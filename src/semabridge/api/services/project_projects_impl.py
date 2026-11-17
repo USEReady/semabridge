@@ -694,27 +694,6 @@ async def create_project_compat(request: dict):
     # Projects that target the same semantic model/workspace must not share
     # mapping state implicitly, because each project can have different naming.
 
-    from fastapi import HTTPException
-    from semabridge.core.project_resync import (
-        detect_project_match,
-        compute_source_content_hash,
-        resolve_unique_copy_name,
-        record_resync_audit,
-    )
-
-    pbix_path = src.get("pbix_path") or src.get("source_path")
-    content_hash = compute_source_content_hash(src, pbix_path=pbix_path)
-    requested_mode = str(payload.get("mode") or payload.get("resync_mode") or payload.get("sync_mode") or "").strip().lower() or None
-
-    match_info = detect_project_match(
-        new_name=payload_name,
-        source_cfg=src,
-        workspace_id=ws_id,
-        content_hash=content_hash,
-        existing_projects=_compat_projects,
-        pbix_path=pbix_path,
-    )
-
     safe_name = re.sub(r'[^a-zA-Z0-9_]+', '-', payload_name.lower()).strip('-')
     default_id = f"proj-{safe_name}" if safe_name else f"proj-{int(_time.time() * 1000)}"
     requested_id = str(payload.get("id") or payload.get("project_id") or default_id).strip()
@@ -722,44 +701,13 @@ async def create_project_compat(request: dict):
     _compat_deleted_project_ids.discard(project_id)
     requested_semantic_name = _project_semantic_name({"semantic_name": payload_name, "name": payload_name}, payload_name)
 
-    from semabridge.core.project_resync import check_target_semantic_view_exists
-    target_conflict = check_target_semantic_view_exists(project_id, payload.get("config_yaml") or payload)
-    if target_conflict:
-        confirmed_view = str(payload.get("confirmed_target_view") or "").strip().upper()
-        conflict_full_vn = str(target_conflict.get("view_name") or "").strip().upper()
-        conflict_raw_vn = str(target_conflict.get("raw_view_name") or "").strip().upper()
-        is_confirmed = (
-            bool(confirmed_view)
-            and (
-                confirmed_view == conflict_full_vn
-                or confirmed_view == conflict_raw_vn
-                or (conflict_raw_vn and confirmed_view.endswith(f".{conflict_raw_vn}"))
-            )
-        )
-        if not is_confirmed:
-            raise HTTPException(status_code=409, detail=target_conflict)
-        chosen_mode = str(payload.get("sync_mode") or payload.get("mode") or "copy").lower()
-        record_resync_audit(payload.get("user_id"), project_id, chosen_mode, details={"view_name": target_conflict.get("view_name")})
-
-    if match_info and not requested_mode:
-        # Backend must enforce: if a match exists and request has no mode -> HTTP 409 with match details
-        raise HTTPException(status_code=409, detail=match_info)
-
-    if requested_mode == "skip":
-        return {"status": "skipped", "message": "Identical content; skipped", "match_info": match_info}
-
     existing_project_id = None
     existing_project = None
-    if match_info and requested_mode in ("upsert", "copy", "resync_anyway"):
-        existing_project_id = match_info.get("matched_project_id")
-        existing_project = _compat_projects.get(existing_project_id) if existing_project_id else None
-        record_resync_audit(payload.get("user_id"), existing_project_id or project_id, requested_mode, match_type=match_info.get("match_type") if match_info else "B")
-    else:
-        for candidate_id, candidate in _compat_projects.items():
-            if _project_semantic_key(candidate, candidate_id) == requested_semantic_name.strip().casefold():
-                existing_project_id = candidate_id
-                existing_project = candidate
-                break
+    for candidate_id, candidate in _compat_projects.items():
+        if _project_semantic_key(candidate, candidate_id) == requested_semantic_name.strip().casefold():
+            existing_project_id = candidate_id
+            existing_project = candidate
+            break
 
     # Only a genuinely brand-new project (no existing_project_id match) gets
     # the new per-project Snowflake schema default -- reusing an existing

@@ -1,21 +1,8 @@
 import React from 'react';
 import { ArrowLeft, ArrowRight, Save, Loader2 } from 'lucide-react';
 
-export function WizardFooter({
-  createdProject,
-  step,
-  goBack,
-  goNext,
-  canAdvance,
-  saving,
-  mappingLoading,
-  editMode,
-  nextLabel = null,
-  nextDisabled = false,
-}) {
+export function WizardFooter({ createdProject, step, goBack, goNext, canAdvance, saving, mappingLoading, editMode }) {
   if (createdProject) return null;
-
-  const isAdvanceDisabled = !canAdvance || saving || mappingLoading || nextDisabled;
 
   return (
     <footer style={{
@@ -55,20 +42,15 @@ export function WizardFooter({
           <button
             type="button"
             onClick={goNext}
-            disabled={isAdvanceDisabled}
+            disabled={!canAdvance || saving || mappingLoading}
             className={`flex items-center gap-2 px-7 py-2.5 text-xs font-bold transition-all rounded-lg cursor-pointer ${
-              isAdvanceDisabled
+              !canAdvance || saving || mappingLoading
                 ? 'bg-[var(--bg-surface-raised)] text-[var(--text-tertiary)] border border-[var(--border-main)] cursor-not-allowed opacity-50'
                 : 'bg-[var(--accent-blue)] text-white hover:bg-[var(--accent-blue-hover)] shadow-sm'
             }`}
           >
             {(saving || mappingLoading) && <Loader2 size={14} className="animate-spin" />}
-            {nextLabel ? (
-              <>
-                {nextLabel}
-                <ArrowRight size={14} />
-              </>
-            ) : step === 6 ? (
+            {step === 6 ? (
               <>
                 <Save size={14} />
                 {saving ? 'SAVING…' : (editMode ? 'SAVE CHANGES' : 'CREATE PROJECT')}

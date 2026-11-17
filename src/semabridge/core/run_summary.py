@@ -21,7 +21,6 @@ class RunStatus(str, Enum):
     FAILED = "FAILED"
     PARTIAL = "PARTIAL"
     RUNNING = "RUNNING"
-    WARNING = "WARNING"
 
 
 class StepStatus(str, Enum):
@@ -151,13 +150,6 @@ class RunSummary(BaseModel):
     # therefore excluded from every field's synonyms (see
     # SourceFormat.ambiguous_report_aliases and LocalPBIXConnector.discover()).
     ambiguous_report_aliases: List[Dict[str, Any]] = Field(default_factory=list)
-
-    # Zero-table model status and classification
-    skipped_no_tables: bool = False
-    reason_code: Optional[str] = None
-    warning_message: Optional[str] = None
-    model_reference: Optional[str] = None
-    notes: List[str] = Field(default_factory=list)
 
     # Effective demo_mode for this run (server env var AND project opt-in
     # both true — see core/demo_mode.resolve_effective_demo_mode). Stamped

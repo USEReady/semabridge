@@ -43,9 +43,7 @@ BASE_METRICS = [
 
 
 def test_names_normalize_case_underscore_and_space():
-    # Key format changed: separators are significant (RUNNINGMONTHS != RUNNING_MONTHS);
-    # the equivalence this test protects is unchanged.
-    assert normalize_name("Total Units YTD") == normalize_name("TOTAL_UNITS_YTD") == "total_units_ytd"
+    assert normalize_name("Total Units YTD") == normalize_name("TOTAL_UNITS_YTD") == "totalunitsytd"
     assert normalize_model_name("Competitive Marketing Analysis (More Synonyms)_updated") == normalize_model_name(
         "COMPETITIVE_MARKETING_ANALYSIS_MORE_SYNONYMS_UPDATED"
     )

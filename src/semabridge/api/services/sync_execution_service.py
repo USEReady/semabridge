@@ -760,18 +760,6 @@ def _run_single_job_impl(
     )
     lock_key = _target_lock_key(local_config, target_view_name)
 
-    # Feature 1 Step 3: Pre-deploy backup of live DDL + grants per run
-    from semabridge.core.project_resync import backup_live_ddl_and_grants, check_ddl_drift, validate_removals_confirmation
-    if sync_mode == "upsert" and deploy_enabled:
-        try:
-            backup_live_ddl_and_grants(
-                project_id=requested_project_id or "default",
-                run_id=job.get("project_run_id") or "run",
-                view_names=[target_view_name],
-            )
-        except Exception as b_exc:
-            logger.warning("Pre-deploy DDL backup non-fatal warning: %s", b_exc)
-
     # A dry run never deploys, so it must not take the target view's lease: it
     # would reject (and be rejected by) a concurrent real sync of that view.
     # Real deploys lease db.schema.<view> here (DB-backed, cross-process); the
@@ -817,49 +805,26 @@ def _run_single_job_impl(
                 batch_name_registry=batch_name_registry,
             )
             summary_data = summary.model_dump(mode="json")
-
-            # Feature 1 Step 5: confirm_removals enforcement
-            delta_obj = summary_data.get("upsert_delta") or {}
-            delta_changes = delta_obj.get("changes") if isinstance(delta_obj, dict) else {}
-            removed_items = (delta_changes.get("removed") or []) if isinstance(delta_changes, dict) else []
-            if removed_items:
-                confirm_req = (config.get("confirm_removals") if isinstance(config, dict) else None)
-                confirmed, kept, has_unconfirmed = validate_removals_confirmation(removed_items, confirm_req)
-                if has_unconfirmed:
-                    summary_data["pending_removals"] = kept
-                    summary_data["status"] = "WARNING"
-
-            summary_status = str(summary_data.get("status", "")).upper()
-            is_skipped = bool(summary_data.get("skipped_no_tables")) or summary_status == "WARNING"
-            job_ok = summary_status == "SUCCESS"
+            job_ok = str(summary_data.get("status", "")).upper() == "SUCCESS"
             run_context = getattr(engine, "_context", None)
 
             _record_true_run_completion(repository, summary_data)
 
-            if job_ok and deploy_enabled and not is_skipped:
+            if job_ok and deploy_enabled:
                 try:
                     _persist_model_version(repository, local_config, summary_data, model_label, resolved_workspace_id)
                 except Exception as version_error:
                     logger.warning("Version row write failed for %s: %s", model_label, version_error)
 
-            if is_skipped:
-                status = "SKIPPED_NO_TABLES"
-            elif job_ok:
-                status = "success"
-            else:
-                status = "failed"
+            status = "success" if job_ok else "failed"
             return {
                 "model": model_label,
                 "status": status,
-                "skipped_no_tables": is_skipped,
-                "reason_code": summary_data.get("reason_code"),
-                "warning_message": summary_data.get("warning_message") or "No tables found - a semantic view cannot be created",
-                "model_reference": summary_data.get("model_reference"),
                 "summary": summary_data,
                 "routing_summary": summary_data.get("routing_summary") if isinstance(summary_data, dict) else None,
                 "console": _build_console_details(
                     summary_data,
-                    fallback_message=f"[{status.upper()}] Model '{model_label}' skipped: {summary_data.get('reason_code')}" if is_skipped else f"[{status.upper()}] Model '{model_label}' finished with status {summary_data.get('status')}",
+                    fallback_message=f"[{status.upper()}] Model '{model_label}' finished with status {summary_data.get('status')}",
                 ),
                 "run_id": summary_data.get("run_id"),
                 "missing_dims": summary_data.get("missing_dims") or {},
@@ -868,9 +833,9 @@ def _run_single_job_impl(
                 "cortex_validation_results": summary_data.get("cortex_validation_results") or [],
                 "upsert_delta": summary_data.get("upsert_delta"),
                 "pbix_path": job.get("pbix_path"),
-                "view_name": None if is_skipped else _resolve_result_view_name(run_context, target_type),
-                "target_artifact_path": None if is_skipped else (summary_data.get("target_artifact_path")
-                or getattr(run_context, "target_artifact_path", None)),
+                "view_name": _resolve_result_view_name(run_context, target_type),
+                "target_artifact_path": summary_data.get("target_artifact_path")
+                or getattr(run_context, "target_artifact_path", None),
                 "physical_namespace": job.get("physical_namespace"),
                 "duration_ms": int((time.perf_counter() - started) * 1000),
             }
@@ -1390,76 +1355,19 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
             result.setdefault("model_plan", plan)
 
     succeeded = [result for result in per_model_results if result["status"] == "success"]
-    skipped = [result for result in per_model_results if result["status"] in ("SKIPPED_NO_TABLES", "skipped_no_tables")]
-    failed = [result for result in per_model_results if result["status"] not in ("success", "SKIPPED_NO_TABLES", "skipped_no_tables", "conflict")]
-    conflicts = [result for result in per_model_results if result["status"] == "conflict"]
-
-    if conflicts:
-        overall_status = "conflict"
-    elif failed:
-        overall_status = "partial" if (succeeded or skipped) else "failed"
-    elif skipped:
-        # Run status: WARNING (not ERROR, not SUCCESS), with an explicit note in the report
-        overall_status = "WARNING"
-    elif len(succeeded) == len(per_model_results):
+    if len(succeeded) == len(per_model_results):
         overall_status = "success"
+    elif succeeded:
+        overall_status = "partial"
+    elif any(result["status"] == "conflict" for result in per_model_results):
+        overall_status = "conflict"
     else:
         overall_status = "failed"
-
-    report_notes: List[str] = []
-    for s in skipped:
-        m_name = s.get("model") or "unknown"
-        r_code = s.get("reason_code") or "0 physical tables"
-        ref = s.get("model_reference")
-        reason_str = f"{r_code} (Points to {ref} on Power BI Service)" if (r_code == "LIVE_CONNECTION" and ref) else r_code
-        report_notes.append(f"Model {m_name} skipped: {reason_str}")
 
     last_summary = next(
         (result.get("summary") for result in reversed(per_model_results) if isinstance(result.get("summary"), dict)),
         {},
     )
-
-    # Feature 1 Step 1: Store last_source_content_hash and deployed_ddl_hash on every successful/warning sync
-    # preview-* and dry-run-* projects must never persist hashes (dry run must not block subsequent project creation)
-    is_preview = (
-        str(requested_project_id or "").startswith("preview")
-        or str(requested_project_id or "").startswith("dry-run")
-    )
-    if overall_status in ("success", "WARNING") and requested_project_id and not is_preview:
-        try:
-            from datetime import datetime, timezone
-            import hashlib
-            from semabridge.api.services.project_shared import compat_store_lock, _compat_projects, _compat_save_store
-            from semabridge.core.project_resync import compute_source_content_hash
-
-            src_hash = compute_source_content_hash(source_cfg)
-            deployed_views = [r.get("view_name") for r in per_model_results if r.get("view_name")]
-
-            ddl_hashes = []
-            for r in per_model_results:
-                art_path = r.get("target_artifact_path") or (r.get("summary") or {}).get("target_artifact_path")
-                if art_path and Path(art_path).exists():
-                    try:
-                        ddl_content = Path(art_path).read_text(encoding="utf-8")
-                        ddl_hashes.append(hashlib.sha256(ddl_content.strip().encode("utf-8")).hexdigest())
-                    except Exception:
-                        pass
-            ddl_hash = ddl_hashes[0] if ddl_hashes else None
-
-            with compat_store_lock():
-                proj = _compat_projects.get(requested_project_id)
-                if isinstance(proj, dict):
-                    if src_hash:
-                        proj["last_source_content_hash"] = src_hash
-                    if ddl_hash:
-                        proj["deployed_ddl_hash"] = ddl_hash
-                    proj["last_sync_time"] = datetime.now(timezone.utc).isoformat()
-                    if deployed_views:
-                        proj["deployed_views"] = deployed_views
-                    _compat_save_store()
-        except Exception as _hash_exc:
-            logger.warning("Could not persist source/DDL hash on project %s: %s", requested_project_id, _hash_exc)
-            report_notes.append(f"Hash persistence warning: {_hash_exc}")
 
     logger.info(
         "Sync complete: %d/%d models succeeded (status=%s, parallelism=%d, executor=%s)",
@@ -1474,8 +1382,6 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
         "status": overall_status,
         "models_synced": len(succeeded),
         "total_models": len(per_model_results),
-        "skipped_models": [s.get("model") for s in skipped],
-        "notes": report_notes,
         "results": per_model_results,
         "summary": last_summary or {},
         "routing_summary": (last_summary or {}).get("routing_summary") if isinstance(last_summary, dict) else None,

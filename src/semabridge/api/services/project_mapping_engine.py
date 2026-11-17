@@ -516,10 +516,15 @@ def extract_model_entities(
 def _scope_key(entity: Dict[str, Any]) -> str:
     kind = str(entity.get("entity_kind") or "").lower()
     if kind == "column":
-        # Columns compete across tables within the model so same-named columns
-        # (e.g. AgeGroup.ID and Employee.ID) are detected as collisions and can be
-        # disambiguated with table prefixes.
-        return f"column::{entity.get('model_name') or 'model'}"
+        # One namespace PER LOGICAL TABLE, exactly what a Snowflake semantic
+        # view enforces: dimensions/facts are named ``<table_alias>.<name>``,
+        # so ``CUSTOMER.NAME`` and ``PRODUCT.NAME`` coexist (Snowflake docs,
+        # "Querying semantic views": dot-notation is required when two
+        # entities define a calculation with the same name), and the emitter
+        # (dimensions_clause_builder) dedupes aliases per logical table too.
+        # A flat model-wide scope reported collisions the deploy never has.
+        parent = str(entity.get("parent_source_path") or "").strip()
+        return f"column::{entity.get('model_name') or 'model'}::{parent}"
     if kind == "table":
         return f"table::{entity.get('model_name') or 'model'}"
     if kind == "metric":

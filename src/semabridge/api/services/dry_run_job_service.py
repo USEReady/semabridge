@@ -179,7 +179,7 @@ def _file_payload(f: DryRunJobFile) -> Dict[str, Any]:
     source_type = str(f.source_type or ("pbix" if f.pbix_path else "")).lower()
     source_ref = f.source_ref or f.pbix_path or ""
     label = f.label or f.display_name
-    payload = {
+    return {
         "file_id": f.file_id,
         "status": f.status,
         "error_message": f.error_message,
@@ -194,19 +194,6 @@ def _file_payload(f: DryRunJobFile) -> Dict[str, Any]:
         "started_at": _iso(f.started_at),
         "completed_at": _iso(f.completed_at),
     }
-    if str(f.status).upper() == "SKIPPED_NO_TABLES":
-        payload["warning_message"] = f.error_message or "No tables found - a semantic view cannot be created"
-        if f.result_json:
-            try:
-                rdata = json.loads(f.result_json)
-                if isinstance(rdata, dict):
-                    payload["reason_code"] = rdata.get("reason_code")
-                    payload["model_reference"] = rdata.get("model_reference")
-                    payload["remote_model_name"] = rdata.get("model_reference")
-                    payload["warning_row"] = rdata.get("warning_row")
-            except Exception:
-                pass
-    return payload
 
 
 def create_dry_run_job(
@@ -350,7 +337,7 @@ def _aggregate_job_status(file_statuses: List[str]) -> str:
         return "failed"
     if any(s in ("pending", "running") for s in file_statuses):
         return "running"
-    if all(str(s).upper() in ("SUCCESS", "SKIPPED_NO_TABLES") for s in file_statuses):
+    if all(s == "success" for s in file_statuses):
         return "success"
     if all(s == "failed" for s in file_statuses):
         return "failed"
@@ -439,17 +426,11 @@ def _record_file_outcome(
             job_file.result_json = None
         else:
             result = result or {}
-            is_file_skipped = (
-                str(result.get("status") or "").upper() == "SKIPPED_NO_TABLES"
-                or bool(result.get("skipped_no_tables"))
-            )
-            if is_file_skipped:
-                job_file.status = "SKIPPED_NO_TABLES"
-                job_file.error_message = str(result.get("warning_message") or "No tables found - a semantic view cannot be created")
-                job_file.content_hash = _hash_or_none(result.get("content_hash"))
-                job_file.config_hash = _hash_or_none(result.get("config_hash"))
-                job_file.overrides_hash = _hash_or_none(result.get("overrides_hash"))
-            elif result.get("success") and not result.get("extraction_failed"):
+            # extraction_failed=True is a "soft" failure the pipeline returns
+            # successfully rather than raising (see _run_dry_run_pipeline) --
+            # must still surface as a failed file, not a silent success with
+            # zero fields, per "show real error messages, never hide failures."
+            if result.get("success") and not result.get("extraction_failed"):
                 job_file.status = "success"
                 job_file.error_message = None
                 # What this dry run validated -- the sync gate requires the
@@ -717,9 +698,6 @@ def get_dry_run_job_status(job_id: str) -> Dict[str, Any]:
         if job is None:
             raise NotFoundError(f"Dry-run job '{job_id}' not found.")
         _fail_stale_files(session, job)
-        files = [_file_payload(f) for f in job.files]
-        all_skipped = bool(files) and all(str(f["status"]).upper() == "SKIPPED_NO_TABLES" for f in files)
-        any_in_progress = any(f["status"] in ("pending", "running") for f in files)
         return {
             "job_id": job.job_id,
             "project_id": job.project_id,
@@ -727,11 +705,7 @@ def get_dry_run_job_status(job_id: str) -> Dict[str, Any]:
             "source_type": job.source_type or "pbix",
             "created_at": _iso(job.created_at),
             "completed_at": _iso(job.completed_at),
-            "files": files,
-            "all_models_skipped": all_skipped,
-            "can_sync": not all_skipped and not any_in_progress and all(str(f["status"]).upper() in ("SUCCESS", "SKIPPED_NO_TABLES") for f in files),
-            "sync_button_disabled": all_skipped,
-            "sync_button_label": "Nothing to create" if all_skipped else "Sync Models",
+            "files": [_file_payload(f) for f in job.files],
         }
 
 
@@ -1091,9 +1065,6 @@ def validate_multi_model_dry_run_readiness(
             )
             candidate = legacy
 
-        if str(candidate["status"]).upper() == "SKIPPED_NO_TABLES":
-            # Sibling models must not be blocked: skipped zero-table model
-            continue
         if candidate["status"] != "success":
             err = candidate["error"] or f"status is '{candidate['status']}'"
             raise ValidationError(

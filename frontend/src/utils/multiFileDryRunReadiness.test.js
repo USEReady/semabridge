@@ -13,14 +13,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  resolveMultiFileDryRunReadiness,
-  formatZeroTablesReason,
-  resolveMultiModelReadiness,
-  getSyncButtonProps,
-  normalizeFileStatus,
-  isTerminalFileStatus,
-} from './multiFileDryRunReadiness.js';
+import { resolveMultiFileDryRunReadiness } from './multiFileDryRunReadiness.js';
 
 test('no poll has landed yet (job just created) -> running, not ready', () => {
   const result = resolveMultiFileDryRunReadiness(null);
@@ -76,75 +69,4 @@ test('backend aggregate status "partial" (mixed success/failed) -> not running, 
   assert.equal(result.running, false);
   assert.equal(result.succeeded, false, 'a mixed success/failed outcome must never claim blanket readiness');
   assert.equal(result.hasFailures, true);
-});
-
-test('normalizeFileStatus and isTerminalFileStatus support skipped_no_tables', () => {
-  assert.equal(normalizeFileStatus('skipped_no_tables'), 'skipped_no_tables');
-  assert.equal(normalizeFileStatus('SKIPPED'), 'skipped_no_tables');
-  assert.equal(isTerminalFileStatus('skipped_no_tables'), true);
-});
-
-test('formatZeroTablesReason formats all 5 reason codes correctly', () => {
-  // 1. LIVE_CONNECTION
-  assert.equal(
-    formatZeroTablesReason({ reasonCode: 'LIVE_CONNECTION', modelReference: 'RemoteModel' }),
-    'Points to RemoteModel on Power BI Service'
-  );
-  // 2. ONLY_AUTO_DATE_TABLES
-  assert.equal(
-    formatZeroTablesReason({ reasonCode: 'ONLY_AUTO_DATE_TABLES' }),
-    'Only auto date/time tables found (excluded by design)'
-  );
-  // 3. ALL_TABLES_FAILED
-  assert.equal(
-    formatZeroTablesReason({ reasonCode: 'ALL_TABLES_FAILED' }),
-    'All tables failed extraction or validation'
-  );
-  // 4. MEASURES_ONLY
-  assert.equal(
-    formatZeroTablesReason({ reasonCode: 'MEASURES_ONLY', measures: [{ name: 'Total Sales' }, { name: 'Profit Margin' }] }),
-    'Model contains measures but no physical tables: Total Sales, Profit Margin'
-  );
-  assert.equal(
-    formatZeroTablesReason({ reasonCode: 'MEASURES_ONLY', measures: [] }),
-    'Model contains measures but no physical tables'
-  );
-  // 5. EMPTY_MODEL
-  assert.equal(
-    formatZeroTablesReason({ reasonCode: 'EMPTY_MODEL' }),
-    'Model has no tables or fields'
-  );
-});
-
-test('resolveMultiModelReadiness handles skipped_no_tables models and computes N of M', () => {
-  const sections = [
-    { fileId: 'f1', label: 'Sales', status: 'success', loaded: true, rows: [{ id: '1', status: 'auto' }], blockingCount: 0, compatibilityScore: 95 },
-    { fileId: 'f2', label: 'HR Live', status: 'skipped_no_tables', reasonCode: 'LIVE_CONNECTION', modelReference: 'HR Live Model' },
-  ];
-
-  const readiness = resolveMultiModelReadiness(sections);
-  assert.equal(readiness.total, 2);
-  assert.equal(readiness.validCount, 1);
-  assert.equal(readiness.skippedCount, 1);
-  assert.equal(readiness.failedCount, 0);
-  assert.equal(readiness.allProcessed, true);
-  assert.equal(readiness.ready, true, 'Ready because 1 model is valid and the other is safely skipped');
-
-  const btnProps = getSyncButtonProps(readiness);
-  assert.equal(btnProps.label, 'Create 1 of 2 semantic views');
-  assert.equal(btnProps.disabled, false);
-});
-
-test('getSyncButtonProps returns "Nothing to create" and disabled when N = 0', () => {
-  const sections = [
-    { fileId: 'f1', label: 'LiveOnly', status: 'skipped_no_tables', reasonCode: 'LIVE_CONNECTION' },
-  ];
-
-  const readiness = resolveMultiModelReadiness(sections);
-  assert.equal(readiness.validCount, 0);
-  assert.equal(readiness.ready, false);
-
-  const btnProps = getSyncButtonProps(readiness);
-  assert.equal(btnProps.label, 'Nothing to create');
-  assert.equal(btnProps.disabled, true);
 });

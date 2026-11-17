@@ -63,10 +63,6 @@ class AutoMapRequest(BaseModel):
 
 class DeployRequest(BaseModel):
     field_mappings: List[Dict[str, Any]]
-    sync_mode: Optional[str] = None
-    confirm_removals: Optional[List[str]] = None
-    acknowledge_duplicates: Optional[bool] = False
-    confirmed_target_view: Optional[str] = None
 
 # --- Router ---
 
@@ -445,10 +441,6 @@ def _restore_engine_collision_verdicts(
         if engine_row.get("mapping_scope"):
             row["mapping_scope"] = engine_row.get("mapping_scope")
         if engine_row.get("collision_detected"):
-            row["collision_detected"] = True
-            row["validation_status"] = engine_row.get("validation_status") or "collision"
-            row["validation_code"] = engine_row.get("validation_code") or "NAME_COLLISION"
-            row["status"] = "collision"
             continue
         if str(row.get("validation_code") or "").upper() == "COLLISION":
             row["collision_detected"] = False
@@ -737,13 +729,7 @@ async def _run_dry_run_pipeline(
         if model_plan is None and isinstance(r.get("model_plan"), dict):
             model_plan = r.get("model_plan")
         result_status = str(r.get("status") or "").strip().lower()
-        is_r_skipped = (
-            result_status in ("skipped_no_tables",)
-            or bool(r.get("skipped_no_tables"))
-            or bool(summary.get("skipped_no_tables"))
-            or str(summary.get("status") or "").upper() == "WARNING"
-        )
-        if result_status and result_status != "success" and not is_r_skipped:
+        if result_status and result_status != "success":
             messages = [
                 str(e.get("message") or "").strip()
                 for e in (summary.get("errors") or [])
@@ -1003,52 +989,12 @@ async def _run_dry_run_pipeline(
 
     ontology_blockers = list((ontology_report or {}).get("blocking_conflicts") or [])
 
-    skipped_res = next(
-        (
-            r for r in results
-            if str(r.get("status") or "").lower() in ("skipped_no_tables",)
-            or bool(r.get("skipped_no_tables"))
-            or bool((r.get("summary") or {}).get("skipped_no_tables"))
-            or str((r.get("summary") or {}).get("status") or "").upper() == "WARNING"
-        ),
-        None,
-    )
-    is_skipped_no_tables = skipped_res is not None
-    skipped_reason_code = None
-    skipped_model_ref = None
-    if is_skipped_no_tables:
-        s_sum = skipped_res.get("summary") or {}
-        skipped_reason_code = skipped_res.get("reason_code") or s_sum.get("reason_code")
-        skipped_model_ref = skipped_res.get("model_reference") or s_sum.get("model_reference")
-        # Ensure dropped entities from skipped model are captured
-        if s_sum.get("dropped_entities"):
-            for d in s_sum["dropped_entities"]:
-                if d not in dropped_entities:
-                    dropped_entities.append(d)
-
-    dry_run_ok = not engine_errors and (not extraction_failed or is_skipped_no_tables)
+    dry_run_ok = not engine_errors and not extraction_failed
     file_ref = selected_sources[0] if len(selected_sources or []) == 1 else None
     from semabridge.api.services.sync_execution_service import file_content_sha256
 
-    warning_row_text = None
-    if is_skipped_no_tables:
-        warning_row_text = "No tables found - a semantic view cannot be created"
-        if skipped_reason_code == "LIVE_CONNECTION" and skipped_model_ref:
-            warning_row_text = f"Points to {skipped_model_ref} on Power BI Service"
-
     return {
         "success": dry_run_ok,
-        "status": "SKIPPED_NO_TABLES" if is_skipped_no_tables else ("success" if dry_run_ok else "failed"),
-        "skipped": is_skipped_no_tables,
-        "skipped_no_tables": is_skipped_no_tables,
-        "reason_code": skipped_reason_code,
-        "model_reference": skipped_model_ref,
-        "remote_model_name": skipped_model_ref,
-        "warning_message": "No tables found - a semantic view cannot be created" if is_skipped_no_tables else None,
-        "warning_row": warning_row_text,
-        "can_sync": not is_skipped_no_tables and dry_run_ok,
-        "sync_button_disabled": is_skipped_no_tables,
-        "sync_button_label": "Nothing to create" if is_skipped_no_tables else "Sync Models",
         "error": None if dry_run_ok else (
             engine_errors[0] if engine_errors
             else "Extraction failed — no semantic model could be built from this file."
@@ -1070,8 +1016,8 @@ async def _run_dry_run_pipeline(
         "source_type": source_type,
         "source_ref": (selected_sources[0] if len(selected_sources or []) == 1 else None),
         "entity_mappings": filtered_mappings,
-        "extraction_failed": extraction_failed if not is_skipped_no_tables else False,
-        "dropped_entities": dropped_entities,
+        "extraction_failed": extraction_failed,
+        "dropped_entities": data.get("dropped_entities", []),
         "unresolved_report_field_references": unresolved_report_field_references,
         "ambiguous_report_aliases": ambiguous_report_aliases,
         "sync_mode": sync_mode,
@@ -1093,9 +1039,7 @@ async def _run_dry_run_pipeline(
             "unmapped": unmapped_count,
             "collisions": collision_count,
             "predicted_failures": predicted_failure_count,
-            "extraction_failed": extraction_failed if not is_skipped_no_tables else False,
-            "skipped_no_tables": is_skipped_no_tables,
-            "reason_code": skipped_reason_code,
+            "extraction_failed": extraction_failed,
             "ontology_blockers": len(ontology_blockers),
         },
     }
@@ -1359,24 +1303,6 @@ async def deploy_mappings(
     project_shared._compat_raise_if_store_failed()
 
     # ── 3. Trigger the full semantic sync pipeline (SYNC run) ─────────────────
-    from semabridge.core.project_resync import check_target_semantic_view_exists
-    cfg_to_check = project_shared._compat_project_configs.get(actual_project_id) or project_shared._compat_project_configs.get(project_id)
-    target_conflict = check_target_semantic_view_exists(actual_project_id, cfg_to_check)
-    if target_conflict:
-        confirmed_view = str(request.confirmed_target_view or "").strip().upper()
-        conflict_full_vn = str(target_conflict.get("view_name") or "").strip().upper()
-        conflict_raw_vn = str(target_conflict.get("raw_view_name") or "").strip().upper()
-        is_confirmed = (
-            bool(confirmed_view)
-            and (
-                confirmed_view == conflict_full_vn
-                or confirmed_view == conflict_raw_vn
-                or (conflict_raw_vn and confirmed_view.endswith(f".{conflict_raw_vn}"))
-            )
-        )
-        if not is_confirmed:
-            raise HTTPException(status_code=409, detail=target_conflict)
-
     try:
         run_result = await run_project_now_compat(
             actual_project_id,
@@ -1385,10 +1311,6 @@ async def deploy_mappings(
                 "run_type": "SYNC",
                 "field_mappings": request.field_mappings,
                 "user_id": request_user_id,
-                "sync_mode": request.sync_mode,
-                "confirm_removals": request.confirm_removals,
-                "acknowledge_duplicates": request.acknowledge_duplicates,
-                "confirmed_target_view": request.confirmed_target_view,
             },
         )
         return {
@@ -1399,8 +1321,6 @@ async def deploy_mappings(
             "deployed_count": len(request.field_mappings),
             "errors": [],
         }
-    except HTTPException:
-        raise
     except Exception as e:
         import traceback
         traceback.print_exc()

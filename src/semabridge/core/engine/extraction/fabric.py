@@ -34,7 +34,6 @@ from semabridge.sml.models import SMLModel, SMLRelationship
 from semabridge.repository.model_repository import ModelRepository
 from semabridge.utils.logger import get_logger
 from semabridge.utils.relationship_naming import generate_relationship_name
-from semabridge.core.zero_tables import classify_tmsl_model, ZeroTablesModelError
 from semabridge.core.engine.context import RunContext
 from semabridge.core.engine.exceptions import (
     ConfigValidationError,
@@ -222,16 +221,6 @@ def _extract_fabric(
     resolved_dataset_id = extractor.resolve_model_id(dataset_id)
 
     tmsl = extractor.get_model_definition(resolved_dataset_id)
-    classification = classify_tmsl_model(tmsl)
-    if classification is not None:
-        reason_code, model_ref, measures = classification
-        m_name = getattr(context, "project_name", "") or resolved_dataset_id
-        raise ZeroTablesModelError(
-            f"Fabric model '{m_name}' contains 0 physical tables ({reason_code})",
-            reason_code=reason_code,
-            model_reference=model_ref,
-            measures=measures,
-        )
     row_counts = extractor.get_table_row_counts(resolved_dataset_id)
 
     source_format = from_fabric_tmsl(

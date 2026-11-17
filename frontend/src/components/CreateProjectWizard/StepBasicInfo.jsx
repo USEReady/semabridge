@@ -20,7 +20,7 @@ export function StepBasicInfo({
   targetConnectors, setTargetConnectors,
   intermediateFormat, setIntermediateFormat,
   tags, setTags, tagInput, setTagInput,
-  showValidation, editMode, nameClash,
+  showValidation, editMode
 }) {
   const isSourceMissing = !sourceConnector;
   const isTargetsMissing = targetConnectors.size === 0;
@@ -46,7 +46,7 @@ export function StepBasicInfo({
           <h3 style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Project Identity</h3>
           <p style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 4 }}>Basic details to identify this synchronization pipeline.</p>
         </div>
-
+        
         <div style={{ display: 'grid', gap: 24 }}>
           <div>
             <label style={LABEL}>Project Name</label>
@@ -58,11 +58,6 @@ export function StepBasicInfo({
             />
             {showValidation && !name && (
               <p style={{ color: 'var(--color-error)', fontSize: 11, marginTop: 4 }}>Name is required</p>
-            )}
-            {nameClash && (
-              <p style={{ color: 'var(--color-error)', fontSize: 11, marginTop: 4 }}>
-                A project named &quot;{name}&quot; already exists in this workspace. Please choose another name.
-              </p>
             )}
           </div>
           <div>
@@ -147,8 +142,8 @@ export function StepBasicInfo({
                         boxShadow: isSelected ? '0 0 0 1px rgba(59, 130, 246, 0.2)' : 'none',
                       }}
                     >
-                      <div style={{
-                        width: 16, height: 16, borderRadius: '50%',
+                      <div style={{ 
+                        width: 16, height: 16, borderRadius: '50%', 
                         border: isSelected ? '5px solid var(--accent-blue)' : '2px solid var(--border-main)',
                         background: 'transparent',
                         transition: 'all 0.2s ease'
@@ -193,10 +188,10 @@ export function StepBasicInfo({
                         boxShadow: isSelected ? '0 0 0 1px rgba(59, 130, 246, 0.2)' : 'none',
                       }}
                     >
-                      <div style={{
-                        width: 16, height: 16, borderRadius: 4,
-                        background: isSelected ? 'var(--accent-blue)' : 'transparent',
-                        border: isSelected ? 'none' : '2px solid var(--border-main)',
+                      <div style={{ 
+                        width: 16, height: 16, borderRadius: 4, 
+                        background: isSelected ? 'var(--accent-blue)' : 'transparent', 
+                        border: isSelected ? 'none' : '2px solid var(--border-main)', 
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
                         transition: 'all 0.2s ease'
                       }}>
@@ -227,7 +222,7 @@ export function StepBasicInfo({
               ))}
             </div>
             <p style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 16, lineHeight: 1.5 }}>
-              The intermediate format determines the schema representation used during the synchronization process.
+              The intermediate format determines the schema representation used during the synchronization process. 
               This is critical for cross-platform semantic translation.
             </p>
           </div>

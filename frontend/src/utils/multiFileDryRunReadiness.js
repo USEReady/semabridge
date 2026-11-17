@@ -38,10 +38,9 @@ export function resolveMultiFileDryRunReadiness(jobStatus) {
 /** Minimum compatibility score a model may have and still allow Proceed (same as the single-model gate). */
 export const MIN_PROCEED_COMPAT_SCORE = 70;
 
-/** Normalizes a backend per-file status into pending | running | success | failed | skipped_no_tables. */
+/** Normalizes a backend per-file status into pending | running | success | failed. */
 export function normalizeFileStatus(status) {
   const s = String(status || '').trim().toLowerCase();
-  if (s === 'skipped_no_tables' || s === 'skipped' || s === 'no_tables') return 'skipped_no_tables';
   if (s === 'success' || s === 'succeeded' || s === 'completed' || s === 'complete' || s === 'done') return 'success';
   if (s === 'failed' || s === 'error' || s === 'errored' || s === 'cancelled' || s === 'canceled') return 'failed';
   if (s === 'running' || s === 'in_progress' || s === 'started') return 'running';
@@ -50,43 +49,7 @@ export function normalizeFileStatus(status) {
 
 export function isTerminalFileStatus(status) {
   const s = normalizeFileStatus(status);
-  return s === 'success' || s === 'failed' || s === 'skipped_no_tables';
-}
-
-/**
- * Formats human-readable explanation for a zero-tables model skipped during dry run.
- * Reason codes:
- *   - LIVE_CONNECTION: Points to remote model on Power BI Service
- *   - ONLY_AUTO_DATE_TABLES: Only auto date/time tables found
- *   - ALL_TABLES_FAILED: All tables failed extraction or validation
- *   - MEASURES_ONLY: Model contains measures but no physical tables (incl. list)
- *   - EMPTY_MODEL: Model has no tables or fields
- */
-export function formatZeroTablesReason(section) {
-  const code = String(section?.reasonCode || section?.reason_code || '').toUpperCase();
-  if (code === 'LIVE_CONNECTION') {
-    const ref = section.modelReference || section.model_reference || section.remote_model_name || 'remote model';
-    return `Points to ${ref} on Power BI Service`;
-  }
-  if (code === 'ONLY_AUTO_DATE_TABLES') {
-    return 'Only auto date/time tables found (excluded by design)';
-  }
-  if (code === 'ALL_TABLES_FAILED') {
-    return 'All tables failed extraction or validation';
-  }
-  if (code === 'MEASURES_ONLY') {
-    const rawMeasures = section.measures || section.metrics || [];
-    const list = rawMeasures
-      .map((m) => (typeof m === 'string' ? m : (m?.name || m?.unique_name || '')))
-      .filter(Boolean);
-    return list.length > 0
-      ? `Model contains measures but no physical tables: ${list.join(', ')}`
-      : 'Model contains measures but no physical tables';
-  }
-  if (code === 'EMPTY_MODEL') {
-    return 'Model has no tables or fields';
-  }
-  return section?.warningMessage || section?.warning_message || 'No physical tables found in model';
+  return s === 'success' || s === 'failed';
 }
 
 /** True once every file in the job reached a terminal state (polling can stop). */
@@ -155,25 +118,6 @@ export function buildMultiModelSections(jobStatus, fileStates = {}) {
     // (the server-side gate counts both).
     const ontologyBlockingCount = Array.isArray(result?.blocking_conflicts) ? result.blocking_conflicts.length : 0;
     const plan = result?.model_plan && typeof result.model_plan === 'object' ? result.model_plan : null;
-    let parsedResult = null;
-    if (typeof file?.result_json === 'string') {
-      try { parsedResult = JSON.parse(file.result_json); } catch { /* ignore */ }
-    } else if (file?.result_json && typeof file.result_json === 'object') {
-      parsedResult = file.result_json;
-    }
-    const reasonCode = String(
-      file?.reason_code || parsedResult?.reason_code || state?.result?.reason_code || ''
-    ).toUpperCase();
-    const modelReference = String(
-      file?.model_reference || file?.remote_model_name || parsedResult?.model_reference || state?.result?.model_reference || ''
-    ).trim();
-    const measures = Array.isArray(file?.measures)
-      ? file.measures
-      : (Array.isArray(parsedResult?.measures) ? parsedResult.measures : (Array.isArray(state?.result?.measures) ? state.result.measures : []));
-    const warningMessage = String(
-      file?.warning_message || file?.warning_row || parsedResult?.warning_row || ''
-    ).trim();
-
     return {
       fileId,
       index,
@@ -197,31 +141,22 @@ export function buildMultiModelSections(jobStatus, fileStates = {}) {
       plan,
       compatibilityScore: compat,
       schemaConflictCount: Array.isArray(result?.schema_conflicts) ? result.schema_conflicts.length : 0,
-      reasonCode,
-      modelReference,
-      measures,
-      warningMessage,
     };
   });
 }
 
 /**
- * resolveMultiModelReadiness — Proceed is enabled only when every model has
- * either loaded successfully or been skipped (zero physical tables), at least
- * one model will deploy a semantic view (N > 0), and no deploying model has
- * unresolved blocking rows or a compatibility score under the threshold.
+ * resolveMultiModelReadiness — Proceed is enabled only when EVERY model's dry
+ * run succeeded, every model's result is loaded, and no model has unresolved
+ * blocking rows or a compatibility score under the single-model threshold.
  */
 export function resolveMultiModelReadiness(sections = [], { minCompat = MIN_PROCEED_COMPAT_SCORE } = {}) {
   const list = Array.isArray(sections) ? sections : [];
   const total = list.length;
   const pendingCount = list.filter((s) => s.status === 'pending' || s.status === 'running').length;
-  const skippedCount = list.filter((s) => s.status === 'skipped_no_tables').length;
   const failedCount = list.filter((s) => s.status === 'failed' || Boolean(s.loadError)).length;
   const loadingCount = list.filter((s) => s.loading).length;
   const succeededCount = list.filter((s) => s.status === 'success' && s.loaded).length;
-  const validCount = succeededCount;
-  const totalCount = total;
-
   const totalBlocking = list.reduce((sum, s) => sum + (s.blockingCount || 0), 0);
   const totalSchemaConflicts = list.reduce((sum, s) => sum + (s.schemaConflictCount || 0), 0);
   const scores = list.map((s) => s.compatibilityScore).filter((v) => typeof v === 'number');
@@ -232,19 +167,13 @@ export function resolveMultiModelReadiness(sections = [], { minCompat = MIN_PROC
     .map((s) => s.label);
 
   const running = total === 0 || pendingCount > 0 || loadingCount > 0;
-  const allProcessed = total > 0 && (succeededCount + skippedCount === total);
   const allSucceeded = total > 0 && succeededCount === total;
-  // Ready to proceed: all processed, at least 1 valid model (N > 0), 0 failures, 0 blockers
-  const ready = allProcessed && validCount > 0 && failedCount === 0 && totalBlocking === 0 && lowCompatModels.length === 0;
+  const ready = allSucceeded && totalBlocking === 0 && lowCompatModels.length === 0;
 
   return {
     total,
-    totalCount,
-    validCount,
-    skippedCount,
     running,
     allSucceeded,
-    allProcessed,
     hasFailures: failedCount > 0,
     ready,
     pendingCount,
@@ -256,29 +185,6 @@ export function resolveMultiModelReadiness(sections = [], { minCompat = MIN_PROC
     minCompatibilityScore,
     blockedModels,
     lowCompatModels,
-  };
-}
-
-/**
- * Returns label and disabled state for the dry-run sync button:
- * "Create N of M semantic views", or disabled "Nothing to create" when N = 0.
- */
-export function getSyncButtonProps(readiness) {
-  const n = readiness?.validCount ?? readiness?.succeededCount ?? 0;
-  const m = readiness?.totalCount ?? readiness?.total ?? 0;
-  if (n === 0) {
-    return {
-      label: 'Nothing to create',
-      disabled: true,
-      validCount: 0,
-      totalCount: m,
-    };
-  }
-  return {
-    label: `Create ${n} of ${m} semantic views`,
-    disabled: !readiness?.ready,
-    validCount: n,
-    totalCount: m,
   };
 }
 

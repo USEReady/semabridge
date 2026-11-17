@@ -1365,51 +1365,7 @@ async def _start_project_run_request(
             if scope_models:
                 config_override = _scope_config_to_models(config_override, scope_models)
             await _assert_sync_ready(project_id, config_override, force=bool(payload.get("force", False)))
-            schedule_label_check = str(payload.get("schedule") or ("Retry" if retry_of_run_id else "Manual")).strip().lower()
-            is_scheduled_run = schedule_label_check in ("scheduled", "cron", "timer")
-
-            from semabridge.core.project_resync import (
-                check_target_semantic_view_exists,
-                record_resync_audit,
-                backup_live_ddl_and_grants,
-            )
-
-            target_conflict = await asyncio.to_thread(check_target_semantic_view_exists, project_id, config_override)
-            if target_conflict:
-                if is_scheduled_run:
-                    from semabridge.api.services.project_shared import _compat_projects
-                    proj_data = _compat_projects.get(project_id) or {}
-                    saved_mode = proj_data.get("sync_mode") or None
-                    if not saved_mode:
-                        raise HTTPException(status_code=400, detail="Scheduled sync stopped: no sync mode configured for this project.")
-                    payload["sync_mode"] = saved_mode
-                else:
-                    confirmed_view = str(payload.get("confirmed_target_view") or "").strip().upper()
-                    conflict_full_vn = str(target_conflict.get("view_name") or "").strip().upper()
-                    conflict_raw_vn = str(target_conflict.get("raw_view_name") or "").strip().upper()
-                    is_confirmed = (
-                        bool(confirmed_view)
-                        and (
-                            confirmed_view == conflict_full_vn
-                            or confirmed_view == conflict_raw_vn
-                            or (conflict_raw_vn and confirmed_view.endswith(f".{conflict_raw_vn}"))
-                        )
-                    )
-                    if not is_confirmed:
-                        raise HTTPException(
-                            status_code=409,
-                            detail=target_conflict,
-                        )
-                    explicit_sync_mode = payload.get("sync_mode")
-                    chosen_mode = str(explicit_sync_mode or "copy").lower()
-                    payload["sync_mode"] = chosen_mode
-                    from semabridge.api.services.project_shared import _compat_projects
-                    if project_id in _compat_projects and isinstance(_compat_projects[project_id], dict):
-                        _compat_projects[project_id]["sync_mode"] = chosen_mode
-                    record_resync_audit(payload.get("user_id"), project_id, chosen_mode, details={"view_name": target_conflict.get("view_name")})
-                    backup_vn = [target_conflict.get("raw_view_name") or target_conflict.get("view_name")]
-                    await asyncio.to_thread(backup_live_ddl_and_grants, project_id, run_id, backup_vn)
-            elif not bool(payload.get("acknowledge_duplicates", False)):
+            if not bool(payload.get("acknowledge_duplicates", False)):
                 from semabridge.api.services.duplicate_sync_service import find_duplicate_deployments
 
                 duplicates = await asyncio.to_thread(find_duplicate_deployments, project_id, config_override)
