@@ -538,6 +538,27 @@ def restore_live_ddl_backup(
     return True
 
 
+def reapply_grants_after_replace(
+    view_name: str,
+    grants: List[str],
+    executor: Optional[Any] = None,
+) -> int:
+    """Re-apply backed up grants after every view replacement (or when COPY GRANTS is unsupported).
+    Returns count of successfully re-applied grant statements."""
+    applied_count = 0
+    if not grants or not callable(executor):
+        return 0
+    for grant_stmt in grants:
+        if isinstance(grant_stmt, str) and grant_stmt.strip():
+            try:
+                executor(grant_stmt.strip())
+                applied_count += 1
+            except Exception as exc:
+                logger.warning("Could not re-apply grant '%s' on %s: %s", grant_stmt, view_name, exc)
+    logger.info("Re-applied %d grant(s) on %s", applied_count, view_name)
+    return applied_count
+
+
 # ---------------------------------------------------------------------------
 # 5. External DDL Drift Detection
 # ---------------------------------------------------------------------------
