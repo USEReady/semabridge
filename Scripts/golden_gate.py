@@ -39,7 +39,46 @@ from semabridge.core.settings import SnowflakeConfig
 
 
 def _get_snowflake_config() -> Optional[SnowflakeConfig]:
-    """Retrieve Snowflake credentials from config file or environment."""
+    """Retrieve Snowflake credentials from environment (primary) or config file."""
+    # 1. Environment variables (primary for CI and command-line execution)
+    account = os.environ.get("SNOWFLAKE_ACCOUNT")
+    user = os.environ.get("SNOWFLAKE_USER")
+    database = os.environ.get("SNOWFLAKE_DATABASE", "SEMABRIDGE")
+    warehouse = (os.environ.get("SNOWFLAKE_WAREHOUSE") or "").strip()
+    role = (os.environ.get("SNOWFLAKE_ROLE") or "").strip()
+    private_key = os.environ.get("SNOWFLAKE_PRIVATE_KEY")
+    password = os.environ.get("SNOWFLAKE_PASSWORD")
+
+    if account and user and (private_key or password):
+        if not warehouse:
+            raise ValueError(
+                "Missing required SNOWFLAKE_WAREHOUSE environment variable. "
+                "Falling back to default warehouse is forbidden."
+            )
+        if not role:
+            raise ValueError(
+                "Missing required SNOWFLAKE_ROLE environment variable. "
+                "Falling back to default role is forbidden."
+            )
+        if role.upper() == "ACCOUNTADMIN":
+            raise ValueError(
+                "SNOWFLAKE_ROLE must not be ACCOUNTADMIN. "
+                "Use a dedicated role with minimum required permissions."
+            )
+
+        return SnowflakeConfig(
+            account=account,
+            user=user,
+            database=database,
+            schema_name=os.environ.get("SNOWFLAKE_SCHEMA", "SEMABRIDGE_WORKSPACE"),
+            warehouse=warehouse,
+            role=role,
+            auth_type="keypair" if private_key else "password",
+            private_key=private_key,
+            password=password,
+        )
+
+    # 2. Config file fallback (local developer use)
     cfg_path = Path("snowflake_config.json")
     if not cfg_path.exists():
         fallback_path = Path(r"C:\Users\charank\OneDrive - USEReady Technology Private Limited\Desktop\data-load-snowflake-semabridge\snowflake_config.json")
@@ -61,39 +100,24 @@ def _get_snowflake_config() -> Optional[SnowflakeConfig]:
             with open(key_path, "r", encoding="utf-8") as kf:
                 key_pem = kf.read()
 
+        file_wh = (data.get("warehouse") or "").strip()
+        file_role = (data.get("role") or "").strip()
+        if not file_wh:
+            raise ValueError("snowflake_config.json is missing required 'warehouse'.")
+        if not file_role or file_role.upper() == "ACCOUNTADMIN":
+            raise ValueError("snowflake_config.json 'role' must be specified and must not be ACCOUNTADMIN.")
+
         return SnowflakeConfig(
             account=data["account"],
             user=data["user"],
             database=data.get("database", "SEMABRIDGE"),
             schema_name=data.get("schema", "SEMABRIDGE_WORKSPACE"),
-            warehouse=data["warehouse"],
-            role=data.get("role", "SEMABRIDGE_DEVELOPER"),
+            warehouse=file_wh,
+            role=file_role,
             auth_type="keypair" if key_pem else "password",
             private_key=key_pem,
             private_key_passphrase=data.get("private_key_passphrase"),
             password=data.get("password"),
-        )
-
-    # Check environment variables
-    account = os.environ.get("SNOWFLAKE_ACCOUNT")
-    user = os.environ.get("SNOWFLAKE_USER")
-    database = os.environ.get("SNOWFLAKE_DATABASE", "SEMABRIDGE")
-    warehouse = os.environ.get("SNOWFLAKE_WAREHOUSE", "DI_OTH_POC_WH")
-    role = os.environ.get("SNOWFLAKE_ROLE", "SEMABRIDGE_DEVELOPER")
-    private_key = os.environ.get("SNOWFLAKE_PRIVATE_KEY")
-    password = os.environ.get("SNOWFLAKE_PASSWORD")
-
-    if account and user and (private_key or password):
-        return SnowflakeConfig(
-            account=account,
-            user=user,
-            database=database,
-            schema_name=os.environ.get("SNOWFLAKE_SCHEMA", "SEMABRIDGE_WORKSPACE"),
-            warehouse=warehouse,
-            role=role,
-            auth_type="keypair" if private_key else "password",
-            private_key=private_key,
-            password=password,
         )
 
     return None
