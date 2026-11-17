@@ -185,6 +185,30 @@ def _resolve_target_config(config: Dict[str, Any]) -> Dict[str, Any]:
 
     return target_cfg
 
+def _fabric_source_workspace(config: Dict[str, Any], source_cfg: Dict[str, Any], env_workspace_id: str) -> str:
+    """The workspace a Fabric SOURCE is read from. Never a literal 'default'.
+
+    Order: source.workspace_id, then the project's fabric.workspace_id. The
+    target's workspace is not a source workspace. The server's .env workspace
+    is used only while behavior.features.fabric_strict_workspace is off, and
+    is logged as a warning; with it on (or with no .env value) a project
+    without a workspace is a validation error naming the field to set.
+    """
+    project_ws = str(source_cfg.get("workspace_id") or (config.get("fabric", {}) or {}).get("workspace_id") or "").strip()
+    if project_ws:
+        return project_ws
+    features = ((config.get("behavior") or {}).get("features") or {}) if isinstance(config.get("behavior"), dict) else {}
+    strict = bool(features.get("fabric_strict_workspace", False))
+    if env_workspace_id and not strict:
+        logger.warning(
+            "Fabric project has no source.workspace_id; falling back to the server's FABRIC_WORKSPACE_ID (%s). "
+            "Set source.workspace_id (this fallback is disabled by fabric_strict_workspace).",
+            env_workspace_id,
+        )
+        return str(env_workspace_id)
+    raise ValidationError("Fabric source has no workspace: set source.workspace_id in the project settings.")
+
+
 def _build_sync_jobs(config: Dict[str, Any]) -> tuple[List[Dict[str, Any]], str, str, Dict[str, Any], Dict[str, Any]]:
     source_cfg = config.get("source", {}) or {}
     source_type = _normalize_connector_type(source_cfg.get("type", "fabric"), "fabric")
@@ -194,7 +218,20 @@ def _build_sync_jobs(config: Dict[str, Any]) -> tuple[List[Dict[str, Any]], str,
     sync_jobs: List[Dict[str, Any]] = []
 
     if source_type == "fabric":
-        explicit_id = source_cfg.get("dataset_id")
+        explicit_id = str(source_cfg.get("dataset_id") or "").strip()
+        configured_models = [
+            str(m.get("id") or m.get("name") or "").strip() if isinstance(m, dict) else str(m or "").strip()
+            for m in (source_cfg.get("models") or [])
+        ]
+        configured_models = [m for m in configured_models if m]
+        if explicit_id and configured_models and {m.casefold() for m in configured_models} != {explicit_id.casefold()}:
+            # Previously source.models was silently ignored here, so a stale
+            # dataset_id made a multi-model project sync only one model.
+            raise ValidationError(
+                f"Fabric source sets both source.dataset_id ('{explicit_id}') and source.models "
+                f"({', '.join(configured_models)}). Clear source.dataset_id to sync the listed models, "
+                f"or clear source.models to sync only that dataset."
+            )
         if explicit_id:
             sync_jobs.append({"dataset_id": explicit_id, "pbix_path": None, "model_label": explicit_id, "source_ref": explicit_id})
         else:
@@ -212,11 +249,21 @@ def _build_sync_jobs(config: Dict[str, Any]) -> tuple[List[Dict[str, Any]], str,
                     else:
                         model_list = [single]
             if not model_list:
-                raise ValidationError("No models specified in source.models")
+                raise ValidationError("No Fabric models configured: set source.models (or source.dataset_id).")
+            seen_models: set = set()
             for model_id in model_list:
-                resolved_id = str(model_id).strip()
-                if resolved_id:
-                    sync_jobs.append({"dataset_id": resolved_id, "pbix_path": None, "model_label": resolved_id, "source_ref": resolved_id})
+                resolved_id = (
+                    str(model_id.get("id") or model_id.get("name") or "").strip()
+                    if isinstance(model_id, dict) else str(model_id).strip()
+                )
+                if not resolved_id or resolved_id.casefold() in seen_models:
+                    continue  # the same model listed twice is synced once
+                seen_models.add(resolved_id.casefold())
+                sync_jobs.append({"dataset_id": resolved_id, "pbix_path": None, "model_label": resolved_id, "source_ref": resolved_id})
+            if len(sync_jobs) > MAX_BATCH_MODELS:
+                raise ValidationError(
+                    f"{len(sync_jobs)} Fabric models configured; at most {MAX_BATCH_MODELS} are supported per project."
+                )
 
     elif source_type == "pbix":
         explicit_pbix = source_cfg.get("pbix_path")
@@ -1318,13 +1365,16 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
     except Exception:
         pass  # Fabric not configured in .env — credentials come from Account table via identity_id
 
-    resolved_workspace_id = str(
-        source_cfg.get("workspace_id")
-        or (target_cfg.get("workspace_id") if isinstance(target_cfg, dict) else None)
-        or (config.get("fabric", {}) or {}).get("workspace_id")
-        or _fabric_env_workspace_id
-        or "default"
-    )
+    if source_type == "fabric":
+        resolved_workspace_id = _fabric_source_workspace(config, source_cfg, _fabric_env_workspace_id)
+    else:
+        resolved_workspace_id = str(
+            source_cfg.get("workspace_id")
+            or (target_cfg.get("workspace_id") if isinstance(target_cfg, dict) else None)
+            or (config.get("fabric", {}) or {}).get("workspace_id")
+            or _fabric_env_workspace_id
+            or "default"
+        )
     deploy_enabled = bool((target_cfg or {}).get("deploy", True))
     dry_run = bool(payload.get("dry_run", False))
     if dry_run:

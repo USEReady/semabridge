@@ -158,10 +158,29 @@ def _extract_fabric(
 
     extractor = apply_to_extractor(FabricExtractor(fabric_cfg), fabric_creds)
 
-    resolved_dataset_id = extractor.resolve_model_id(dataset_id)
+    # Exact match only: a GUID as-is, or exactly one model with that display
+    # name. Two models sharing a name is an error naming their ids, never
+    # "the first one".
+    from semabridge.sources.base import SourceError
+
+    try:
+        resolved_dataset_id = extractor._resolve_model_id_exact(dataset_id)
+    except SourceError as exc:
+        raise ExtractionError(str(exc)) from exc
 
     tmsl = extractor.get_model_definition(resolved_dataset_id)
-    row_counts = extractor.get_table_row_counts(resolved_dataset_id)
+    if context.behavior.features.fabric_real_row_counts:
+        # COUNTROWS counts are kept for row-count parity only and never reach
+        # fact/dimension classification (facts come from relationships), so
+        # the classifier gets no row counts at all on this path.
+        from semabridge.sources.fabric.stats import fabric_row_counts
+
+        stats = fabric_row_counts(extractor, resolved_dataset_id, tmsl)
+        context.source_row_counts = stats.counts
+        context.source_row_count_errors = stats.errors
+        row_counts = {}
+    else:
+        row_counts = extractor.get_table_row_counts(resolved_dataset_id)
 
     source_format = from_fabric_tmsl(
         project_id=context.project_id,

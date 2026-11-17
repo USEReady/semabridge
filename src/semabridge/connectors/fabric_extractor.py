@@ -574,17 +574,22 @@ class FabricExtractor:
             else:
                  response.raise_for_status()
                  
-            # DEBUG: Save raw definition
-            try:
-                safe_dataset = re.sub(r"[^A-Za-z0-9_.-]", "_", str(dataset_id or resolved_id or "model"))
-                safe_dataset = re.sub(r"_+", "_", safe_dataset).strip("._") or "model"
-                debug_path = Path("output/debug") / safe_dataset / "raw_fabric_model.json"
-                debug_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(debug_path, "w", encoding="utf-8") as f:
-                    json.dump(result, f, indent=2)
-                logger.info(f"Saved raw model definition to {debug_path}")
-            except Exception as e:
-                logger.warning(f"Failed to save debug artifact: {e}")
+            # DEBUG dump: opt-in only (SEMABRIDGE_DEBUG_DUMPS=1). The decoded
+            # model is written with M connector arguments / connection strings
+            # redacted -- never the raw definition parts.
+            if os.getenv("SEMABRIDGE_DEBUG_DUMPS", "").strip() == "1":
+                try:
+                    from semabridge.sources.fabric.redact import redact_tmsl
+
+                    safe_dataset = re.sub(r"[^A-Za-z0-9_.-]", "_", str(dataset_id or resolved_id or "model"))
+                    safe_dataset = re.sub(r"_+", "_", safe_dataset).strip("._") or "model"
+                    debug_path = Path("output/debug") / safe_dataset / "raw_fabric_model.json"
+                    debug_path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(debug_path, "w", encoding="utf-8") as f:
+                        json.dump(redact_tmsl(result), f, indent=2)
+                    logger.info(f"Saved redacted model definition to {debug_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to save debug artifact: {e}")
                 
             return result
             

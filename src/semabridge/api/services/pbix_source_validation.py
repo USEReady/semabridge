@@ -138,3 +138,25 @@ def normalize_dry_run_sources(sources: Optional[List[str]], *, source_type: str)
                 "(selected_sources was empty)."
             )
     return deduped
+
+
+SUPPORTED_SOURCE_TYPES = ("pbix", "fabric", "snowflake")
+
+
+def require_source_type(source_cfg: Optional[dict], *, where: str = "project") -> str:
+    """The project's ``source.type``, required at create/save.
+
+    There is no default source type: a missing or unknown type is a
+    validation error naming the field, instead of silently becoming
+    ``fabric`` and failing later with confusing auth/workspace errors.
+    """
+    stype = str((source_cfg or {}).get("type") or "").strip().lower()
+    if not stype:
+        raise ValidationError(
+            f"The {where} has no source type: set source.type to one of {', '.join(SUPPORTED_SOURCE_TYPES)}."
+        )
+    if stype not in SUPPORTED_SOURCE_TYPES:
+        raise ValidationError(
+            f"Unsupported source.type '{stype}' for the {where}; use one of {', '.join(SUPPORTED_SOURCE_TYPES)}."
+        )
+    return stype
