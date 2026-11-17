@@ -1420,7 +1420,12 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
     )
 
     # Feature 1 Step 1: Store last_source_content_hash and deployed_ddl_hash on every successful/warning sync
-    if overall_status in ("success", "WARNING") and requested_project_id:
+    # preview-* and dry-run-* projects must never persist hashes (dry run must not block subsequent project creation)
+    is_preview = (
+        str(requested_project_id or "").startswith("preview")
+        or str(requested_project_id or "").startswith("dry-run")
+    )
+    if overall_status in ("success", "WARNING") and requested_project_id and not is_preview:
         try:
             from datetime import datetime, timezone
             import hashlib
@@ -1454,6 +1459,7 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
                     _compat_save_store()
         except Exception as _hash_exc:
             logger.warning("Could not persist source/DDL hash on project %s: %s", requested_project_id, _hash_exc)
+            report_notes.append(f"Hash persistence warning: {_hash_exc}")
 
     logger.info(
         "Sync complete: %d/%d models succeeded (status=%s, parallelism=%d, executor=%s)",

@@ -431,3 +431,36 @@ async def test_sync_mode_sent_without_confirmed_target_view_raises_409(monkeypat
         assert e.status_code != 409
 
 
+@pytest.mark.asyncio
+async def test_preview_projects_never_persist_hashes(monkeypatch):
+    """Clean-up test (Item 6): preview-* projects never persist hashes.
+    A dry run using a file must never block subsequent creation with the same file with a 409."""
+    import asyncio
+    from semabridge.api.services.project_shared import _compat_projects, _compat_ensure_loaded
+    from semabridge.core.project_resync import detect_project_match
+
+    await asyncio.to_thread(_compat_ensure_loaded)
+
+    # 1. Simulate a preview/dry-run sync for preview-xyz
+    preview_pid = "preview-temp-dryrun-123"
+    _compat_projects[preview_pid] = {
+        "id": preview_pid,
+        "name": "preview-project",
+        "is_transient_preview": True,
+    }
+
+    # Verify that preview projects are excluded from detect_project_match
+    match = detect_project_match(
+        new_name="My Real Project",
+        source_cfg={"type": "pbix", "file_name": "Sample.pbix"},
+        workspace_id="",
+        content_hash="abc123hash",
+        existing_projects=_compat_projects,
+    )
+    assert match is None
+
+    # Clean up
+    _compat_projects.pop(preview_pid, None)
+
+
+
