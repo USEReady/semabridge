@@ -160,6 +160,17 @@ def create_account(request: Request, body: AccountCreate, db: Session = Depends(
                                     token_exp = datetime.fromtimestamp(int(pending["expires_at"]), tz=timezone.utc)
                                 if pending.get("refresh_token"):
                                     ref_token = encrypt_token(pending["refresh_token"])
+                            else:
+                                try:
+                                    parsed_b = json.loads(payload_str)
+                                    if isinstance(parsed_b, dict):
+                                        resolved_auth_type = parsed_b.get("auth_method", parsed_b.get("auth_type", "interactive"))
+                                        if parsed_b.get("expires_at"):
+                                            token_exp = datetime.fromtimestamp(int(parsed_b["expires_at"]), tz=timezone.utc)
+                                        if parsed_b.get("refresh_token"):
+                                            ref_token = encrypt_token(parsed_b["refresh_token"])
+                                except Exception:
+                                    pass
                         except Exception as e:
                             logger.warning(f"Could not consume pending Fabric login for account {body.tag}: {e}")
 
@@ -225,6 +236,17 @@ def create_account(request: Request, body: AccountCreate, db: Session = Depends(
                             token_exp = datetime.fromtimestamp(int(pending["expires_at"]), tz=timezone.utc)
                         if pending.get("refresh_token"):
                             ref_token = encrypt_token(pending["refresh_token"])
+                    else:
+                        try:
+                            parsed_b = json.loads(payload_str)
+                            if isinstance(parsed_b, dict):
+                                resolved_auth_type = parsed_b.get("auth_method", parsed_b.get("auth_type", "interactive"))
+                                if parsed_b.get("expires_at"):
+                                    token_exp = datetime.fromtimestamp(int(parsed_b["expires_at"]), tz=timezone.utc)
+                                if parsed_b.get("refresh_token"):
+                                    ref_token = encrypt_token(parsed_b["refresh_token"])
+                        except Exception:
+                            pass
                 except Exception as e:
                     logger.warning(f"Could not consume pending Fabric login for account {body.tag}: {e}")
             
@@ -357,8 +379,8 @@ def link_project_account(
         project.warehouse = body.warehouse
     if body.database is not None:
         project.database = body.database
-    if body.schema is not None:
-        project.schema = body.schema
+    if body.db_schema is not None:
+        project.schema = body.db_schema
     
     db.commit()
     db.refresh(project)
@@ -568,6 +590,12 @@ def test_account(request: Request, account_id: str, db: Session = Depends(get_db
             }
             if creds.get("password"):
                 conn_kwargs["password"] = creds["password"]
+            elif creds.get("private_key"):
+                from semabridge.connectors.snowflake_connection import _parse_private_key
+
+                conn_kwargs["private_key"] = _parse_private_key(
+                    creds["private_key"], creds.get("private_key_passphrase")
+                )
             conn = snowflake.connector.connect(**conn_kwargs)
             conn.cursor().execute("SELECT CURRENT_VERSION()")
             conn.close()

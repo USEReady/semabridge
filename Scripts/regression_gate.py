@@ -42,6 +42,11 @@ def _run_gate(
 
     print(f"📋 Loaded {len(known_failures)} accepted known failures from {known_failures_path.name}")
 
+    # Determine python binary (prefer repository .venv if available)
+    repo_root = Path(__file__).resolve().parent.parent
+    venv_py = repo_root / ".venv" / ("Scripts" if os.name == "nt" else "bin") / ("python.exe" if os.name == "nt" else "python")
+    python_bin = str(venv_py) if venv_py.exists() else sys.executable
+
     # Determine pytest command
     has_xdist = False
     try:
@@ -50,7 +55,7 @@ def _run_gate(
     except ImportError:
         pass
 
-    cmd = [sys.executable, "-m", "pytest", "--tb=no", "-q", "-p", "no:cacheprovider"]
+    cmd = [python_bin, "-m", "pytest", "--tb=no", "-q", "-p", "no:cacheprovider"]
     if has_xdist:
         cmd.extend(["-n", "auto"])
 

@@ -43,6 +43,10 @@ def pbixray_available() -> str:
     """'' when pbixray's native decoder loads, else the reason it does not."""
     try:
         import pbixray  # noqa: F401
+        from semabridge.connectors.pbixray_compat import get_pbixray
+
+        if get_pbixray() is None:
+            return "pbixray native decoder blocked or not installed"
     except Exception as exc:  # noqa: BLE001 - reported as the skip reason
         return f"pbixray unavailable: {exc}"
     return ""
