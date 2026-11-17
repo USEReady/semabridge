@@ -86,10 +86,11 @@ def target_snowflake_config(context: RunContext):
         ).scalars().first()
 
         if not account:
-            raise AuthenticationError(
-                f"No linked Snowflake account found for identity_id '{identity_id}'. "
-                "Please link this account in the Connections panel."
+            logger.warning(
+                "No linked Snowflake account found for identity_id %s; falling back to global Snowflake settings",
+                identity_id,
             )
+            return context.config.snowflake
 
         # Thread-safe: builds an isolated SnowflakeConfig object rather than
         # mutating os.environ (scoped_account_env), which is unsafe when

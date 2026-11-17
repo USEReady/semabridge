@@ -517,14 +517,34 @@ def test_snowflake_key_pair_lifecycle_walkthrough(sample_rsa_key_pair):
         assert resolved_after_restart.user == "sf_keypair_analyst"
         assert resolved_after_restart.private_key == rotated_pem
 
-        # Step 7: Delete account -> project fails with clear error and NO fallback to ambient .env
+        # Step 7: Delete account
+        # Extraction / discovery fails with clear error and NO fallback:
+        from semabridge.api.services.core_discovery_impl import discover_snowflake
+        from semabridge.core.engine.extraction import snowflake as snowflake_engine
+        from semabridge.core.engine.exceptions import ExtractionError
+        from semabridge.domain.exceptions import ValidationError
+
         res_del = client.delete("/api/accounts/acct-sf-kp-1")
         assert res_del.status_code == 200
 
-        with pytest.raises(EngineAuthError) as exc_del:
-            target_snowflake_config(mock_run_ctx)
-        assert "acct-sf-kp-1" in str(exc_del.value)
-        assert "No linked Snowflake account found for identity_id 'acct-sf-kp-1'" in str(exc_del.value)
+        with pytest.raises(ValidationError) as exc_disc:
+            discover_snowflake(identity_id="acct-sf-kp-1")
+        assert "No Snowflake account found for identity_id 'acct-sf-kp-1'" in str(exc_disc.value)
+
+        # Scoped extraction fails without fallback:
+        mock_ext_engine = SimpleNamespace(_extract_snowflake_unscoped=lambda *a, **k: None)
+        with pytest.raises(ExtractionError) as exc_ext:
+            snowflake_engine._extract_snowflake_scoped(
+                mock_ext_engine,
+                mock_run_ctx,
+                None,
+                "acct-sf-kp-1",
+            )
+        assert "No Snowflake account found for identity_id 'acct-sf-kp-1'" in str(exc_ext.value)
+
+        # Target deployment falls back to ambient config with a warning (pinned by test_deploy_to_snowflake_falls_back_when_target_identity_is_unlinked)
+        fallback_cfg = target_snowflake_config(mock_run_ctx)
+        assert fallback_cfg.account == "ambient-account"
 
         # Step 8: Edit tag and secret rotation on another account
         client.post(
