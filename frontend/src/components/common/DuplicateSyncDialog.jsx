@@ -10,6 +10,7 @@ const HEAD = { padding: '6px 8px' };
 const MAX_BLOCKERS_SHOWN = 25;
 
 const REASON_LABELS = {
+  same_file: 'Same PBIX file (identical content)',
   same_view: 'Same view name — this sync would overwrite it',
   same_model: 'Same model name',
   same_content: 'Same metrics and columns',
@@ -19,7 +20,44 @@ const TITLES = {
   duplicate: 'Model already synced',
   already_running: 'Sync already running',
   blocked: 'Dry run has unresolved issues',
+  removed_fields: 'Fields will be removed',
 };
+
+const MAX_REMOVED_SHOWN = 50;
+
+function RemovedFieldsBody({ detail, message }) {
+  const models = Array.isArray(detail?.models) ? detail.models : [];
+  return (
+    <>
+      <p style={{ margin: '0 0 8px', fontSize: 13, color: 'var(--text-secondary)' }}>
+        {message || 'Some fields in the deployed semantic view are no longer in the source.'}
+      </p>
+      <p style={{ margin: '0 0 12px', fontSize: 12.5, color: 'var(--text-tertiary)' }}>
+        <b>Remove them</b> runs the Copy sync (full rebuild from the source). <b>Keep them</b> runs this sync
+        as an Upsert: new and changed fields are deployed and these stay in Snowflake.
+      </p>
+      <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+        {models.map((m) => (
+          <div key={`${m.model}-${m.view_name}`} style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 4 }}>
+              {m.model} <span style={{ color: 'var(--text-tertiary)', fontWeight: 400 }}>({m.count} field{m.count === 1 ? '' : 's'})</span>
+            </div>
+            <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: 'var(--text-secondary)' }}>
+              {(m.removed || []).slice(0, MAX_REMOVED_SHOWN).map((f) => (
+                <li key={`${f.kind}-${f.name}`}>
+                  <code>{f.name}</code> <span style={{ color: 'var(--text-tertiary)' }}>{f.kind}</span>
+                </li>
+              ))}
+              {(m.removed || []).length > MAX_REMOVED_SHOWN && (
+                <li style={{ color: 'var(--text-tertiary)' }}>…and {m.removed.length - MAX_REMOVED_SHOWN} more</li>
+              )}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
 
 function overlapText(part) {
   if (!part || !part.total) return '—';
@@ -146,6 +184,14 @@ export default function DuplicateSyncDialog() {
         <button type="button" style={PRIMARY_BTN} onClick={() => answer('view_run')}>View running sync</button>
       </>
     );
+  } else if (kind === 'removed_fields') {
+    footer = (
+      <>
+        <button type="button" style={SECONDARY_BTN} onClick={() => answer('cancel')}>Cancel sync</button>
+        <button type="button" style={SECONDARY_BTN} onClick={() => answer('upsert')}>Keep them (sync as Upsert)</button>
+        <button type="button" style={PRIMARY_BTN} onClick={() => answer('confirm')}>Remove them and sync</button>
+      </>
+    );
   } else if (kind === 'blocked') {
     footer = (
       <>
@@ -181,6 +227,7 @@ export default function DuplicateSyncDialog() {
         </p>
       )}
       {kind === 'blocked' && <BlockedBody detail={detail} message={message} />}
+      {kind === 'removed_fields' && <RemovedFieldsBody detail={detail} message={message} />}
       {kind === 'duplicate' && <DuplicateBody duplicates={duplicates} message={message} overwrites={overwrites} />}
     </Modal>
   );

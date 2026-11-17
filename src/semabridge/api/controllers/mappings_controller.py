@@ -63,6 +63,11 @@ class AutoMapRequest(BaseModel):
 
 class DeployRequest(BaseModel):
     field_mappings: List[Dict[str, Any]]
+    # Answers to the sync-start checks (same as run-now): the user confirmed
+    # the duplicate / removed-fields warning, or chose a sync mode for this run.
+    acknowledge_duplicates: bool = False
+    acknowledge_removed_fields: bool = False
+    sync_mode: Optional[str] = None
 
 # --- Router ---
 
@@ -1318,15 +1323,16 @@ async def deploy_mappings(
 
     # ── 3. Trigger the full semantic sync pipeline (SYNC run) ─────────────────
     try:
-        run_result = await run_project_now_compat(
-            actual_project_id,
-            background_tasks,
-            payload={
-                "run_type": "SYNC",
-                "field_mappings": request.field_mappings,
-                "user_id": request_user_id,
-            },
-        )
+        run_payload: Dict[str, Any] = {
+            "run_type": "SYNC",
+            "field_mappings": request.field_mappings,
+            "user_id": request_user_id,
+            "acknowledge_duplicates": request.acknowledge_duplicates,
+            "acknowledge_removed_fields": request.acknowledge_removed_fields,
+        }
+        if request.sync_mode:
+            run_payload["sync_mode"] = request.sync_mode
+        run_result = await run_project_now_compat(actual_project_id, background_tasks, payload=run_payload)
         return {
             "success": True,
             "project_id": actual_project_id,
@@ -1335,6 +1341,16 @@ async def deploy_mappings(
             "deployed_count": len(request.field_mappings),
             "errors": [],
         }
+    except HTTPException as exc:
+        # A refused start (409 already running / blocked / duplicate /
+        # removed fields, 503 readiness timeout) reaches the UI as itself,
+        # so the sync dialog can show it with its options -- it used to be
+        # turned into a generic 500 here. A preview deploy has already
+        # created the real project: name it, so the confirmed retry goes to
+        # that project instead of creating another one.
+        if isinstance(exc.detail, dict) and actual_project_id != project_id:
+            exc.detail = {**exc.detail, "project_id": actual_project_id}
+        raise
     except Exception as e:
         import traceback
         traceback.print_exc()

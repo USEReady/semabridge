@@ -1939,7 +1939,13 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         setDeployError(errMsg);
       }
     } catch (err) {
-      setDeployError(err?.message || 'Deploy failed.');
+      // The deploy may already have created the project before a sync check
+      // stopped it (the dialog explained why): keep it, don't recreate it.
+      const createdId = err?.payload?.detail?.project_id;
+      if (createdId) setCreatedProject({ id: createdId, project_id: createdId });
+      setDeployError(err?.handled
+        ? `Not deployed yet: ${err.message}`
+        : (err?.message || 'Deploy failed.'));
     } finally {
       setIsDeploying(false);
     }
@@ -1993,8 +1999,15 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         setMappingError('Deployment returned without success.');
       }
     } catch (err) {
-      setMappingError(err.message || 'Deploy failed');
-      console.error('Deploy failed:', err);
+      const createdId = err?.payload?.detail?.project_id;
+      if (createdId) setCreatedProject({ id: createdId, project_id: createdId });
+      if (err?.handled) {
+        // Shown in the sync dialog with its options.
+        setMappingError(`Not deployed yet: ${err.message}`);
+      } else {
+        setMappingError(err.message || 'Deploy failed');
+        console.error('Deploy failed:', err);
+      }
     }
   }, [createdProject, goNext]);
 

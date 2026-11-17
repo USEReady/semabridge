@@ -477,24 +477,45 @@ export function resetRefreshCooldown() {
  * their own alert/toast.
  */
 async function sendWithSyncConflictPrompt(projectId, payload, send) {
-    try {
-        return await send(payload);
-    } catch (err) {
-        const kind = syncConflictKind(err);
-        if (!kind) throw err;
-        const detail = syncConflictDetail(err);
-        const choice = await requestSyncConflictDecision(kind, projectId, detail);
-        if (kind === 'duplicate' && choice === 'confirm') {
-            return send({ ...(payload || {}), acknowledge_duplicates: true });
+    // One sync can meet several checks in a row (e.g. duplicate, then
+    // removed fields): every answer is kept for the next attempt. The
+    // backend asks each question at most once, so this ends.
+    let body = { ...(payload || {}) };
+    let targetProjectId = projectId;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+        try {
+            return await send(body, targetProjectId);
+        } catch (err) {
+            const kind = syncConflictKind(err);
+            if (!kind) throw err;
+            const detail = syncConflictDetail(err);
+            // A wizard deploy creates the project before the checks run:
+            // retry against that project, never create a second one.
+            if (detail?.project_id) targetProjectId = String(detail.project_id);
+            const choice = await requestSyncConflictDecision(kind, targetProjectId, detail);
+            if (kind === 'duplicate' && choice === 'confirm') {
+                body = { ...body, acknowledge_duplicates: true };
+                continue;
+            }
+            if (kind === 'removed_fields' && choice === 'confirm') {
+                body = { ...body, acknowledge_removed_fields: true };
+                continue;
+            }
+            if (kind === 'removed_fields' && choice === 'upsert') {
+                // Keep the fields: this sync runs as an upsert.
+                body = { ...body, sync_mode: 'upsert' };
+                continue;
+            }
+            const handled = new Error(detail?.message || 'Sync not started.');
+            handled.status = err.status;
+            handled.payload = err.payload;
+            handled.conflict = kind;
+            handled.handled = true;
+            handled.cancelled = true;
+            throw handled;
         }
-        const handled = new Error(detail?.message || 'Sync not started.');
-        handled.status = err.status;
-        handled.payload = err.payload;
-        handled.conflict = kind;
-        handled.handled = true;
-        handled.cancelled = true;
-        throw handled;
     }
+    throw new Error('Sync not started: too many confirmation rounds.');
 }
 
 async function handleResponse(res) {
@@ -1811,12 +1832,17 @@ export const api = {
     },
 
     async deployMappings(projectId, fieldMappings) {
-        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/deploy`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ field_mappings: fieldMappings }),
-        });
-        return handleResponse(res);
+        // Same sync-start checks and dialog as Run now (duplicate, removed
+        // fields, already running, dry-run blocked).
+        const send = async (body, targetProjectId) => {
+            const res = await authFetch(`${API_BASE_URL}/projects/${targetProjectId}/deploy`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ...body, field_mappings: fieldMappings }),
+            });
+            return handleResponse(res);
+        };
+        return sendWithSyncConflictPrompt(projectId, {}, send);
     },
 
     async deleteMappings(projectId) {

@@ -977,7 +977,20 @@ def _readiness_timeout_seconds() -> int:
         return 300
 
 
-async def _assert_sync_ready(project_id: str, config_yaml: str, *, force: bool = False) -> None:
+def _effective_sync_mode(project_id: str, config_yaml: str, payload: Dict[str, Any]) -> str:
+    """The sync mode the run will use: the request's own value, then the
+    project config, then the project record, then "copy" (same order as
+    _create_project_run). A project's first deployment is always a copy, but
+    then there is nothing deployed to lose either."""
+    return (
+        _compat_normalize_sync_mode(payload.get("sync_mode"))
+        or sync_mode_from_project_config(config_yaml)
+        or _compat_normalize_sync_mode((_compat_projects.get(project_id) or {}).get("sync_mode"))
+        or "copy"
+    )
+
+
+async def _assert_sync_ready(project_id: str, config_yaml: str, *, force: bool = False) -> Optional[str]:
     """Server-side dry-run gate shared by every SYNC entry point. Raises
     ValidationError (multi-model) or HTTPException 409 (single-model) when
     the project has unresolved dry-run blockers."""
@@ -989,9 +1002,9 @@ async def _assert_sync_ready(project_id: str, config_yaml: str, *, force: bool =
         from semabridge.api.services.dry_run_job_service import validate_multi_model_dry_run_readiness
 
         await asyncio.to_thread(validate_multi_model_dry_run_readiness, project_id, source_cfg)
-        return
+        return None
     if force:
-        return
+        return None
     import sys
 
     pri_mod = sys.modules.get("semabridge.api.services.project_runs_impl")
@@ -1036,6 +1049,10 @@ async def _assert_sync_ready(project_id: str, config_yaml: str, *, force: bool =
                 "message": f"Project has {len(blockers)} blocking issue(s) in dry run. Resolve them before running live sync.",
             },
         )
+    # The dry run just run for this sync: its snapshot is the content about
+    # to be deployed (used by the removed-fields check).
+    preview_id = str((auto_map_res or {}).get("project_id") or "").strip() if isinstance(auto_map_res, dict) else ""
+    return preview_id if preview_id and preview_id != project_id else None
 
 
 async def _execute_project_run(project_id: str, schedule_label: str = "Manual") -> dict:
@@ -1374,7 +1391,9 @@ async def _start_project_run_request(
             config_override = _prepare_sync_config(project_id)
             if scope_models:
                 config_override = _scope_config_to_models(config_override, scope_models)
-            await _assert_sync_ready(project_id, config_override, force=bool(payload.get("force", False)))
+            dry_run_project_id = await _assert_sync_ready(
+                project_id, config_override, force=bool(payload.get("force", False)),
+            )
             if not bool(payload.get("acknowledge_duplicates", False)):
                 from semabridge.api.services.duplicate_sync_service import find_duplicate_deployments
 
@@ -1388,6 +1407,31 @@ async def _start_project_run_request(
                             "message": (
                                 f"{len(duplicates)} model(s) in this project are already synced by another project. "
                                 "Review them, then confirm to sync anyway."
+                            ),
+                        },
+                    )
+            # COPY rebuilds the view from the source: fields that are in the
+            # deployed view but no longer in the source would disappear.
+            # Ask first (UPSERT keeps them, so it never asks).
+            if (
+                not bool(payload.get("acknowledge_removed_fields", False))
+                and _effective_sync_mode(project_id, config_override, payload) == "copy"
+            ):
+                from semabridge.api.services.duplicate_sync_service import find_removed_fields
+
+                removed = await asyncio.to_thread(find_removed_fields, project_id, config_override, dry_run_project_id)
+                if removed:
+                    total = sum(m["count"] for m in removed)
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "status": "removed_fields",
+                            "sync_mode": "copy",
+                            "models": removed,
+                            "total": total,
+                            "message": (
+                                f"{total} field(s) in the deployed semantic view are no longer in the source. "
+                                "A Copy sync rebuilds the view, so they will be removed from Snowflake."
                             ),
                         },
                     )

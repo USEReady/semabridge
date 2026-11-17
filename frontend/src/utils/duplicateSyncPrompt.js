@@ -13,9 +13,15 @@ import { create } from 'zustand';
  *    "cannot be synced ... dry run" error: the dry run has unresolved
  *    blockers (or none was run). Options: open the dry run to resolve them.
  *
+ *  - 409 { detail: { status: 'removed_fields', models: [{ model, removed }] } }
+ *      a COPY sync would remove fields that are in the deployed view but no
+ *      longer in the source. Options: remove them ('confirm'), keep them by
+ *      syncing as an upsert ('upsert'), or cancel.
+ *
  * The dialog (DuplicateSyncDialog) is mounted once in DashboardLayout.
  * `requestSyncConflictDecision` resolves with the user's choice:
- * 'confirm' (duplicate only), 'view_run', 'open_dry_run' or 'cancel'.
+ * 'confirm' (duplicate / removed_fields), 'upsert' (removed_fields),
+ * 'view_run', 'open_dry_run' or 'cancel'.
  */
 export const useDuplicateSyncPrompt = create((set) => ({
   open: false,
@@ -46,6 +52,7 @@ export function syncConflictKind(err) {
   if (err?.status === 409 && status === 'duplicate') return 'duplicate';
   if (err?.status === 409 && (status === 'already_running' || status === 'running')) return 'already_running';
   if (err?.status === 409 && status === 'blocked') return 'blocked';
+  if (err?.status === 409 && status === 'removed_fields') return 'removed_fields';
   if (err?.status === 503 && status === 'readiness_timeout') return 'blocked';
   // Multi-model gate (ValidationError): plain-text detail.
   if (err?.status && err.status >= 400 && err.status < 500 && MULTI_MODEL_GATE_RE.test(String(err?.message || ''))) {
