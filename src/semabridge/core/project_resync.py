@@ -118,6 +118,15 @@ def compute_source_content_hash(
 # 2. Match Detection (Match A, Match B, Match C)
 # ---------------------------------------------------------------------------
 
+def _extract_project_workspace(p: Dict[str, Any]) -> str:
+    ws = p.get("workspace_id")
+    if not ws:
+        src = p.get("source")
+        if isinstance(src, dict):
+            ws = src.get("workspace_id")
+    return str(ws or "").strip().casefold()
+
+
 def detect_project_match(
     new_name: str,
     source_cfg: Dict[str, Any],
@@ -142,7 +151,7 @@ def detect_project_match(
         for p_id, p in existing_projects.items():
             if not isinstance(p, dict) or p.get("is_deleted"):
                 continue
-            p_ws = str(p.get("workspace_id") or (p.get("source") or {}).get("workspace_id") or "").strip().casefold()
+            p_ws = _extract_project_workspace(p)
             if target_ws and p_ws and target_ws != p_ws:
                 continue
 
@@ -160,7 +169,7 @@ def detect_project_match(
     for p_id, p in existing_projects.items():
         if not isinstance(p, dict) or p.get("is_deleted"):
             continue
-        p_ws = str(p.get("workspace_id") or (p.get("source") or {}).get("workspace_id") or "").strip().casefold()
+        p_ws = _extract_project_workspace(p)
         if target_ws and p_ws and target_ws != p_ws:
             continue
 
@@ -207,7 +216,7 @@ def detect_project_match(
         for p_id, p in existing_projects.items():
             if not isinstance(p, dict) or p.get("is_deleted"):
                 continue
-            p_ws = str(p.get("workspace_id") or (p.get("source") or {}).get("workspace_id") or "").strip().casefold()
+            p_ws = _extract_project_workspace(p)
             if target_ws and p_ws and target_ws != p_ws:
                 continue
             p_name = str(p.get("name") or "").strip().casefold()
