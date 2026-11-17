@@ -760,6 +760,18 @@ def _run_single_job_impl(
     )
     lock_key = _target_lock_key(local_config, target_view_name)
 
+    # Feature 1 Step 3: Pre-deploy backup of live DDL + grants per run
+    from semabridge.core.project_resync import backup_live_ddl_and_grants, check_ddl_drift, validate_removals_confirmation
+    if sync_mode == "upsert" and deploy_enabled:
+        try:
+            backup_live_ddl_and_grants(
+                project_id=requested_project_id or "default",
+                run_id=job.get("project_run_id") or "run",
+                view_names=[target_view_name],
+            )
+        except Exception as b_exc:
+            logger.warning("Pre-deploy DDL backup non-fatal warning: %s", b_exc)
+
     # A dry run never deploys, so it must not take the target view's lease: it
     # would reject (and be rejected by) a concurrent real sync of that view.
     # Real deploys lease db.schema.<view> here (DB-backed, cross-process); the
@@ -805,6 +817,18 @@ def _run_single_job_impl(
                 batch_name_registry=batch_name_registry,
             )
             summary_data = summary.model_dump(mode="json")
+
+            # Feature 1 Step 5: confirm_removals enforcement
+            delta_obj = summary_data.get("upsert_delta") or {}
+            delta_changes = delta_obj.get("changes") if isinstance(delta_obj, dict) else {}
+            removed_items = (delta_changes.get("removed") or []) if isinstance(delta_changes, dict) else []
+            if removed_items:
+                confirm_req = (config.get("confirm_removals") if isinstance(config, dict) else None)
+                confirmed, kept, has_unconfirmed = validate_removals_confirmation(removed_items, confirm_req)
+                if has_unconfirmed:
+                    summary_data["pending_removals"] = kept
+                    summary_data["status"] = "WARNING"
+
             summary_status = str(summary_data.get("status", "")).upper()
             is_skipped = bool(summary_data.get("skipped_no_tables")) or summary_status == "WARNING"
             job_ok = summary_status == "SUCCESS"
@@ -1394,6 +1418,41 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
         (result.get("summary") for result in reversed(per_model_results) if isinstance(result.get("summary"), dict)),
         {},
     )
+
+    # Feature 1 Step 1: Store last_source_content_hash and deployed_ddl_hash on every successful/warning sync
+    if overall_status in ("success", "WARNING") and requested_project_id:
+        try:
+            from semabridge.api.services.project_shared import compat_store_lock, _compat_projects, _compat_save_store
+            from semabridge.core.project_resync import compute_source_content_hash
+            import hashlib
+
+            src_hash = compute_source_content_hash(source_cfg)
+            deployed_views = [r.get("view_name") for r in per_model_results if r.get("view_name")]
+
+            ddl_hashes = []
+            for r in per_model_results:
+                art_path = r.get("target_artifact_path") or (r.get("summary") or {}).get("target_artifact_path")
+                if art_path and Path(art_path).exists():
+                    try:
+                        ddl_content = Path(art_path).read_text(encoding="utf-8")
+                        ddl_hashes.append(hashlib.sha256(ddl_content.strip().encode("utf-8")).hexdigest())
+                    except Exception:
+                        pass
+            ddl_hash = ddl_hashes[0] if ddl_hashes else None
+
+            with compat_store_lock():
+                proj = _compat_projects.get(requested_project_id)
+                if isinstance(proj, dict):
+                    if src_hash:
+                        proj["last_source_content_hash"] = src_hash
+                    if ddl_hash:
+                        proj["deployed_ddl_hash"] = ddl_hash
+                    proj["last_sync_time"] = datetime.now(timezone.utc).isoformat()
+                    if deployed_views:
+                        proj["deployed_views"] = deployed_views
+                    _compat_save_store()
+        except Exception as _hash_exc:
+            logger.warning("Could not persist source/DDL hash on project %s: %s", requested_project_id, _hash_exc)
 
     logger.info(
         "Sync complete: %d/%d models succeeded (status=%s, parallelism=%d, executor=%s)",
