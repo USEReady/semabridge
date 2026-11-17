@@ -19,6 +19,8 @@ import {
   Info, Settings, Settings2,
 } from 'lucide-react';
 import { api } from '../utils/api';
+import { classifyModelDiscovery, hydrateFabricEditState } from '../utils/fabricProjectState';
+import ConnectionsPanel from '../components/ConnectionsPanel';
 import { useHPSearch } from '../hooks/useHPSearch';
 import SearchableSelect from '../components/common/SearchableSelect';
 import SmartSearchBar from '../components/common/SmartSearchBar';
@@ -259,7 +261,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     name, description, sourceConnector, targetConnectors: targetConnectorsRaw,
     intermediateFormat, tags: tagsRaw, tagInput,
     fabricAccountId, selectedConnectionId, snowflakeAccountId, databricksAccountId,
-    fabricWorkspaceId, snowflakeDatabase, snowflakeSchema,
+    fabricWorkspaceId, targetFabricAccountId, targetFabricWorkspaceId, snowflakeDatabase, snowflakeSchema,
     targetDatabase, targetSchema, targetAccount, targetWarehouse,
     modelQueryRegex, pbixSourceMode,
     selectedLocalFolderId, selectedPbixFilePath,
@@ -273,6 +275,11 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   const [saving, setSaving] = useState(false);
   const [createError, setCreateError] = useState('');
   const [runWarning, setRunWarning] = useState('');
+  // Fabric model discovery needs a fresh sign-in (401 / reauth_required):
+  // offer "Sign in again" (ConnectionsPanel device-code flow) and retry after.
+  const [fabricReauth, setFabricReauth] = useState(false);
+  const [fabricSignInOpen, setFabricSignInOpen] = useState(false);
+  const [discoveryNonce, setDiscoveryNonce] = useState(0);
   // Step 4 (Ontology review) state; kept here so Back/Next preserves decisions.
   const [ontologyReview, setOntologyReview] = useState(EMPTY_REVIEW);
   const isHydratedRef = useRef(false);
@@ -351,6 +358,8 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   const setSnowflakeAccountId = (val) => setWizardState({ snowflakeAccountId: val });
   const setDatabricksAccountId = (val) => setWizardState({ databricksAccountId: val });
   const setFabricWorkspaceId = (val) => setWizardState({ fabricWorkspaceId: val });
+  const setTargetFabricAccountId = (val) => setWizardState({ targetFabricAccountId: val });
+  const setTargetFabricWorkspaceId = (val) => setWizardState({ targetFabricWorkspaceId: val });
   const setSnowflakeDatabase = (val) => setWizardState({ snowflakeDatabase: val });
   const setSnowflakeSchema = (val) => setWizardState({ snowflakeSchema: val });
   const setTargetDatabase = (val) => setWizardState({ targetDatabase: val });
@@ -507,14 +516,15 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       if (initialData.target_type != null) setTargetConnectors(new Set([initialData.target_type]));
       if (initialData.output_format != null) setIntermediateFormat(initialData.output_format);
       if (Array.isArray(initialData.tags)) setTags(new Set(initialData.tags));
-      if (initialData.workspace_id != null) setFabricWorkspaceId(initialData.workspace_id);
-      if (initialData.identity_id != null) setFabricAccountId(initialData.identity_id);
+      // Source and target Fabric fields are restored into SEPARATE state, and the
+      // saved source connection is restored for model discovery (selectedConnectionId).
+      const fabricState = hydrateFabricEditState(initialData);
+      if (initialData.workspace_id != null || initialData.identity_id != null) setWizardState(fabricState.source);
+      if (initialData.target_identity_id != null || initialData.target_workspace_id != null) setWizardState(fabricState.target);
       if (initialData.database != null) setSnowflakeDatabase(initialData.database);
       if (initialData.schema != null) setSnowflakeSchema(initialData.schema);
       if (initialData.target_database != null) setTargetDatabase(initialData.target_database);
       if (initialData.target_schema != null) setTargetSchema(initialData.target_schema);
-      if (initialData.target_identity_id != null) setFabricAccountId(initialData.target_identity_id);
-      if (initialData.target_workspace_id != null) setFabricWorkspaceId(initialData.target_workspace_id);
       // sync/write strategy (copy | upsert)
       if (!editMode) {
         setWizardState({ write_strategy: 'copy' });
@@ -870,12 +880,10 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       console.log('[SemaBridge] Discovering Fabric models for workspaceId:', fabricWorkspaceId);
       api.discoverFabricModels(fabricWorkspaceId, selectedConnectionId)
         .then(data => {
-          if (!Array.isArray(data) || data.length === 0) {
-            setRunWarning('No semantic models found for this workspace. Check Fabric permissions or workspace contents.');
-          } else {
-            setRunWarning('');
-          }
-          const models = data ?? [];
+          const discovery = classifyModelDiscovery({ result: data });
+          setFabricReauth(discovery.state === 'reauth');
+          setRunWarning(discovery.state === 'ok' ? '' : discovery.message);
+          const models = discovery.models;
           setWsModels({ [fabricWorkspaceId]: models });
 
           // Edit-mode hydration seeds saved model NAMES; now that the
@@ -898,7 +906,9 @@ export default function CreateProjectPage({ editMode = false, initialData = null
           setWsLoading(false); // Set loading to false immediately after 200 OK
         })
         .catch((err) => {
-          setRunWarning('Failed to load semantic models: ' + (err?.message || 'Unknown error'));
+          const discovery = classifyModelDiscovery({ error: err });
+          setFabricReauth(discovery.state === 'reauth');
+          setRunWarning(discovery.message);
           setWsModels({ [fabricWorkspaceId]: [] });
           setWsLoading(false); // Also set loading to false on error
         });
@@ -929,7 +939,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     }
 
     setWorkspaces([]);
-  }, [step, sourceConnector, fabricWorkspaceId, selectedConnectionId, selectedWorkspace, liveFabricWorkspaces]);
+  }, [step, sourceConnector, fabricWorkspaceId, selectedConnectionId, selectedWorkspace, liveFabricWorkspaces, discoveryNonce]);
 
   const loadWsModels = useCallback(async (wsid) => {
     if (wsModels[wsid]) return;
@@ -1282,9 +1292,9 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       }
 
       if (connector === 'fabric') {
-        if (fabricAccountId) target.identity_id = fabricAccountId;
-        if (fabricWorkspaceId) target.workspace_id = fabricWorkspaceId;
-        if (selectedWorkspace?.name) target.workspace = selectedWorkspace.name;
+        // Target fields only: never the source's identity/workspace.
+        if (targetFabricAccountId) target.identity_id = targetFabricAccountId;
+        if (targetFabricWorkspaceId) target.workspace_id = targetFabricWorkspaceId;
       }
 
       if (connector === 'databricks') {
@@ -2093,6 +2103,10 @@ export default function CreateProjectPage({ editMode = false, initialData = null
               fabricAccounts={fabricAccounts}
               fabricWorkspaceId={fabricWorkspaceId}
               setFabricWorkspaceId={setFabricWorkspaceId}
+              targetFabricAccountId={targetFabricAccountId}
+              setTargetFabricAccountId={setTargetFabricAccountId}
+              targetFabricWorkspaceId={targetFabricWorkspaceId}
+              setTargetFabricWorkspaceId={setTargetFabricWorkspaceId}
               snowflakeAccountId={snowflakeAccountId}
               setSnowflakeAccountId={setSnowflakeAccountId}
               snowflakeAccounts={snowflakeAccounts}
@@ -2135,6 +2149,21 @@ export default function CreateProjectPage({ editMode = false, initialData = null
               runWarning={runWarning}
             />
           )}
+          {step === 3 && sourceConnector === 'fabric' && fabricReauth && (
+            <div role="alert" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', marginBottom: 12, borderRadius: 8, border: '1px solid var(--color-warning, #F59E0B)', background: 'var(--bg-surface)' }}>
+              <span style={{ flex: 1, fontSize: 13 }}>Your Fabric sign-in has expired. Sign in again to load the semantic models.</span>
+              <button type="button" onClick={() => setFabricSignInOpen(true)} style={{ padding: '6px 12px', borderRadius: 6, cursor: 'pointer' }}>Sign in again</button>
+            </div>
+          )}
+          <ConnectionsPanel
+            isOpen={fabricSignInOpen}
+            selectedConnector="fabric"
+            onClose={() => {
+              setFabricSignInOpen(false);
+              setFabricReauth(false);
+              setDiscoveryNonce((n) => n + 1); // retry discovery with the new sign-in
+            }}
+          />
           {step === 3 && (
             <StepSourceBrowser
               sourceConnector={sourceConnector}

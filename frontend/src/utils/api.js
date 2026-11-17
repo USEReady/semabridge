@@ -2317,7 +2317,9 @@ export const api = {
             `${API_BASE_URL}/discovery/fabric/workspaces/${encodeURIComponent(workspaceId)}/models${query}`
         );
         const data = await handleResponse(res);
-        return setCachedApiValue(cacheKey, data);
+        // Cache only a real model list: a `reauth_required` answer must not be
+        // replayed after the user signs in again.
+        return Array.isArray(data) ? setCachedApiValue(cacheKey, data) : data;
     },
 
     async discoverFabricReports(workspaceId, connectionId = '') {
