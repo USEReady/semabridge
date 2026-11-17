@@ -91,6 +91,11 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     except ValueError:
         pass  # already registered by another conftest
 
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Ensure pytest cache basetemp directory exists on clean checkouts."""
+    Path(".pytest_cache/temp").mkdir(parents=True, exist_ok=True)
+
 # -----------------------------------------------------------------------------
 # Database environment — force in-memory SQLite for all tests
 # -----------------------------------------------------------------------------
