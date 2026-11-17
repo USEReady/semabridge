@@ -66,6 +66,8 @@ async def run_sync(
     force_full_sync: bool = False,
     *,
     mode: Optional[str] = None,
+    project_id: str = "",
+    fabric_identity_id: str = "",
 ) -> SyncResult:
     """
     Dispatch a single model sync to the configured orchestrator.
@@ -75,6 +77,13 @@ async def run_sync(
               ``"local"`` | ``"temporal"``.
     """
     effective_mode = (mode or ORCHESTRATOR_MODE).lower()
+    # Both paths sync a Fabric model: the job's own identity/workspace (explicit,
+    # else the project config) -- never the server-wide FABRIC_* defaults.
+    from semabridge.sources.fabric.legacy_sync import resolve_sync_fabric_target
+
+    fabric_identity_id, fabric_workspace_id = resolve_sync_fabric_target(
+        identity_id=fabric_identity_id, workspace_id=fabric_workspace_id, project_id=project_id, caller="adapter",
+    )
 
     if effective_mode == "temporal":
         return await _run_temporal(
@@ -87,6 +96,7 @@ async def run_sync(
             warehouse_size=warehouse_size,
             version_tag=version_tag,
             force_full_sync=force_full_sync,
+            fabric_identity_id=fabric_identity_id,
         )
     else:
         return await _run_local(
@@ -94,6 +104,8 @@ async def run_sync(
             model_id=model_id,
             database=database,
             schema=schema,
+            fabric_workspace_id=fabric_workspace_id,
+            fabric_identity_id=fabric_identity_id,
         )
 
 
@@ -112,6 +124,7 @@ async def _run_temporal(
     warehouse_size: str,
     version_tag: str,
     force_full_sync: bool,
+    fabric_identity_id: str = "",
 ) -> SyncResult:
     """Start a ``SyncModelWorkflow`` on the Temporal cluster and await its result."""
     from temporalio.client import Client
@@ -138,6 +151,7 @@ async def _run_temporal(
         warehouse_size=warehouse_size,
         version_tag=version_tag,
         force_full_sync=force_full_sync,
+        fabric_identity_id=fabric_identity_id,
         run_id=run_id,
     )
 
@@ -181,6 +195,8 @@ async def _run_local(
     model_id: str,
     database: str,
     schema: str,
+    fabric_workspace_id: str = "",
+    fabric_identity_id: str = "",
 ) -> SyncResult:
     """
     Run the sync using the existing in-process ``SyncOrchestrator``.
@@ -203,7 +219,10 @@ async def _run_local(
 
             config = ProjectConfig(
                 name=f"Sync {model_id}",
-                source=SourceConfig(type="fabric", model=model_id),
+                source=SourceConfig(
+                    type="fabric", model=model_id,
+                    workspace_id=fabric_workspace_id or None, identity_id=fabric_identity_id or None,
+                ),
                 targets=[TargetConfig(type=TargetType.SNOWFLAKE, database=database, schema_name=schema)]
             )
 
