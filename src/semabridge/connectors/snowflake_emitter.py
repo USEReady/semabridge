@@ -858,7 +858,7 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
                             # name, against the staged enriched views. Nothing
                             # live changes here.
                             _executed = self._execute_with_isolation(
-                                cur, self._staged.to_staging(sql), f"DDL[{idx}] (staging)"
+                                cur, self._staged.to_staging(sql), f"DDL[{idx}] (staging)", copy_grants=False,
                             )
                             ddls[idx] = self._staged.to_live(_executed)
                             _staged_sv_indices.append(idx)

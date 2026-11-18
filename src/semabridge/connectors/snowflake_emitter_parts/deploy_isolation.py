@@ -368,7 +368,7 @@ class DeployIsolationMixin:
             self._record_ddl_deployment_drops(invalid_id, list(nulled), sql, exc)
         return fixed
 
-    def _execute_with_isolation(self, cur: Any, sql: str, context: str) -> str:
+    def _execute_with_isolation(self, cur: Any, sql: str, context: str, copy_grants: bool = True) -> str:
         """Execute *sql*; on failure isolate the offending item(s) and retry,
         at most MAX_CREATE_REMEDIATION_ATTEMPTS times. Returns the SQL that
         finally succeeded. Raises ConnectorError (with every isolation
@@ -381,12 +381,14 @@ class DeployIsolationMixin:
         # A CREATE OR REPLACE SEMANTIC VIEW replaces a live view: COPY GRANTS
         # keeps the grants other roles have on it. Added only to the executed
         # statement; the returned SQL (snapshots, remediation) stays as built.
+        # Staging objects are new (copy_grants=False): promotion adds it.
         from semabridge.connectors.staged_deploy import with_copy_grants
 
+        is_sv_replace = is_sv and copy_grants
         for attempt in range(cap + 1):
             try:
                 self.connection_manager._execute_sql(
-                    cur, with_copy_grants(current) if is_sv else current,
+                    cur, with_copy_grants(current) if is_sv_replace else current,
                     context=context if attempt == 0 else f"{context} pass {attempt}",
                 )
                 if attempt:
