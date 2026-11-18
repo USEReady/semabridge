@@ -111,8 +111,11 @@ class SnowflakeConfig(BaseSettings):
             if v.lower().startswith(prefix):
                 v = v[len(prefix):]
         # Strip .snowflakecomputing.com suffix and any trailing path
-        if ".snowflakecomputing.com" in v.lower():
-            v = v.lower().split(".snowflakecomputing.com")[0]
+        # (case-insensitively, keeping the account id's own case so the plain
+        # and URL forms of one account normalize to the same identifier).
+        idx = v.lower().find(".snowflakecomputing.com")
+        if idx != -1:
+            v = v[:idx]
         return v
 
 
