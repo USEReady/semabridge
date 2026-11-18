@@ -9,17 +9,9 @@ router = APIRouter()
 
 
 def _require_admin(request: Request) -> None:
-    from semabridge.api.services.project_ownership_service import (
-        _is_admin_user,
-        auth_is_enabled,
-        require_request_user_id,
-    )
+    from semabridge.api.services.project_ownership_service import require_admin_request
 
-    if not auth_is_enabled():
-        return  # single-user development mode
-    user_id = require_request_user_id(request)
-    if not _is_admin_user(user_id):
-        raise HTTPException(status_code=403, detail="Admin role required")
+    require_admin_request(request)
 
 
 @router.get("/api/admin/maintenance/preview-projects")
@@ -62,3 +54,16 @@ async def persistence_status(request: Request):
         }
 
     return await asyncio.to_thread(_collect)
+
+
+@router.get("/api/admin/flags")
+async def feature_flags(request: Request):
+    """Registered behaviour-changing env flags: default, effective value
+    (secrets masked) and whether it differs from the default. Admin only."""
+    _require_admin(request)
+    from semabridge.core.feature_flags import flag_report, non_default_flags
+
+    return {
+        "flags": flag_report(),
+        "non_default": [flag.name for flag in non_default_flags()],
+    }

@@ -58,7 +58,8 @@ def _parse_project_yaml_dict(project_id: str) -> Dict[str, Any]:
         return {}
     try:
         parsed = yaml.safe_load(raw_yaml) or {}
-    except Exception:
+    except Exception as exc:
+        logger.warning("Project config for %s is not valid YAML (ownership lookup): %s", project_id, exc)
         parsed = {}
     return parsed if isinstance(parsed, dict) else {}
 
@@ -275,6 +276,20 @@ def _is_admin_user(user_id: str | None) -> bool:
     except Exception as exc:
         logger.debug("Could not verify admin role for user_id=%s: %s", user_id, exc)
         return False
+
+
+def require_admin_request(request: Request) -> None:
+    """Raise unless the request comes from an admin.
+
+    With auth disabled (single-user development mode) the implicit dev user is
+    an admin, so the check passes. With auth enabled the caller must be an
+    authenticated user whose role is ``admin``.
+    """
+    if not auth_is_enabled():
+        return
+    user_id = require_request_user_id(request)
+    if not _is_admin_user(user_id):
+        raise HTTPException(status_code=403, detail="Admin role required")
 
 
 def _user_exists(user_id: str | None) -> bool:

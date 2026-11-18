@@ -855,17 +855,49 @@ def _run_single_job_impl(
             # the actual extraction call site.
             logger.error("Sync failed for model '%s': %s", model_label, exc, exc_info=True)
             _close_engine_row(repository, engine, exc)
-            accumulated_drops = []
-            try:
-                if engine is not None and hasattr(engine, "_context") and hasattr(engine._context, "drop_ledger"):
-                    for r in getattr(engine._context.drop_ledger, "records", []) or []:
-                        accumulated_drops.append(r.model_dump(mode="json") if hasattr(r, "model_dump") else dict(r))
-            except Exception:
-                pass
+            accumulated_drops = _collect_drop_ledger(engine, model_label)
             result = _failed_result(job, str(exc), type(exc).__name__, started, dropped_entities=accumulated_drops)
             if "CONFLICT:" in str(exc):
                 result["status"] = "conflict"
             return result
+
+
+def _drop_record_to_dict(record: Any) -> Dict[str, Any]:
+    if hasattr(record, "model_dump"):
+        return record.model_dump(mode="json")
+    if isinstance(record, dict):
+        return dict(record)
+    return dict(record)
+
+
+def _collect_drop_ledger(engine: Any, model_label: str) -> List[Dict[str, Any]]:
+    """The engine's drop ledger as JSON-able dicts, for a FAILED result.
+
+    The failed result must still say what was dropped before the failure.
+    Each record is serialised on its own: one record that cannot be dumped is
+    kept as a minimal placeholder (and logged) instead of losing the whole
+    ledger, which used to make a failed run look like it dropped nothing.
+    """
+    ledger = getattr(getattr(engine, "_context", None), "drop_ledger", None)
+    if ledger is None:
+        return []
+    try:
+        records = list(getattr(ledger, "records", []) or [])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Drop ledger of failed model '%s' could not be read: %s", model_label, exc)
+        return [{"entity": None, "reason": f"drop ledger unreadable: {exc}", "ledger_error": True}]
+    drops: List[Dict[str, Any]] = []
+    for record in records:
+        try:
+            drops.append(_drop_record_to_dict(record))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Drop ledger record of failed model '%s' could not be serialised (%s); keeping a placeholder",
+                model_label, exc,
+            )
+            drops.append({"entity": str(getattr(record, "entity", None) or record), "reason": str(
+                getattr(record, "reason", "") or ""), "ledger_error": True})
+    return drops
 
 
 class _NoLock:

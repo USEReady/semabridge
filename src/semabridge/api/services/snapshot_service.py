@@ -38,7 +38,10 @@ def _compat_parse_project_cfg_dict(project_cfg: str) -> Dict[str, Any]:
     try:
         parsed = yaml.safe_load(project_cfg) or {}
         return parsed if isinstance(parsed, dict) else {}
-    except Exception:
+    except yaml.YAMLError as exc:
+        import logging
+
+        logging.getLogger(__name__).warning("Project config is not valid YAML (snapshot view): %s", exc)
         return {}
 
 

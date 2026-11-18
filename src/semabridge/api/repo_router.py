@@ -586,6 +586,14 @@ def get_model_graph(
     return graph
 
 
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
 @router.get("/file")
 def get_file_content(path: str = Query(..., description="Relative file path")):
     """REQ-MAP-001: Return raw file content for preview."""
@@ -593,10 +601,12 @@ def get_file_content(path: str = Query(..., description="Relative file path")):
     if not file_root.exists():
         file_root = _get_repo_root()
 
+    file_root = file_root.resolve()
     target = (file_root / path).resolve()
 
-    # Security: ensure path stays within repo
-    if not str(target).startswith(str(file_root)):
+    # Security: ensure path stays within the root. A string prefix test would
+    # accept a sibling such as ``<root>-secrets/...``; compare path components.
+    if not _is_relative_to(target, file_root):
         raise HTTPException(status_code=403, detail="Access denied: path outside repository")
 
     if not target.exists() or not target.is_file():

@@ -69,39 +69,10 @@ _SERVER_CONTROLLED_SYNC_KEYS = frozenset({
     "project_run_id",
 })
 
-# Config keys that carry a local source-file path.
-_SOURCE_FILE_KEYS = frozenset({
-    "pbix_path",
-    "pbix_file_path",
-    "pbix_paths",
-    "pbix_files",
-    "file_path",
-    "twb_path",
-    "twbx_path",
-    "tds_path",
-    "tdsx_path",
-})
-
-
-def _iter_source_file_paths(node: Any) -> Iterable[str]:
-    if isinstance(node, dict):
-        for key, value in node.items():
-            if str(key).lower() in _SOURCE_FILE_KEYS:
-                if isinstance(value, str) and value.strip():
-                    yield value
-                elif isinstance(value, list):
-                    for item in value:
-                        if isinstance(item, str) and item.strip():
-                            yield item
-                        elif isinstance(item, dict):
-                            yield from _iter_source_file_paths(item)
-                elif isinstance(value, dict):
-                    yield from _iter_source_file_paths(value)
-            else:
-                yield from _iter_source_file_paths(value)
-    elif isinstance(node, list):
-        for item in node:
-            yield from _iter_source_file_paths(item)
+# Config keys that carry a local source-file path (single definition in
+# ``semabridge.auth.file_access``).
+from semabridge.auth.file_access import SOURCE_FILE_KEYS as _SOURCE_FILE_KEYS  # noqa: E402
+from semabridge.auth.file_access import iter_source_file_paths as _iter_source_file_paths  # noqa: E402
 
 
 def _sanitize_sync_payload_for_user(payload: Dict[str, Any], user_id: str) -> Dict[str, Any]:

@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select, delete
 from sqlalchemy.orm import Session
@@ -48,6 +48,54 @@ def _is_absolute_path(raw_path: str) -> bool:
     return bool(re.match(r"^(?:[A-Za-z]:/|//|/)", normalized))
 
 
+# Registering a folder widens the server-wide path allow-list
+# (``semabridge.auth.file_access``), so these locations are never accepted:
+# the whole tree below them is system territory ...
+_FORBIDDEN_SUBTREES = (
+    "/etc", "/private/etc", "/proc", "/sys", "/dev", "/boot", "/bin", "/sbin",
+    "/usr", "/lib", "/lib64", "/System", "/Library", "/root",
+    "C:/Windows", "C:/Program Files", "C:/Program Files (x86)", "C:/ProgramData",
+)
+# ... and these are too broad to register as a whole (subfolders are fine).
+_FORBIDDEN_EXACT = (
+    "/var", "/private", "/private/var", "/tmp", "/private/tmp", "/opt", "/home",
+    "/Users", "/Volumes", "/mnt", "/media", "/srv", "/Applications",
+)
+
+
+def _path_key(path: Path) -> str:
+    return str(path).replace("\\", "/").rstrip("/").casefold()
+
+
+def _reject_system_directory(resolved: Path) -> None:
+    """Refuse filesystem roots, system directories and the home root itself."""
+    key = _path_key(resolved)
+    reason: Optional[str] = None
+    if resolved == Path(resolved.anchor) or not key or key.endswith(":"):
+        reason = "a filesystem root"
+    else:
+        for forbidden in _FORBIDDEN_SUBTREES:
+            fkey = _path_key(Path(forbidden))
+            if key == fkey or key.startswith(fkey + "/"):
+                reason = "a system directory"
+                break
+        if reason is None and key in {_path_key(Path(p)) for p in _FORBIDDEN_EXACT}:
+            reason = "too broad"
+        if reason is None:
+            try:
+                home = Path.home().resolve()
+                # The home directory itself, or any ancestor of it.
+                home.relative_to(resolved)
+                reason = "your home directory (or a parent of it)"
+            except (ValueError, RuntimeError, OSError):
+                pass
+    if reason:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot register {resolved}: it is {reason}. Choose a specific project folder.",
+        )
+
+
 def _resolve_existing_directory(raw_path: str) -> Path:
     if not raw_path or not raw_path.strip():
         raise HTTPException(status_code=400, detail="absolute_path is required")
@@ -55,11 +103,14 @@ def _resolve_existing_directory(raw_path: str) -> Path:
     if not _is_absolute_path(raw_path):
         raise HTTPException(status_code=400, detail="absolute_path must be an absolute path")
 
+    # resolve() follows symlinks, so a link to a system folder is judged by
+    # its real target.
     resolved = Path(raw_path).expanduser().resolve()
     if not resolved.exists():
         raise HTTPException(status_code=400, detail=f"Directory does not exist: {resolved}")
     if not resolved.is_dir():
         raise HTTPException(status_code=400, detail=f"Path is not a directory: {resolved}")
+    _reject_system_directory(resolved)
     return resolved
 
 
@@ -75,7 +126,21 @@ def list_local_folders(
 
 
 @router.post("/local-folders", response_model=LocalFolderResponse, status_code=status.HTTP_201_CREATED)
-def save_local_folder(body: LocalFolderCreate, db: Session = Depends(get_db)) -> LocalFolder:
+def save_local_folder(
+    body: LocalFolderCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> LocalFolder:
+    """Register (or update) a named local folder. **Admin only.**
+
+    Registered folders are global: ``LocalFolder`` has no owner/account
+    column, and every active folder joins the server-wide path allow-list
+    (``semabridge.auth.file_access``) for all users. Registration is therefore
+    restricted to admins, and system/root directories are refused.
+    """
+    from semabridge.api.services.project_ownership_service import require_admin_request
+
+    require_admin_request(request)
     tag_name = body.tag_name.strip()
     if not tag_name:
         raise HTTPException(status_code=400, detail="tag_name is required")

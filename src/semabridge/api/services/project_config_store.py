@@ -44,12 +44,16 @@ _tables_lock = threading.Lock()
 _write_lock = threading.RLock()
 
 
-from semabridge.domain.exceptions import InternalError
+from semabridge.domain.exceptions import InternalError, ValidationError
 
 
 class ConfigPersistenceError(InternalError):
     """A project config / mapping override could not be persisted (HTTP 500
     with the reason, so the UI reports the failed save)."""
+
+
+class InvalidProjectConfigError(ValidationError):
+    """A config submitted for saving is not valid YAML (HTTP 400)."""
 
 
 # ---------------------------------------------------------------------------
@@ -106,10 +110,29 @@ def _sha(text: str) -> str:
 
 
 def _parse(text: str) -> Dict[str, Any]:
+    """Tolerant parse: ``{}`` for invalid YAML. Only for *comparisons* of two
+    texts (file-import change detection); never to read a config for use --
+    use :func:`_parse_strict` there, so a corrupt config never silently
+    becomes an empty one."""
     try:
         parsed = yaml.safe_load(text or "") or {}
     except Exception:
         return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _parse_strict(text: str, project_id: Any, error_cls: type = None) -> Dict[str, Any]:
+    """Parse a project config, raising on invalid YAML.
+
+    ``error_cls`` defaults to :class:`ConfigPersistenceError` (a *stored*
+    config is corrupt -> 500); saves pass :class:`InvalidProjectConfigError`.
+    """
+    try:
+        parsed = yaml.safe_load(text or "") or {}
+    except yaml.YAMLError as exc:
+        cls = error_cls or ConfigPersistenceError
+        logger.error("Project config for %s is not valid YAML: %s", project_id, exc)
+        raise cls(f"Project config for {project_id} is not valid YAML: {exc}") from exc
     return parsed if isinstance(parsed, dict) else {}
 
 
@@ -413,12 +436,17 @@ def project_ids_with_config() -> List[str]:
     return sorted(str(r[0]) for r in rows if r[0])
 
 
-def render_config_text(stored_text: str, overrides: List[Dict[str, Any]]) -> str:
+def render_config_text(
+    stored_text: str, overrides: List[Dict[str, Any]], project_id: Any = "<unknown>"
+) -> str:
     """The stored config with ``mappings_overrides`` regenerated from the
     override table. Rows already in the stored list keep their order; rows
     added later follow. No overrides -> the key is removed (a reset must not
-    let the stored list bring old names back)."""
-    parsed = _parse(stored_text)
+    let the stored list bring old names back).
+
+    Raises :class:`ConfigPersistenceError` if the stored text is not valid
+    YAML (it used to be passed through and later read as an empty config)."""
+    parsed = _parse_strict(stored_text, project_id)
     if not parsed:
         return stored_text
     had_key = "mappings_overrides" in parsed
@@ -437,7 +465,7 @@ def _render_for(project_id: str, stored_text: str) -> str:
     except Exception as exc:
         logger.error("Could not read mapping overrides of %s: %s", project_id, exc)
         raise ConfigPersistenceError(f"Mapping overrides of '{project_id}' unavailable: {exc}") from exc
-    return render_config_text(stored_text, overrides)
+    return render_config_text(stored_text, overrides, project_id)
 
 
 def _export_yaml(project_id: str, text: str) -> None:
@@ -556,7 +584,7 @@ def save_project_config(
             ps._compat_project_configs[pid] = text
         return {"project_id": pid, "version": None, "config_yaml": text, "created": False}
 
-    parsed = _parse(text)
+    parsed = _parse_strict(text, pid, InvalidProjectConfigError)
     _ensure_tables()
     created = False
     version: Optional[int] = None
@@ -670,6 +698,9 @@ def get_project_config_text(project_id: str, *, use_cache: bool = True) -> str:
         logger.info("Project %s: importing config file into the database (first read)", pid)
         try:
             return save_project_config(pid, file_text, reason="import", export=False, merge_store_edits=True)["config_yaml"]
+        except InvalidProjectConfigError as exc:
+            # A corrupt legacy file must not be served (and read as empty).
+            raise ConfigPersistenceError(str(exc)) from exc
         except ConfigPersistenceError:
             return file_text
     return ""
@@ -812,7 +843,13 @@ def load_all_configs_into_cache() -> List[str]:
     for pid, text in rows:
         if pid in ps._compat_deleted_project_ids:
             continue
-        rendered = _render_for(pid, text)
+        try:
+            rendered = _render_for(pid, text)
+        except ConfigPersistenceError as exc:
+            # Leave it uncached: reading this project raises the same clear
+            # error instead of serving an empty config; others still load.
+            logger.error("Project %s not loaded into the config cache: %s", pid, exc)
+            continue
         with ps.compat_store_lock():
             ps._compat_project_configs[pid] = rendered
         loaded.append(pid)

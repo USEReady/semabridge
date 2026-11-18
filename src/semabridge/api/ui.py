@@ -385,7 +385,18 @@ async def start_sync_job(
             candidate = str(pbix_path or "").strip()
             if not candidate:
                 raise HTTPException(status_code=400, detail="Provide pbix_path or upload a .pbix file.")
-            candidate_path = Path(os.path.expandvars(os.path.expanduser(candidate))).resolve()
+            from semabridge.auth.file_access import resolve_allowed_path
+            from semabridge.domain.exceptions import PermissionError as DomainPermissionError
+            from semabridge.domain.exceptions import ValidationError as DomainValidationError
+
+            try:
+                candidate_path = resolve_allowed_path(
+                    os.path.expandvars(os.path.expanduser(candidate)), expect="any"
+                )
+            except DomainPermissionError as exc:
+                raise HTTPException(status_code=403, detail=str(exc)) from exc
+            except DomainValidationError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
             if not candidate_path.exists() or not candidate_path.is_file():
                 raise HTTPException(status_code=400, detail=f"PBIX file not found: {candidate_path}")
             if candidate_path.suffix.lower() != ".pbix":

@@ -43,6 +43,15 @@ from semabridge.api.services.project_config_store import (
     save_project_config,
 )
 
+def _validate_payload_source_paths(payload: Any) -> None:
+    """Reject local source paths (pbix_path, pbix_folder, ...) outside the
+    file-access allow-list (raises the domain ``PermissionError`` -> 403)."""
+    from semabridge.auth.file_access import validate_source_paths
+
+    if isinstance(payload, (dict, list)):
+        validate_source_paths(payload)
+
+
 def _raise_if_store_failed() -> None:
     from semabridge.api.services.project_shared import _compat_raise_if_store_failed
 
@@ -550,8 +559,9 @@ def _project_id_exists_anywhere(project_id: str) -> bool:
     try:
         if project_config_store.latest_config_row(pid) is not None:
             return True
-    except Exception:
-        pass
+    except Exception as exc:
+        # Unknown is not "free": the caller may reuse this id for a new project.
+        logger.warning("Could not check whether project id %s already has a stored config: %s", pid, exc)
     if str(_compat_load_project_yaml_text(pid) or "").strip():
         return True
     return any(path.exists() for path in _compat_project_yaml_paths(pid))
@@ -685,6 +695,7 @@ async def create_project_compat(request: dict):
     """Compatibility: create in-memory project for UI continuity."""
     await asyncio.to_thread(_compat_ensure_loaded)
     payload = request or {}
+    _validate_payload_source_paths(payload)
     payload_name = _compat_clean_project_name(payload.get("name"), "")
     src = payload.get("source") if isinstance(payload.get("source"), dict) else {}
     src_type = (src.get("type") or payload.get("source_type") or "fabric").strip().lower()
@@ -776,6 +787,7 @@ async def patch_project_compat(project_id: str, payload: dict):
     project = _compat_projects.get(project_id)
     if not project:
         raise NotFoundError("Project not found")
+    _validate_payload_source_paths(payload or {})
 
     for key in ("name", "display_name", "description", "folder_id", "status"):
         if key in (payload or {}):
@@ -926,6 +938,11 @@ async def save_project_config_compat(project_id: str, payload: dict):
     yaml_text = str((payload or {}).get("config_yaml") or "").strip()
     if not yaml_text:
         raise ValidationError("config_yaml is required")
+    try:
+        submitted_cfg = yaml.safe_load(yaml_text)
+    except yaml.YAMLError as exc:
+        raise ValidationError(f"config_yaml is not valid YAML: {exc}") from exc
+    _validate_payload_source_paths(submitted_cfg)
     yaml_text = _normalize_project_config_yaml(
         project_id,
         yaml_text,

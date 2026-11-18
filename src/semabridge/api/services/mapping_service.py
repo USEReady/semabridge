@@ -79,11 +79,25 @@ def _log_mapping_event(project_id: Any, event: Dict[str, Any]) -> None:
 # Private helpers
 # ---------------------------------------------------------------------------
 
-def _compat_parse_project_cfg_dict(project_cfg: str) -> Dict[str, Any]:
+def _compat_parse_project_cfg_dict(
+    project_cfg: str, *, project_id: str = "", strict: bool = False
+) -> Dict[str, Any]:
+    """Parse a project config YAML to a dict.
+
+    Invalid YAML is logged at WARNING. With ``strict=True`` (paths that feed a
+    sync/mapping decision) it raises :class:`ConfigPersistenceError` instead
+    of returning ``{}``, so a corrupt config never silently acts as empty.
+    """
     try:
         parsed = yaml.safe_load(project_cfg) or {}
         return parsed if isinstance(parsed, dict) else {}
-    except Exception:
+    except yaml.YAMLError as exc:
+        label = project_id or "<unsaved>"
+        logger.warning("Project config for %s is not valid YAML: %s", label, exc)
+        if strict:
+            from semabridge.api.services.project_config_store import ConfigPersistenceError
+
+            raise ConfigPersistenceError(f"Project config for {label} is not valid YAML: {exc}") from exc
         return {}
 
 
@@ -130,7 +144,7 @@ def _compat_project_target_type(project_id: str) -> str:
     cfg = str(_compat_project_configs.get(project_id) or "").strip()
     if not cfg:
         return ""
-    parsed = _compat_parse_project_cfg_dict(cfg)
+    parsed = _compat_parse_project_cfg_dict(cfg, project_id=project_id, strict=True)
     if not isinstance(parsed, dict):
         return ""
     target = parsed.get("target") if isinstance(parsed.get("target"), dict) else {}
@@ -264,7 +278,7 @@ def _compat_merge_model_scoped_overrides(
 
 
 def _compat_apply_manual_mapping_overrides_to_cfg(config_yaml: str, project_id: str) -> str:
-    parsed = _compat_parse_project_cfg_dict(config_yaml) or {}
+    parsed = _compat_parse_project_cfg_dict(config_yaml, project_id=project_id, strict=True) or {}
     overrides = _compat_collect_manual_mapping_overrides(project_id)
     if not overrides:
         return config_yaml

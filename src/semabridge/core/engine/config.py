@@ -232,8 +232,10 @@ def _apply_mapping_overrides_from_config(
         )
     try:
         sml_model.unmatched_mapping_overrides = list(unmatched_overrides)  # type: ignore[attr-defined]
-    except Exception:
-        pass
+    except Exception as exc:
+        # The run report lists unmatched overrides from this attribute.
+        logger.warning("Could not record %d unmatched mapping override(s) on the model: %s",
+                       len(unmatched_overrides), exc)
     if renamed_columns or renamed_metrics:
         logger.info(
             "Applied mapping overrides from config: columns=%s metrics=%s",

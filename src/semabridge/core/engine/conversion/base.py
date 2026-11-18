@@ -143,8 +143,15 @@ def _step6a_apply_upsert_delta(self, context: RunContext) -> None:
         sf_cfg = target_snowflake_config(context)
         target_database = getattr(sf_cfg, "database", None)
         target_schema = getattr(sf_cfg, "schema_name", None) or getattr(sf_cfg, "schema", None)
-    except Exception:
-        pass
+    except Exception as exc:
+        # Without the target database/schema the UPSERT baseline lookup is
+        # not scoped to the deployed target -- the delta (and so the deploy
+        # decision) may be computed against the wrong baseline.
+        logger.warning(
+            "UPSERT delta for project %s: could not resolve the Snowflake target config (%s); "
+            "baseline lookup is not scoped to the target database/schema",
+            getattr(context, "project_id", None), exc,
+        )
 
     target_view_name = getattr(context, "deployed_view_name", None) or get_target_deployment_name(
         getattr(model, "unique_name", None) or getattr(model, "label", None) or "model",

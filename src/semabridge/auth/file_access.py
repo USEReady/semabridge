@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Any, Iterable, List, Optional
 
 from semabridge.domain.exceptions import PermissionError, ValidationError
 from semabridge.utils.logger import get_logger
@@ -150,3 +150,52 @@ def is_path_allowed(raw_path: str, roots: Optional[List[Path]] = None) -> bool:
         return True
     except (PermissionError, ValidationError):
         return False
+
+
+# Config/payload keys that carry a local filesystem path the server will read.
+# (``source_path`` is deliberately absent: in mappings it is a table/column
+# path, not a filesystem path.)
+SOURCE_FILE_KEYS = frozenset({
+    "pbix_path",
+    "pbix_file_path",
+    "pbix_paths",
+    "pbix_files",
+    "pbix_folder",
+    "file_path",
+    "twb_path",
+    "twbx_path",
+    "tds_path",
+    "tdsx_path",
+})
+
+
+def iter_source_file_paths(node: Any) -> Iterable[str]:
+    """Yield every local source path found under :data:`SOURCE_FILE_KEYS`."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if str(key).lower() in SOURCE_FILE_KEYS:
+                if isinstance(value, str) and value.strip():
+                    yield value
+                elif isinstance(value, list):
+                    for item in value:
+                        if isinstance(item, str) and item.strip():
+                            yield item
+                        elif isinstance(item, dict):
+                            yield from iter_source_file_paths(item)
+                elif isinstance(value, dict):
+                    yield from iter_source_file_paths(value)
+            else:
+                yield from iter_source_file_paths(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from iter_source_file_paths(item)
+
+
+def validate_source_paths(config: Any, roots: Optional[List[Path]] = None) -> None:
+    """Raise :class:`PermissionError` if any source path in ``config`` lies
+    outside the allowed roots (existence is not required)."""
+    effective_roots = roots
+    for raw_path in iter_source_file_paths(config):
+        if effective_roots is None:
+            effective_roots = allowed_source_roots()
+        resolve_allowed_path(raw_path, expect="any", roots=effective_roots)

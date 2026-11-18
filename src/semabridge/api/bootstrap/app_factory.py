@@ -271,6 +271,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     cleanup_task = asyncio.create_task(_cleanup_poll_sessions())
     sweep_task = asyncio.create_task(_sweep_stale_runs_periodically())
+    try:
+        from semabridge.core.feature_flags import log_non_default_flags
+
+        log_non_default_flags(logger)
+    except Exception as exc:  # visibility only -- never block startup
+        logger.warning('Could not summarise feature flags: %s', exc)
     logger.info('SemaBridge API startup complete; application is ready')
     yield
     for _task in (cleanup_task, sweep_task):

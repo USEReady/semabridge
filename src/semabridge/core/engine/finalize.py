@@ -88,8 +88,12 @@ def _step7_persist_artifacts(
         try:
             from semabridge.core.engine.deployment.snowflake import target_snowflake_config
             sf_cfg = target_snowflake_config(context)
-        except Exception:
-            pass
+        except Exception as cfg_exc:
+            logger.warning(
+                "Run %s: could not resolve the Snowflake target config (%s); the snapshot is recorded "
+                "without target database/schema (next UPSERT baseline may not match)",
+                getattr(context, "run_id", None), cfg_exc,
+            )
         t_db = getattr(sf_cfg, "database", None)
         t_schema = getattr(sf_cfg, "schema_name", None) or getattr(sf_cfg, "schema", None)
         t_vn = getattr(context, "deployed_view_name", None)
@@ -100,8 +104,11 @@ def _step7_persist_artifacts(
                     getattr(context.sml_model, "unique_name", None) or getattr(context.sml_model, "label", None) or "model",
                     "snowflake",
                 )
-            except Exception:
-                pass
+            except Exception as name_exc:
+                logger.warning(
+                    "Run %s: could not derive the target view name (%s); the snapshot is recorded without it",
+                    getattr(context, "run_id", None), name_exc,
+                )
 
         try:
             committed, snapshot_id = self.db_manager.commit_model(

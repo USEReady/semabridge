@@ -117,14 +117,39 @@ class ResumeJobRequest(BaseModel):
 # =============================================================================
 
 
+def _validated_path(raw: Optional[str], *, expect: str, field: str) -> Optional[str]:
+    """Resolve a user-supplied path against the file-access allow-list.
+
+    Returns the resolved path (symlinks followed) or ``None`` when not given.
+    Raises 403 when it lies outside every allowed root, 400 when malformed.
+    """
+    if raw is None or not str(raw).strip():
+        return None
+    from semabridge.auth import file_access
+    from semabridge.domain.exceptions import PermissionError as DomainPermissionError
+    from semabridge.domain.exceptions import ValidationError as DomainValidationError
+
+    try:
+        return str(file_access.resolve_allowed_path(str(raw), expect=expect))
+    except DomainPermissionError as exc:
+        raise HTTPException(status_code=403, detail=f"{field}: {exc}") from exc
+    except DomainValidationError as exc:
+        raise HTTPException(status_code=400, detail=f"{field}: {exc}") from exc
+
+
 @router.post("/jobs")
 def start_sync_job(request: StartSyncRequest) -> Dict[str, Any]:
     """Start a new synchronization job."""
+    pbix_folder = _validated_path(request.pbix_folder, expect="dir", field="pbix_folder")
+    source_field = "source_path" if request.source_path else "file_path"
+    source_path = _validated_path(
+        request.source_path or request.file_path, expect="any", field=source_field
+    )
     config = SyncConfig(
         direction=request.direction,
         conflict_resolution=request.conflict_resolution,
-        pbix_folder=request.pbix_folder,
-        source_path=request.source_path or request.file_path,
+        pbix_folder=pbix_folder,
+        source_path=source_path,
         pbix_pattern=request.pbix_pattern,
         snowflake_database=request.snowflake_database,
         snowflake_schema=request.snowflake_schema or request.target_snowflake_schema,

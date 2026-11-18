@@ -596,8 +596,8 @@ def _extract_ddl_for_result(result: Dict[str, Any], summary: Dict[str, Any]) -> 
             if p.suffix == ".sql" and p.exists():
                 try:
                     ddl = p.read_text(encoding="utf-8")
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Run report: deployed DDL artifact %s could not be read: %s", p, exc)
     return ddl
 
 def _describe_source(project_cfg: str, run: Dict[str, Any]) -> Tuple[str, List[str]]:

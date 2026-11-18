@@ -205,6 +205,12 @@ class DatabricksConfig(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        # schema_name is read from env via its validation_alias
+        # (DATABRICKS_SCHEMA). Without populate_by_name an explicit
+        # DatabricksConfig(schema_name=...) -- connectors/factory.py,
+        # auth/credential_builder.py -- was silently ignored and the
+        # .env/default schema used instead.
+        populate_by_name=True,
     )
 
     host: str = Field(..., description="Databricks workspace host, e.g. adb-12345.11.azuredatabricks.net")
@@ -359,6 +365,9 @@ class ConcurrencyConfig(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        # Fields use validation_alias for env names; allow the field name too
+        # so explicit construction (Config(field=...)) is not ignored.
+        populate_by_name=True,
     )
 
     max_workers: int = Field(
@@ -419,6 +428,9 @@ class NetworkConfig(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        # Fields use validation_alias for env names; allow the field name too
+        # so explicit construction (Config(field=...)) is not ignored.
+        populate_by_name=True,
     )
 
     https_proxy: Optional[str] = Field(
@@ -472,6 +484,9 @@ class DatabaseConfig(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        # Fields use validation_alias for env names; allow the field name too
+        # so explicit construction (Config(field=...)) is not ignored.
+        populate_by_name=True,
     )
 
     url: str = Field(

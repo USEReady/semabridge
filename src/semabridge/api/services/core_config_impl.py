@@ -116,6 +116,11 @@ async def generate_config(payload: Dict[str, Any]):
             source_cfg["database"] = settings.snowflake.database or ""
             source_cfg["schema"] = settings.snowflake.schema_name or "PUBLIC"
         elif source_type == "pbix":
+            if pbix_folder:
+                from semabridge.auth.file_access import resolve_allowed_path
+
+                # Raises PermissionError (403) outside the allow-list.
+                resolve_allowed_path(pbix_folder, expect="any")
             local_models_path = pbix_folder or str(_resolve_models_path())
             source_cfg["pbix_folder"] = local_models_path.replace("\\", "/")
 
@@ -146,6 +151,8 @@ async def generate_config(payload: Dict[str, Any]):
                 default_flow_style=False,
             )
         }
+    except SemaBridgeError:
+        raise
     except Exception as e:
         logger.exception("YAML generation failed")
         raise InternalError(str(e))

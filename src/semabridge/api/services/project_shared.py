@@ -528,9 +528,13 @@ def _compat_load_modular_project(project_id: str) -> Optional[Dict[str, Any]]:
 
     try:
         project_cfg = yaml.safe_load(config_text) or {}
-    except Exception as exc:
-        logger.warning("Failed to parse config of project %s: %s", project_id, exc)
-        return None
+    except yaml.YAMLError as exc:
+        # A corrupt config is NOT "no config": callers decide sync/run
+        # behaviour from this bundle, so fail loudly.
+        from semabridge.api.services.project_config_store import ConfigPersistenceError
+
+        logger.warning("Project config for %s is not valid YAML: %s", project_id, exc)
+        raise ConfigPersistenceError(f"Project config for {project_id} is not valid YAML: {exc}") from exc
     if not isinstance(project_cfg, dict):
         return None
 
@@ -621,7 +625,11 @@ def _compat_bootstrap_projects_from_modular_configs() -> None:
                 or project_id == "preview" or project_id.startswith("preview-")
             ):
                 continue
-            bundle = _compat_load_modular_project(project_id)
+            try:
+                bundle = _compat_load_modular_project(project_id)
+            except Exception as exc:  # one corrupt project must not hide the others
+                logger.error("Skipping project %s while loading project list: %s", project_id, exc)
+                continue
             if not bundle:
                 continue
 

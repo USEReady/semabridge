@@ -421,8 +421,12 @@ class ExecutionEngine:
                         try:
                             from semabridge.core.engine.deployment.snowflake import target_snowflake_config
                             sf_cfg = target_snowflake_config(context)
-                        except Exception:
-                            pass
+                        except Exception as cfg_exc:
+                            logger.warning(
+                                "Run %s: could not resolve the Snowflake target config (%s); the deployed-"
+                                "snapshot marker is recorded without target database/schema",
+                                getattr(context, "run_id", None), cfg_exc,
+                            )
                         t_db = getattr(sf_cfg, "database", None)
                         t_schema = getattr(sf_cfg, "schema_name", None) or getattr(sf_cfg, "schema", None)
                         t_vn = getattr(context, "deployed_view_name", None)
