@@ -217,12 +217,12 @@ def _fabric_env_workspace() -> str:
 
 
 def _default_fabric_model_resolver(refs: List[str], workspace_id: str, identity_id: Optional[str]):
-    """Validate refs against the workspace with the project's credentials (live)."""
-    from semabridge.sources.fabric.credentials import resolve_fabric_credentials
-    from semabridge.sources.fabric.validation import validate_fabric_models
+    """Validate refs against the workspace with the project's credentials (live) via adapter."""
+    from semabridge.sources.base import get_source_adapter
 
-    creds = resolve_fabric_credentials(identity_id=identity_id)
-    return validate_fabric_models(refs, workspace_id, creds, max_models=MAX_BATCH_MODELS)
+    adapter = get_source_adapter("fabric")
+    creds = adapter.resolve_credentials(identity_id=identity_id)
+    return adapter.validate_and_resolve(refs, workspace_id, creds, max_models=MAX_BATCH_MODELS)
 
 
 def _attach_fabric_identities(

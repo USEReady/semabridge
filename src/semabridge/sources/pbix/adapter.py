@@ -63,8 +63,17 @@ class PbixAdapter(SemanticSourceAdapter):
         *,
         max_models: int = 10,
         lister: Any = None,
+        base_dir: Optional[Any] = None,
         **kwargs: Any,
     ) -> PbixModelCheck:
+        from semabridge.sources.base import SourceConfigError
+
+        non_empty_refs = [r for r in refs if str(r or "").strip()]
+        if len(non_empty_refs) > max_models:
+            raise SourceConfigError(
+                f"Up to {max_models} PBIX files are supported per project; found {len(non_empty_refs)}."
+            )
+
         identities: List[ModelIdentity] = []
         warnings: List[str] = []
         by_ref: Dict[str, ModelIdentity] = {}
@@ -84,6 +93,14 @@ class PbixAdapter(SemanticSourceAdapter):
             clean_path = os.path.expandvars(os.path.expanduser(clean_path))
 
             p = Path(clean_path)
+            if not p.exists() and base_dir is not None:
+                bdir = Path(base_dir)
+                candidate = bdir / clean_path
+                if candidate.suffix.lower() != ".pbix":
+                    candidate = candidate.with_suffix(".pbix")
+                if candidate.exists():
+                    p = candidate
+
             if not p.exists():
                 stem = p.stem
                 clean_stem = re.sub(r"^[0-9a-fA-F]{32}_", "", stem)
