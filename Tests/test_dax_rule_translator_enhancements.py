@@ -5,6 +5,7 @@ from semabridge.converter.dax_rule_translator import (
     set_dialect,
     _quote_identifier,
 )
+from semabridge.converter.dax_translator import DAXTranslator
 
 
 def test_quote_identifier_supports_snowflake_and_databricks():
@@ -26,11 +27,16 @@ def test_calculate_filter_translates_to_case_when_snowflake():
     )
     """
 
-    sql = rule_based_translation(dax, "SPEND_FACT", "DIVERSE_SUPPLIER_SPEND", "snowflake")
+    # Since 765f27c (F10) the regex rule tier no longer handles CALCULATE
+    # filters (translate_calculate_with_filters is a stub); the AST renderer
+    # does, with DAX filter semantics (no ELSE 0: filtered-out rows are BLANK).
+    assert rule_based_translation(dax, "SPEND_FACT", "DIVERSE_SUPPLIER_SPEND", "snowflake") is None
 
-    assert sql == (
-        'SUM(CASE WHEN DIVERSITY_BRIDGE."DIVERSITY_FLAG" = \'Y\' '
-        'THEN SPEND_FACT."TRANSACTION_USD_AMOUNT" ELSE 0 END)'
+    result = DAXTranslator().translate(dax, table_alias="SPEND_FACT", dataset_name="spend_fact")
+    assert result.is_success
+    assert result.sql == (
+        "SUM(CASE WHEN DIVERSITY_BRIDGE.DIVERSITY_FLAG = 'Y' "
+        'THEN SPEND_FACT."TRANSACTION_USD_AMOUNT" END)'
     )
 
 
@@ -62,4 +68,5 @@ def test_sumx_arithmetic_translates_without_llm():
         "snowflake",
     )
 
-    assert sql == 'SUM(SALES."QUANTITY" * SALES."UNIT_PRICE")'
+    # ::FLOAT on SUM/AVG iterators is intended (137869f8, F3).
+    assert sql == 'SUM(SALES."QUANTITY" * SALES."UNIT_PRICE"::FLOAT)'

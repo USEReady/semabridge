@@ -49,7 +49,9 @@ class TestGenericFixG4WhatIfParameters:
         )
         assert res is not None
         sql = res.sql
-        assert "* NULL" in sql or "* (NULL)" in sql
+        # simplify_dead_arithmetic_sql (3d1bb8c) folds `x * NULL / 1` to NULL:
+        # BLANK propagates through * and DIVIDE, never a 0 default.
+        assert sql == "NULL" or "* NULL" in sql or "* (NULL)" in sql
         assert "* (0)" not in sql
 
     def test_parameter_in_subtraction_wraps_in_coalesce(self):
@@ -75,5 +77,7 @@ class TestGenericFixG4WhatIfParameters:
         )
         assert res is not None
         sql = res.sql
-        assert "COALESCE" in sql
+        # BLANK compares as 0. The renderer emits COALESCE(NULL, 0) and
+        # simplify_dead_arithmetic_sql (3d1bb8c) folds it to the constant 0.
+        assert "COALESCE(NULL, 0)" in sql or sql == "CASE WHEN 0 >= 0.1 THEN 1 ELSE 0 END"
 
