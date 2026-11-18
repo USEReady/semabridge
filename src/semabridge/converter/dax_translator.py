@@ -1006,6 +1006,14 @@ class DAXTranslator:
 
                 allow_window_enrichment=getattr(self, "_allow_window_enrichment", False),
 
+                # Same source schema the Tier 1-3 AST call gets: without it the
+                # renderer treats an unknown [Name] (e.g. a measure defined later
+                # in source order) as a column of the home table and emits
+                # FACT."NAME", a column that does not exist.
+                datasets=kwargs.get("datasets"),
+
+                dataset_col_lookup=dataset_col_lookup,
+
             )
 
             if general_ast_sql:
