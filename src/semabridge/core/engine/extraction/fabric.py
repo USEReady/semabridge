@@ -177,10 +177,8 @@ def _extract_fabric(
         # model become field aliases (synonyms); unresolved / ambiguous report
         # fields are reported like PBIX. A report this identity cannot read is a
         # run warning, not a failure.
-        from semabridge.sources.fabric.report_layer import fetch_report_layer
-
         try:
-            layer = fetch_report_layer(extractor, ws_id, resolved_dataset_id, tmsl)
+            layer = adapter.extract_report_layer(identity, extractor=extractor, tmsl=tmsl)
         except SourceError as exc:
             raise ExtractionError(f"Fabric report layer failed: {exc}") from exc
         source_format.field_aliases = layer.field_aliases
