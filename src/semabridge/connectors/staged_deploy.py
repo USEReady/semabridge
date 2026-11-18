@@ -55,7 +55,44 @@ _SV_NAME_RE = re.compile(
 
 
 _COPY_GRANTS_RE = re.compile(r"\bCOPY\s+GRANTS\b", re.IGNORECASE)
-_REPLACE_SV_RE = re.compile(r"^\s*CREATE\s+OR\s+REPLACE\s+SEMANTIC\s+VIEW\b", re.IGNORECASE)
+# Leading whitespace and SQL comments (-- line, /* block */) before the DDL.
+_LEADING = r"(?:\s+|--[^\n]*(?:\n|$)|/\*.*?\*/)*"
+_REPLACE_SV_RE = re.compile(r"^" + _LEADING + r"CREATE\s+OR\s+REPLACE\s+SEMANTIC\s+VIEW\b", re.IGNORECASE | re.DOTALL)
+_REPLACE_VIEW_RE = re.compile(
+    r"^(" + _LEADING + r"CREATE\s+OR\s+REPLACE\s+(?:SECURE\s+)?(?:RECURSIVE\s+)?VIEW\s+)"
+    r'((?:"[^"]+"|[\w$]+)(?:\s*\.\s*(?:"[^"]+"|[\w$]+))*)',
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def with_view_copy_grants(sql: str) -> str:
+    """Add ``COPY GRANTS`` to a ``CREATE OR REPLACE VIEW``: right after the
+    view name and its optional column list, before COMMENT/AS (Snowflake
+    syntax). Replacing a live view without it drops the grants other roles
+    have on it. Other SQL is returned unchanged."""
+    if not sql or _COPY_GRANTS_RE.search(sql):
+        return sql
+    match = _REPLACE_VIEW_RE.match(sql)
+    if not match:
+        return sql
+    pos = match.end()
+    rest = sql[pos:]
+    stripped = rest.lstrip()
+    if stripped.startswith("("):
+        # Column list: skip to its matching parenthesis.
+        start = pos + (len(rest) - len(stripped))
+        depth = 0
+        for i in range(start, len(sql)):
+            if sql[i] == "(":
+                depth += 1
+            elif sql[i] == ")":
+                depth -= 1
+                if depth == 0:
+                    pos = i + 1
+                    break
+        else:
+            return sql
+    return f"{sql[:pos]} COPY GRANTS{sql[pos:]}"
 
 
 def with_copy_grants(ddl: str) -> str:
@@ -223,7 +260,8 @@ class StagedDeploy:
         previous: Dict[str, Optional[str]] = {}
         for live_upper, (live, _staging, create_sql) in self.enriched.items():
             previous[live_upper] = self._capture_live_ddl(cursor, live)
-            self._execute(cursor, create_sql, context="promote-enriched-view")
+            # COPY GRANTS: the live enriched view keeps its grants.
+            self._execute(cursor, with_view_copy_grants(create_sql), context="promote-enriched-view")
             self._event("promoted", "VIEW", live)
         try:
             for ddl in semantic_ddls:

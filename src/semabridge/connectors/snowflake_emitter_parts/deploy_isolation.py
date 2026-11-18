@@ -378,9 +378,17 @@ class DeployIsolationMixin:
         n_items = sum(1 for _ in SemanticViewDDL(sql).all_items()) if is_sv else 1
         cap = max(1, min(MAX_CREATE_REMEDIATION_ATTEMPTS, n_items + 1))
         last_exc: Optional[Exception] = None
+        # A CREATE OR REPLACE SEMANTIC VIEW replaces a live view: COPY GRANTS
+        # keeps the grants other roles have on it. Added only to the executed
+        # statement; the returned SQL (snapshots, remediation) stays as built.
+        from semabridge.connectors.staged_deploy import with_copy_grants
+
         for attempt in range(cap + 1):
             try:
-                self.connection_manager._execute_sql(cur, current, context=context if attempt == 0 else f"{context} pass {attempt}")
+                self.connection_manager._execute_sql(
+                    cur, with_copy_grants(current) if is_sv else current,
+                    context=context if attempt == 0 else f"{context} pass {attempt}",
+                )
                 if attempt:
                     logger.info("%s succeeded after %d isolation retr%s", context, attempt, "y" if attempt == 1 else "ies")
                 return current

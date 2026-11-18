@@ -3651,7 +3651,12 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
                 # is replaced only at promotion (connectors/staged_deploy.py).
                 _staged.stage_enriched_view(cursor, enriched_view_name, full_sql)
             else:
-                self.connection_manager._execute_sql(cursor, full_sql, context="create-enriched-view")
+                # COPY GRANTS: replacing the live view keeps its grants.
+                from semabridge.connectors.staged_deploy import with_view_copy_grants
+
+                self.connection_manager._execute_sql(
+                    cursor, with_view_copy_grants(full_sql), context="create-enriched-view",
+                )
 
             # No data check: the view only LEFT JOINs along many-to-one PBIX
             # relationships onto the one-side key (_edge_is_pk_safe), so it
