@@ -84,23 +84,37 @@ def _model_with_mismatched_label():
 
 
 def test_fallback_borrows_physical_name_from_relationship_partner_when_own_schema_unknown():
+    """Borrowing is the LAST resort (commit 9d92e29 "defer relationship
+    column resolution to fallback"): it applies only when the dataset itself
+    has nothing that matches the requested column. Here Region does not
+    model the join key at all, so only the FK partner (Orders, live schema
+    confirmed) can tell the physical name."""
     sm = _build_schema_manager()
     model, orders, region = _model_with_mismatched_label()
+    region.columns = [SMLColumn(unique_name="RegionName", data_type=DataType.STRING)]
 
-    # Orders' own live schema is confirmed; its FK column really is REGION_FK.
     sm._live_schema_metadata["ORDERS"] = {"REGION_FK", "AMOUNT"}
-    # Region has no live schema entry at all -- the exact condition that
-    # produces "no live schema was available for dataset 'Region'".
 
     resolved = sm._resolve_physical_column_name(region, "RegionKey", model=model)
 
     assert resolved == "REGION_FK", (
         "must borrow the confirmed physical name from the FK relationship "
-        "partner (Orders) rather than guessing from Region's own label/name"
+        "partner (Orders) when the dataset has no column of its own to match"
     )
-    # Prove it actually differs from what the old behavior would have produced.
+
+
+def test_own_modeled_column_wins_over_relationship_partner():
+    """9d92e29: the two sides of a join need not share a physical column
+    name (Association.RightItemSetId -> Product.ProductID), so a column the
+    dataset models itself is never overridden by its partner's name."""
+    sm = _build_schema_manager()
+    model, orders, region = _model_with_mismatched_label()
+    sm._live_schema_metadata["ORDERS"] = {"REGION_FK", "AMOUNT"}
+
+    resolved = sm._resolve_physical_column_name(region, "RegionKey", model=model)
+
+    assert resolved == "REGIONKEY"
     assert resolved != "REGION_LABEL_WRONG", "must not fall back to the dataset's own (possibly wrong) label"
-    assert resolved != "REGIONKEY", "must not fall back to a naive sanitize of the raw column name either"
 
 
 def test_fallback_prefers_own_live_schema_when_available():
