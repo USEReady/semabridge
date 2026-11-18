@@ -657,8 +657,11 @@ class SyncOrchestrator:
                 target_id = target_artifacts or None
             item.target_artifact_id = target_id
 
-            if self._artifact_exporter and isinstance(target_artifacts, dict):
-                self._artifact_exporter.export_target_artifacts(item, target_artifacts)
+            if self._artifact_exporter:
+                self._artifact_exporter.export_target_artifacts(
+                    item,
+                    target_artifacts if isinstance(target_artifacts, dict) else {"target": str(target_artifacts)},
+                )
 
             # Step 6: Update mapping
             schema_hash = self._schema_tracker.compute_schema_hash(osi_model)
@@ -746,20 +749,21 @@ class SyncOrchestrator:
             )
 
     def _extract_pbix_to_osi(self, item: SyncJobItem) -> OSIModel:
-        """Extract PBIX file and convert to OSI model."""
-        from semabridge.connectors.local_pbix_connector import LocalPBIXConnector
+        """Extract PBIX file and convert to OSI model via source adapter."""
         from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
+        from semabridge.sources.base import ModelIdentity, get_source_adapter
 
         drop_ledger = getattr(self, "drop_ledger", None)
-        connector = LocalPBIXConnector({"pbix_path": item.source_path}, drop_ledger=drop_ledger)
-        discovered = connector.discover()
-        raw_tmsl = connector.extract() if discovered.get("raw_tmsl") is None else discovered.get("raw_tmsl")
+        adapter = get_source_adapter("pbix")
+        ident = ModelIdentity("pbix", item.source_path, item.model_name)
+        raw_tmsl = adapter.extract_model(ident, drop_ledger=drop_ledger)
+        report_layer = adapter.extract_report_layer(ident)
         converter = TMSLToOSIConverter()
         tmsl_data = {
             "tmsl": raw_tmsl,
             "workspace_id": "local",
             "dataset_id": item.model_name,
-            "field_aliases": discovered.get("field_aliases", []),
+            "field_aliases": report_layer.field_aliases,
         }
 
         osi_model = converter.to_osi(tmsl_data)
@@ -772,19 +776,15 @@ class SyncOrchestrator:
         return osi_model
 
     def _extract_fabric_to_osi(self, item: SyncJobItem, config: SyncConfig) -> OSIModel:
-        """
-        Extract a Fabric semantic model definition and convert to OSI.
-
-        Uses ``FabricExtractor.get_model_definition()`` (TMSL JSON) and
-        pipes it through the existing ``TMSLToOSIConverter``.
-        """
+        """Extract a Fabric semantic model definition and convert to OSI via source adapter."""
         from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
-        from semabridge.sources.fabric.legacy_sync import fabric_extractor_for_sync
+        from semabridge.sources.base import ModelIdentity, get_source_adapter
 
-        extractor = fabric_extractor_for_sync(config.fabric_workspace_id, config.fabric_identity_id)
-        # item.source_path holds the Fabric dataset GUID
+        adapter = get_source_adapter("fabric")
+        creds = adapter.resolve_credentials(identity_id=config.fabric_identity_id)
         dataset_id: str = item.source_path or item.model_name
-        tmsl_data = extractor.get_model_definition(dataset_id)
+        ident = ModelIdentity("fabric", dataset_id, item.model_name, config.fabric_workspace_id)
+        tmsl_data = adapter.extract_model(ident, creds=creds)
 
         converter = TMSLToOSIConverter()
         osi_model = converter.to_osi(
