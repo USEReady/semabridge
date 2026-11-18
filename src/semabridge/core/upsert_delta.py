@@ -18,6 +18,24 @@ the same Snowflake name, so only one of them can exist in the target. They
 are reported in the delta (``identity_collisions``) instead of being dropped
 silently; they do not force a redeploy (the collision is in the model
 itself, so it would otherwise redeploy on every sync).
+
+Renames. A baseline item is matched to a new item first by SOURCE identity
+-- ``original_name`` when the item carries one (metrics renamed by a mapping
+override keep the Power BI name there), else its name -- and only then by
+name. A renamed metric is therefore one "modified" item (its name is part of
+the signature), and :func:`merge_upsert` does not keep the old name.
+
+Column renames keep the physical ``unique_name`` (identity) and change the
+``label``; the signature of tables and dimensions includes each column's
+DEPLOYED semantic name (what the emitter puts in the DDL), so a rename -- or
+a change in the naming rule itself -- is "modified" and gets deployed. The
+baseline's deployed names are computed with the rule that produced them:
+snapshots record ``semantic_naming_version``; a snapshot without it predates
+the current rule ('Date' -> DATE) and is read with the legacy one ('Date' ->
+COL_DATE), so such a baseline registers as modified exactly once (the
+redeploy stores a stamped snapshot). A snapshot written by code that already
+used the new rule but before the stamp existed is also read as legacy: worst
+case one extra redeploy, never a missed change.
 """
 
 from __future__ import annotations
@@ -26,7 +44,10 @@ import json
 import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from functools import lru_cache
+
 from semabridge.sml.models import (
+    SEMANTIC_NAMING_VERSION,
     SMLAttribute,
     SMLColumn,
     SMLDataset,
@@ -102,12 +123,70 @@ def _norm_synonyms(item: Any) -> List[str]:
     return [seen[k] for k in sorted(seen)]
 
 
-def _signature(kind: str, item: Any) -> Dict[str, Any]:
+@lru_cache(maxsize=8192)
+def _semantic_name(name: str, legacy: bool) -> str:
+    """Deployed DIMENSION/FACT name for a column label (emitter rule:
+    ``sanitize_semantic_alias`` + digit guard). ``legacy`` applies the rule
+    used before 'Date' stopped getting COL_ (``sanitize_column``)."""
+    from semabridge.utils.identifiers import IdentifierSanitizer
+
+    sanitizer = IdentifierSanitizer(force_uppercase=True, suppress_reserved=True)
+    out = sanitizer.sanitize_column(name) if legacy else sanitizer.sanitize_semantic_alias(name)
+    if out and out[0].isdigit():
+        out = f"_{out}"
+    return out.upper()
+
+
+def _deployed_column_name(column: Any, legacy: bool = False) -> str:
+    """Name the emitter deploys a column/attribute under: label if set, else unique_name."""
+    return _semantic_name(str(_get(column, "label") or _get(column, "unique_name") or ""), legacy)
+
+
+def _is_legacy_naming(model: Any) -> bool:
+    """True when a baseline was built with the legacy column-naming rule."""
+    if model is None:
+        return False
+    try:
+        version = int(_get(model, "semantic_naming_version") or 1)
+    except (TypeError, ValueError):
+        version = 1
+    return version < SEMANTIC_NAMING_VERSION
+
+
+def _source_key(item: Any) -> str:
+    """Source identity: the pre-rename name (``original_name``) when present."""
+    return normalize_name(_get(item, "original_name") or _item_name(item))
+
+
+def _match(new_items: Dict[str, Any], old_items: Dict[str, Any]) -> Dict[str, str]:
+    """new key -> old key. Source identity first (so a renamed metric meets its
+    old self), then name; each baseline item matches at most one new item."""
+    pairs: Dict[str, str] = {}
+    used: set = set()
+    old_by_source: Dict[str, List[str]] = {}
+    for old_key, old_item in old_items.items():
+        old_by_source.setdefault(_source_key(old_item), []).append(old_key)
+    for new_key, new_item in new_items.items():
+        for old_key in old_by_source.get(_source_key(new_item), []):
+            if old_key not in used:
+                pairs[new_key] = old_key
+                used.add(old_key)
+                break
+    for new_key in new_items:
+        if new_key not in pairs and new_key in old_items and new_key not in used:
+            pairs[new_key] = new_key
+            used.add(new_key)
+    return pairs
+
+
+def _signature(kind: str, item: Any, legacy: bool = False) -> Dict[str, Any]:
     """Definition fields that decide whether an item changed.
 
     Includes source-defined fields plus ontology-applied ``description`` and
     ``synonyms`` so metadata edits in the ontology trigger an UPSERT while an
-    unchanged PBIX + unchanged ontology still compares equal.
+    unchanged PBIX + unchanged ontology still compares equal. Names are
+    included as deployed (metric name; columns' semantic names, computed
+    with the legacy rule when ``legacy``), so renames are changes.
     """
     if kind == "verified_queries":
         return {
@@ -117,6 +196,7 @@ def _signature(kind: str, item: Any) -> Dict[str, Any]:
         }
     if kind == "metrics":
         return {
+            "name": normalize_name(_item_name(item)),
             "expression": _ws(_get(item, "expression")),
             "dataset": normalize_name(_get(item, "dataset")),
             "aggregation": _enum_text(_get(item, "aggregation")),
@@ -130,6 +210,7 @@ def _signature(kind: str, item: Any) -> Dict[str, Any]:
         attributes = sorted(
             (
                 normalize_name(_get(a, "unique_name")),
+                _deployed_column_name(a, legacy),
                 normalize_name(_get(a, "dataset")),
                 normalize_name(_get(a, "dataset_column")),
                 bool(_get(a, "is_hidden", False)),
@@ -159,6 +240,7 @@ def _signature(kind: str, item: Any) -> Dict[str, Any]:
     columns = sorted(
         (
             normalize_name(_get(c, "unique_name")),
+            _deployed_column_name(c, legacy),
             _enum_text(_get(c, "data_type")),
             bool(_get(c, "is_hidden", False)),
             _ws(_get(c, "description")),
@@ -218,6 +300,8 @@ def _modified_entry(kind: str, old: Any, new: Any, old_sig: Dict[str, Any], new_
         **_item_entry(kind, new),
         "changed_fields": changed_fields,
     }
+    if "name" in changed_fields:
+        entry["renamed_from"] = _display_name(old)
     if changed_fields and set(changed_fields) <= {"description", "synonyms"}:
         entry["change_type"] = "metadata changed"
         entry["metadata_changed"] = True
@@ -243,6 +327,12 @@ def _modified_entry(kind: str, old: Any, new: Any, old_sig: Dict[str, Any], new_
             _get(c, "unique_name") for c in (_get(old, "columns") or [])
             if normalize_name(_get(c, "unique_name")) in old_cols - new_cols
         )
+        old_names = {c[0]: c[1] for c in old_sig["columns"]}
+        entry["columns_renamed"] = [
+            {"column": c[0], "old_name": old_names[c[0]], "new_name": c[1]}
+            for c in new_sig["columns"]
+            if c[0] in old_names and old_names[c[0]] != c[1]
+        ]
     elif kind == "relationships":
         entry["old_definition"] = _relationship_text(old)
         entry["new_definition"] = _relationship_text(new)
@@ -271,26 +361,31 @@ def compute_delta(
     """
     kinds: Dict[str, Dict[str, Any]] = {}
     identity_collisions: List[Dict[str, Any]] = []
+    legacy_baseline = _is_legacy_naming(baseline)
     for kind, attr in DELTA_KINDS:
         new_items = _index(getattr(new_model, attr, []) or [], identity_collisions, kind=kind, side="new")
         old_items = _index((baseline or {}).get(attr) or [], identity_collisions, kind=kind, side="baseline")
+        pairs = _match(new_items, old_items)
         added: List[Dict[str, Any]] = []
         modified: List[Dict[str, Any]] = []
         unchanged = 0
         for key, new_item in new_items.items():
-            old_item = old_items.get(key)
-            if old_item is None:
+            old_key = pairs.get(key)
+            if old_key is None:
                 added.append(_item_entry(kind, new_item))
                 continue
-            old_sig, new_sig = _signature(kind, old_item), _signature(kind, new_item)
+            old_item = old_items[old_key]
+            old_sig = _signature(kind, old_item, legacy_baseline)
+            new_sig = _signature(kind, new_item)
             if old_sig == new_sig:
                 unchanged += 1
             else:
                 modified.append(_modified_entry(kind, old_item, new_item, old_sig, new_sig))
+        matched_old = set(pairs.values())
         removed = [
             _item_entry(kind, old_item)
             for key, old_item in old_items.items()
-            if key not in new_items
+            if key not in matched_old
         ]
         kinds[kind] = {
             "added": added,
@@ -360,8 +455,21 @@ def compute_delta(
     return delta
 
 
+def _entry_label(entry: Dict[str, Any]) -> str:
+    name = str(entry.get("name") or "")
+    if entry.get("renamed_from"):
+        return f"{entry['renamed_from']} (renamed to {name})"
+    renamed = entry.get("columns_renamed") or []
+    if renamed:
+        shown = ", ".join(f"{r['old_name']} renamed to {r['new_name']}" for r in renamed[:_SUMMARY_NAME_LIMIT])
+        if len(renamed) > _SUMMARY_NAME_LIMIT:
+            shown += f" (+{len(renamed) - _SUMMARY_NAME_LIMIT} more)"
+        return f"{name} ({shown})"
+    return name
+
+
 def _names(entries: List[Dict[str, Any]]) -> str:
-    names = [str(e.get("name") or "") for e in entries]
+    names = [_entry_label(e) for e in entries]
     shown = ", ".join(names[:_SUMMARY_NAME_LIMIT])
     if len(names) > _SUMMARY_NAME_LIMIT:
         shown += f" (+{len(names) - _SUMMARY_NAME_LIMIT} more)"
@@ -412,9 +520,13 @@ def merge_upsert(new_model: SMLModel, baseline: Optional[Dict[str, Any]]) -> SML
         current: List[Any] = getattr(merged, attr, [])
         current_keys = {normalize_name(_item_name(i)) for i in current}
         old_items = _index(baseline.get(attr) or [])
+        # Baseline items matched to a source item -- by name or by source
+        # identity (a renamed metric) -- are replaced by it, never kept.
+        pairs = _match(_index(current), old_items)
+        matched_old = set(pairs.values())
         for key, old_item in old_items.items():
-            if key in current_keys:
-                continue  # present in the source (any equivalent spelling): source wins
+            if key in current_keys or key in matched_old:
+                continue  # present in the source (any spelling, or renamed): source wins
             if cls is dict:
                 current.append(old_item if isinstance(old_item, dict) else old_item.model_dump())
             else:
@@ -424,17 +536,31 @@ def merge_upsert(new_model: SMLModel, baseline: Optional[Dict[str, Any]]) -> SML
         if kind in ("tables", "dimensions"):
             child_attr, child_cls = ("columns", SMLColumn) if kind == "tables" else ("attributes", SMLAttribute)
             for item in current:
-                old_item = old_items.get(normalize_name(item.unique_name))
+                old_key = pairs.get(normalize_name(item.unique_name))
+                old_item = old_items.get(old_key) if old_key else None
                 if old_item is None:
                     continue
                 children = getattr(item, child_attr)
                 child_keys = {normalize_name(c.unique_name) for c in children}
-                for old_child in (old_item.get(child_attr) or []):
+                # A column the converter renamed ('Order-Date' -> 'Order-Date_2')
+                # is the same field as a baseline column under either name.
+                child_keys |= {normalize_name(_get(c, "renamed_from")) for c in children if _get(c, "renamed_from")}
+                # Deployed names already taken: a baseline child deploying under
+                # one of them would be a second name for (or a duplicate of) a
+                # source field.
+                deployed_names = {_deployed_column_name(c) for c in children}
+                for old_child in (_get(old_item, child_attr) or []):
                     child_key = normalize_name(_get(old_child, "unique_name"))
                     if not child_key or child_key in child_keys:
                         continue
+                    renamed_from = normalize_name(_get(old_child, "renamed_from"))
+                    if renamed_from and renamed_from in child_keys:
+                        continue
+                    if _deployed_column_name(old_child) in deployed_names:
+                        continue
                     children.append(child_cls.model_validate(old_child))
                     child_keys.add(child_key)
+                    deployed_names.add(_deployed_column_name(children[-1]))
     return merged
 
 

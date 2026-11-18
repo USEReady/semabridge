@@ -17,6 +17,13 @@ from typing import Any, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
+# Rule that turned column labels into deployed dimension/fact names when a
+# model was built. 1 = legacy (sanitize_column: 'Date' -> COL_DATE), 2 =
+# sanitize_semantic_alias ('Date' -> DATE). Stored in deployed snapshots so
+# UPSERT can tell which rule named a baseline's columns; a snapshot without
+# it predates the field and is read as 1.
+SEMANTIC_NAMING_VERSION = 2
+
 
 class AggregationType(str, Enum):
     """Aggregation types for metrics."""
@@ -542,6 +549,10 @@ class SMLModel(BaseModel):
     source_platform: SourcePlatform = Field(default=SourcePlatform.SNOWFLAKE, description="Platform where model was authored")
     created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat(), description="Creation timestamp")
     modified_at: Optional[str] = Field(default=None, description="Last modification timestamp")
+    semantic_naming_version: int = Field(
+        default=SEMANTIC_NAMING_VERSION,
+        description="Rule used for deployed dimension/fact names (see SEMANTIC_NAMING_VERSION)",
+    )
     
     def model_post_init(self, __context: Any) -> None:
         """Set label from unique_name if not provided."""

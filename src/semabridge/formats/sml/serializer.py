@@ -25,6 +25,7 @@ from semabridge.formats.sml.models import (
     Cardinality,
     CrossFilterDirection,
 )
+from semabridge.sml.models import SEMANTIC_NAMING_VERSION
 from semabridge.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -247,6 +248,7 @@ class SMLSerializer:
             "source_system": model.source_system,
             "created_at": model.created_at,
             "modified_at": model.modified_at,
+            "semantic_naming_version": model.semantic_naming_version,
             "datasets": [SMLSerializer._dataset_to_dict(ds) for ds in model.datasets],
             "dimensions": [SMLSerializer._dimension_to_dict(dim) for dim in model.dimensions],
             "metrics": [SMLSerializer._metric_to_dict(m) for m in model.metrics],
@@ -264,6 +266,7 @@ class SMLSerializer:
             source_system=data.get("source_system", "snowflake"),
             created_at=data.get("created_at", ""),
             modified_at=data.get("modified_at"),
+            semantic_naming_version=data.get("semantic_naming_version", SEMANTIC_NAMING_VERSION),
             datasets=[SMLSerializer._dict_to_dataset(ds) for ds in data.get("datasets", [])],
             dimensions=[SMLSerializer._dict_to_dimension(dim) for dim in data.get("dimensions", [])],
             metrics=[SMLSerializer._dict_to_metric(m) for m in data.get("metrics", [])],
@@ -340,6 +343,7 @@ class SMLSerializer:
             "cortex_search_service": column.cortex_search_service,
             "sample_values": list(column.sample_values or []),
             "precompute_aggregation": column.precompute_aggregation,
+            "renamed_from": column.renamed_from,
         }
 
     @staticmethod
@@ -364,6 +368,7 @@ class SMLSerializer:
             cortex_search_service=data.get("cortex_search_service"),
             sample_values=list(data.get("sample_values") or []),
             precompute_aggregation=data.get("precompute_aggregation"),
+            renamed_from=data.get("renamed_from"),
         )
     
     @staticmethod
