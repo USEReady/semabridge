@@ -493,7 +493,7 @@ async function sendWithSyncConflictPrompt(projectId, payload, send) {
             // retry against that project, never create a second one.
             if (detail?.project_id) targetProjectId = String(detail.project_id);
             const choice = await requestSyncConflictDecision(kind, targetProjectId, detail);
-            if (kind === 'duplicate' && choice === 'confirm') {
+            if ((kind === 'duplicate' || kind === 'duplicate_check_failed') && choice === 'confirm') {
                 body = { ...body, acknowledge_duplicates: true };
                 continue;
             }
@@ -1456,12 +1456,16 @@ export const api = {
             restore_snapshot_id: payload?.restore_snapshot_id || payload?.snapshot_id,
             run_type: 'restore',
         };
-        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/run`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        });
-        return handleResponse(res);
+        // A refused start (e.g. already running) shows the sync dialog.
+        const send = async (sendBody) => {
+            const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/run`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(sendBody),
+            });
+            return handleResponse(res);
+        };
+        return sendWithSyncConflictPrompt(projectId, body, send);
     },
 
     // Generic fetch for specialized calls
@@ -1662,12 +1666,21 @@ export const api = {
 
     async triggerJob(projectId) {
         invalidateApiCache('jobs:runs:');
-        const res = await authFetch(`${API_BASE_URL}/jobs/trigger`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(projectId ? { project_id: projectId } : {}),
-        });
-        return handleResponse(res);
+        const send = async (body) => {
+            const res = await authFetch(`${API_BASE_URL}/jobs/trigger`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            return handleResponse(res);
+        };
+        // "Run all scheduled" starts each project in the background (a
+        // refusal shows as a failed run with the reason). One project gets
+        // run-now's checks and the same dialog.
+        if (!projectId) return send({});
+        return sendWithSyncConflictPrompt(projectId, {}, (body, target) => (
+            send({ ...body, project_id: target })
+        ));
     },
 
     // ── Model Mapping ──────────────────────────────────────────────────────
@@ -2089,12 +2102,17 @@ export const api = {
 
     async syncProject(projectId) {
         invalidateApiCache('jobs:runs:');
-        // Backend compatibility API exposes /run as the sync trigger route.
-        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/run`, {
-            method: 'POST',
-            timeoutMs: PROJECT_RUN_REQUEST_TIMEOUT_MS,
-        });
-        return handleResponse(res);
+        // Same start, checks and dialog (duplicate, removed fields, ...) as Run now.
+        const send = async (body) => {
+            const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/run`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body || {}),
+                timeoutMs: PROJECT_RUN_REQUEST_TIMEOUT_MS,
+            });
+            return handleResponse(res);
+        };
+        return sendWithSyncConflictPrompt(projectId, {}, send);
     },
 
     async listProjectSnapshots(projectId, options = {}) {

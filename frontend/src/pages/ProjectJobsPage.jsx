@@ -187,6 +187,7 @@ export default function ProjectJobsPage() {
     try {
       addStartedRun(await api.triggerJob(projectId || undefined));
     } catch (err) {
+      if (err?.handled) return; // shown in the sync dialog
       console.error('Trigger job failed:', err);
       alert(`Could not start the run: ${err.message || 'Unknown error'}`);
     } finally {

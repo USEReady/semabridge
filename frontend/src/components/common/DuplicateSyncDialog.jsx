@@ -14,10 +14,13 @@ const REASON_LABELS = {
   same_view: 'Same view name — this sync would overwrite it',
   same_model: 'Same model name',
   same_content: 'Same metrics and columns',
+  same_file_in_progress: 'Same PBIX file — another project is syncing it right now',
+  same_file_dry_run: 'Same PBIX file — dry-run by another project, not synced yet',
 };
 
 const TITLES = {
   duplicate: 'Model already synced',
+  duplicate_check_failed: 'Could not check for duplicates',
   already_running: 'Sync already running',
   blocked: 'Dry run has unresolved issues',
   removed_fields: 'Fields will be removed',
@@ -27,15 +30,41 @@ const MAX_REMOVED_SHOWN = 50;
 
 function RemovedFieldsBody({ detail, message }) {
   const models = Array.isArray(detail?.models) ? detail.models : [];
+  const unverifiable = Array.isArray(detail?.unverifiable) ? detail.unverifiable : [];
+  const promoted = Boolean(detail?.promoted_from_upsert);
   return (
     <>
       <p style={{ margin: '0 0 8px', fontSize: 13, color: 'var(--text-secondary)' }}>
         {message || 'Some fields in the deployed semantic view are no longer in the source.'}
       </p>
-      <p style={{ margin: '0 0 12px', fontSize: 12.5, color: 'var(--text-tertiary)' }}>
-        <b>Remove them</b> runs the Copy sync (full rebuild from the source). <b>Keep them</b> runs this sync
-        as an Upsert: new and changed fields are deployed and these stay in Snowflake.
-      </p>
+      {promoted ? (
+        <p style={{ margin: '0 0 12px', fontSize: 12.5, color: 'var(--text-tertiary)' }}>
+          This sync runs as a <b>Copy</b> because at least one model has never been deployed by this project
+          (a first deployment creates its objects). <b>Remove them and sync</b> runs that Copy.
+        </p>
+      ) : (
+        <p style={{ margin: '0 0 12px', fontSize: 12.5, color: 'var(--text-tertiary)' }}>
+          <b>Remove them</b> runs the Copy sync (full rebuild from the source). <b>Keep them</b> runs this sync
+          as an Upsert: new and changed fields are deployed and these stay in Snowflake.
+        </p>
+      )}
+      {unverifiable.length > 0 && (
+        <div style={{ margin: '0 0 12px', fontSize: 12.5 }}>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>Cannot verify</div>
+          <div style={{ color: 'var(--text-tertiary)', marginBottom: 4 }}>
+            These models are deployed, but there is no successful dry run of the content about to be synced,
+            so the fields a Copy would remove are unknown. Re-run the dry run to see them.
+          </div>
+          <ul style={{ margin: 0, paddingLeft: 18, color: 'var(--text-secondary)' }}>
+            {unverifiable.map((m) => (
+              <li key={`${m.model}-${m.view_name}`}>
+                <b>{m.model}</b>
+                {m.view_name && <span style={{ color: 'var(--text-tertiary)' }}> ({m.view_name})</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <div style={{ maxHeight: 320, overflowY: 'auto' }}>
         {models.map((m) => (
           <div key={`${m.model}-${m.view_name}`} style={{ marginBottom: 10 }}>
@@ -185,11 +214,27 @@ export default function DuplicateSyncDialog() {
       </>
     );
   } else if (kind === 'removed_fields') {
+    const hasUnverifiable = Array.isArray(detail?.unverifiable) && detail.unverifiable.length > 0;
+    const promoted = Boolean(detail?.promoted_from_upsert);
     footer = (
       <>
         <button type="button" style={SECONDARY_BTN} onClick={() => answer('cancel')}>Cancel sync</button>
-        <button type="button" style={SECONDARY_BTN} onClick={() => answer('upsert')}>Keep them (sync as Upsert)</button>
-        <button type="button" style={PRIMARY_BTN} onClick={() => answer('confirm')}>Remove them and sync</button>
+        {hasUnverifiable && projectId && (
+          <button type="button" style={SECONDARY_BTN} onClick={() => answer('open_dry_run')}>Re-run dry run</button>
+        )}
+        {!promoted && (
+          <button type="button" style={SECONDARY_BTN} onClick={() => answer('upsert')}>Keep them (sync as Upsert)</button>
+        )}
+        <button type="button" style={PRIMARY_BTN} onClick={() => answer('confirm')}>
+          {hasUnverifiable && !(detail?.models || []).length ? 'Sync as Copy anyway' : 'Remove them and sync'}
+        </button>
+      </>
+    );
+  } else if (kind === 'duplicate_check_failed') {
+    footer = (
+      <>
+        <button type="button" style={SECONDARY_BTN} onClick={() => answer('cancel')}>Cancel sync</button>
+        <button type="button" style={PRIMARY_BTN} onClick={() => answer('confirm')}>Sync anyway</button>
       </>
     );
   } else if (kind === 'blocked') {
@@ -224,6 +269,12 @@ export default function DuplicateSyncDialog() {
         <p style={{ margin: 0, fontSize: 13, color: 'var(--text-secondary)' }}>
           {message || 'A sync of this project is already running.'}
           {' '}Only one sync per project runs at a time, so this one was not started. Nothing was changed.
+        </p>
+      )}
+      {kind === 'duplicate_check_failed' && (
+        <p style={{ margin: 0, fontSize: 13, color: 'var(--text-secondary)' }}>
+          {message || 'The check for models already synced by another project could not run.'}
+          {' '}Nothing was deployed yet.
         </p>
       )}
       {kind === 'blocked' && <BlockedBody detail={detail} message={message} />}

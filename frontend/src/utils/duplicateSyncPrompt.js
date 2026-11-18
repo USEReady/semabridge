@@ -16,7 +16,14 @@ import { create } from 'zustand';
  *  - 409 { detail: { status: 'removed_fields', models: [{ model, removed }] } }
  *      a COPY sync would remove fields that are in the deployed view but no
  *      longer in the source. Options: remove them ('confirm'), keep them by
- *      syncing as an upsert ('upsert'), or cancel.
+ *      syncing as an upsert ('upsert'), or cancel. `unverifiable: [{ model }]`
+ *      lists deployed models with no usable dry run (re-run the dry run);
+ *      `promoted_from_upsert` means the Upsert was promoted to Copy because a
+ *      model was never deployed, so 'upsert' is not offered.
+ *
+ *  - 409 { detail: { status: 'duplicate_check_failed' } }
+ *      the duplicate check could not run. Options: sync anyway ('confirm',
+ *      re-sent with acknowledge_duplicates) or cancel.
  *
  * The dialog (DuplicateSyncDialog) is mounted once in DashboardLayout.
  * `requestSyncConflictDecision` resolves with the user's choice:
@@ -50,6 +57,7 @@ export function syncConflictKind(err) {
   const detail = err?.payload?.detail;
   const status = typeof detail === 'object' && detail ? String(detail.status || '') : '';
   if (err?.status === 409 && status === 'duplicate') return 'duplicate';
+  if (err?.status === 409 && status === 'duplicate_check_failed') return 'duplicate_check_failed';
   if (err?.status === 409 && (status === 'already_running' || status === 'running')) return 'already_running';
   if (err?.status === 409 && status === 'blocked') return 'blocked';
   if (err?.status === 409 && status === 'removed_fields') return 'removed_fields';

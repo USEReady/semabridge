@@ -120,6 +120,7 @@ export default function ProjectDetailPage() {
       await api.syncProject(id);
       navigate('/runs');
     } catch (err) {
+      if (err?.handled) return; // shown in the sync dialog
       alert(`Run failed: ${err.message}`);
     } finally {
       setRunning(false);

@@ -12,5 +12,10 @@ test('each refused sync start maps to its dialog', () => {
   assert.equal(syncConflictKind(err(409, { status: 'removed_fields', models: [] })), 'removed_fields');
   assert.equal(syncConflictKind(err(409, { status: 'already_running' })), 'already_running');
   assert.equal(syncConflictKind(err(409, { status: 'blocked' })), 'blocked');
+  assert.equal(syncConflictKind(err(409, { status: 'duplicate_check_failed' })), 'duplicate_check_failed');
+  assert.equal(
+    syncConflictKind(err(409, { status: 'removed_fields', models: [], unverifiable: [{ model: 'Fin' }] })),
+    'removed_fields',
+  );
   assert.equal(syncConflictKind(err(500, 'boom')), '');
 });
