@@ -13,6 +13,7 @@ def databricks_config():
     return DatabricksConfig(
         host="localhost",
         token="test_token",
+        warehouse_id="wh-test",  # required field since 91c4e4b
         catalog="semabridge",
         schema_name="public",
     )

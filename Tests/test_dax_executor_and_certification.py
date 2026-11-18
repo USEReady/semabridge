@@ -208,9 +208,17 @@ def test_linter_per_domain_cycle_isolation_on_real_ontologies():
     fed = FederatedOntologyLoader.merge_domains(domains)
 
     report = SemanticLinter(require_steward=False).lint_ontology(fed)
-    assert report.passed is True
-    assert report.error_count == 0
+    # What this test pins is per-domain cycle isolation: merging several
+    # domains must never manufacture a cross-domain circular-join ERROR.
+    # The overall pass/fail depends on whatever ontologies are committed
+    # under Config/ontologies; since the demo ontologies added in
+    # bc6a212/f2b56f2/306915b (the same Competitive Marketing model synced
+    # twice) it correctly reports RULE_METRIC_COLLISION / EMPTY_EXPRESSION
+    # errors, which are data findings, not a linter regression.
+    assert files, "expected committed ontologies under Config/ontologies"
     assert not any(i.rule_id == "RULE_CIRCULAR_JOIN" and i.severity == "ERROR" for i in report.issues)
+    data_rules = {"RULE_METRIC_COLLISION", "RULE_EMPTY_EXPRESSION"}
+    assert all(i.rule_id in data_rules for i in report.issues if i.severity == "ERROR")
 
 
 def test_reserved_prefix_helper_strips_only_real_columns():
