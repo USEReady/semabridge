@@ -22,10 +22,14 @@ def test_category2_dependency_replacement_arithmetic():
 
     sql = translator._try_branching("[Total Revenue] - [Total COGS]", metrics)
 
+    # Since 44ba7e0 ("DAX BLANK Arithmetic Semantics") '-' is BLANK-aware
+    # (COALESCE operands, NULL only when both are BLANK), and aliases are
+    # emitted upper-case by to_alias().
     assert sql is not None
-    assert 'SUM(fact."REVENUE")' in sql
-    assert 'SUM(fact."COGS")' in sql
+    assert 'SUM(FACT."REVENUE")' in sql
+    assert 'SUM(FACT."COGS")' in sql
     assert " - " in sql
+    assert 'COALESCE((SUM(FACT."REVENUE")), 0) - COALESCE((SUM(FACT."COGS")), 0)' in sql
 
 
 def test_category2_divide_safe_division_default_zero():
@@ -36,12 +40,25 @@ def test_category2_divide_safe_division_default_zero():
         _metric("Gross Margin", "[Total Revenue] - [Total COGS]"),
     ]
 
-    sql = translator._try_branching("DIVIDE([Gross Margin], [Total Revenue])", metrics)
+    # fb6eda6 ("unify DIVIDE in AST") removed _try_branching's own DIVIDE
+    # branch; DIVIDE over measure dependencies is translated by the AST
+    # renderer through the public translate() path.
+    result = translator.translate(
+        "DIVIDE([Gross Margin], [Total Revenue])",
+        table_alias="FACT",
+        dataset_name="Fact",
+        metrics_context=metrics,
+    )
 
+    assert result.is_success
+    sql = result.sql
     assert sql is not None
-    assert "COALESCE(" in sql
-    assert "NULLIF(" in sql
-    assert ", 0)" in sql
+    assert "COALESCE(" in sql  # BLANK-aware Gross Margin subtraction
+    assert 'NULLIF((SUM(FACT."REVENUE")), 0)' in sql
+    assert "DIVIDE" not in sql.upper()
+
+    # _try_branching itself still declines any function call (no partial DAX).
+    assert translator._try_branching("DIVIDE([Gross Margin], [Total Revenue])", metrics) is None
 
 
 def test_category3_totalytd_metadata_injection():

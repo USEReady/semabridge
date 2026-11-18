@@ -7,6 +7,7 @@ from semabridge.converter.dax_ast_parser import (
     ADVISORY_CATEGORY_CALCULATE_FILTER_SEMANTICS,
     ADVISORY_NOTE_CALCULATE_FILTER_SEMANTICS,
     try_ast_translate,
+    dax_calculate_filters_unreachable_dimension,
 )
 from semabridge.converter.dax_translator import DAXTranslator
 from semabridge.converter.osi_to_sml import OSIToSMLConverter
@@ -35,37 +36,57 @@ class TestDivideBlankTranslation:
         sql = renderer.render(ast)
         assert "BLANK" not in sql
         assert "NULLIF" in sql
-        assert sql == '(fact."A") / NULLIF(fact."B", 0)'
+        # Operands are parenthesized only when needed (_wrap_parens_for_op, 2afb203).
+        assert sql == 'fact."A" / NULLIF(fact."B", 0)'
 
     def test_divide_two_args_emits_nullif(self):
         renderer = DaxSqlRenderer("fact")
         ast = DaxAstParser().parse("DIVIDE([A], [B])")
         sql = renderer.render(ast)
-        assert sql == '(fact."A") / NULLIF(fact."B", 0)'
+        # Operands are parenthesized only when needed (_wrap_parens_for_op, 2afb203).
+        assert sql == 'fact."A" / NULLIF(fact."B", 0)'
 
 
 class TestAliasResolutionRelationshipEnforcement:
+    @staticmethod
+    def _vendor_rel():
+        # FactSpend takes part in a relationship, so the renderer knows its
+        # graph; since 5e4ab8e (F2) a primary table with NO relationships at
+        # all (e.g. a measure table) resolves other tables by name instead.
+        return OSIRelationship(
+            unique_name="REL_FACTSPEND_VENDORKEY__VENDOR_VENDORKEY",
+            from_dataset="FactSpend",
+            from_columns=["VendorKey"],
+            to_dataset="Vendor",
+            to_columns=["VendorKey"],
+            cardinality=OSICardinality.MANY_TO_ONE,
+            cross_filter_direction=OSICrossFilterDirection.SINGLE,
+            is_active=True,
+        )
+
     def test_unknown_table_without_alias_or_relationship_fails_closed(self):
         renderer = DaxSqlRenderer(
             table_alias="factspend",
             primary_table_name="FactSpend",
             table_aliases={"FactSpend": "factspend", "Scenario": "scenario"},
-            relationships=[],
+            relationships=[self._vendor_rel()],
         )
         ast = DaxAstParser().parse('CALCULATE(SUM(FactSpend[Amount]), OtherTable[Col]="Val")')
         sql = renderer.render(ast)
-        assert sql is None  # OtherTable not in table_aliases
+        assert sql is None  # OtherTable is not aliased and has no path from FactSpend
 
     def test_table_in_aliases_without_relationship_path_fails_closed(self):
-        renderer = DaxSqlRenderer(
-            table_alias="factspend",
-            primary_table_name="FactSpend",
-            table_aliases={"FactSpend": "factspend", "Scenario": "scenario"},
-            relationships=[],  # No relationship between FactSpend and Scenario
+        # Since 81c8743 an explicitly aliased table resolves to its alias in
+        # the renderer; an unreachable CALCULATE filter is caught by the
+        # dedicated detector instead (Snowflake rejects it with 010211).
+        dax = 'CALCULATE(SUM(FactSpend[Amount]), Scenario[ScenarioDescription]="Actual")'
+        result = dax_calculate_filters_unreachable_dimension(
+            dax,
+            calling_dataset="FactSpend",
+            relationships=[self._vendor_rel()],
         )
-        ast = DaxAstParser().parse('CALCULATE(SUM(FactSpend[Amount]), Scenario[ScenarioDescription]="Actual")')
-        sql = renderer.render(ast)
-        assert sql is None  # No path from FactSpend to Scenario
+        assert result is not None
+        assert result.filtered_table == "Scenario"
 
     def test_table_with_valid_relationship_resolves_and_adds_advisory(self):
         rel = OSIRelationship(
