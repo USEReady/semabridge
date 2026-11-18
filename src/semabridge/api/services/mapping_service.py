@@ -1070,6 +1070,10 @@ async def auto_map_compat(payload: dict):
     # from the latest model state are preserved.
     preview_mode = (not project_id) and dry_run and (bool(config_yaml) or bool(selected_model_names))
     sync_result: Dict[str, Any] = {}  # populated in project-backed branch; empty otherwise
+    # Set only by a successful pre-sync; the fallback below (pre-sync failed,
+    # project already has mappings) must still be able to build from the
+    # latest snapshot instead of raising UnboundLocalError.
+    preferred_snapshot_id = ""
     if project_id and not preview_mode:
         from semabridge.api.services.core_domain_service import sync_models
         try:
