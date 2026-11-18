@@ -43,7 +43,9 @@ def test_oauth_token_does_not_mutate_config():
     mock_response.raise_for_status.return_value = None
     
     # Attempt to acquire token (will fail at network layer, but that's ok)
-    with patch('semabridge.connectors.snowflake_connection._requests.post') as mock_post:
+    # _acquire_oauth_token imports requests locally (883b1e9), so patch the
+    # library function rather than a module attribute that no longer exists.
+    with patch('requests.post') as mock_post:
         mock_post.return_value = mock_response
         try:
             token = _acquire_oauth_token(config)
@@ -93,42 +95,45 @@ def test_concurrent_oauth_calls_no_state_pollution():
     results = {}
     errors = []
     
+    def _post(url, data=None, **kwargs):
+        response = Mock()
+        response.json.return_value = {
+            "access_token": f"token-{data['client_id']}",
+            "expires_in": 3600,
+        }
+        response.raise_for_status.return_value = None
+        return response
+
     def acquire_token(config, config_id):
         try:
-            mock_response = Mock()
-            mock_response.json.return_value = {
-                "access_token": f"token-{config_id}",
-                "expires_in": 3600
+            token = _acquire_oauth_token(config)
+            results[config_id] = {
+                'token': token,
+                'endpoint': config.oauth_token_endpoint,
+                'scope': config.oauth_scope,
             }
-            mock_response.raise_for_status.return_value = None
-            
-            with patch('semabridge.connectors.snowflake_connection._requests.post') as mock_post:
-                mock_post.return_value = mock_response
-                token = _acquire_oauth_token(config)
-                results[config_id] = {
-                    'token': token,
-                    'endpoint': config.oauth_token_endpoint,
-                    'scope': config.oauth_scope,
-                }
         except Exception as e:
             errors.append((config_id, str(e)))
-    
+
     # Run concurrent token acquisitions
     t1 = threading.Thread(target=acquire_token, args=(config1, 'config1'))
     t2 = threading.Thread(target=acquire_token, args=(config2, 'config2'))
     
-    t1.start()
-    t2.start()
-    t1.join()
-    t2.join()
+    # One patch for both threads: patching the same target from two threads
+    # at once races on restore.
+    with patch('requests.post', side_effect=_post):
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
     
     if errors:
         print(f"✗ FAIL: Errors during concurrent execution: {errors}")
         raise RuntimeError(f"Concurrent execution failed: {errors}")
     
     # Verify no state pollution
-    assert results['config1']['token'] == 'token-config1', "Config1 token incorrect"
-    assert results['config2']['token'] == 'token-config2', "Config2 token incorrect"
+    assert results['config1']['token'] == 'token-client-id-1', "Config1 token incorrect"
+    assert results['config2']['token'] == 'token-client-id-2', "Config2 token incorrect"
     assert results['config1']['endpoint'] is None, "Config1 endpoint was mutated"
     assert results['config2']['endpoint'] is None, "Config2 endpoint was mutated"
     

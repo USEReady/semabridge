@@ -42,7 +42,7 @@ def test_failed_snapshot_written_and_head_ignores_failed(model_repository, sampl
     assert failed_id in ids and success_id in ids
 
 
-def test_failed_snapshots_clear_payload(tmp_path, sample_sml_model):
+def test_failed_status_update_keeps_payload_but_failed_commit_stores_none(tmp_path, sample_sml_model):
     repo = ModelRepository(url_override=f"sqlite:///{tmp_path / 'failed_snapshot_payload.db'}")
 
     project_id = f"proj_failed_payload_{uuid.uuid4().hex[:8]}"
@@ -59,7 +59,11 @@ def test_failed_snapshots_clear_payload(tmp_path, sample_sml_model):
     failed_snapshot = repo.get_snapshot(snapshot_id)
     assert failed_snapshot is not None
     assert failed_snapshot.status == "failed"
-    assert failed_snapshot.sml_blob == {}
+    # Marking an existing snapshot failed after a failed deploy keeps its
+    # payload (1fc1482): the per-run report of a failed run is built from it
+    # (run_report_service reads get_snapshot(sml_snapshot_id).sml_blob).
+    assert failed_snapshot.sml_blob.get("unique_name") == sml["unique_name"]
+    assert repo.get_head(project_id) is None or repo.get_head(project_id).snapshot_id != snapshot_id
 
     committed_failed, failed_id = repo.commit_model(
         project_id,

@@ -29,4 +29,4 @@ def test_discover_snowflake_returns_actionable_error_for_missing_identity_accoun
 
     assert response.status_code == 400
     assert "No Snowflake account found for identity_id '241347f2-70b3-4bb5-9586-85bc50b2bd7b'." in response.json()['detail']
-    assert 'Settings -> Connections' in response.json()['detail']
+    assert 'Settings → Connections' in response.json()['detail']
