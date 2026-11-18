@@ -196,9 +196,13 @@ class PbixAdapter(SemanticSourceAdapter):
         from semabridge.reconciliation.dax_executor import execute_dax
 
         backend = "pbi_desktop"
+        params = dict(kwargs)
         if isinstance(target, dict):
-            backend = target.get("backend", "pbi_desktop")
-        res = execute_dax(query=query, backend=backend, **kwargs)
+            backend = target.get("backend", backend)
+            for k in ("port", "timeout", "dataset_id", "workspace", "workspace_id"):
+                if k in target and k not in params:
+                    params[k] = target[k]
+        res = execute_dax(query=query, backend=backend, **params)
         if not res.success:
             raise SourceQueryError(res.error or "DAX query failed against local Power BI Desktop backend")
         return {

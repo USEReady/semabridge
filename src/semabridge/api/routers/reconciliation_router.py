@@ -94,11 +94,11 @@ def _fabric_project_dax_target(project_id: Optional[str], backend: Optional[str]
 
 
 def _run_fabric_project_dax(target, query: str) -> Dict[str, Any]:
-    from semabridge.sources.base import SourceError
-    from semabridge.sources.fabric.dax_target import run_fabric_dax
+    from semabridge.sources.base import SourceError, get_source_adapter
 
     try:
-        return run_fabric_dax(target, query)
+        adapter = get_source_adapter("fabric")
+        return adapter.execute_dax(target, query)
     except SourceError as exc:
         raise HTTPException(status_code=400, detail=f"Fabric DAX on the project's model failed: {exc}") from exc
 
