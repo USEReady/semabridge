@@ -24,7 +24,7 @@ import json
 import threading
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from sqlalchemy import select, update, delete, and_, or_, func
 from sqlalchemy.orm import Session, sessionmaker
@@ -654,6 +654,23 @@ class ModelRepository:
                 )
             ).scalars().all()
             return {row.dataset_key: row.table_name for row in rows}
+
+    def get_tables_created_by_other_models(self, project_id: str, model_key: str) -> Set[str]:
+        """Physical tables (upper-case) that a sync of ANOTHER project/model
+        created as its own namespaced table (matched_by "created"). A new
+        model must not bind to these by a partial name match."""
+        from semabridge.repository.orm.models import TableBinding
+
+        with self._session() as session:
+            rows = session.execute(
+                select(TableBinding.project_id, TableBinding.model_key, TableBinding.table_name).where(
+                    TableBinding.matched_by == "created"
+                )
+            ).all()
+        return {
+            str(table).upper() for pid, mkey, table in rows
+            if table and not (pid == project_id and mkey == model_key)
+        }
 
     def save_table_bindings(self, project_id: str, model_key: str, bindings: List[Dict[str, Any]]) -> int:
         """Insert or update bindings ({dataset_key, dataset, table, matched_by})."""

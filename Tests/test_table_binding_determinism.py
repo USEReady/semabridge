@@ -4,6 +4,7 @@ import pytest
 from semabridge.connectors.schema_manager import SnowflakeSchemaManager, clear_schema_cache
 from semabridge.connectors.table_binding_resolver import (
     LiveSchemaMetadata,
+    clean_ident,
     compute_column_compatibility,
     resolve_dataset_to_physical_table,
 )
@@ -83,7 +84,8 @@ def test_cross_model_namespaced_tables_disambiguated_by_model_name():
         model_name="e124ae47cc9646bc9403600f2c8449b2_Competitive Marketing Analysis",
     )
     assert res == "COMPETITIVE_MARKETING_ANALYSIS_DATE"
-    assert meta.binding_log["DATE"]["matched_by"] == "model namespace"
+    # The log is keyed by clean_ident ('Date' is the reserved word -> COL_DATE).
+    assert meta.binding_log[clean_ident("Date")]["matched_by"] == "model namespace"
 
     # Core finance model resolves to its own table
     res_finance = resolve_dataset_to_physical_table(
@@ -241,3 +243,54 @@ def test_new_model_is_not_bound_to_other_models_namespaced_tables():
     # Once its own table exists, it binds to it.
     meta["CORPORATE_SPEND_DATE"] = {"DATE", "YEAR", "MONTH"}
     assert resolve_dataset_to_physical_table("Date", date_cols, meta, model_name=model) == "CORPORATE_SPEND_DATE"
+
+
+def test_single_other_models_namespaced_table_is_not_bound_by_a_partial_name():
+    # Only ONE candidate, another model's namespaced Date table matched by
+    # its name ending: no tie, but binding would still tie this model to that
+    # model's table. It counts as missing (the model gets its own table).
+    date_cols = ["Date", "Year", "Month"]
+    model = "62a7005cf6b5460ab0af1e2826be4411_Corporate Spend"
+    meta = LiveSchemaMetadata({"CORE_FINANCE_V1_DATE": {"DATE", "YEAR", "MONTH"}})
+    assert resolve_dataset_to_physical_table("Date", date_cols, meta, model_name=model) == "Date"
+    assert meta.binding_log == {}
+
+    # A user table with a single-word prefix still binds (DIM_DATE for 'Date').
+    meta = LiveSchemaMetadata({"DIM_DATE": {"DATE", "YEAR", "MONTH"}})
+    assert resolve_dataset_to_physical_table("Date", date_cols, meta, model_name=model) == "DIM_DATE"
+
+    # ...unless another model created it (known from table_bindings).
+    meta = LiveSchemaMetadata({"SPEND_DATE": {"DATE", "YEAR", "MONTH"}})
+    meta.other_model_tables.add("SPEND_DATE")
+    assert resolve_dataset_to_physical_table("Date", date_cols, meta, model_name=model) == "Date"
+
+    # Without a model name nothing changes, and an exact name always binds.
+    meta = LiveSchemaMetadata({"CORE_FINANCE_V1_DATE": {"DATE", "YEAR", "MONTH"}})
+    assert resolve_dataset_to_physical_table("Date", date_cols, meta) == "CORE_FINANCE_V1_DATE"
+    meta = LiveSchemaMetadata({"DATE": {"DATE", "YEAR", "MONTH"}, "CORE_FINANCE_V1_DATE": {"DATE", "YEAR", "MONTH"}})
+    assert resolve_dataset_to_physical_table("Date", date_cols, meta, model_name=model) == "DATE"
+
+
+def test_tables_created_by_other_models_come_from_table_bindings():
+    from semabridge.repository.model_repository import ModelRepository
+    from semabridge.repository.orm.base import Base
+    from semabridge.repository.orm.models import TableBinding
+    from semabridge.repository.orm.session_factory import db_manager
+
+    Base.metadata.create_all(db_manager.get_engine())
+    repo = ModelRepository()
+    repo.save_table_bindings("p-bind", "FINANCE", [
+        {"dataset_key": "DATE", "dataset": "Date", "table": "CORE_FINANCE_V1_DATE", "matched_by": "created"},
+        {"dataset_key": "SALES", "dataset": "Sales", "table": "DIM_SALES", "matched_by": "columns"},
+    ])
+    repo.save_table_bindings("p-bind", "SPEND", [
+        {"dataset_key": "DATE", "dataset": "Date", "table": "CORPORATE_SPEND_DATE", "matched_by": "created"},
+    ])
+    try:
+        others = repo.get_tables_created_by_other_models("p-bind", "SPEND")
+        assert "CORE_FINANCE_V1_DATE" in others
+        assert "DIM_SALES" not in others and "CORPORATE_SPEND_DATE" not in others
+    finally:
+        with db_manager.get_session() as s:
+            s.query(TableBinding).filter(TableBinding.project_id == "p-bind").delete()
+            s.commit()

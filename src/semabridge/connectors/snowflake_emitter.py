@@ -1535,8 +1535,16 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
         from semabridge.repository.model_repository import ModelRepository
 
         project_id, model_key = self.binding_scope
-        pins = ModelRepository().get_table_bindings(project_id, model_key)
+        repo = ModelRepository()
+        pins = repo.get_table_bindings(project_id, model_key)
         self._live_schema_metadata.pinned_bindings.update(pins)
+        try:
+            others = repo.get_tables_created_by_other_models(project_id, model_key)
+            known = getattr(self._live_schema_metadata, "other_model_tables", None)
+            if known is not None:
+                known.update(others)
+        except Exception as exc:  # noqa: BLE001 -- the name heuristic still applies
+            logger.debug("Other models' tables not loaded for %s/%s: %s", project_id, model_key, exc)
         if pins:
             logger.info("Reusing %d saved table binding(s) for %s/%s", len(pins), project_id, model_key)
 

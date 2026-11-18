@@ -121,6 +121,10 @@ class LiveSchemaMetadata(dict):
         # type differs from the model (a date stored as TEXT, ...).
         self.column_types: Dict[str, Dict[str, str]] = {}
 
+        # Upper-case names of tables other SemaBridge models created as their
+        # own namespaced tables (table_bindings matched_by "created").
+        self.other_model_tables: Set[str] = set()
+
 
 
     def clear(self) -> None:
@@ -128,6 +132,8 @@ class LiveSchemaMetadata(dict):
         super().clear()
 
         self.pinned_bindings.clear()
+
+        self.other_model_tables.clear()
 
         self.row_counts.clear()
 
@@ -404,6 +410,29 @@ def rank_table_candidates(
 
 
 
+def _is_other_models_table(table: str, dataset_name: str, live_schema_metadata: Any) -> bool:
+    """True when ``table`` is another SemaBridge model's namespaced copy of
+    ``dataset_name``: a table another model created (table_bindings, carried
+    on the metadata as ``other_model_tables``), else -- when that is unknown
+    -- a table named ``<PREFIX>_<DATASET>`` whose prefix is a multi-word
+    identifier (CORE_FINANCE_V1_DATE for 'Date'). A single-word prefix
+    (DIM_DATE, SPEND_DATE) is taken as a user table and still binds."""
+    upper = str(table or "").upper()
+    known = getattr(live_schema_metadata, "other_model_tables", None) or set()
+    if upper in known:
+        return True
+    from semabridge.utils.identifiers import IdentifierSanitizer
+
+    # Raw aliases: 'Date' must stay DATE here, not the reserved-word COL_DATE.
+    sanitizer = IdentifierSanitizer(suppress_reserved=False)
+    suffix = sanitizer.to_alias(dataset_name).upper()
+    clean_tbl = sanitizer.to_alias(table).upper()
+    if not suffix or not clean_tbl.endswith(f"_{suffix}"):
+        return False
+    prefix = clean_tbl[: -(len(suffix) + 1)].strip("_")
+    return len([part for part in prefix.split("_") if part]) >= 2
+
+
 def _is_viable(candidate: Dict[str, Any]) -> bool:
 
     return candidate["col_compat"] >= 0.8
@@ -555,7 +584,25 @@ def resolve_dataset_to_physical_table(
                 return dataset_name
             raise TableBindingAmbiguityError(dataset_name, tied)
 
-        matched_by = "model namespace" if best.get("name_score") == 85 else "columns"
+        if (
+            model_name
+            and 0 < best["name_score"] < 85
+            and not best.get("model_match")
+            and _is_other_models_table(best["table"], dataset_name, live_schema_metadata)
+        ):
+            # The only candidate is another SemaBridge model's namespaced
+            # table matched by its name ending (e.g. 'Date' vs
+            # CORE_FINANCE_V1_DATE): binding would tie this model to that
+            # model's table. Treat it as missing, like the tie case above:
+            # this model gets its own <NAMESPACE>_<TABLE>.
+            logger.info(
+                "No table of model '%s' for '%s'; the only partial match %s belongs to another model. "
+                "Treating it as missing so this model gets its own table.",
+                model_name, dataset_name, best["table"],
+            )
+            return dataset_name
+
+        matched_by ="model namespace" if best.get("name_score") == 85 else "columns"
         logger.debug(
             "Generic table binding: '%s' -> '%s' (col_compat=%.2f, name_score=%d, matched_by=%s)",
             dataset_name, best["table"], best["col_compat"], best["name_score"], matched_by,
