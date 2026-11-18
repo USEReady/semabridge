@@ -104,14 +104,19 @@ def test_unreachable_table_metric_predicted_as_drop_during_ddl_emission():
         is_osi=False,
     )
 
-    # 1. Verify drop_ledger recorded KPI01 at DDL_EMISSION stage
+    # 1. Since 7939c36 ("metrics never fail a sync") an unreachable-table
+    # metric is kept as a CAST(NULL AS DOUBLE) placeholder and ledgered as a
+    # "placeholder: ..." entry (recorded via _record_placeholder at the
+    # DAX_TRANSLATION stage) instead of being dropped from the DDL.
     recorded_drops = drop_ledger.to_json()
     kpi_drop = next((d for d in recorded_drops if d.get("entity_name") == "KPI01"), None)
-    assert kpi_drop is not None, "Expected KPI01 to be recorded in drop_ledger during DDL_EMISSION"
-    assert kpi_drop["stage"] == DropStage.DDL_EMISSION.value
-    assert ("reachable" in kpi_drop["reason"].lower() or "unsupported kpi pattern" in kpi_drop["reason"].lower())
+    assert kpi_drop is not None, "Expected KPI01 to be recorded in drop_ledger"
+    assert kpi_drop["stage"] == DropStage.DAX_TRANSLATION.value
+    assert kpi_drop["reason"].startswith("placeholder:")
+    assert "reachable" in kpi_drop["reason"].lower()
 
-    # 2. Verify DDL does NOT emit CAST(NULL AS DOUBLE) placeholder for KPI01, and emits valid expression for TOTAL_UNITS_YTD
+    # 2. KPI01 is a NULL placeholder; TOTAL_UNITS_YTD keeps its real expression
     ddl_text = "\n".join(lines)
-    assert 'CAST(NULL AS DOUBLE)' not in ddl_text
+    assert 'KPI."KPI01" AS CAST(NULL AS DOUBLE)' in ddl_text
+    assert 'CAST(NULL AS DOUBLE)' not in next(l for l in lines if "TOTAL_UNITS_YTD" in l)
     assert 'SALESFACT."TOTAL_UNITS_YTD" AS SUM(CASE WHEN SALESFACT.IS_YTD THEN SALESFACT.UNITS ELSE NULL END::FLOAT)' in ddl_text

@@ -28,14 +28,29 @@ class DummySanitizer:
         return f'{alias}."{col}"'
 
 
-def _builder():
+def _builder(enriched_view_mapping=None):
+    # Since 44926a9 (enrichment fallback) a flag-column metric is only
+    # emitted when its fact is actually routed to an enriched view in the
+    # TABLES clause; the default here is the normal deploy shape where it is.
+    if enriched_view_mapping is None:
+        enriched_view_mapping = {"SalesFact": "SALESFACT_ENRICHED"}
     return MetricsClauseBuilder(
         identifier_sanitizer=IdentifierSanitizer(),
         schema_manager=None,
         sanitizer=DummySanitizer(),
         translator=MetricExpressionTranslator(identifier_sanitizer=IdentifierSanitizer()),
         config=SimpleNamespace(database="DB", schema_name="SCHEMA"),
+        enriched_view_mapping=enriched_view_mapping,
     )
+
+
+def _placeholder_lines(lines, column):
+    """Lines that still use `column` in a real SQL expression (not just in
+    the COMMENT of a CAST(NULL AS DOUBLE) placeholder)."""
+    return [
+        line for line in lines
+        if column in line.split(" COMMENT =")[0] and "CAST(NULL AS DOUBLE)" not in line
+    ]
 
 
 def _model(metrics):
@@ -131,11 +146,42 @@ def test_metric_with_a_genuinely_unknown_column_is_still_hard_dropped():
         emittable_metric_name_set=set(),
     )
 
-    assert not any("TOTALLY_MADE_UP_COLUMN" in line for line in lines)
+    # Since 7939c36 ("metrics never fail a sync") an unresolvable metric is
+    # emitted as a CAST(NULL AS DOUBLE) placeholder and ledgered as
+    # "placeholder: ..." instead of vanishing; the bad column must never
+    # reach a real SQL expression.
+    assert _placeholder_lines(lines, "TOTALLY_MADE_UP_COLUMN") == []
+    assert any("CAST(NULL AS DOUBLE)" in line for line in lines)
     dropped = builder.drop_ledger.to_json()
     assert len(dropped) == 1
     assert dropped[0]["entity_name"] == "Bogus Metric"
+    assert dropped[0]["reason"].startswith("placeholder:")
     assert metric.advisory_categories == []  # no false-positive advisory tagging
+
+
+def test_flag_column_metric_without_enriched_view_routing_is_a_placeholder():
+    """44926a9: when the fact is NOT routed to an enriched view (e.g. the
+    enrichment failed), the flag column cannot exist, so the metric becomes
+    a NULL placeholder with that reason instead of shipping SQL that
+    Snowflake would reject."""
+    metric = _flag_column_metric()
+    builder = _builder(enriched_view_mapping={})
+
+    lines = builder.build_for_sml(
+        _model([metric]),
+        dataset_aliases=_DATASET_ALIASES,
+        dataset_by_name=_DATASET_BY_NAME,
+        dataset_col_lookup=_DATASET_COL_LOOKUP,
+        alias_by_raw={},
+        all_physical_col_names={"UNITS", "COL_DATE"},
+        emittable_metric_name_set=set(),
+    )
+
+    assert _placeholder_lines(lines, "IS_YTD") == []
+    dropped = builder.drop_ledger.to_json()
+    assert len(dropped) == 1
+    assert "not pointing to an enriched view" in dropped[0]["reason"]
+    assert metric.advisory_categories == []
 
 
 def test_metric_whose_shape_predicts_a_different_flag_column_is_still_hard_dropped():
