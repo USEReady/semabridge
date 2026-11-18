@@ -18,8 +18,10 @@ class _FakeEngine:
 
 def _stub_connector(monkeypatch, tmsl):
     class _FakeConnector:
-        def __init__(self, cfg):
+        # 8628faf passes drop_ledger= to LocalPBIXConnector.
+        def __init__(self, cfg, drop_ledger=None):
             self.cfg = cfg
+            self.drop_ledger = drop_ledger
 
         def discover(self):
             return {"raw_tmsl": tmsl, "field_aliases": []}
@@ -87,7 +89,9 @@ def test_extract_pbix_creates_source_namespace_when_missing(monkeypatch, tmp_pat
     """
     pbix_file = tmp_path / "OnlyModel.pbix"
     pbix_file.write_bytes(b"stub")
-    _stub_connector(monkeypatch, {"model": {"tables": []}})
+    # A table-less model is rejected since 30231c8; these tests are about the
+    # source-path writeback, so give the model a table.
+    _stub_connector(monkeypatch, {"model": {"tables": [{"name": "Sales", "measures": []}]}})
 
     config = SimpleNamespace()  # no .source attribute at all
     context = _make_context(config)
@@ -104,7 +108,9 @@ def test_extract_pbix_falls_back_to_existing_source_path_when_no_explicit_arg(mo
     """
     pbix_file = tmp_path / "LegacyModel.pbix"
     pbix_file.write_bytes(b"stub")
-    _stub_connector(monkeypatch, {"model": {"tables": []}})
+    # A table-less model is rejected since 30231c8; these tests are about the
+    # source-path writeback, so give the model a table.
+    _stub_connector(monkeypatch, {"model": {"tables": [{"name": "Sales", "measures": []}]}})
 
     config = SimpleNamespace(source=SimpleNamespace(pbix_path=str(pbix_file)))
     context = _make_context(config)

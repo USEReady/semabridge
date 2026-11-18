@@ -106,13 +106,11 @@ def test_snowflake_diffing():
     assert len(added_metrics) == 1
     assert added_metrics[0]["name"] == "total_revenue"
     
-    # "total_orders" should be modified, generating 2 rows: modified_in_1 and modified_in_2
-    modified_m1 = [m for m in metrics_diff if m.get("_diff_status") == "modified_in_1"]
-    modified_m2 = [m for m in metrics_diff if m.get("_diff_status") == "modified_in_2"]
+    # "total_orders" is modified: one row with the changes inline (b63bbe2 replaced
+    # the modified_in_1 / modified_in_2 row pair with a single "modified" row).
+    modified_m1 = [m for m in metrics_diff if m.get("_diff_status") == "modified"]
     assert len(modified_m1) == 1
-    assert len(modified_m2) == 1
     assert modified_m1[0]["name"] == "total_orders"
-    assert modified_m2[0]["name"] == "total_orders"
     
     # Ensure changes are tracked
     assert len(modified_m1[0]["_changes"]) > 0

@@ -66,8 +66,9 @@ def test_fabric_model_name_propagated_to_osi():
 
 def test_fabric_model_name_fallback_without_display_name():
     """
-    Without display_name in source_data, the converter falls back to model_obj['name'].
-    This test documents the existing fallback behaviour.
+    Without display_name in source_data, the unique_name falls back to the
+    dataset_id, not the TMSL model name (a6ce511: a Fabric definition's
+    model.name is often a generic placeholder); the TMSL name stays the label.
     """
     from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
 
@@ -81,15 +82,16 @@ def test_fabric_model_name_fallback_without_display_name():
 
     osi = TMSLToOSIConverter().to_osi(source_data)
 
-    # model_obj["name"] = "continent" so this still works
-    assert osi.unique_name == "continent"
+    assert osi.unique_name == "abc-123"
+    assert osi.label == "continent"
 
 
 def test_fabric_model_name_fallback_when_tmsl_name_empty():
     """
-    When TMSL model.name is empty AND display_name is absent, the fallback
-    'FabricModel' is used. The fix ensures display_name is always passed so
-    this fallback is never reached in the normal pipeline.
+    When TMSL model.name is empty AND display_name is absent, the unique_name
+    is the dataset_id (a6ce511) and only the label falls back to
+    'FabricModel'. The pipeline always passes display_name, so this fallback
+    is never reached there.
     """
     from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
 
@@ -100,9 +102,8 @@ def test_fabric_model_name_fallback_when_tmsl_name_empty():
         "dataset_id": "abc-123",
     }
     osi_bad = TMSLToOSIConverter().to_osi(source_data_without_display)
-    assert osi_bad.unique_name == "FabricModel", (
-        "Without display_name and with empty TMSL name, fallback should be 'FabricModel'"
-    )
+    assert osi_bad.unique_name == "abc-123"
+    assert osi_bad.label == "FabricModel"
 
     # With the fix: display_name from sf.dataset_name is passed explicitly
     source_data_with_display = {

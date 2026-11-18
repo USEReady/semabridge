@@ -9,10 +9,13 @@ from semabridge.sml.models import SMLModel
 
 
 class _EmitterWithoutCortexMethod:
+    """Stub emitter. Target conversion builds DDLs with generate_ddls_live
+    (the live-schema build, 230d12e), not generate_ddls."""
+
     def __init__(self, *_args, **_kwargs):
         pass
 
-    def generate_ddls(self, _sml):
+    def generate_ddls_live(self, _sml):
         return ["CREATE OR REPLACE VIEW test_view AS SELECT 1"]
 
     def generate_cortex_yaml(self, _sml):
@@ -65,7 +68,7 @@ class _SnapshotStatusRecorder:
         return True
 
 
-def test_convert_to_snowflake_target_falls_back_when_emitter_lacks_cortex_method(
+def test_convert_to_snowflake_target_stages_ddl_and_cortex_yaml(
     monkeypatch,
     tmp_path,
 ):
@@ -91,10 +94,6 @@ def test_convert_to_snowflake_target_falls_back_when_emitter_lacks_cortex_method
     monkeypatch.setattr(
         "semabridge.connectors.snowflake_emitter.SnowflakeEmitter",
         _EmitterWithoutCortexMethod,
-    )
-    monkeypatch.setattr(
-        "semabridge.connectors.snowflake_emitter_parts.renderers.generate_cortex_yaml",
-        lambda _emitter, _sml: "name: demo-model\n",
     )
     monkeypatch.setattr(ExecutionEngine, "_model_output_dir", lambda self, *args, **kwargs: tmp_path)
 
