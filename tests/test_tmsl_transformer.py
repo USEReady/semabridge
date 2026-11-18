@@ -456,14 +456,16 @@ class TestTMSLTransformerAutomatedTranslation:
         return TMSLTransformer()
 
     def test_automated_translation_uses_safe_alias(self, transformer) -> None:
-        """Automated translation emits lowercase alias + quoted identifiers."""
+        """Automated translation emits the to_alias() alias + quoted identifiers."""
         sml = transformer.transform(_TMSL_SALESFACT, "ws-1", "ds-1")
         metric = next(
             (m for m in sml.metrics if m.unique_name == "Score Total"), None
         )
         assert metric is not None
         assert metric.sql_expression is not None
-        assert 'salesfact."SCORE"' in metric.sql_expression
+        # Aliases come from to_alias(), upper-case since 2afb203 ("single
+        # authoritative rule"); the column stays quoted.
+        assert 'SALESFACT."SCORE"' in metric.sql_expression
         assert "SALESFACT.SCORE" not in metric.sql_expression
 
     def test_transform_does_not_accept_metric_overrides(self, transformer) -> None:
@@ -491,5 +493,7 @@ class TestTMSLTransformerAutomatedTranslation:
         )
         assert metric is not None
         assert metric.sql_expression is not None
-        assert 'salesfact."SCORE"' in metric.sql_expression
+        # Aliases come from to_alias(), upper-case since 2afb203 ("single
+        # authoritative rule"); the column stays quoted.
+        assert 'SALESFACT."SCORE"' in metric.sql_expression
         assert "SALESFACT.SCORE" not in metric.sql_expression

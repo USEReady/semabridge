@@ -140,7 +140,9 @@ class TestTMSLToOSI:
         assert len(osi.metrics) == 1
         metric = osi.metrics[0]
         assert metric.unique_name == "Broken Measure"
-        assert metric.expression == "[Broken Measure]"
+        # Placeholder is BLANK() since 2afb203 (the old "[Broken Measure]"
+        # placeholder was a self-reference, i.e. a dependency cycle).
+        assert metric.expression == "BLANK()"
 
     def test_summarize_by_columns_become_metrics_not_dimensions(self, converter):
         """Fabric Aggregation columns should emit as metrics and be excluded from dimensions."""

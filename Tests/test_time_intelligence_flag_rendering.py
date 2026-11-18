@@ -86,15 +86,13 @@ def test_totalytd_direct_aggregate_uses_flag_column_when_provided():
 
 
 def test_totalytd_direct_aggregate_anchor_matches_dax_rule_translator_exactly():
-    """The two independent implementations must anchor identically (after
-    normalizing the one pre-existing, unrelated difference between them:
-    date-column qualification style -- COL_DATE."COL_DATE" here vs. a bare
-    "COL_DATE" in the regex-based rule engine, which has no table-alias
-    context for the date dimension)."""
+    """The two independent implementations must anchor identically. The
+    rule engine now qualifies the date column with its table alias too
+    (it used to emit a bare "COL_DATE"), so no normalization is needed."""
     dax = "TOTALYTD(SUM('SalesFact'[Units]), 'Date'[Date])"
     ast_condition = _case_when_condition(_render(dax))
     rule_condition = _case_when_condition(translate_time_intelligence_with_anchors(dax, "SALESFACT"))
-    assert ast_condition.replace('COL_DATE."COL_DATE"', '"COL_DATE"') == rule_condition
+    assert ast_condition == rule_condition
 
 
 # ---------------------------------------------------------------------------
