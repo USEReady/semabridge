@@ -28,45 +28,114 @@ from semabridge.core.execution_engine import ExecutionEngine
 from semabridge.sml.models import DataType, SMLColumn, SMLDataset, SMLMetric, SMLModel
 
 
+# project_runs_impl is a re-export shim (4203016 split it into
+# mapping_service / run_service / snapshot_service / ... and project_shared).
+# The functions read their globals from the module that defines them, so a
+# patch on the shim alone is invisible to them: patch every module that has
+# the name.
+from semabridge.api.services import (  # noqa: E402
+    folder_service as _folder_service,
+    mapping_service as _mapping_service,
+    project_shared as _project_shared,
+    run_service as _run_service,
+    schedule_service as _schedule_service,
+    snapshot_service as _snapshot_service,
+    version_service as _version_service,
+)
+
+_COMPAT_MODULES = (
+    pri,
+    _project_shared,
+    _mapping_service,
+    _run_service,
+    _snapshot_service,
+    _version_service,
+    _folder_service,
+    _schedule_service,
+)
+
+
+@pytest.fixture(autouse=True)
+def _release_project_lease():
+    """A run started here with a stubbed background runner never finishes,
+    so its project lease would block the next test's run ("already
+    running"). Release it after each test."""
+    yield
+    from semabridge.core import run_coordination
+
+    run_coordination.release_leases(key=run_coordination.project_lease_key("project-1"))
+
+
+def _patch_compat(monkeypatch, name, value):
+    patched = False
+    for module in _COMPAT_MODULES:
+        if hasattr(module, name):
+            monkeypatch.setattr(module, name, value)
+            patched = True
+    assert patched, f"no compat module defines {name}"
+
+
 @pytest.mark.asyncio
 async def test_run_sync_injects_mappings_overrides_into_config(monkeypatch):
+    """A SYNC run executes the project config with the user's saved mapping
+    edits merged into mappings_overrides.
+
+    Since 306915b the edits are read from the mapping_overrides table
+    (project_config_store.list_overrides), not the JSON mapping store, and
+    the run start passes a dry-run gate and duplicate-sync checks first;
+    those are stubbed here -- this test is about the config handed to the run.
+    """
     captured: dict = {}
 
-    monkeypatch.setattr(pri, "_compat_projects", {"project-1": {"name": "proj", "source": "fabric"}})
-    monkeypatch.setattr(
-        pri,
+    _patch_compat(monkeypatch, "_compat_projects", {"project-1": {"name": "proj", "source": "fabric"}})
+    _patch_compat(
+        monkeypatch,
         "_compat_project_configs",
         {
             "project-1": "project_name: proj\nsource:\n  type: fabric\ntarget:\n  type: snowflake\n",
         },
     )
+    _patch_compat(monkeypatch, "_compat_load_modular_project", lambda project_id: None)
+
+    from semabridge.api.services import project_config_store
+
     monkeypatch.setattr(
-        pri,
-        "_compat_mappings",
-        {
-            "m-1": {
-                "id": "m-1",
-                "project_id": "project-1",
+        project_config_store,
+        "list_overrides",
+        lambda project_id: [
+            {
+                "project_id": project_id,
                 "source_path": "metrics.Revenue",
                 "target_name": "REV_TOTAL",
                 "entity_kind": "metric",
                 "source_name": "Revenue",
-                "is_user_edited": True,
             }
-        },
+        ] if project_id == "project-1" else [],
     )
 
-    def fake_create_project_run(project_id, schedule_label="Manual", run_type="SYNC", project_cfg_override=None, restore_snapshot_id=None):
+    async def fake_assert_sync_ready(project_id, config_override, force=False):
+        return project_id
+
+    async def fake_sync_safety_checks(project_id, config_override, payload, **kwargs):
+        return {"sync_mode": "copy", "promoted_models": []}
+
+    _patch_compat(monkeypatch, "_assert_sync_ready", fake_assert_sync_ready)
+    _patch_compat(monkeypatch, "_sync_safety_checks", fake_sync_safety_checks)
+
+    def fake_create_project_run(project_id, schedule_label="Manual", run_type="SYNC", project_cfg_override=None, **kwargs):
         captured["project_id"] = project_id
         captured["project_cfg_override"] = project_cfg_override
         return ({"id": "run-1", "project_id": project_id}, project_cfg_override or "", 0.0)
 
-    monkeypatch.setattr(pri, "_create_project_run", fake_create_project_run)
+    _patch_compat(monkeypatch, "_create_project_run", fake_create_project_run)
+    _patch_compat(monkeypatch, "_run_project_background", lambda *args, **kwargs: None)
 
     background_tasks = BackgroundTasks()
     result = await pri.run_project_now_compat("project-1", background_tasks, payload={"run_type": "SYNC"})
 
-    assert result["status"] == "running"
+    # A new run is "queued" until it gets an execution slot.
+    assert result["status"] == "queued"
+    assert captured["project_id"] == "project-1"
     cfg = str(captured.get("project_cfg_override") or "")
     assert "mappings_overrides:" in cfg
     assert "source_path: metrics.Revenue" in cfg

@@ -7,6 +7,8 @@ import types
 import pytest
 from fastapi import HTTPException
 
+from semabridge.domain.exceptions import ExternalServiceError
+
 
 os.environ.setdefault("SEMABRIDGE_DATABASE_URL", "sqlite:///./test_project_runs_dry_run.sqlite")
 
@@ -24,6 +26,65 @@ if "psycopg2" not in sys.modules:
 
 from semabridge.api.services import project_runs_impl as pri
 from semabridge.api.services import core_domain_service
+
+
+# project_runs_impl is a re-export shim (4203016 split it into
+# mapping_service / run_service / snapshot_service / ... and project_shared).
+# The functions read their globals from the module that defines them, so a
+# patch on the shim alone is invisible to them: patch every module that has
+# the name.
+from semabridge.api.services import (  # noqa: E402
+    folder_service as _folder_service,
+    mapping_service as _mapping_service,
+    project_shared as _project_shared,
+    run_service as _run_service,
+    schedule_service as _schedule_service,
+    snapshot_service as _snapshot_service,
+    version_service as _version_service,
+)
+
+_COMPAT_MODULES = (
+    pri,
+    _project_shared,
+    _mapping_service,
+    _run_service,
+    _snapshot_service,
+    _version_service,
+    _folder_service,
+    _schedule_service,
+)
+
+
+@pytest.fixture(autouse=True)
+def _orm_schema():
+    """The run-start path queries the snapshots table (duplicate-sync
+    check); create the ORM tables on the in-memory test DB so this file does
+    not depend on an earlier test having created them."""
+    from semabridge.repository.orm.base import Base
+    from semabridge.repository.orm.session_factory import db_manager
+
+    Base.metadata.create_all(bind=db_manager.get_engine())
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _release_project_lease():
+    """A run started here with a stubbed background runner never finishes,
+    so its project lease would block the next test's run ("already
+    running"). Release it after each test."""
+    yield
+    from semabridge.core import run_coordination
+
+    run_coordination.release_leases(key=run_coordination.project_lease_key("project-1"))
+
+
+def _patch_compat(monkeypatch, name, value):
+    patched = False
+    for module in _COMPAT_MODULES:
+        if hasattr(module, name):
+            monkeypatch.setattr(module, name, value)
+            patched = True
+    assert patched, f"no compat module defines {name}"
 
 
 @pytest.mark.asyncio
@@ -55,9 +116,9 @@ async def test_auto_map_dry_run_prefers_project_backed_mappings(monkeypatch):
             "collisions": [],
         }
 
-    monkeypatch.setattr(pri, "build_entity_mappings", fake_build_entity_mappings)
-    monkeypatch.setattr(pri, "_compat_build_project_entity_mappings", fake_compat_build_project_entity_mappings)
-    monkeypatch.setattr(pri, "_compat_projects", {"project-1": {"name": "legacy", "source": "pbix"}})
+    _patch_compat(monkeypatch, "build_entity_mappings", fake_build_entity_mappings)
+    _patch_compat(monkeypatch, "_compat_build_project_entity_mappings", fake_compat_build_project_entity_mappings)
+    _patch_compat(monkeypatch, "_compat_projects", {"project-1": {"name": "legacy", "source": "pbix"}})
 
     payload = {
         "project_id": "project-1",
@@ -106,9 +167,9 @@ async def test_run_project_now_blocks_when_dry_run_has_blockers(monkeypatch):
     def fail_create_run(*args, **kwargs):
         raise AssertionError("_create_project_run must not be called when blockers exist")
 
-    monkeypatch.setattr(pri, "_compat_ensure_loaded", lambda: None)
-    monkeypatch.setattr(pri, "auto_map_compat", fake_auto_map)
-    monkeypatch.setattr(pri, "_create_project_run", fail_create_run)
+    _patch_compat(monkeypatch, "_compat_ensure_loaded", lambda: None)
+    _patch_compat(monkeypatch, "auto_map_compat", fake_auto_map)
+    _patch_compat(monkeypatch, "_create_project_run", fail_create_run)
 
     with pytest.raises(HTTPException) as exc_info:
         await pri.run_project_now_compat("project-1", DummyBackgroundTasks(), payload={"dry_run": False})
@@ -154,21 +215,21 @@ async def test_run_project_now_starts_run_when_dry_run_has_no_blockers(monkeypat
             "2026-04-24T00:00:00Z",
         )
 
-    monkeypatch.setattr(pri, "_compat_ensure_loaded", lambda: None)
-    monkeypatch.setattr(pri, "auto_map_compat", fake_auto_map)
-    monkeypatch.setattr(pri, "_create_project_run", fake_create_run)
+    _patch_compat(monkeypatch, "_compat_ensure_loaded", lambda: None)
+    _patch_compat(monkeypatch, "auto_map_compat", fake_auto_map)
+    _patch_compat(monkeypatch, "_create_project_run", fake_create_run)
     scheduled = {}
 
     def fake_run_project_background(*args, **kwargs):
         scheduled["args"] = args
         scheduled["kwargs"] = kwargs
 
-    monkeypatch.setattr(pri, "_run_project_background", fake_run_project_background)
-    monkeypatch.setattr(pri, "_compat_load_modular_project", lambda project_id: None)
-    monkeypatch.setattr(pri, "_compat_load_repo_yaml_text", lambda: "")
-    monkeypatch.setattr(pri, "_compat_apply_manual_mapping_overrides_to_cfg", lambda cfg, project_id: cfg)
-    monkeypatch.setattr(pri, "_compat_project_configs", {})
-    monkeypatch.setattr(pri, "_compat_projects", {"project-1": {"name": "p1"}})
+    _patch_compat(monkeypatch, "_run_project_background", fake_run_project_background)
+    _patch_compat(monkeypatch, "_compat_load_modular_project", lambda project_id: None)
+    _patch_compat(monkeypatch, "_compat_load_repo_yaml_text", lambda: "")
+    _patch_compat(monkeypatch, "_compat_apply_manual_mapping_overrides_to_cfg", lambda cfg, project_id: cfg)
+    _patch_compat(monkeypatch, "_compat_project_configs", {})
+    _patch_compat(monkeypatch, "_compat_projects", {"project-1": {"name": "p1"}})
 
     background_tasks = DummyBackgroundTasks()
     result = await pri.run_project_now_compat("project-1", background_tasks, payload={"dry_run": False})
@@ -189,14 +250,12 @@ async def test_restore_project_version_schedules_detached_background_runner(monk
         def add_task(self, func, *args, **kwargs):
             self.calls.append((func, args, kwargs))
 
-    monkeypatch.setattr(pri, "_compat_ensure_loaded", lambda: None)
-    monkeypatch.setattr(pri, "_compat_save_store", lambda: None)
-    monkeypatch.setattr(pri, "_compat_now_iso", lambda: "2026-05-25T00:00:00Z")
-    monkeypatch.setattr(pri, "_compat_project_configs", {"project-1": "project_name: p1"})
-    monkeypatch.setattr(pri, "_compat_projects", {"project-1": {"id": "project-1", "name": "p1", "updated_at": None}})
-    monkeypatch.setattr(
-        pri,
-        "_compat_project_snapshots",
+    _patch_compat(monkeypatch, "_compat_ensure_loaded", lambda: None)
+    _patch_compat(monkeypatch, "_compat_save_store", lambda: None)
+    _patch_compat(monkeypatch, "_compat_now_iso", lambda: "2026-05-25T00:00:00Z")
+    _patch_compat(monkeypatch, "_compat_project_configs", {"project-1": "project_name: p1"})
+    _patch_compat(monkeypatch, "_compat_projects", {"project-1": {"id": "project-1", "name": "p1", "updated_at": None}})
+    _patch_compat(monkeypatch, "_compat_project_snapshots",
         {
             "project-1": [
                 {
@@ -207,8 +266,8 @@ async def test_restore_project_version_schedules_detached_background_runner(monk
             ]
         },
     )
-    monkeypatch.setattr(pri, "_compat_default_project_yaml", lambda project: "project_name: default")
-    monkeypatch.setattr(pri, "_compat_sync_mode_for_restore_snapshot", lambda *args, **kwargs: "copy")
+    _patch_compat(monkeypatch, "_compat_default_project_yaml", lambda project: "project_name: default")
+    _patch_compat(monkeypatch, "_compat_sync_mode_for_restore_snapshot", lambda *args, **kwargs: "copy")
 
     def fake_create_project_run(*args, **kwargs):
         return (
@@ -217,12 +276,12 @@ async def test_restore_project_version_schedules_detached_background_runner(monk
             0.0,
         )
 
-    monkeypatch.setattr(pri, "_create_project_run", fake_create_project_run)
+    _patch_compat(monkeypatch, "_create_project_run", fake_create_project_run)
 
     def fake_run_project_background(*args, **kwargs):
         return None
 
-    monkeypatch.setattr(pri, "_run_project_background", fake_run_project_background)
+    _patch_compat(monkeypatch, "_run_project_background", fake_run_project_background)
 
     background_tasks = DummyBackgroundTasks()
     result = await pri.restore_project_version_compat(
@@ -242,15 +301,16 @@ async def test_auto_map_dry_run_raises_when_presync_fails(monkeypatch):
         raise RuntimeError("sync unavailable")
 
     monkeypatch.setattr(core_domain_service, "sync_models", failing_sync_models)
-    monkeypatch.setattr(pri, "_compat_projects", {"project-1": {"name": "p1"}})
+    _patch_compat(monkeypatch, "_compat_projects", {"project-1": {"name": "p1"}})
 
-    with pytest.raises(HTTPException) as exc_info:
+    # 4203016 replaced the HTTPException(502) with the domain
+    # ExternalServiceError (mapped to an HTTP status by api/error_handlers).
+    with pytest.raises(ExternalServiceError):
         await pri.auto_map_compat({
             "project_id": "project-1",
             "dry_run": True,
         })
 
-    assert exc_info.value.status_code == 502
 
 
 @pytest.mark.asyncio
@@ -258,18 +318,19 @@ async def test_auto_map_skip_sync_flag_is_ignored_for_project_pipeline(monkeypat
     async def failing_sync_models(payload):
         raise RuntimeError("presync is always required")
 
-    monkeypatch.setattr(pri, "_compat_projects", {"project-1": {"name": "p1"}})
+    _patch_compat(monkeypatch, "_compat_projects", {"project-1": {"name": "p1"}})
     from semabridge.api.services import core_domain_service
     monkeypatch.setattr(core_domain_service, "sync_models", failing_sync_models)
 
-    with pytest.raises(HTTPException) as exc_info:
+    # 4203016 replaced the HTTPException(502) with the domain
+    # ExternalServiceError (mapped to an HTTP status by api/error_handlers).
+    with pytest.raises(ExternalServiceError):
         await pri.auto_map_compat({
             "project_id": "project-1",
             "dry_run": True,
             "skip_sync": True,
         })
 
-    assert exc_info.value.status_code == 502
 
 
 @pytest.mark.asyncio
@@ -280,8 +341,8 @@ async def test_auto_map_forwards_user_id_to_sync_models(monkeypatch):
         captured.update(payload)
         return {"status": "success", "summary": {}, "results": []}
 
-    monkeypatch.setattr(pri, "_compat_projects", {"project-1": {"name": "p1"}})
-    monkeypatch.setattr(pri, "_compat_build_project_entity_mappings", lambda *args, **kwargs: {
+    _patch_compat(monkeypatch, "_compat_projects", {"project-1": {"name": "p1"}})
+    _patch_compat(monkeypatch, "_compat_build_project_entity_mappings", lambda *args, **kwargs: {
         "project_id": "project-1",
         "session_key": "s",
         "model_name": "m",
@@ -312,10 +373,10 @@ async def test_perform_project_run_forwards_user_id_to_sync_models(monkeypatch):
         captured.update(payload)
         return {"status": "success", "summary": {}, "results": []}
 
-    monkeypatch.setattr(pri, "_compat_save_store", lambda: None)
-    monkeypatch.setattr(pri, "_build_run_logs", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr(pri, "_build_stage_states", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr(pri, "_compat_capture_snapshots_for_run", lambda **_kwargs: None)
+    _patch_compat(monkeypatch, "_compat_save_store", lambda: None)
+    _patch_compat(monkeypatch, "_build_run_logs", lambda *_args, **_kwargs: [])
+    _patch_compat(monkeypatch, "_build_stage_states", lambda *_args, **_kwargs: [])
+    _patch_compat(monkeypatch, "_compat_capture_snapshots_for_run", lambda **_kwargs: None)
 
     from semabridge.api.services import core_domain_service
     monkeypatch.setattr(core_domain_service, "sync_models", fake_sync_models)
@@ -379,9 +440,7 @@ def test_is_blocking_mapping_allows_resolved_name_collision():
 
 
 def test_latest_identifier_diagnostics_ignores_stale_older_runs(monkeypatch):
-    monkeypatch.setattr(
-        pri,
-        "_compat_project_runs",
+    _patch_compat(monkeypatch, "_compat_project_runs",
         {
             "project-1": [
                 {
