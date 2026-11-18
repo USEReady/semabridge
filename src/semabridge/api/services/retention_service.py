@@ -11,7 +11,7 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Set, Dict, Any
-from uuid import UUID
+import uuid
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
@@ -102,6 +102,24 @@ def _get_all_referenced_snapshot_ids(session: Session) -> Set[str]:
     return referenced
 
 
+def latest_deployed_snapshot_ids(snapshots: List[Any]) -> Set[str]:
+    """The newest deployed snapshot (deployed_at set) per model/view."""
+    latest: Dict[str, Any] = {}
+
+    def _when(snap: Any) -> datetime:
+        value = snap.deployed_at or snap.timestamp or datetime.min
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+    for snap in snapshots:
+        if getattr(snap, "deployed_at", None) is None:
+            continue
+        key = str(getattr(snap, "view_name", None) or "").strip().upper()
+        current = latest.get(key)
+        if current is None or _when(snap) > _when(current):
+            latest[key] = snap
+    return {snap.snapshot_id for snap in latest.values()}
+
+
 def apply_retention_policy(
     session: Session,
     project_id: str,
@@ -139,8 +157,11 @@ def apply_retention_policy(
     if not snapshots:
         return {"pruned": 0, "reason": "No snapshots found"}
     
-    # Get all referenced snapshot IDs (CRITICAL: never prune these)
-    referenced_ids = _get_all_referenced_snapshot_ids(session)
+    # Get all referenced snapshot IDs (CRITICAL: never prune these), and the
+    # latest DEPLOYED snapshot of every model/view: a count limit across the
+    # whole project must never prune what a model's live view was built from
+    # (removed-fields check, restore, duplicate check rely on it).
+    referenced_ids = _get_all_referenced_snapshot_ids(session) | latest_deployed_snapshot_ids(snapshots)
     
     to_prune: List[str] = []
     

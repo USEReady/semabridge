@@ -843,7 +843,17 @@ async def _perform_project_run_impl(run: dict, project_cfg: str, started: float)
                 preferred_snapshot_id=preferred_snapshot_id,
             )
         except Exception as exc:
-            logger.debug("Post-sync snapshot capture skipped for %s: %s", project_id, exc)
+            # The deployed snapshot is what later checks (removed fields,
+            # duplicates, restore, initial-copy promotion) rely on: say so.
+            logger.warning("Post-sync snapshot capture failed for %s (run %s): %s", project_id, run.get("run_id"), exc)
+            notice = f"Warning: the post-sync snapshot could not be saved ({exc})."
+            run["snapshot_capture_error"] = str(exc)
+            run["message"] = f"{run.get('message') or ''} {notice}".strip()
+            run["logs"] = [*(run.get("logs") or []), notice]
+            try:
+                _persist_run(run)
+            except Exception as persist_exc:  # noqa: BLE001
+                logger.warning("Could not record the snapshot failure on run %s: %s", run.get("run_id"), persist_exc)
 
         # Apply Retention Policy in background thread
         import threading
@@ -1992,11 +2002,14 @@ async def get_run_report_data_compat(project_id: str, run_id: str) -> Optional[D
 
 
 def _is_run_demo_masked(project_id: str, run_id: str) -> bool:
-    from semabridge.core.demo_mode import demo_mode_globally_armed
+    """True when this run's failure is hidden from the UI: only a run that
+    was itself started in demo mode (its own ``demo_mode``) and did not
+    succeed. The server-wide demo flag alone never masks a run -- a run
+    started without demo mode shows its real outcome."""
     _compat_ensure_loaded()
     for candidate in _compat_project_runs.get(project_id, []):
         if str(candidate.get("run_id") or candidate.get("id") or "") == run_id:
-            if candidate.get("demo_mode") or demo_mode_globally_armed():
+            if candidate.get("demo_mode"):
                 return str(candidate.get("status") or "").lower() not in ("success", "running", "")
             return False
     try:
@@ -2004,7 +2017,7 @@ def _is_run_demo_masked(project_id: str, run_id: str) -> bool:
         from semabridge.repository.orm.session_factory import db_manager
         with db_manager.get_session() as session:
             row = session.get(Run, run_id)
-            if row and (getattr(row, "demo_mode", False) or demo_mode_globally_armed()):
+            if row and getattr(row, "demo_mode", False):
                 return str(row.status or "").lower() not in ("success", "running", "")
     except Exception:
         pass
