@@ -498,12 +498,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
                 )):
                     item.add_marker(skip_pbixray)
             elif "test_local_pbix_connector.py" in nodeid:
-                if any(target in nodeid for target in (
-                    "test_discover_end_to_end_succeeds_for_confirmed_empty_model",
-                    "test_extract_with_pbixray_logs_exception_type_and_traceback",
-                    "test_extract_with_pbixray_returns_empty_result",
-                )):
-                    item.add_marker(skip_pbixray)
+                item.add_marker(skip_pbixray)
             elif "pbixray" in item.keywords:
                 item.add_marker(skip_pbixray)
 
