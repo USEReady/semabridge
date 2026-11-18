@@ -228,7 +228,14 @@ def test_anchor_flag_map_storage_is_nested_by_fact_table_after_enrichment(monkey
     # MAX("<date col>") anchor fetch.
     fake_cursor.fetchone.return_value = ("2024-01-01",)
 
-    fact_ds = SimpleNamespace(unique_name="SalesFact", source_table="SALES_FACT", columns=[])
+    # The fact models its DATE column: since 7939c36 (deterministic table
+    # binding) a dataset binds to a live table by name + column
+    # compatibility, never by SMLDataset.source_table alone, so a fact with
+    # no columns cannot bind to SALES_FACT and no anchor is built.
+    fact_ds = SimpleNamespace(
+        unique_name="SalesFact", source_table="SALES_FACT",
+        columns=[SimpleNamespace(unique_name="DATE")],
+    )
     date_ds = SimpleNamespace(unique_name="Date", source_table="DATE_DIM", columns=[])
     model = SimpleNamespace(datasets=[fact_ds, date_ds], metrics=[], relationships=[])
 
