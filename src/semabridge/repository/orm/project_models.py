@@ -58,6 +58,16 @@ class Project(Base):
     last_updated: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
     connection_tag: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     notification_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # Project metadata that drives decisions (sb0005). The database row is
+    # the authority; the in-memory compat store only caches it.
+    owner_user_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    sync_mode: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    # NULL = never recorded; "" = explicitly in no folder.
+    folder_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # Soft delete: a deleted project keeps its row as a tombstone so every
+    # process (and a project YAML left on another host) sees it deleted.
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
 
     # Relationships
     account: Mapped[Optional["Account"]] = relationship(back_populates="projects")
@@ -70,6 +80,25 @@ class Project(Base):
 
     def __repr__(self) -> str:
         return f"<Project(project_id={self.project_id!r}, name={self.name!r})>"
+
+
+class DriftEventRow(Base):
+    """One metric drift event (governance/drift_service). Replaces the
+    per-host ``~/.semabridge/drift_state.json`` event list (sb0005)."""
+
+    __tablename__ = "drift_events"
+    __table_args__ = (
+        Index("ix_drift_events_project", "project_id"),
+        Index("ix_drift_events_position", "position"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[Optional[str]] = mapped_column(String(PROJECT_ID_LENGTH), nullable=True)
+    status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    # Order of the event list (lower first), as the JSON list kept it.
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False, default=lambda: _utc_now())
 
 
 class RetentionPolicy(Base):

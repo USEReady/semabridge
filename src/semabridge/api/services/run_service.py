@@ -74,20 +74,52 @@ _compat_normalize_sync_mode = normalize_sync_mode
 # asyncio.Semaphore is only safe to acquire/release from the single event
 # loop it was touched on; a plain threading.Semaphore works correctly
 # regardless of which thread calls it, which is what's actually needed here.
+#
+# With several server processes (uvicorn --workers N, several hosts) the cap
+# is global: _RUN_SLOTS holds one of _MAX_CONCURRENT_RUNS slot leases
+# (``slot:run:<i>`` in run_leases, heartbeated like every lease) on top of
+# this process's semaphore. Without the lease table the semaphore alone
+# applies (per-process cap, as before).
 _MAX_CONCURRENT_RUNS = max(1, int(os.getenv("SEMABRIDGE_MAX_CONCURRENT_RUNS", "2")))
 _RUN_SEMAPHORE = threading.Semaphore(_MAX_CONCURRENT_RUNS)
+# Both read at call time, so a patched cap / semaphore is honoured.
+_RUN_SLOTS = run_coordination.SlotPool("run", lambda: _MAX_CONCURRENT_RUNS, lambda: _RUN_SEMAPHORE)
 
 
 # ---------------------------------------------------------------------------
 # Private helpers (also exported for use in version_service / schedule_service)
 # ---------------------------------------------------------------------------
 
-def _compat_parse_project_cfg_dict(project_cfg: str) -> Dict[str, Any]:
+def _compat_parse_project_cfg_dict(
+    project_cfg: str, *, project_id: str = "", strict: bool = False
+) -> Dict[str, Any]:
+    """Parse a project config YAML to a dict ({} only for "no config").
+
+    Invalid YAML is logged at WARNING. With ``strict=True`` (the result drives
+    a sync decision: the readiness gate, the sync mode, a restore/retry
+    config) it raises ConfigPersistenceError instead, so a corrupt config
+    never silently acts as an empty one."""
+    if not str(project_cfg or "").strip():
+        return {}
     try:
         parsed = yaml.safe_load(project_cfg) or {}
         return parsed if isinstance(parsed, dict) else {}
-    except Exception:
+    except yaml.YAMLError as exc:
+        label = project_id or "<unsaved>"
+        logger.warning("Project config for %s is not valid YAML: %s", label, exc)
+        if strict:
+            from semabridge.api.services.project_config_store import ConfigPersistenceError
+
+            raise ConfigPersistenceError(f"Project config for {label} is not valid YAML: {exc}") from exc
         return {}
+
+
+def _config_sync_mode(config_yaml: str, project_id: str = "") -> Optional[str]:
+    """The sync mode the config selects; a corrupt config raises (it must
+    not silently fall through to another mode)."""
+    return sync_mode_from_project_config(
+        _compat_parse_project_cfg_dict(config_yaml, project_id=project_id, strict=True)
+    )
 
 
 def _extract_source_type_from_project_cfg(project_cfg: str, fallback: str = "fabric") -> str:
@@ -98,7 +130,7 @@ def _extract_source_type_from_project_cfg(project_cfg: str, fallback: str = "fab
 
 
 def _compat_apply_restore_overrides(config_yaml: str, overrides: Dict[str, Any]) -> str:
-    parsed = _compat_parse_project_cfg_dict(config_yaml) or {}
+    parsed = _compat_parse_project_cfg_dict(config_yaml, strict=True) or {}
     for section in ("source", "target", "ui"):
         value = overrides.get(section)
         if isinstance(value, dict):
@@ -316,7 +348,10 @@ def _create_project_run(
     (``parent_run_id``), logs, reports and the UI. The run starts "queued"
     and turns "running" when its first model gets an execution slot."""
     _compat_ensure_loaded()
-    if project_id not in _compat_projects:
+    # Read-through: the project may have been created (or deleted) by another
+    # server process; the database row decides.
+    project_meta = project_shared._compat_get_project(project_id, _compat_projects)
+    if not project_meta:
         raise NotFoundError("Project not found")
 
     started = _time.time()
@@ -327,13 +362,12 @@ def _create_project_run(
         or (str(modular_bundle.get("config_yaml") or "") if modular_bundle else "")
         or _compat_project_configs.get(project_id)
         or _compat_load_repo_yaml_text()
-        or _compat_default_project_yaml(_compat_projects[project_id])
+        or _compat_default_project_yaml(project_meta)
     )
-    project_meta = _compat_projects[project_id]
     if not _compat_normalize_sync_mode(sync_mode):
         sync_mode = (
-            sync_mode_from_project_config(project_cfg)
-            or _compat_normalize_sync_mode(project_meta.get("sync_mode"))
+            _config_sync_mode(project_cfg, project_id)
+            or project_shared._compat_project_sync_mode(project_id)
             or _compat_normalize_sync_mode(fallback_sync_mode)
             or "copy"
         )
@@ -665,7 +699,10 @@ async def _perform_project_run_impl(run: dict, project_cfg: str, started: float)
         # on concurrent project syncs across every dispatch path. A queued
         # run still fires once a slot frees up -- this only delays when the
         # sync starts, never drops it.
-        if not _RUN_SEMAPHORE.acquire(blocking=False):
+        # The cap is global across server processes (slot leases); a full
+        # pool queues this run in its own thread until a slot frees up.
+        run_slot = _RUN_SLOTS.try_acquire()
+        if run_slot is None:
             logger.info(
                 "Run for project %s is queued (%d concurrent sync(s) already in progress, "
                 "cap=%d) -- will start as soon as a slot frees up",
@@ -675,11 +712,11 @@ async def _perform_project_run_impl(run: dict, project_cfg: str, started: float)
                 f"Queued: {_MAX_CONCURRENT_RUNS} other sync(s) are running; this run starts when one finishes."
             )
             save_project_run(run)
-            _RUN_SEMAPHORE.acquire()
+            run_slot = _RUN_SLOTS.acquire()
         try:
             sync_result = await sync_models(sync_payload)
         finally:
-            _RUN_SEMAPHORE.release()
+            _RUN_SLOTS.release(run_slot)
         run["duration_ms"] = elapsed_ms(started)
         run["completed_at"] = _compat_now_iso()
         run["status"] = resolve_run_status(sync_result or {})
@@ -708,10 +745,14 @@ async def _perform_project_run_impl(run: dict, project_cfg: str, started: float)
         # The project's STORED status is always the true outcome. Demo-mode
         # masking is applied only when the projects grid is rendered (see
         # run_helpers.mask_project_for_display), never written here.
+        _project_status = _project_status_map.get(_run_final_status, _run_final_status)
+        # The database row is the authority every process reads; the cache
+        # below is updated after it.
+        project_shared._compat_write_project_meta(
+            project_id, status=_project_status, create=project_id in _compat_projects
+        )
         if project_id in _compat_projects:
-            _compat_projects[project_id]["status"] = _project_status_map.get(
-                _run_final_status, _run_final_status
-            )
+            _compat_projects[project_id]["status"] = _project_status
             _compat_projects[project_id]["last_run_demo_mode"] = bool(run["demo_mode"])
             # Persist the updated status so the store file has the correct value
             # on the next server start (avoids reverting to "draft" on restart).
@@ -981,13 +1022,14 @@ def _readiness_timeout_seconds() -> int:
 
 def _effective_sync_mode(project_id: str, config_yaml: str, payload: Dict[str, Any]) -> str:
     """The sync mode the run will use: the request's own value, then the
-    project config, then the project record, then "copy" (same order as
-    _create_project_run). A project's first deployment is always a copy, but
-    then there is nothing deployed to lose either."""
+    project config, then the project record (its database row), then "copy"
+    (same order as _create_project_run). A project's first deployment is
+    always a copy, but then there is nothing deployed to lose either. A
+    corrupt config raises instead of falling through."""
     return (
         _compat_normalize_sync_mode(payload.get("sync_mode"))
-        or sync_mode_from_project_config(config_yaml)
-        or _compat_normalize_sync_mode((_compat_projects.get(project_id) or {}).get("sync_mode"))
+        or _config_sync_mode(config_yaml, project_id)
+        or project_shared._compat_project_sync_mode(project_id)
         or "copy"
     )
 
@@ -996,7 +1038,7 @@ async def _assert_sync_ready(project_id: str, config_yaml: str, *, force: bool =
     """Server-side dry-run gate shared by every SYNC entry point. Raises
     ValidationError (multi-model) or HTTPException 409 (single-model) when
     the project has unresolved dry-run blockers."""
-    parsed_cfg = _compat_parse_project_cfg_dict(config_yaml) or {}
+    parsed_cfg = _compat_parse_project_cfg_dict(config_yaml, project_id=project_id, strict=True) or {}
     source_cfg = parsed_cfg.get("source") if isinstance(parsed_cfg.get("source"), dict) else {}
     from semabridge.utils.project_models import is_multi_mode
 
@@ -1648,7 +1690,7 @@ def _scope_config_to_models(config_yaml: str, models: List[str]) -> str:
     """Restrict a project config to the given models (retry of failed
     models). Naming is still computed over the whole project (see
     sync_execution_service ``sync_scope_models``)."""
-    parsed = _compat_parse_project_cfg_dict(config_yaml) or {}
+    parsed = _compat_parse_project_cfg_dict(config_yaml, strict=True) or {}
     parsed["sync_scope_models"] = [str(m) for m in models if str(m or "").strip()]
     return yaml.safe_dump(parsed, sort_keys=False, allow_unicode=True)
 

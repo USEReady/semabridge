@@ -21,6 +21,10 @@ def test_unresolved_name_collision_blocks_even_when_status_is_auto():
 def test_demo_seeding_keeps_real_events_and_never_overrides_a_real_metric(tmp_path, monkeypatch):
     state_file = tmp_path / "drift_state.json"
     monkeypatch.setattr(drift_service, "_state_path", lambda: state_file)
+    # Drift events live in the database; the old JSON file is imported into
+    # an empty table on first use.
+    drift_service.clear_drift_events()
+    state_file.unlink(missing_ok=True)
     real = [
         {"id": "real-1", "project_id": "proj-regional-sales", "metric_name": "REVENUE", "status": "pending",
          "proposed_snowflake_definition": "SUM(X)"},
@@ -32,7 +36,7 @@ def test_demo_seeding_keeps_real_events_and_never_overrides_a_real_metric(tmp_pa
     events = drift_service.seed_mock_drift_events("proj-comp")
     events_again = drift_service.seed_mock_drift_events("proj-comp")
 
-    stored = json.loads(state_file.read_text())["events"]
+    stored = drift_service._load_state()["events"]
     ids = {e["id"] for e in stored}
     assert {"real-1", "real-2"} <= ids  # "sales" projects are no longer wiped
     total_units = [e for e in events if e["metric_name"] == "TOTAL_UNITS"]

@@ -3,6 +3,7 @@
 Provides list, auto-map, update, and delete mappings plus all supporting
 private helpers for building, serializing, and validating entity mappings.
 """
+import semabridge.api.services.project_shared as _project_shared_mod
 import logging
 import re
 import uuid
@@ -482,7 +483,9 @@ def _compat_build_project_entity_mappings(
     )
 
     _compat_ensure_loaded()
-    if project_id not in _compat_projects:
+    # Read-through: the database row decides (another process may have
+    # created or deleted the project).
+    if _project_shared_mod._compat_get_project(project_id, _compat_projects) is None:
         raise NotFoundError("Project not found")
 
     try:

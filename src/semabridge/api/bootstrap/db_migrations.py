@@ -183,6 +183,16 @@ def _apply_schema_compatibility_fixes() -> None:
             pending_alters.append("ALTER TABLE projects ADD COLUMN connection_tag VARCHAR(255)")
         if "notification_email" not in project_columns:
             pending_alters.append("ALTER TABLE projects ADD COLUMN notification_email VARCHAR(255)")
+        # sb0005 (Alembic on PostgreSQL; here for SQLite/DuckDB databases).
+        for _col, _ddl in (
+            ("owner_user_id", "VARCHAR(255)"),
+            ("status", "VARCHAR(32)"),
+            ("sync_mode", "VARCHAR(20)"),
+            ("folder_id", "VARCHAR(255)"),
+            ("deleted_at", expires_type),
+        ):
+            if _col not in project_columns:
+                pending_alters.append(f"ALTER TABLE projects ADD COLUMN {_col} {_ddl}")
 
     if _table_exists(engine, "snapshots"):
         snapshot_columns = _get_column_names(engine, "snapshots")

@@ -691,7 +691,7 @@ def get_project_config_text(project_id: str, *, use_cache: bool = True) -> str:
         with ps.compat_store_lock():
             ps._compat_project_configs[pid] = rendered
         return rendered
-    if pid in ps._compat_deleted_project_ids:
+    if ps._compat_is_project_deleted(pid):  # the database tombstone, not this process's set
         return ""
     file_text = ps._compat_load_project_yaml_text(pid)
     if file_text.strip():
@@ -758,12 +758,13 @@ def import_project_config_files(legacy_store_configs: Optional[Dict[str, str]] =
     ps = _shared()
     report: Dict[str, Any] = {"imported": [], "file_edits": [], "imported_from_store": [], "unchanged": [], "errors": []}
     seen: set = set()
+    deleted = ps._compat_deleted_ids()  # from the database (cached set if unreadable)
     for projects_dir in ps._compat_projects_dirs():
         if not projects_dir.exists():
             continue
         for path in sorted(projects_dir.glob("*.y*ml")):
             pid = path.stem.strip()
-            if not pid or pid in seen or is_transient_project(pid) or pid in ps._compat_deleted_project_ids:
+            if not pid or pid in seen or is_transient_project(pid) or pid in deleted:
                 continue
             seen.add(pid)
             try:
@@ -806,7 +807,7 @@ def import_project_config_files(legacy_store_configs: Optional[Dict[str, str]] =
         pid = str(pid or "").strip()
         if (
             not pid or pid in seen or is_transient_project(pid)
-            or pid in ps._compat_deleted_project_ids or not str(text or "").strip()
+            or pid in deleted or not str(text or "").strip()
         ):
             continue
         try:
@@ -840,8 +841,9 @@ def load_all_configs_into_cache() -> List[str]:
                   & (ProjectConfigVersion.version == latest_sq.c.v))
         ).all()
     loaded: List[str] = []
+    deleted = ps._compat_deleted_ids()
     for pid, text in rows:
-        if pid in ps._compat_deleted_project_ids:
+        if pid in deleted:
             continue
         try:
             rendered = _render_for(pid, text)

@@ -1075,14 +1075,18 @@ def _compat_db_project_ids() -> Optional[List[str]]:
         from sqlalchemy import select
 
         with _orm_db_manager.get_session() as session:
-            ids = {str(r[0]).strip() for r in session.execute(select(Project.project_id)).all() if r[0]}
+            rows = session.execute(select(Project.project_id, Project.deleted_at)).all()
+        ids = {str(r[0]).strip() for r in rows if r[0] and r[1] is None}
+        deleted = {str(r[0]).strip() for r in rows if r[0] and r[1] is not None}
         ids.update(project_ids_with_config())
     except Exception as exc:
         logger.error("Project list could not be read from the database: %s", exc)
         return None
+    # Deletion comes from the database (tombstone rows), never from this
+    # process's cached set: another process may have deleted or re-created it.
     return sorted(
         pid for pid in ids
-        if pid and pid != "preview" and not pid.startswith("preview-") and pid not in _compat_deleted_project_ids
+        if pid and pid != "preview" and not pid.startswith("preview-") and pid not in deleted
     )
 
 
@@ -1103,6 +1107,7 @@ def _compat_bootstrap_projects_from_orm() -> None:
                 _compat_project_entry_from_orm_row(row) for row in rows
                 if str(row.project_id or "").strip()
                 and not str(row.project_id).startswith("preview")
+                and getattr(row, "deleted_at", None) is None
             ]
 
         for entry in entries:
@@ -1173,6 +1178,407 @@ def _compat_bootstrap_project_from_repo_yaml() -> None:
     _compat_snapshot_groups.setdefault(project_id, [])
 
 
+# ---------------------------------------------------------------------------
+# Postgres is the authority for projects; the dicts above are only a cache.
+#
+# With more than one server process (uvicorn --workers N, several hosts) each
+# process has its own copy of the dicts and the JSON store is last-writer-wins,
+# so nothing that decides behaviour may come from them alone:
+#   * existence / deletion: the ``projects`` row (``deleted_at`` = tombstone)
+#     plus the project's config versions;
+#   * metadata that drives decisions (owner, status, sync_mode, folder): the
+#     row's columns, overlaid onto the cached entry on every read-through.
+# When the database cannot be read the cache is used as a fallback.
+# ---------------------------------------------------------------------------
+
+_PROJECT_DB_META_FIELDS = ("owner_user_id", "status", "sync_mode", "folder_id")
+_project_tables_ready: set = set()
+_project_tables_lock = threading.Lock()
+
+
+class ProjectPersistenceError(_InternalError):
+    """A project write could not be saved to the database (HTTP 500)."""
+
+
+def _orm_db():
+    from semabridge.repository.orm.session_factory import db_manager as _orm_db_manager
+
+    return _orm_db_manager
+
+
+def _compat_is_transient_project_id(project_id: Any) -> bool:
+    pid = str(project_id or "").strip()
+    return not pid or pid.startswith("preview")
+
+
+def _ensure_project_tables() -> None:
+    """Create the projects table on the current engine if missing (fresh
+    SQLite test DBs). On PostgreSQL Alembic owns it; a no-op once it exists."""
+    from semabridge.repository.orm.base import Base
+    from semabridge.repository.orm.models import Project
+
+    engine = _orm_db().get_engine()
+    key = id(engine)
+    if key in _project_tables_ready:
+        return
+    with _project_tables_lock:
+        if key in _project_tables_ready:
+            return
+        Base.metadata.create_all(bind=engine, tables=[Project.__table__], checkfirst=True)
+        _project_tables_ready.add(key)
+
+
+def _compat_db_deleted_project_ids() -> Optional[set]:
+    """Ids of soft-deleted projects in the database; None when it cannot be read."""
+    try:
+        from sqlalchemy import select
+        from semabridge.repository.orm.models import Project
+
+        _ensure_project_tables()
+        with _orm_db().get_session() as session:
+            rows = session.execute(select(Project.project_id).where(Project.deleted_at.isnot(None))).all()
+        return {str(r[0]).strip() for r in rows if r[0]}
+    except Exception as exc:  # noqa: BLE001 -- caller falls back to the cache
+        logger.warning("Deleted projects could not be read from the database: %s", exc)
+        return None
+
+
+def _compat_deleted_ids() -> set:
+    """The deleted project ids: from the database (refreshing the cached set
+    the JSON store keeps), or the cached set when the database is unreadable."""
+    db_ids = _compat_db_deleted_project_ids()
+    if db_ids is None:
+        return set(_compat_deleted_project_ids)
+    with _compat_store_lock:
+        _compat_deleted_project_ids.clear()
+        _compat_deleted_project_ids.update(db_ids)
+    return set(db_ids)
+
+
+def _compat_project_db_row(project_id: str) -> tuple:
+    """(state, row) for one project: state is "live", "deleted", "missing" or
+    "unavailable" (database unreadable). ``row`` is a detached Project."""
+    try:
+        from semabridge.repository.orm.models import Project
+
+        _ensure_project_tables()
+        with _orm_db().get_session() as session:
+            row = session.get(Project, project_id)
+            if row is not None:
+                session.expunge(row)
+    except Exception as exc:  # noqa: BLE001 -- caller falls back to the cache
+        logger.warning("Project %s could not be read from the database: %s", project_id, exc)
+        return "unavailable", None
+    if row is None:
+        return "missing", None
+    if row.deleted_at is not None:
+        return "deleted", row
+    return "live", row
+
+
+def _compat_is_project_deleted(project_id: str) -> bool:
+    """Deleted according to the database (the cached set only when the
+    database cannot be read)."""
+    pid = str(project_id or "").strip()
+    state, _ = _compat_project_db_row(pid)
+    if state == "unavailable":
+        return pid in _compat_deleted_project_ids
+    return state == "deleted"
+
+
+def _compat_apply_db_meta(entry: Dict[str, Any], row: Any) -> Dict[str, Any]:
+    """Overlay the authoritative row fields onto a cached project entry."""
+    pid = str(row.project_id or "").strip()
+    if row.name and str(row.name).strip() and str(row.name).strip() != pid:
+        entry["name"] = row.name
+    for field in ("workspace_id", "account_id", "connection_tag"):
+        value = getattr(row, field, None)
+        if value:
+            entry[field] = value
+    if row.notification_email:
+        entry["notification_email"] = row.notification_email
+    owner = str(getattr(row, "owner_user_id", None) or "").strip()
+    if owner:
+        entry["owner_user_id"] = owner
+        entry["user_id"] = owner
+    status = str(getattr(row, "status", None) or "").strip()
+    if status:
+        entry["status"] = status
+    sync_mode = str(getattr(row, "sync_mode", None) or "").strip().lower()
+    if sync_mode:
+        entry["sync_mode"] = sync_mode
+    folder_id = getattr(row, "folder_id", None)
+    if folder_id is not None:  # "" = explicitly no folder
+        entry["folder_id"] = folder_id or None
+    return entry
+
+
+def _compat_evict_project(project_id: str, cache: Optional[Dict[str, Any]] = None) -> None:
+    """Drop a (deleted) project from every per-process cache."""
+    pid = str(project_id or "").strip()
+    with _compat_store_lock:
+        _compat_deleted_project_ids.add(pid)
+        if cache is not None:
+            cache.pop(pid, None)
+        for container in (
+            _compat_projects, _compat_project_configs, _compat_project_runs, _compat_project_snapshots,
+            _compat_snapshot_groups, _compat_run_snapshots, _compat_project_schedules,
+        ):
+            container.pop(pid, None)
+        for mapping_id, mapping in list(_compat_mappings.items()):
+            if isinstance(mapping, dict) and str(mapping.get("project_id") or "").strip() == pid:
+                _compat_mappings.pop(mapping_id, None)
+
+
+def _compat_entry_from_config(project_id: str, config_text: str) -> Dict[str, Any]:
+    """A cache entry for a project known only by its saved config."""
+    try:
+        parsed = yaml.safe_load(config_text) or {}
+    except yaml.YAMLError as exc:
+        logger.warning("Project config for %s is not valid YAML: %s", project_id, exc)
+        parsed = {}
+    parsed = parsed if isinstance(parsed, dict) else {}
+    metadata = parsed.get("project_metadata") if isinstance(parsed.get("project_metadata"), dict) else {}
+    return _compat_project_payload(project_id, {
+        "name": metadata.get("name") or parsed.get("display_name") or parsed.get("project_name") or project_id,
+        "source": parsed.get("source") if isinstance(parsed.get("source"), dict) else {},
+        "target": parsed.get("target") if isinstance(parsed.get("target"), dict) else {},
+        "targets": parsed.get("targets") if isinstance(parsed.get("targets"), list) else [],
+        "user_id": parsed.get("owner_user_id") or metadata.get("owner_user_id"),
+    })
+
+
+def _compat_get_project(project_id: str, cache: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """Read-through project lookup: the database row decides whether the
+    project exists (another process may have created or deleted it) and
+    supplies its authoritative metadata; ``cache`` (default: the shared
+    ``_compat_projects``) is refreshed in place. None when it does not exist
+    or is deleted."""
+    pid = str(project_id or "").strip()
+    cache = _compat_projects if cache is None else cache
+    if not pid:
+        return None
+    if _compat_is_transient_project_id(pid):
+        return cache.get(pid)
+    state, row = _compat_project_db_row(pid)
+    if state == "unavailable":
+        return None if pid in _compat_deleted_project_ids else cache.get(pid)
+    if state == "deleted":
+        _compat_evict_project(pid, cache)
+        return None
+    with _compat_store_lock:
+        entry = cache.get(pid)
+        if state == "live":
+            if not isinstance(entry, dict):
+                entry = _compat_project_entry_from_orm_row(row)
+            _compat_apply_db_meta(entry, row)
+            cache[pid] = entry
+            if cache is not _compat_projects:
+                _compat_projects.setdefault(pid, entry)
+            _compat_project_runs.setdefault(pid, [])
+            _compat_deleted_project_ids.discard(pid)
+            return entry
+        if isinstance(entry, dict):
+            # No row yet (e.g. registered from a project file); the config
+            # store owns its existence.
+            return entry
+    # Not cached and no row: a project known only by its saved config.
+    from semabridge.api.services.project_config_store import get_project_config_text
+
+    config_text = get_project_config_text(pid)
+    if not str(config_text or "").strip():
+        return None
+    entry = _compat_entry_from_config(pid, config_text)
+    with _compat_store_lock:
+        cache[pid] = entry
+        if cache is not _compat_projects:
+            _compat_projects.setdefault(pid, entry)
+        _compat_project_runs.setdefault(pid, [])
+    return entry
+
+
+def _compat_refresh_projects_from_db() -> Optional[List[str]]:
+    """Bulk read-through for project lists: one query of the projects table.
+    Deleted projects are evicted, missing live ones added, and every cached
+    entry gets its authoritative metadata. Returns the live (non-preview)
+    project ids, most recently updated first; None when the database cannot
+    be read."""
+    try:
+        from sqlalchemy import select
+        from semabridge.repository.orm.models import Project
+
+        _ensure_project_tables()
+        with _orm_db().get_session() as session:
+            rows = session.execute(
+                select(Project).order_by(Project.last_updated.desc().nullslast())
+            ).scalars().all()
+            for row in rows:
+                session.expunge(row)
+    except Exception as exc:  # noqa: BLE001 -- caller falls back to the cache
+        logger.error("Project list could not be read from the database: %s", exc)
+        return None
+    live: List[str] = []
+    deleted: set = set()
+    with _compat_store_lock:
+        for row in rows:
+            pid = str(row.project_id or "").strip()
+            if _compat_is_transient_project_id(pid):
+                continue
+            if row.deleted_at is not None:
+                deleted.add(pid)
+                continue
+            entry = _compat_projects.get(pid)
+            if not isinstance(entry, dict):
+                entry = _compat_project_entry_from_orm_row(row)
+                _compat_projects[pid] = entry
+                _compat_project_runs.setdefault(pid, [])
+                _compat_project_snapshots.setdefault(pid, [])
+                _compat_snapshot_groups.setdefault(pid, [])
+            _compat_apply_db_meta(entry, row)
+            live.append(pid)
+        _compat_deleted_project_ids.clear()
+        _compat_deleted_project_ids.update(deleted)
+    for pid in deleted:
+        if pid in _compat_projects:
+            _compat_evict_project(pid)
+    return live
+
+
+def _compat_write_project_meta(
+    project_id: str, *, strict: bool = False, create: bool = True, **fields: Any
+) -> bool:
+    """Write project metadata columns (owner_user_id, status, sync_mode,
+    folder_id) to the database row; a missing row is created only with
+    ``create`` (never for a deleted project). Returns True when saved; with
+    ``strict`` a failure raises ProjectPersistenceError."""
+    pid = str(project_id or "").strip()
+    if not pid or _compat_is_transient_project_id(pid):
+        return False
+    values = {k: v for k, v in fields.items() if k in _PROJECT_DB_META_FIELDS}
+    if not values:
+        return False
+    try:
+        from datetime import timezone as _tz
+        from semabridge.repository.orm.models import Project
+
+        _ensure_project_tables()
+        with _orm_db().get_session() as session:
+            row = session.get(Project, pid)
+            if row is not None and row.deleted_at is not None:
+                return False
+            if row is None:
+                if not create:
+                    return False
+                cached = _compat_projects.get(pid) or {}
+                row = Project(project_id=pid, name=str(cached.get("name") or pid))
+                session.add(row)
+            for key, value in values.items():
+                setattr(row, key, value)
+            row.last_updated = datetime.now(_tz.utc)
+            session.commit()
+        return True
+    except Exception as exc:  # noqa: BLE001
+        if strict:
+            raise ProjectPersistenceError(f"Project {pid} could not be saved to the database: {exc}") from exc
+        logger.warning("Project %s metadata %s not saved to the database: %s", pid, sorted(values), exc)
+        return False
+
+
+def _compat_project_sync_mode(project_id: str) -> Optional[str]:
+    """The project's stored sync mode ("copy"/"upsert") from its database row
+    (the cached value only when the database cannot be read)."""
+    pid = str(project_id or "").strip()
+    state, row = _compat_project_db_row(pid)
+    if state == "unavailable":
+        value = (_compat_projects.get(pid) or {}).get("sync_mode")
+    elif state == "live":
+        value = row.sync_mode
+    else:
+        value = None
+    token = str(value or "").strip().lower()
+    return token if token in {"copy", "upsert"} else None
+
+
+def _compat_soft_delete_project_in_db(project_id: str) -> None:
+    """Persist a project delete: tombstone the row (creating it when the
+    project only had a config) and drop its runs/snapshots as the former
+    hard delete's cascade did. Raises ProjectPersistenceError on failure."""
+    pid = str(project_id or "").strip()
+    if not pid:
+        return
+    try:
+        from datetime import timezone as _tz
+        from semabridge.repository.orm.models import Project
+
+        _ensure_project_tables()
+        now = datetime.now(_tz.utc)
+        with _orm_db().get_session() as session:
+            row = session.get(Project, pid)
+            if row is None:
+                row = Project(project_id=pid, name=pid)
+                session.add(row)
+            else:
+                for child in list(row.snapshots or []) + list(row.runs or []):
+                    session.delete(child)
+            row.deleted_at = now
+            row.last_updated = now
+            session.commit()
+    except Exception as exc:  # noqa: BLE001
+        raise ProjectPersistenceError(f"Delete of project {pid} could not be saved to the database: {exc}") from exc
+
+
+def _compat_sync_store_to_db() -> None:
+    """Move what only the JSON store knew into the database (idempotent):
+    deleted project ids become tombstones, and cached metadata (owner,
+    status, sync_mode, folder) fills columns the row does not have yet. The
+    database values win from then on."""
+    try:
+        from datetime import timezone as _tz
+        from semabridge.repository.orm.models import Project
+
+        _ensure_project_tables()
+        now = datetime.now(_tz.utc)
+        with _compat_store_lock:
+            deleted = sorted(p for p in _compat_deleted_project_ids if not _compat_is_transient_project_id(p))
+            cached = {
+                pid: dict(entry) for pid, entry in _compat_projects.items()
+                if isinstance(entry, dict) and not _compat_is_transient_project_id(pid)
+            }
+        changed = 0
+        with _orm_db().get_session() as session:
+            for pid in deleted:
+                row = session.get(Project, pid)
+                if row is None:
+                    session.add(Project(project_id=pid, name=pid, deleted_at=now, last_updated=now))
+                    changed += 1
+                elif row.deleted_at is None and pid not in cached:
+                    row.deleted_at = now
+                    changed += 1
+            for pid, entry in cached.items():
+                if pid in deleted:
+                    continue
+                row = session.get(Project, pid)
+                if row is None or row.deleted_at is not None:
+                    continue
+                for field in _PROJECT_DB_META_FIELDS:
+                    if getattr(row, field, None) is not None:
+                        continue
+                    value = entry.get(field)
+                    if field == "owner_user_id":
+                        value = value or entry.get("user_id")
+                    if field == "sync_mode" and str(value or "").lower() not in {"copy", "upsert"}:
+                        value = None
+                    if value is None or value == "":
+                        continue
+                    setattr(row, field, str(value))
+                    changed += 1
+            session.commit()
+        if changed:
+            logger.info("Moved %d project metadata value(s) / tombstone(s) from the compat store to the database", changed)
+    except Exception as exc:  # noqa: BLE001 -- retried on the next start
+        logger.warning("Compat store metadata could not be moved to the database: %s", exc)
+
+
 _compat_bootstrapped: bool = False
 
 
@@ -1189,6 +1595,10 @@ def _compat_ensure_loaded() -> None:
 def _compat_ensure_loaded_locked() -> None:
     global _compat_bootstrapped
     _compat_load_store()
+    # Deleted ids the JSON store knew become database tombstones before
+    # anything below decides visibility from the database.
+    _compat_sync_store_to_db()
+    _compat_deleted_ids()
     _compat_bootstrap_projects_from_modular_configs()
     _compat_bootstrap_projects_from_orm()
     _compat_bootstrap_project_from_repo_yaml()
@@ -1196,6 +1606,10 @@ def _compat_ensure_loaded_locked() -> None:
     # was populated (store file, ORM bootstrap, or YAML discovery).  The store file
     # may hold stale "draft" values for projects that have had successful runs.
     _compat_refresh_project_statuses_from_runs()
+    # Cached metadata fills database columns not set yet; then the database
+    # values (owner, status, sync_mode, folder) win in the cache.
+    _compat_sync_store_to_db()
+    _compat_refresh_projects_from_db()
     _compat_bootstrapped = True
 
 

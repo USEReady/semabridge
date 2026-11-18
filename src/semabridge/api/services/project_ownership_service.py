@@ -151,6 +151,10 @@ def _persist_project_owner(project_id: str, project: Dict[str, Any], owner_user_
         project["user_id"] = normalized_owner_user_id
         changed = True
     if changed:
+        # Database first: the owner every process authorizes against.
+        from semabridge.api.services.project_shared import _compat_write_project_meta
+
+        _compat_write_project_meta(project_id, owner_user_id=normalized_owner_user_id)
         _compat_projects[project_id] = project
         _compat_save_store()
 
@@ -188,7 +192,11 @@ def _persist_project_owner(project_id: str, project: Dict[str, Any], owner_user_
 def ensure_project_owner(project_id: str) -> Dict[str, Any]:
     _compat_ensure_loaded()
     pid = str(project_id or "").strip()
-    project = _compat_projects.get(pid)
+    # Read-through: existence, deletion and the owner come from the database
+    # row (another process may have created, re-owned or deleted it).
+    from semabridge.api.services.project_shared import _compat_get_project
+
+    project = _compat_get_project(pid, _compat_projects)
     if not isinstance(project, dict):
         parsed_yaml = _parse_project_yaml_dict(pid)
         if parsed_yaml:

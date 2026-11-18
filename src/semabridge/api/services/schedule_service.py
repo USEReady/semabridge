@@ -3,6 +3,7 @@
 Provides get/save/delete project schedule, trigger job, list job schedules,
 list job runs, and jobs config management.
 """
+import semabridge.api.services.project_shared as _project_shared_mod
 import asyncio
 from typing import Any, Dict, List
 
@@ -97,7 +98,9 @@ async def list_job_schedules_compat():
 
 async def get_project_schedule_compat(project_id: str):
     _compat_ensure_loaded()
-    if project_id not in _compat_projects:
+    # Read-through: the database row decides (another process may have
+    # created or deleted the project).
+    if _project_shared_mod._compat_get_project(project_id, _compat_projects) is None:
         raise NotFoundError("Project not found")
     schedule = scheduler_service.get_project_schedule(project_id) or _compat_project_schedules.get(project_id)
     if schedule:
@@ -107,7 +110,9 @@ async def get_project_schedule_compat(project_id: str):
 
 async def save_project_schedule_compat(project_id: str, payload: dict):
     _compat_ensure_loaded()
-    if project_id not in _compat_projects:
+    # Read-through: the database row decides (another process may have
+    # created or deleted the project).
+    if _project_shared_mod._compat_get_project(project_id, _compat_projects) is None:
         raise NotFoundError("Project not found")
     try:
         schedule = scheduler_service.save_project_schedule(project_id, payload or {})
@@ -144,7 +149,9 @@ async def save_project_schedule_compat(project_id: str, payload: dict):
 
 async def delete_project_schedule_compat(project_id: str):
     _compat_ensure_loaded()
-    if project_id not in _compat_projects:
+    # Read-through: the database row decides (another process may have
+    # created or deleted the project).
+    if _project_shared_mod._compat_get_project(project_id, _compat_projects) is None:
         raise NotFoundError("Project not found")
     removed = scheduler_service.delete_project_schedule(project_id)
     _compat_project_schedules.pop(project_id, None)

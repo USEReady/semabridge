@@ -21,9 +21,15 @@ Leases (mutual exclusion)
     run keeps heartbeating, so a crashed holder blocks nobody for longer than
     the lease. Dry runs never take leases.
 
-Capacity
-    One process-wide semaphore of ``SEMABRIDGE_MAX_CONCURRENT_MODELS`` (4)
-    model executions shared by syncs and dry runs (``model_slot``).
+Capacity (global, across processes)
+    ``SEMABRIDGE_MAX_CONCURRENT_MODELS`` (4) model executions shared by syncs
+    and dry runs (``model_slot``) and ``SEMABRIDGE_MAX_CONCURRENT_RUNS`` (2)
+    project syncs (run_service). Each cap is a ``SlotPool``: N slot leases
+    ``slot:<pool>:<i>`` in ``run_leases``, taken and heartbeated like any
+    other lease, so N server processes together never exceed the cap. An
+    in-process semaphore of the same size gates each process first and is
+    the only gate when the lease table is unavailable. A full pool queues
+    the caller (it waits; it never fails).
 
 Scheduler leadership
     ``SchedulerLeadership`` holds a PostgreSQL session advisory lock on a
@@ -258,43 +264,95 @@ def _mem_acquire(key: str, run_id: str, holder: str, project_id: Optional[str]) 
     return LeaseResult(True, key, holder, run_id, project_id)
 
 
-def acquire_lease(
-    key: str, *, run_id: str, holder: Optional[str] = None, lease_type: str = "target",
-    project_id: Optional[str] = None,
+_lease_tables_ready: set = set()
+_lease_tables_lock = threading.Lock()
+
+
+def _ensure_lease_table() -> None:
+    """Create ``run_leases`` on the current engine if missing (fresh SQLite
+    test DBs); Alembic owns it on PostgreSQL."""
+    from semabridge.repository.orm.base import Base
+    from semabridge.repository.orm.models import RunLease
+    from semabridge.repository.orm.session_factory import db_manager
+
+    engine = db_manager.get_engine()
+    key = id(engine)
+    if key in _lease_tables_ready:
+        return
+    with _lease_tables_lock:
+        if key not in _lease_tables_ready:
+            Base.metadata.create_all(bind=engine, tables=[RunLease.__table__], checkfirst=True)
+            _lease_tables_ready.add(key)
+
+
+def _db_acquire_lease(
+    key: str, *, run_id: str, holder: str, lease_type: str, project_id: Optional[str],
 ) -> LeaseResult:
-    """Take (or re-take, same holder) the lease ``key``. Never blocks."""
+    """Take the lease in the database; raises when the table is unavailable."""
     from sqlalchemy import select
     from sqlalchemy.exc import IntegrityError
 
     from semabridge.repository.orm.models import RunLease
 
-    holder = str(holder or run_id)
     now = utcnow()
     expires = now + timedelta(seconds=lease_seconds())
-    try:
-        with _session() as session:
-            row = session.execute(
-                select(RunLease).where(RunLease.lease_key == key).with_for_update()
-            ).scalar_one_or_none()
-            if row is not None:
-                if row.holder != holder and (_aware(row.expires_at) or now) > now:
-                    return LeaseResult(False, key, row.holder, row.run_id, row.project_id)
-                if row.holder != holder:
-                    row.acquired_at = now
-                row.holder, row.run_id, row.lease_type, row.project_id = holder, str(run_id), lease_type, project_id
-                row.heartbeat_at, row.expires_at = now, expires
-            else:
-                session.add(RunLease(
-                    lease_key=key, lease_type=lease_type, run_id=str(run_id), holder=holder,
-                    project_id=project_id, acquired_at=now, heartbeat_at=now, expires_at=expires,
-                ))
-            try:
+    _ensure_lease_table()
+    with _session() as session:
+        row = session.execute(
+            select(RunLease).where(RunLease.lease_key == key).with_for_update()
+        ).scalar_one_or_none()
+        if row is not None:
+            if row.holder != holder and (_aware(row.expires_at) or now) > now:
+                return LeaseResult(False, key, row.holder, row.run_id, row.project_id)
+            if row.holder != holder:
+                # Take over an expired lease with a compare-and-swap on the
+                # row we read: FOR UPDATE already serializes this on
+                # PostgreSQL, the condition also covers databases without
+                # row locks (SQLite) -- two takers can never both win.
+                from sqlalchemy import update
+
+                old_holder, old_expires = row.holder, row.expires_at
+                session.expunge(row)
+                taken = session.execute(
+                    update(RunLease)
+                    .where(RunLease.lease_key == key)
+                    .where(RunLease.holder == old_holder)
+                    .where(RunLease.expires_at == old_expires)
+                    .values(
+                        holder=holder, run_id=str(run_id), lease_type=lease_type, project_id=project_id,
+                        acquired_at=now, heartbeat_at=now, expires_at=expires,
+                    )
+                    .execution_options(synchronize_session=False)
+                ).rowcount
                 session.commit()
-            except IntegrityError:
-                session.rollback()
-                current = session.get(RunLease, key)
-                return LeaseResult(False, key, getattr(current, "holder", None), getattr(current, "run_id", None))
-        return LeaseResult(True, key, holder, str(run_id), project_id)
+                if taken != 1:
+                    current = session.get(RunLease, key)
+                    return LeaseResult(False, key, getattr(current, "holder", None), getattr(current, "run_id", None))
+                return LeaseResult(True, key, holder, str(run_id), project_id)
+            row.holder, row.run_id, row.lease_type, row.project_id = holder, str(run_id), lease_type, project_id
+            row.heartbeat_at, row.expires_at = now, expires
+        else:
+            session.add(RunLease(
+                lease_key=key, lease_type=lease_type, run_id=str(run_id), holder=holder,
+                project_id=project_id, acquired_at=now, heartbeat_at=now, expires_at=expires,
+            ))
+        try:
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            current = session.get(RunLease, key)
+            return LeaseResult(False, key, getattr(current, "holder", None), getattr(current, "run_id", None))
+    return LeaseResult(True, key, holder, str(run_id), project_id)
+
+
+def acquire_lease(
+    key: str, *, run_id: str, holder: Optional[str] = None, lease_type: str = "target",
+    project_id: Optional[str] = None,
+) -> LeaseResult:
+    """Take (or re-take, same holder) the lease ``key``. Never blocks."""
+    holder = str(holder or run_id)
+    try:
+        return _db_acquire_lease(key, run_id=str(run_id), holder=holder, lease_type=lease_type, project_id=project_id)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Lease table unavailable (%s); using in-process lease for %s", exc, key)
         return _mem_acquire(key, str(run_id), holder, project_id)
@@ -407,10 +465,176 @@ def max_concurrent_models() -> int:
     return _env_int("SEMABRIDGE_MAX_CONCURRENT_MODELS", 4)
 
 
+def slot_poll_seconds() -> float:
+    try:
+        return max(0.05, float(os.getenv("SEMABRIDGE_SLOT_POLL_SECONDS", "0.5")))
+    except (TypeError, ValueError):
+        return 0.5
+
+
+def global_slots_enabled() -> bool:
+    """Whether the capacity caps use database slot leases.
+
+    ``SEMABRIDGE_GLOBAL_SLOTS``: ``on`` / ``off`` / ``auto`` (default). Auto
+    means PostgreSQL only: SQLite and DuckDB are single-process databases
+    here (see SchedulerLeadership), and SQLite's shared connection would
+    make slot rows unreliable, so the in-process semaphore is the cap."""
+    mode = str(os.getenv("SEMABRIDGE_GLOBAL_SLOTS", "auto")).strip().lower()
+    if mode in {"on", "true", "1", "yes"}:
+        return True
+    if mode in {"off", "false", "0", "no"}:
+        return False
+    try:
+        from semabridge.repository.orm.session_factory import db_manager
+
+        return db_manager.get_engine().dialect.name == "postgresql"
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Database dialect unknown (%s); capacity caps are per process", exc)
+        return False
+
+
+def _is_write_contention(exc: BaseException) -> bool:
+    """A lock / serialization conflict (retry) rather than a missing or
+    unreachable lease table (fall back)."""
+    text = str(exc).lower()
+    return any(t in text for t in (
+        "database is locked", "database table is locked", "busy", "deadlock",
+        "could not serialize", "lock timeout", "lock not available",
+    ))
+
+
+@dataclass
+class SlotToken:
+    """One held slot of a ``SlotPool`` (``key`` is None when only the
+    in-process semaphore was taken because the lease table is unavailable)."""
+
+    pool: "SlotPool"
+    holder: str
+    key: Optional[str]
+    local: Any
+
+
+class SlotPool:
+    """A capacity cap that holds across server processes.
+
+    ``limit()`` slot leases ``slot:<name>:<i>`` in ``run_leases`` (heartbeated
+    while held, so a crashed holder frees its slot after the lease time) plus
+    an in-process semaphore of the same size, taken first. When the lease
+    table cannot be used the in-process semaphore alone applies (the same
+    fallback the other leases use). ``acquire`` waits until a slot is free;
+    it never fails because the pool is full."""
+
+    def __init__(self, name: str, limit: Callable[[], int], local: Callable[[], Any]):
+        self.name = name
+        self._limit = limit
+        self._local = local
+        self._cond = threading.Condition()
+
+    def limit(self) -> int:
+        return max(1, int(self._limit()))
+
+    def keys(self) -> List[str]:
+        return [f"slot:{self.name}:{i}" for i in range(self.limit())]
+
+    def _take_db_slot(self, holder: str) -> Any:
+        """The leased key, None when the lease table is unavailable (or
+        global slots are off), False when every slot is held by someone else."""
+        if not global_slots_enabled():
+            return None
+        for key in self.keys():
+            try:
+                result = _db_acquire_lease(key, run_id=holder, holder=holder, lease_type="slot", project_id=None)
+            except Exception as exc:  # noqa: BLE001 -- fall back to the in-process gate
+                if _is_write_contention(exc):
+                    # Another process is writing the same slot row right
+                    # now: treat as busy and retry, never as "no table".
+                    logger.debug("Slot %s contended (%s); retrying", key, exc)
+                    continue
+                logger.warning(
+                    "Lease table unavailable (%s); %s slots are capped per process only", exc, self.name,
+                )
+                return None
+            if result:
+                register_live_run(holder)  # heartbeat renews the slot lease
+                return key
+        return False
+
+    def try_acquire(self) -> Optional[SlotToken]:
+        """A slot now, or None when the pool is full (never blocks)."""
+        import uuid
+
+        local = self._local()
+        if not local.acquire(blocking=False):
+            return None
+        holder = f"slot-{self.name}-{WORKER_ID}-{uuid.uuid4().hex[:12]}"
+        try:
+            key = self._take_db_slot(holder)
+        except BaseException:
+            local.release()
+            raise
+        if key is False:
+            local.release()
+            return None
+        return SlotToken(self, holder, key, local)
+
+    def acquire(self) -> SlotToken:
+        """Wait for a slot (queued callers keep waiting; nothing fails)."""
+        import uuid
+
+        local = self._local()
+        local.acquire()
+        holder = f"slot-{self.name}-{WORKER_ID}-{uuid.uuid4().hex[:12]}"
+        try:
+            while True:
+                key = self._take_db_slot(holder)
+                if key is not False:
+                    return SlotToken(self, holder, key, local)
+                # Held by other processes: woken by a local release, else poll.
+                with self._cond:
+                    self._cond.wait(slot_poll_seconds())
+        except BaseException:
+            local.release()
+            raise
+
+    def release(self, token: Optional[SlotToken]) -> None:
+        if token is None:
+            return
+        try:
+            if token.key:
+                release_leases(key=token.key, holder=token.holder)
+                unregister_live_run(token.holder)
+        finally:
+            token.local.release()
+            with self._cond:
+                self._cond.notify_all()
+
+    def held_globally(self) -> Optional[int]:
+        """Unexpired slot leases of this pool in the database (None if unreadable)."""
+        from sqlalchemy import func, select
+
+        from semabridge.repository.orm.models import RunLease
+
+        try:
+            with _session() as session:
+                return int(session.execute(
+                    select(func.count()).select_from(RunLease)
+                    .where(RunLease.lease_key.in_(self.keys()))
+                    .where(RunLease.expires_at > utcnow())
+                ).scalar() or 0)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Slot usage of %s unreadable: %s", self.name, exc)
+            return None
+
+
 _model_slots = threading.BoundedSemaphore(max_concurrent_models())
+# Global model-execution slots; the in-process gate is read at call time so
+# tests (and a reload) can swap ``_model_slots``.
+model_slots = SlotPool("model", max_concurrent_models, lambda: _model_slots)
 _slot_depth = threading.local()
 _slot_stats_lock = threading.Lock()
 _slot_stats = {"active": 0, "waiting": 0}
+_child_slot_tokens: List[SlotToken] = []
+_child_slot_lock = threading.Lock()
 
 # Called (once per model) when a model execution obtains its slot -- the
 # owning run flips from "queued" to "running" there.
@@ -422,6 +646,29 @@ model_started_callback: contextvars.ContextVar[Optional[Callable[[], None]]] = c
 def capacity_snapshot() -> Dict[str, int]:
     with _slot_stats_lock:
         return {"limit": max_concurrent_models(), **_slot_stats}
+
+
+def _acquire_model_slot() -> SlotToken:
+    token = model_slots.try_acquire()
+    if token is not None:
+        return token
+    with _slot_stats_lock:
+        _slot_stats["waiting"] += 1
+    logger.info("Model execution queued: all %d global model slots are busy", max_concurrent_models())
+    try:
+        return model_slots.acquire()
+    finally:
+        with _slot_stats_lock:
+            _slot_stats["waiting"] -= 1
+
+
+def _fire_model_started() -> None:
+    callback = model_started_callback.get()
+    if callback is not None:
+        try:
+            callback()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("model-started callback failed: %s", exc)
 
 
 @contextmanager
@@ -436,58 +683,37 @@ def model_slot() -> Iterator[None]:
         finally:
             _slot_depth.n -= 1
         return
-    if not _model_slots.acquire(blocking=False):
-        with _slot_stats_lock:
-            _slot_stats["waiting"] += 1
-        logger.info("Model execution queued: all %d global model slots are busy", max_concurrent_models())
-        try:
-            _model_slots.acquire()
-        finally:
-            with _slot_stats_lock:
-                _slot_stats["waiting"] -= 1
+    token = _acquire_model_slot()
     with _slot_stats_lock:
         _slot_stats["active"] += 1
     _slot_depth.n = 1
     try:
-        callback = model_started_callback.get()
-        if callback is not None:
-            try:
-                callback()
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("model-started callback failed: %s", exc)
+        _fire_model_started()
         yield
     finally:
         _slot_depth.n = 0
         with _slot_stats_lock:
             _slot_stats["active"] -= 1
-        _model_slots.release()
+        model_slots.release(token)
 
 
 def acquire_model_slot_for_child() -> None:
     """Parent-side slot for a model executed in another process (process
     executor); pair with ``release_model_slot_for_child``."""
-    if not _model_slots.acquire(blocking=False):
-        with _slot_stats_lock:
-            _slot_stats["waiting"] += 1
-        try:
-            _model_slots.acquire()
-        finally:
-            with _slot_stats_lock:
-                _slot_stats["waiting"] -= 1
+    token = _acquire_model_slot()
+    with _child_slot_lock:
+        _child_slot_tokens.append(token)
     with _slot_stats_lock:
         _slot_stats["active"] += 1
-    callback = model_started_callback.get()
-    if callback is not None:
-        try:
-            callback()
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("model-started callback failed: %s", exc)
+    _fire_model_started()
 
 
 def release_model_slot_for_child(*_: Any) -> None:
+    with _child_slot_lock:
+        token = _child_slot_tokens.pop() if _child_slot_tokens else None
     with _slot_stats_lock:
         _slot_stats["active"] -= 1
-    _model_slots.release()
+    model_slots.release(token)
 
 
 # ---------------------------------------------------------------------------

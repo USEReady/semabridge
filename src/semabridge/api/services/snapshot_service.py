@@ -3,6 +3,7 @@
 Provides all public snapshot management functions plus shared snapshot
 helper utilities used by run_service and version_service.
 """
+import semabridge.api.services.project_shared as _project_shared_mod
 import json
 import uuid
 from typing import Any, Dict, List, Optional
@@ -495,7 +496,9 @@ async def list_snapshot_groups_compat(project_id: str, limit: int = Query(defaul
 
 async def capture_manual_snapshots_compat(project_id: str, payload: Dict[str, Any]):
     _compat_ensure_loaded()
-    if project_id not in _compat_projects:
+    # Read-through: the database row decides (another process may have
+    # created or deleted the project).
+    if _project_shared_mod._compat_get_project(project_id, _compat_projects) is None:
         raise NotFoundError("Project not found")
 
     # Older compat-store files may have a project row without initialized
@@ -591,7 +594,9 @@ async def compare_project_snapshots_compat(
     include_states: bool = Query(default=False),
 ):
     _compat_ensure_loaded()
-    if project_id not in _compat_projects:
+    # Read-through: the database row decides (another process may have
+    # created or deleted the project).
+    if _project_shared_mod._compat_get_project(project_id, _compat_projects) is None:
         raise NotFoundError("Project not found")
     rows = [row for row in _compat_project_snapshots.get(project_id, []) if isinstance(row, dict)]
     from_row = next((r for r in rows if str(r.get("snapshot_id") or "") == str(from_snapshot_id)), None)

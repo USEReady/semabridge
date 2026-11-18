@@ -3,6 +3,7 @@
 Provides restore preview, model history timeline, audit log management,
 project statistics, and project storage stats.
 """
+import semabridge.api.services.project_shared as _project_shared_mod
 import json
 from typing import Any, Dict, List, Optional
 
@@ -100,7 +101,9 @@ async def preview_restore_compat(project_id: str, snapshot_id: str) -> Dict[str,
 
 async def restore_project_version_compat(project_id: str, payload: Dict[str, Any], background_tasks: BackgroundTasks):
     _compat_ensure_loaded()
-    if project_id not in _compat_projects:
+    # Read-through: the database row decides (another process may have
+    # created or deleted the project).
+    if _project_shared_mod._compat_get_project(project_id, _compat_projects) is None:
         raise NotFoundError("Project not found")
     snapshot_id = str((payload or {}).get("snapshot_id") or "").strip()
     if not snapshot_id:

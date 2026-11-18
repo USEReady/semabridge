@@ -78,16 +78,27 @@ def _resolve_project_account_id(payload: dict) -> str | None:
     return token or None
 
 def _upsert_project_in_orm(
-    project_id: str, project: Dict[str, Any], payload: dict, *, only_if_changed: bool = False
+    project_id: str, project: Dict[str, Any], payload: dict, *, only_if_changed: bool = False,
+    strict: bool | None = None,
 ) -> None:
-    """Create/update the projects row. ``only_if_changed`` (read paths): an
+    """Create/update the projects row (the authority for the project; the
+    in-memory entry is only its cache). ``only_if_changed`` (read paths): an
     existing row whose fields already match is left untouched -- no write,
-    no ``last_updated`` bump."""
+    no ``last_updated`` bump, and a deleted project is never revived.
+    Writes (create / patch) also store the decision metadata (owner, status,
+    sync_mode, folder) and clear a delete tombstone. ``strict`` (default:
+    writes yes, read paths no): a failure raises ProjectPersistenceError
+    instead of being logged -- a write goes to the database first."""
     pid = str(project_id or "").strip()
     if not pid:
         return
+    if strict is None:
+        strict = not only_if_changed
 
     try:
+        from semabridge.api.services.project_shared import _ensure_project_tables
+
+        _ensure_project_tables()
         from datetime import datetime
         from semabridge.repository.orm.models import Project
         from semabridge.repository.orm.session_factory import db_manager as orm_db_manager
@@ -108,6 +119,8 @@ def _upsert_project_in_orm(
             existing = session.get(Project, pid)
             notification_email = str(project.get("notification_email") or "").strip() or None
             touches_email = notification_email is not None or "notification_email" in (payload or {})
+            if existing is not None and only_if_changed and existing.deleted_at is not None:
+                return
             if existing is not None and only_if_changed:
                 unchanged = (
                     existing.name == project_name
@@ -135,8 +148,23 @@ def _upsert_project_in_orm(
             existing.last_updated = datetime.now(_tz.utc)
             if touches_email:
                 existing.notification_email = notification_email
+            if not only_if_changed:
+                existing.deleted_at = None
+                owner = str(project.get("owner_user_id") or project.get("user_id") or "").strip()
+                if owner:
+                    existing.owner_user_id = owner
+                if str(project.get("status") or "").strip():
+                    existing.status = str(project.get("status")).strip()
+                sync_mode = str(project.get("sync_mode") or "").strip().lower()
+                if sync_mode in {"copy", "upsert"}:
+                    existing.sync_mode = sync_mode
+                existing.folder_id = str(project.get("folder_id") or "")
             session.commit()
     except Exception as exc:
+        if strict:
+            from semabridge.api.services.project_shared import ProjectPersistenceError
+
+            raise ProjectPersistenceError(f"Project {pid} could not be saved to the database: {exc}") from exc
         logger.warning("Failed to upsert ORM project %s: %s", pid, exc)
 
 def _backfill_project_metadata(project_id: str, project: Dict[str, Any]) -> None:
@@ -256,21 +284,11 @@ def _delete_project_config_files(project_id: str) -> None:
         raise RuntimeError(f"Failed to delete project config file(s) for {pid}: {details}")
 
 def _delete_project_from_orm(project_id: str) -> None:
-    pid = str(project_id or "").strip()
-    if not pid:
-        return
+    """Soft-delete the project row (tombstone; its runs and snapshots are
+    removed as before). Raises ProjectPersistenceError when it cannot be saved."""
+    from semabridge.api.services.project_shared import _compat_soft_delete_project_in_db
 
-    try:
-        from semabridge.repository.orm.models import Project
-        from semabridge.repository.orm.session_factory import db_manager as orm_db_manager
-
-        with orm_db_manager.get_session() as session:
-            project = session.get(Project, pid)
-            if project is not None:
-                session.delete(project)
-                session.commit()
-    except Exception as exc:
-        logger.warning("Failed to delete ORM project %s: %s", pid, exc)
+    _compat_soft_delete_project_in_db(project_id)
 
 def _project_display_name_from_cfg(project_cfg: Dict[str, Any], fallback: str) -> str:
     if not isinstance(project_cfg, dict):
@@ -568,6 +586,9 @@ def _project_id_exists_anywhere(project_id: str) -> bool:
 
 async def list_project_discovery_compat():
     await asyncio.to_thread(_compat_ensure_loaded)
+    from semabridge.api.services.project_shared import _compat_deleted_ids
+
+    deleted_ids = await asyncio.to_thread(_compat_deleted_ids)
     entries: List[Dict[str, Any]] = []
     seen: set[str] = set()
     for projects_dir in _compat_projects_dirs():
@@ -579,7 +600,7 @@ async def list_project_discovery_compat():
             if (
                 not project_id
                 or project_id in seen
-                or project_id in _compat_deleted_project_ids
+                or project_id in deleted_ids
                 or project_id == "preview"
                 or project_id.startswith("preview-")
             ):
@@ -610,38 +631,9 @@ async def list_project_discovery_compat():
 def _project_entry_from_db(project_id: str) -> Dict[str, Any] | None:
     """A cache entry for a project that exists in Postgres but not (yet) in
     this process's cache (e.g. created by another process)."""
-    from semabridge.api.services.project_shared import (
-        _compat_project_entry_from_orm_row,
-    )
-    try:
-        from semabridge.repository.orm.models import Project
-        from semabridge.repository.orm.session_factory import db_manager as orm_db_manager
+    from semabridge.api.services.project_shared import _compat_get_project
 
-        with orm_db_manager.get_session() as session:
-            row = session.get(Project, project_id)
-            entry = _compat_project_entry_from_orm_row(row) if row is not None else None
-    except Exception as exc:
-        logger.error("Project %s could not be read from the database: %s", project_id, exc)
-        entry = None
-    config_text = get_project_config_text(project_id)
-    if entry is None and not config_text:
-        return None
-    if entry is None:
-        try:
-            parsed = yaml.safe_load(config_text) or {}
-        except Exception:
-            parsed = {}
-        parsed = parsed if isinstance(parsed, dict) else {}
-        entry = _compat_project_payload(project_id, {
-            "name": _project_display_name_from_cfg(parsed, project_id),
-            "source": parsed.get("source") if isinstance(parsed.get("source"), dict) else {},
-            "target": parsed.get("target") if isinstance(parsed.get("target"), dict) else {},
-            "targets": parsed.get("targets") if isinstance(parsed.get("targets"), list) else [],
-            "user_id": parsed.get("owner_user_id"),
-        })
-    _compat_projects[project_id] = entry
-    _compat_project_runs.setdefault(project_id, [])
-    return entry
+    return _compat_get_project(project_id, _compat_projects)
 
 async def list_projects_compat(limit: int = 200, offset: int = 0):
     """Compatibility: newfrontend expects a projects collection.
@@ -654,10 +646,18 @@ async def list_projects_compat(limit: int = 200, offset: int = 0):
     deduped: Dict[str, Dict[str, Any]] = {}
 
     # The project list comes from Postgres: the projects table merged with
-    # every project that has a saved config version. The in-memory cache only
-    # supplies the richer per-project metadata (status, folder, owner, ...).
-    from semabridge.api.services.project_shared import _compat_db_project_ids
+    # every project that has a saved config version, minus the deleted
+    # (tombstoned) ones. The decision metadata (status, folder, owner,
+    # sync_mode) is overlaid from the rows; the in-memory cache only supplies
+    # the remaining display fields.
+    from semabridge.api.services.project_shared import (
+        _compat_db_project_ids,
+        _compat_deleted_ids,
+        _compat_refresh_projects_from_db,
+    )
 
+    await asyncio.to_thread(_compat_refresh_projects_from_db)
+    deleted_ids = await asyncio.to_thread(_compat_deleted_ids)
     db_ids = await asyncio.to_thread(_compat_db_project_ids)
     # Never hide a project the server has loaded but the database does not
     # list yet (e.g. a config whose import failed, or a YAML added since
@@ -669,7 +669,7 @@ async def list_projects_compat(limit: int = 200, offset: int = 0):
     ]
     db_ids = list(dict.fromkeys([*(db_ids or []), *cache_ids]))
     for pid in db_ids:
-        if not pid or pid in _compat_deleted_project_ids or pid == "preview" or pid.startswith("preview-"):
+        if not pid or pid in deleted_ids or pid == "preview" or pid.startswith("preview-"):
             continue
         entry = _compat_projects.get(pid)
         if not isinstance(entry, dict):
@@ -709,7 +709,6 @@ async def create_project_compat(request: dict):
     default_id = f"proj-{safe_name}" if safe_name else f"proj-{int(_time.time() * 1000)}"
     requested_id = str(payload.get("id") or payload.get("project_id") or default_id).strip()
     project_id = requested_id or default_id
-    _compat_deleted_project_ids.discard(project_id)
     requested_semantic_name = _project_semantic_name({"semantic_name": payload_name, "name": payload_name}, payload_name)
 
     existing_project_id = None
@@ -741,8 +740,11 @@ async def create_project_compat(request: dict):
             # modular YAML file still exists for that id.
             project_id = f"{project_id}-{int(_time.time() * 1000)}"
         project = _compat_project_payload(project_id, payload)
-    _compat_projects[project_id] = project
+    # Database first (clears a delete tombstone of a re-used id); the cache
+    # entry only after the row is saved.
     await asyncio.to_thread(_upsert_project_in_orm, project_id, project, payload)
+    _compat_deleted_project_ids.discard(project_id)
+    _compat_projects[project_id] = project
 
     config_yaml = payload.get("config_yaml")
     if isinstance(config_yaml, str) and config_yaml.strip():
@@ -776,7 +778,7 @@ async def create_project_compat(request: dict):
 
 async def get_project_compat(project_id: str):
     await asyncio.to_thread(_compat_ensure_loaded)
-    project = _compat_projects.get(project_id)
+    project = await asyncio.to_thread(_project_entry_from_db, project_id)
     if not project:
         raise NotFoundError("Project not found")
     await asyncio.to_thread(_backfill_project_metadata, project_id, project)
@@ -784,10 +786,12 @@ async def get_project_compat(project_id: str):
 
 async def patch_project_compat(project_id: str, payload: dict):
     await asyncio.to_thread(_compat_ensure_loaded)
-    project = _compat_projects.get(project_id)
-    if not project:
+    cached = await asyncio.to_thread(_project_entry_from_db, project_id)
+    if not cached:
         raise NotFoundError("Project not found")
     _validate_payload_source_paths(payload or {})
+    # Edit a copy: the cache is updated only after the database row is saved.
+    project = dict(cached)
 
     for key in ("name", "display_name", "description", "folder_id", "status"):
         if key in (payload or {}):
@@ -857,17 +861,22 @@ async def patch_project_compat(project_id: str, payload: dict):
         project["user_id"] = owner_user_id
 
     project["updated_at"] = _compat_now_iso()
-    _compat_projects[project_id] = project
     await asyncio.to_thread(_upsert_project_in_orm, project_id, project, payload)
+    cached.clear()
+    cached.update(project)
+    project = cached
+    _compat_projects[project_id] = project
     await asyncio.to_thread(_compat_save_store)
     _raise_if_store_failed()
     return project
 
 async def delete_project_compat(project_id: str):
     await asyncio.to_thread(_compat_ensure_loaded)
+    # The delete is persisted first, as a tombstone row every process
+    # excludes (a per-process set let the project reappear elsewhere).
+    await asyncio.to_thread(_delete_project_from_orm, project_id)
     _compat_deleted_project_ids.add(project_id)
     await asyncio.to_thread(_delete_project_config_files, project_id)
-    await asyncio.to_thread(_delete_project_from_orm, project_id)
     try:
         await asyncio.to_thread(project_config_store.delete_project_config, project_id)
     except Exception as exc:
@@ -888,7 +897,7 @@ async def delete_project_compat(project_id: str):
 
 async def get_project_config_compat(project_id: str, prefer_repo: bool = Query(default=False)):
     await asyncio.to_thread(_compat_ensure_loaded)
-    project = _compat_projects.get(project_id)
+    project = await asyncio.to_thread(_project_entry_from_db, project_id)
     if not project:
         raise NotFoundError("Project not found")
     await asyncio.to_thread(_backfill_project_metadata, project_id, project)
@@ -932,7 +941,7 @@ async def get_project_config_compat(project_id: str, prefer_repo: bool = Query(d
 
 async def save_project_config_compat(project_id: str, payload: dict):
     await asyncio.to_thread(_compat_ensure_loaded)
-    project = _compat_projects.get(project_id)
+    project = await asyncio.to_thread(_project_entry_from_db, project_id)
     if not project:
         raise NotFoundError("Project not found")
     yaml_text = str((payload or {}).get("config_yaml") or "").strip()

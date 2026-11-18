@@ -281,35 +281,204 @@ def seed_mock_drift_events(project_id: str = "proj-comp") -> List[Dict[str, Any]
 
 
 def _state_path() -> Path:
-    p = Path.home() / ".semabridge" / "drift_state.json"
+    """The local JSON file: drift schedules and baselines (per host), and
+    the drift events only while the database is unavailable. Under pytest
+    it never resolves to the real per-user file."""
+    import os
+
+    override = os.environ.get("SEMABRIDGE_DRIFT_STATE_PATH")
+    if override:
+        p = Path(override)
+    elif "PYTEST_CURRENT_TEST" in os.environ:
+        import tempfile
+
+        p = Path(tempfile.gettempdir()) / "semabridge_test_drift_state" / "drift_state.json"
+    else:
+        p = Path.home() / ".semabridge" / "drift_state.json"
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
 
 
-def _load_state() -> Dict[str, Any]:
+# ---------------------------------------------------------------------------
+# Drift events live in the database (``drift_events``) so every server
+# process sees the same list; the JSON file above was per host. The list
+# order, dedupe key and 200-event cap are unchanged (applied by the callers).
+# ---------------------------------------------------------------------------
+
+_LOADED_IDS_KEY = "_loaded_event_ids"  # private: which rows a save may delete
+_IMPORTED_MARKER = "events_imported_to_db"
+_drift_tables_ready: set = set()
+
+
+def _drift_session():
+    from semabridge.repository.orm.session_factory import db_manager
+
+    return db_manager.get_session()
+
+
+def _ensure_drift_table() -> None:
+    from semabridge.repository.orm.base import Base
+    from semabridge.repository.orm.models import DriftEventRow
+    from semabridge.repository.orm.session_factory import db_manager
+
+    engine = db_manager.get_engine()
+    if id(engine) in _drift_tables_ready:
+        return
+    Base.metadata.create_all(bind=engine, tables=[DriftEventRow.__table__], checkfirst=True)
+    _drift_tables_ready.add(id(engine))
+
+
+def _read_json_file() -> Dict[str, Any]:
     p = _state_path()
     if not p.exists():
-        return {"schedules": [], "events": []}
+        return {}
     try:
-        data = json.loads(p.read_text(encoding="utf-8"))
+        data = json.loads(p.read_text(encoding="utf-8")) or {}
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError) as exc:
+        logger.warning("Drift state file %s could not be read: %s", p, exc)
+        return {}
+
+
+def _write_json_file(data: Dict[str, Any]) -> None:
+    _state_path().write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def _db_load_events() -> Optional[List[Dict[str, Any]]]:
+    """Events from the database, in list order; None when it cannot be read."""
+    try:
+        from sqlalchemy import select
+        from semabridge.repository.orm.models import DriftEventRow
+
+        _ensure_drift_table()
+        with _drift_session() as session:
+            rows = session.execute(
+                select(DriftEventRow.payload_json).order_by(DriftEventRow.position, DriftEventRow.updated_at)
+            ).all()
+    except Exception as exc:  # noqa: BLE001 -- the JSON file is the fallback
+        logger.warning("Drift events could not be read from the database (using the local file): %s", exc)
+        return None
+    events: List[Dict[str, Any]] = []
+    for (payload,) in rows:
+        try:
+            ev = json.loads(payload)
+        except ValueError as exc:
+            logger.warning("Skipping unreadable drift event row: %s", exc)
+            continue
+        if isinstance(ev, dict):
+            events.append(ev)
+    return events
+
+
+def _db_save_events(events: List[Dict[str, Any]], loaded_ids: Optional[set]) -> bool:
+    """Upsert ``events`` (position = list index) and delete the rows that
+    were loaded but are no longer in the list. Rows another process added
+    meanwhile are kept. False when the database cannot be written."""
+    try:
+        from sqlalchemy import delete
+        from semabridge.repository.orm.models import DriftEventRow
+
+        _ensure_drift_table()
+        now = datetime.now(timezone.utc)
+        keep = [ev for ev in events if isinstance(ev, dict) and ev.get("id")]
+        keep_ids = {str(ev["id"]) for ev in keep}
+        with _drift_session() as session:
+            removed = {str(i) for i in (loaded_ids or set())} - keep_ids
+            if removed:
+                session.execute(delete(DriftEventRow).where(DriftEventRow.id.in_(sorted(removed))))
+            for position, ev in enumerate(keep):
+                row = session.get(DriftEventRow, str(ev["id"]))
+                if row is None:
+                    row = DriftEventRow(id=str(ev["id"]))
+                    session.add(row)
+                row.project_id = str(ev.get("project_id") or "") or None
+                row.status = str(ev.get("status") or "") or None
+                row.position = position
+                row.payload_json = json.dumps(ev, default=str)
+                row.updated_at = now
+            session.commit()
+        return True
+    except Exception as exc:  # noqa: BLE001 -- the JSON file is the fallback
+        logger.warning("Drift events could not be saved to the database (kept in the local file): %s", exc)
+        return False
+
+
+def _import_json_events_once(db_events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """First use after the move to the database: an empty table takes the
+    events of the old JSON file (once; the file is then marked imported)."""
+    if db_events:
+        return db_events
+    data = _read_json_file()
+    file_events = [e for e in (data.get("events") or []) if isinstance(e, dict) and e.get("id")]
+    if not file_events or data.get(_IMPORTED_MARKER):
+        return db_events
+    if not _db_save_events(file_events, set()):
+        return file_events
+    data[_IMPORTED_MARKER] = True
+    try:
+        _write_json_file(data)
+    except OSError as exc:
+        logger.warning("Drift state file could not be marked as imported: %s", exc)
+    logger.info("Imported %d drift event(s) from %s into the database", len(file_events), _state_path())
+    return file_events
+
+
+def _load_state() -> Dict[str, Any]:
+    data = _read_json_file()
+    db_events = _db_load_events()
+    if db_events is None:
         events = list(data.get("events") or [])
-        for ev in events:
-            if not ev.get("proposed_snowflake_definition"):
-                ev["proposed_snowflake_definition"] = propose_snowflake_sql(
-                    ev.get("metric_name", ""),
-                    ev.get("bi_definition", ""),
-                    mock=bool(ev.get("mock")),
-                )
-        return {
-            "schedules": list(data.get("schedules") or []),
-            "events": events,
-        }
-    except Exception:
-        return {"schedules": [], "events": []}
+    else:
+        events = _import_json_events_once(db_events)
+    for ev in events:
+        if not ev.get("proposed_snowflake_definition"):
+            ev["proposed_snowflake_definition"] = propose_snowflake_sql(
+                ev.get("metric_name", ""),
+                ev.get("bi_definition", ""),
+                mock=bool(ev.get("mock")),
+            )
+    state: Dict[str, Any] = {
+        "schedules": list(data.get("schedules") or []),
+        "events": events,
+        _LOADED_IDS_KEY: {str(e.get("id")) for e in events if isinstance(e, dict) and e.get("id")},
+    }
+    if isinstance(data.get("baselines"), dict):
+        state["baselines"] = data["baselines"]
+    return state
 
 
 def _save_state(data: Dict[str, Any]) -> None:
-    _state_path().write_text(json.dumps(data, indent=2), encoding="utf-8")
+    events = list(data.get("events") or [])
+    in_db = _db_save_events(events, data.get(_LOADED_IDS_KEY))
+    file_data: Dict[str, Any] = {
+        k: v for k, v in data.items() if k not in (_LOADED_IDS_KEY, "events")
+    }
+    if in_db:
+        file_data[_IMPORTED_MARKER] = True
+        data[_LOADED_IDS_KEY] = {str(e.get("id")) for e in events if isinstance(e, dict) and e.get("id")}
+    else:
+        file_data["events"] = events
+    _write_json_file(file_data)
+
+
+def _update_event_row(ev: Dict[str, Any]) -> bool:
+    """Write one event's new state (resolve) without touching the others."""
+    try:
+        from semabridge.repository.orm.models import DriftEventRow
+
+        _ensure_drift_table()
+        with _drift_session() as session:
+            row = session.get(DriftEventRow, str(ev.get("id")))
+            if row is None:
+                return False
+            row.status = str(ev.get("status") or "") or None
+            row.payload_json = json.dumps(ev, default=str)
+            row.updated_at = datetime.now(timezone.utc)
+            session.commit()
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Drift event %s could not be updated in the database: %s", ev.get("id"), exc)
+        return False
 
 
 def _send_webhook(url: str, payload: Dict[str, Any]) -> None:
@@ -736,7 +905,9 @@ def resolve_drift_event(event_id: str, action: str, reason: str = "") -> Optiona
                 ev["status"] = "resolved"
                 ev["resolution_reason"] = reason
             ev["resolved_at"] = datetime.now(timezone.utc).isoformat()
-            _save_state(state)
+            # One row: a whole-list save could undo another process's edits.
+            if not _update_event_row(ev):
+                _save_state(state)
             return ev
     return None
 
