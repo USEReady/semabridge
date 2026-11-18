@@ -22,6 +22,9 @@ def test_publish_falls_back_to_sql_when_any_metric_view_fails():
             measure_view_type="metric_view",
             measure_view_mode="combined",
             create_measure_views=True,
+            # Since d3c7181 an explicit measure_view_type=metric_view only
+            # falls back to SQL views when this opt-in is set.
+            allow_sql_fallback_on_metric_view_failure=True,
         )
     )
     publisher = DatabricksPublisher(_cfg(), behavior=behavior)
@@ -84,6 +87,9 @@ def test_publish_fallback_persists_sql_debug_artifacts(tmp_path):
             measure_view_type="metric_view",
             measure_view_mode="combined",
             create_measure_views=True,
+            # Since d3c7181 an explicit measure_view_type=metric_view only
+            # falls back to SQL views when this opt-in is set.
+            allow_sql_fallback_on_metric_view_failure=True,
         )
     )
     publisher = DatabricksPublisher(_cfg(), behavior=behavior)
@@ -137,3 +143,45 @@ def test_publish_fallback_persists_sql_debug_artifacts(tmp_path):
     sql_artifacts = list(tmp_path.glob("*.sql"))
     assert sql_artifacts
     assert "CREATE OR REPLACE VIEW" in sql_artifacts[0].read_text(encoding="utf-8")
+
+
+def test_explicit_metric_view_without_opt_in_does_not_fall_back_to_sql():
+    """d3c7181: an explicitly configured metric_view keeps that contract --
+    no silent switch to SQL views unless the opt-in flag is set."""
+    behavior = ConnectorBehavior(
+        databricks=DatabricksBehavior(
+            measure_view_type="metric_view",
+            measure_view_mode="combined",
+            create_measure_views=True,
+        )
+    )
+    publisher = DatabricksPublisher(_cfg(), behavior=behavior)
+    model = SMLModel(unique_name="Inventory Semantic Model Project", datasets=[], metrics=[])
+    metric_view_sql = [
+        "CREATE OR REPLACE VIEW `main`.`public`.`mv_Inventory_Semantic_Model_Project_Measures` WITH METRICS LANGUAGE YAML AS $$\nversion: 1.1\n$$",
+    ]
+    requested_overrides: list[str | None] = []
+
+    def _mock_generate_views(sml_model, view_type_override=None):
+        requested_overrides.append(view_type_override)
+        return metric_view_sql, len(metric_view_sql), 0, []
+
+    def _mock_execute(statements, *args, **kwargs):
+        if "WITH METRICS LANGUAGE YAML" in "\n".join(statements):
+            raise DatabricksPublishError("forced metric-view failure")
+        return []
+
+    with patch.object(publisher, "_auto_initialize_missing_tables", return_value=None), patch.object(
+        publisher, "_determine_view_type", return_value="metric_view",
+    ), patch.object(
+        publisher, "_select_measure_view_mode_for_quota", return_value="combined",
+    ), patch.object(
+        publisher, "generate_sql_statements", return_value=["CREATE TABLE x (id INT)", *metric_view_sql],
+    ), patch.object(
+        publisher, "generate_measure_view_statements", side_effect=_mock_generate_views,
+    ), patch.object(
+        publisher, "execute_statements", side_effect=_mock_execute,
+    ):
+        publisher.publish(model)
+
+    assert "sql_view" not in requested_overrides
