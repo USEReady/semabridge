@@ -83,16 +83,33 @@ def _build_osi_model() -> OSIModel:
     )
 
 
-def test_pending_enrichment_advisory_recorded_for_failed_reachable_cross_table_metric():
+def test_reachable_cross_table_filter_now_translates_and_is_not_flagged():
+    """Since fe23519 (general DAX metric and dependency translation without
+    drops) the translator resolves a CALCULATE filter on a table reachable
+    via a declared relationship, so this metric no longer fails at dry-run
+    and must NOT carry the pending-enrichment advisory."""
     sml_model = OSIToSMLConverter().from_osi(_build_osi_model())
 
     special = next(m for m in sml_model.metrics if m.unique_name == "SpecialProductAmount")
 
-    # Translation genuinely failed at dry-run -- this metric's DAX (a
-    # measure reference wrapped in CALCULATE with a cross-table filter) is
-    # not something any tier here can resolve without live schema.
-    assert special.sync_enabled is False
-    assert not special.sql_expression
+    assert special.sync_enabled is True
+    assert special.sql_expression
+    assert "PRODUCT" in special.sql_expression.upper()
+    assert ADVISORY_CATEGORY_PENDING_LIVE_SCHEMA_ENRICHMENT not in special.advisory_categories
+
+
+def test_pending_enrichment_advisory_recorded_for_failed_reachable_cross_table_metric():
+    """The detector itself: when translation of that shape DID fail (no
+    SQL, sync disabled), the advisory note/category is recorded."""
+    sml_model = OSIToSMLConverter().from_osi(_build_osi_model())
+    special = next(m for m in sml_model.metrics if m.unique_name == "SpecialProductAmount")
+    special.sql_expression = None
+    special.sync_enabled = False
+    special.sync_failure_reason = "translation failed at dry-run"
+    special.advisory_notes = []
+    special.advisory_categories = []
+
+    OSIToSMLConverter()._flag_reachable_dimension_filters_pending_enrichment(sml_model)
 
     assert ADVISORY_CATEGORY_PENDING_LIVE_SCHEMA_ENRICHMENT in special.advisory_categories
     assert special.advisory_notes, "expected an advisory note explaining the pending-enrichment outcome"
