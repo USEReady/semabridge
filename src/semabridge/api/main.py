@@ -32,6 +32,7 @@ from semabridge.api.ui import router as ui_router
 from semabridge.api.websocket_alerts import alert_router
 from semabridge.api.routers.diagnostics_router import router as diagnostics_router
 from semabridge.api.routers.mapping_router import router as mapping_router
+from semabridge.api.routers.naming_router import router as naming_router
 from semabridge.api.routers.synonyms_router import router as synonyms_router
 from semabridge.api.routers.domain_ontology_router import router as domain_ontology_router
 from semabridge.api.routers.domain_ontology_router import project_router as ontology_project_router
@@ -95,6 +96,7 @@ for router in [
     connection_router,
     diagnostics_router,
     mapping_router,
+    naming_router,
     synonyms_router,
     domain_ontology_router,
     ontology_project_router,

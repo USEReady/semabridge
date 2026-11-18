@@ -42,6 +42,7 @@ from semabridge.ontology.models import (
     OntologyCollision,
     RelationshipType,
 )
+from semabridge.utils.identifiers import is_legacy_auto_column_name
 
 logger = logging.getLogger("semabridge.ontology.federated_loader")
 
@@ -1072,9 +1073,16 @@ class FederatedOntologyLoader:
 
     @staticmethod
     def _to_logical_id(raw: str) -> str:
-        """Compute deterministic Snowflake logical identifier matching IdentifierSanitizer rules."""
+        """Table alias / metric name (IdentifierSanitizer.to_alias)."""
         from semabridge.utils.identifiers import IdentifierSanitizer
         return IdentifierSanitizer().to_alias(str(raw or "").strip() or "COL")
+
+    @staticmethod
+    def _to_dimension_name(raw: str) -> str:
+        """A column's DIMENSION / FACT name in the semantic view: the emitter's
+        semantic-name rule (sanitize_semantic_alias), so 'Date' -> DATE."""
+        from semabridge.utils.identifiers import IdentifierSanitizer
+        return IdentifierSanitizer().sanitize_semantic_alias(str(raw or "").strip() or "COL")
 
     @classmethod
     def _extract_semantic_view_metadata(cls, ddl: Optional[str]) -> Dict[str, Any]:
@@ -1265,11 +1273,16 @@ class FederatedOntologyLoader:
                 bi_attr_keys.add(a_key)
                 exist_a = existing_attrs.get(a_key)
                 desc, bi_desc = cls._merge_description(exist_a, col.description)
+                # A stored COL_DATE for 'Date' is only the old automatic
+                # dimension name; the view now names it DATE.
+                exist_logical = exist_a.logical_name if exist_a and exist_a.logical_name else None
+                if exist_logical and is_legacy_auto_column_name(col.unique_name, exist_logical):
+                    exist_logical = None
                 col_logical = (
                     sv_meta["dims"].get((ds_logical.upper(), _norm_key(col.source_column or col.unique_name)))
                     or sv_meta["dims"].get((ds_logical.upper(), _norm_key(col.unique_name)))
-                    or (exist_a.logical_name if exist_a and exist_a.logical_name else None)
-                    or cls._to_logical_id(col.unique_name)
+                    or exist_logical
+                    or cls._to_dimension_name(col.unique_name)
                 )
                 attrs.append(
                     DomainAttribute(

@@ -361,6 +361,7 @@ export default function MultiFileDryRunStatus({
                         // every per-file result through normalizeRows() on load.
                         mappings={section.rows}
                         summary={section.result?.summary}
+                        deployedNamesKnown={Boolean(section.result?.deployed_names_known)}
                         relationships={relationships}
                         onEdit={(rowId, updates) => onEditRow?.(section.fileId, rowId, updates)}
                         onBulkResolved={(resolvedMap) => onBulkResolved?.(section.fileId, resolvedMap)}

@@ -2066,6 +2066,7 @@ class DatabricksPublisher:
 
         unresolved = False
 
+        # SQL keywords + Databricks function names (not identifier rules), so not the utils/identifiers lists.
         reserved_tokens = {
             "and", "or", "not", "null", "true", "false",
             "case", "when", "then", "else", "end",

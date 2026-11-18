@@ -7,7 +7,7 @@
  * Step 4: Model mapping settings
  * Step 5: Finish and configure
  */
-import { SNOWFLAKE_RESERVED_WORDS } from '../utils/collisionResolution';
+import { targetNameKind, validateTargetName } from '../utils/validateTargetName';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import './mapping-styles.css';
@@ -116,8 +116,6 @@ const MAPPING_FILTERS = [
   { id: 'unmapped', label: 'Unmapped' },
   { id: 'collision', label: 'Collision/Error' },
 ];
-
-const SNOWFLAKE_RESERVED = new Set([...SNOWFLAKE_RESERVED_WORDS].map((w) => w.toUpperCase())); // Snowflake's real reserved keywords (shared list; DATE is not one)
 
 function shortDeterministicHash(value) {
   let hash = 2166136261;
@@ -230,57 +228,6 @@ function countResponseFields(data) {
   }).length;
 }
 
-function sanitizeIdentifier(value) {
-  const raw = String(value || '').trim();
-  if (!raw) return 'UNNAMED';
-  const cleaned = raw
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, '_')
-    .replace(/_+/g, '_')
-    .replace(/^_+|_+$/g, '');
-  if (!cleaned) return 'UNNAMED';
-  return /^\d/.test(cleaned) ? `N_${cleaned}` : cleaned;
-}
-
-function validateTargetName(value, targetPlatform, sourceType, targetType) {
-  const next = String(value || '').trim();
-  if (!next) {
-    return { isValid: false, code: 'EMPTY_TARGET', message: 'Target field cannot be empty.', suggestion: 'UNNAMED' };
-  }
-
-  const platform = String(targetPlatform || '').toLowerCase();
-  const upper = next.toUpperCase();
-
-  if (platform.includes('snowflake') && SNOWFLAKE_RESERVED.has(upper)) {
-    return {
-      isValid: false,
-      code: 'RESERVED_KEYWORD',
-      message: 'Target field is a Snowflake reserved keyword.',
-      suggestion: `COL_${upper}`,
-    };
-  }
-
-  const sanitized = sanitizeIdentifier(next);
-  if (platform.includes('snowflake') && sanitized !== upper) {
-    return {
-      isValid: false,
-      code: 'UNSUPPORTED_CHARACTERS',
-      message: 'Target field has unsupported characters for Snowflake.',
-      suggestion: sanitized,
-    };
-  }
-
-  if (String(sourceType || '').toLowerCase() === 'boolean' && String(targetType || '').toLowerCase() === 'date') {
-    return {
-      isValid: false,
-      code: 'INCOMPATIBLE_TYPE',
-      message: 'Source and target data types are incompatible.',
-      suggestion: sanitized,
-    };
-  }
-
-  return { isValid: true, code: 'OK', message: '', suggestion: sanitized };
-}
 
 function getConnectorPresentation(type) {
   const normalized = String(type || '').toLowerCase();
@@ -1792,6 +1739,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       targetPlatform,
       sourceType,
       updates.target_data_type,
+      targetNameKind(editingRowData),
     );
 
     if (!validation.isValid) {

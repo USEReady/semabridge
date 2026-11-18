@@ -28,6 +28,11 @@ export const SNOWFLAKE_RESERVED_WORDS = new Set([
   'unique', 'update', 'values', 'whenever', 'where', 'window', 'with',
   'current_date', 'current_time', 'current_timestamp', 'current_user',
   'localtime', 'localtimestamp',
+  // Reserved by Snowflake in some contexts (joins, FROM/WHERE, CAST ...).
+  'account', 'case', 'cast', 'connection', 'constraint', 'cross', 'database',
+  'false', 'full', 'gscluster', 'inner', 'issue', 'join', 'lateral', 'left',
+  'natural', 'organization', 'right', 'schema', 'true', 'try_cast', 'using',
+  'view', 'when',
 ]);
 
 // The backend's broader list (SNOWFLAKE_RESERVED_WORDS): still used for
@@ -79,6 +84,16 @@ export function toSnowflakeAlias(value, kind = 'column') {
   const reserved = isMetricKind(kind) ? SNOWFLAKE_LEGACY_RESERVED_WORDS : SNOWFLAKE_RESERVED_WORDS;
   if (reserved.has(result.toLowerCase())) result = `COL_${result}`;
   return result;
+}
+
+/**
+ * Physical column name in the Snowflake table (backend
+ * IdentifierSanitizer.sanitize_column, broad legacy list): 'Date' -> COL_DATE,
+ * 'Sales %' -> SALES_PCT. Differs from the semantic (dimension) name for
+ * type words such as DATE, VALUE, KEY.
+ */
+export function toPhysicalColumnName(value) {
+  return toSnowflakeAlias(value, 'metric');
 }
 
 /** Generic identifier rules (non-Snowflake targets): backend sanitize_identifier. */

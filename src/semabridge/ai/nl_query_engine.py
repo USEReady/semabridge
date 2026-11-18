@@ -120,8 +120,15 @@ class NLQueryEngine:
         for de in lexicon.dimensions:
             if de.sv_dim_alias and de.concept.name.casefold() == c_cf and de.attribute.name.casefold() == a_cf:
                 return f"{cls._q_ident(de.sv_dim_alias[0])}.{cls._q_ident(de.sv_dim_alias[1])}"
+        from semabridge.utils.identifiers import is_legacy_auto_column_name
+
         tbl = getattr(concept, "logical_name", None) or cls._to_logical_id(concept.name)
-        col = getattr(attr, "logical_name", None) or cls._to_dimension_name(attr.name)
+        col = getattr(attr, "logical_name", None)
+        if col and is_legacy_auto_column_name(attr.name, col):
+            # A stored COL_DATE for 'Date' is the old automatic name; the
+            # view names the dimension DATE now (semantic rule).
+            col = None
+        col = col or cls._to_dimension_name(attr.name)
         return f"{cls._q_ident(tbl)}.{cls._q_ident(col)}"
 
     @staticmethod

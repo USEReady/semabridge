@@ -126,6 +126,11 @@ export function normalizeRows(data) {
           ? row.resolution_suggestions.map(String).filter(Boolean)
           : [],
         mapping_scope: String(row?.mapping_scope || ''),
+        // { from, to } when the column's Snowflake name differs from its
+        // last deployed name (e.g. COL_DATE -> DATE); see nameChanges.js.
+        deployed_name_change: (row?.deployed_name_change && row.deployed_name_change.from && row.deployed_name_change.to)
+          ? { from: String(row.deployed_name_change.from), to: String(row.deployed_name_change.to) }
+          : null,
         target_expression: row?.target_expression || '',
         sync_enabled: row?.sync_enabled === false || (isMeasure && Boolean((row?.source_expression || row?.measure_expression || row?.expression || '').trim()) && !Boolean(String(row?.target_expression || '').trim())) ? false : true,
         sync_failure_reason: row?.sync_failure_reason || (isMeasure && Boolean((row?.source_expression || row?.measure_expression || row?.expression || '').trim()) && !Boolean(String(row?.target_expression || '').trim()) ? 'DAX translation unavailable: no SQL expression produced' : ''),

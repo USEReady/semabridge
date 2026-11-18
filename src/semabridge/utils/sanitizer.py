@@ -31,6 +31,7 @@ def sanitize_sml_name(name: str) -> str:
         name = '_' + name
         
     # 4. Append _LOGICAL if the name is a reserved SQL keyword
+    # SML names (suffix _LOGICAL) keep their own historic set; SNOWFLAKE_RESERVED (utils/identifiers) is lower-case, so only this set matched so far.
     reserved = {"COLUMN", "TABLE", "DATE"}
     if name.upper() in SNOWFLAKE_RESERVED or name.upper() in reserved:
         name = name + "_LOGICAL"

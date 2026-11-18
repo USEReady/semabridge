@@ -25,17 +25,23 @@ class SemanticDDLSanitizer:
     def sanitize_semantic_name(self, name: str) -> str:
         """Sanitize semantic name and ensure it does not start with a digit.
 
-        Semantic names (dimension / fact / metric aliases) use the alias
-        rules: only words Snowflake really reserves get COL_ (DATE stays DATE).
-        Physical column names keep sanitize_column."""
+        DIMENSION / FACT names use the semantic-alias rule: only words
+        Snowflake really reserves get COL_ (DATE stays DATE). Physical column
+        names keep sanitize_column; metric names keep to_alias; relationship
+        names keep sanitize_column (to_snowflake_relationship_name)."""
         sanitized = self.identifier_sanitizer.sanitize_semantic_alias(name)
         if sanitized and sanitized[0].isdigit():
             sanitized = f"_{sanitized}"
         return sanitized
 
     def to_snowflake_relationship_name(self, name: str) -> str:
-        """Convert canonical relationship name to Snowflake-layer identifier."""
-        rel_name = self.sanitize_semantic_name(name)
+        """Convert canonical relationship name to Snowflake-layer identifier.
+
+        Uses sanitize_column (the rule relationship names were always built
+        with), so existing relationship names do not change on re-sync."""
+        rel_name = self.identifier_sanitizer.sanitize_column(name)
+        if rel_name and rel_name[0].isdigit():
+            rel_name = f"_{rel_name}"
         if rel_name.startswith("REL_"):
             return rel_name[4:]
         return rel_name

@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 import re
 
+from semabridge.utils.identifiers import SNOWFLAKE_ALIAS_RESERVED_WORDS
 from semabridge.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -238,13 +239,8 @@ class JoinManager:
 class QueryValidator:
     """Validates assembled SQL queries."""
     
-    # Snowflake reserved keywords (partial list)
-    RESERVED_KEYWORDS = {
-        'SELECT', 'FROM', 'WHERE', 'GROUP', 'ORDER', 'HAVING',
-        'JOIN', 'INNER', 'LEFT', 'RIGHT', 'FULL', 'CROSS',
-        'ON', 'AS', 'AND', 'OR', 'NOT', 'IN', 'BETWEEN',
-        'LIKE', 'NULL', 'IS', 'DISTINCT', 'ALL', 'ANY',
-    }
+    # Snowflake reserved keywords (shared list: utils/identifiers).
+    RESERVED_KEYWORDS = frozenset(w.upper() for w in SNOWFLAKE_ALIAS_RESERVED_WORDS)
     
     @staticmethod
     def validate_select_clause(select_clause: str) -> Tuple[bool, Optional[str]]:

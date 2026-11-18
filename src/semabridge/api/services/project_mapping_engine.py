@@ -31,7 +31,12 @@ def _log_mapping_event(project_id: Any, event: Dict[str, Any]) -> None:
         }, default=str),
     )
 
-from semabridge.utils.identifiers import IdentifierSanitizer, SNOWFLAKE_ALIAS_RESERVED_WORDS, SNOWFLAKE_RESERVED_WORDS
+from semabridge.utils.identifiers import (
+    IdentifierSanitizer,
+    SNOWFLAKE_ALIAS_RESERVED_WORDS,
+    SNOWFLAKE_RESERVED_WORDS,
+    snowflake_target_name,
+)
 from semabridge.core.drop_ledger import DropLedger, DropStage
 from semabridge.converter.dax_ast_parser import (
     ADVISORY_CATEGORY_UNREACHABLE_DIMENSION,
@@ -555,9 +560,8 @@ def _default_target_identifier(
     ('Date' -> DATE). Metrics keep to_alias, which their SQL references use."""
     connector = _normalize_connector_name(target_connector)
     if connector == "snowflake":
-        if _is_column_kind(entity_kind):
-            return _SNOWFLAKE_SANITIZER.sanitize_semantic_alias(source_name)
-        return _SNOWFLAKE_SANITIZER.to_alias(source_name)
+        # The one naming rule (utils/identifiers.snowflake_target_name).
+        return snowflake_target_name(source_name, entity_kind="column" if _is_column_kind(entity_kind) else "metric")
     return sanitize_identifier(source_name)
 
 

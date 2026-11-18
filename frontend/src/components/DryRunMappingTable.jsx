@@ -19,7 +19,7 @@ import { api } from '../utils/api';
 import SynonymEditModal from './SynonymEditModal';
 import { suggestCollisionResolutions, resolveCollisionsForRows } from '../utils/projectHelpers';
 import { normalizeTypedName, finalizeTypedName } from '../utils/collisionResolution';
-import { collectNameChanges, renameImpactNote } from '../utils/nameChanges';
+import { collectNameChanges, legacyNamingNote, renameImpactNote } from '../utils/nameChanges';
 import RenameImpactNote from './common/RenameImpactNote';
 import {
   groupRowsByFieldType,
@@ -1129,6 +1129,7 @@ const CHANGE_TONE = {
   naming_rules: 'var(--text-tertiary)',
   renamed_by_you: 'var(--accent-blue)',
   clash_resolved: '#fbbf24',
+  renamed_in_snowflake: '#f87171',
 };
 
 /**
@@ -1136,12 +1137,34 @@ const CHANGE_TONE = {
  * name differs from its source name (naming rules, resolved clashes, user
  * renames), why, and an Edit action that opens the normal field editor.
  */
-function NameChangesPanel({ rows, onEdit }) {
+function NameChangesPanel({ rows, onEdit, deployedNamesKnown = false }) {
   const [open, setOpen] = useState(false);
   const changes = useMemo(() => collectNameChanges(rows), [rows]);
-  if (changes.length === 0) return null;
+  // Columns renamed in Snowflake vs the last deploy (COL_DATE -> DATE): when
+  // the last deployed names are unknown, one project-level note instead.
+  const legacyNote = useMemo(() => legacyNamingNote(rows, deployedNamesKnown), [rows, deployedNamesKnown]);
+  const renamedInSnowflake = changes.filter(({ reason }) => reason.kind === 'renamed_in_snowflake').length;
+  if (changes.length === 0 && !legacyNote) return null;
   return (
     <div style={PANEL}>
+      {(legacyNote || renamedInSnowflake > 0) && (
+        <div
+          role="note"
+          style={{
+            display: 'flex', gap: 8, padding: '10px 14px', fontSize: 12, color: 'var(--text-secondary)',
+            borderBottom: '1px solid var(--border-subtle)',
+          }}
+        >
+          <Info size={14} style={{ flexShrink: 0, marginTop: 1, color: CHANGE_TONE.renamed_in_snowflake }} />
+          <span>
+            {renamedInSnowflake > 0
+              ? `${renamedInSnowflake} column${renamedInSnowflake > 1 ? 's are' : ' is'} renamed in Snowflake by this sync `
+                + '(see "Renamed in Snowflake" below). Queries, reports, dashboards or Cortex verified queries that use '
+                + 'the old names must be updated.'
+              : legacyNote}
+          </span>
+        </div>
+      )}
       <button type="button" aria-expanded={open} onClick={() => setOpen((v) => !v)} style={PANEL_HEADER}>
         <ChevronRight size={14} style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }} />
         Name changes ({changes.length})
@@ -1227,6 +1250,7 @@ export default function DryRunMappingTable({
   compatibilityScore = null,  // 0–100 float from backend
   onReSync,                   // () => void — trigger a re-sync after auto-add
   droppedEntities = [],       // DropRecord[] — entities excluded from deployed DDL (see DropLedger)
+  deployedNamesKnown = false, // backend read the last deploy's names (rows carry deployed_name_change)
   unresolvedReportFieldReferences = [], // [{field, field_type, table, occurrences}] — report queries a name absent from the current schema (see LocalPBIXConnector._detect_unresolved_field_references); table-scoped only, never auto-attached to a specific column
 }) {
   // ── Dev-only guardrail: catch un-normalized rows reaching this component ────
@@ -1747,7 +1771,7 @@ export default function DryRunMappingTable({
 
       {/* ── Every name that will deploy differently from the source (even
           when nothing needed fixing), with the reason and an Edit action. ── */}
-      <NameChangesPanel rows={mappings} onEdit={onEdit} />
+      <NameChangesPanel rows={mappings} onEdit={onEdit} deployedNamesKnown={deployedNamesKnown} />
 
       {/* ── Same column name in several tables (info only). ── */}
       <SharedNamesNote rows={mappings} />

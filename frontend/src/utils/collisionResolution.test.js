@@ -143,3 +143,33 @@ test('normalizeRows keeps backend resolution_suggestions and mapping_scope', asy
   assert.deepEqual(row.resolution_suggestions, ['PRODUCT_MARGIN_PCT']);
   assert.equal(row.mapping_scope, 'column::m::datasets.Product');
 });
+
+// One table, produced by the backend's snowflake_target_name and asserted by
+// Tests/test_naming_single_rule.py too: both sides are pinned to it.
+test('JS mirror equals the backend snowflake_target_name table (columns and metrics)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const table = JSON.parse(readFileSync(new URL('./snowflakeNamingTable.json', import.meta.url), 'utf8'));
+  const { SNOWFLAKE_RESERVED_WORDS, SNOWFLAKE_LEGACY_RESERVED_WORDS, toPhysicalColumnName } = await import('./collisionResolution.js');
+  ['column', 'metric'].forEach((kind) => {
+    Object.entries(table[kind]).forEach(([input, expected]) => {
+      assert.equal(toSnowflakeAlias(input, kind), expected, `${kind} ${JSON.stringify(input)}`);
+    });
+  });
+  assert.deepEqual([...SNOWFLAKE_RESERVED_WORDS].sort(), table.reserved_words.column);
+  assert.deepEqual([...SNOWFLAKE_LEGACY_RESERVED_WORDS].sort(), table.reserved_words.metric);
+  // Physical column = backend sanitize_column (= the metric/legacy rule).
+  Object.entries(table.metric).forEach(([input, expected]) => {
+    assert.equal(toPhysicalColumnName(input), expected, `physical ${JSON.stringify(input)}`);
+  });
+  assert.equal(toPhysicalColumnName('Date'), 'COL_DATE');
+  assert.equal(toPhysicalColumnName('Sales %'), 'SALES_PCT');
+});
+
+test('words Snowflake restricts in some contexts keep COL_ for dimensions; type words do not', () => {
+  ['Left', 'View', 'Join', 'Case', 'Schema', 'True', 'Try_Cast', 'Using'].forEach((w) => {
+    assert.equal(toSnowflakeAlias(w), `COL_${w.toUpperCase()}`);
+  });
+  ['Date', 'Key', 'Value', 'Count', 'Number', 'Timestamp'].forEach((w) => {
+    assert.equal(toSnowflakeAlias(w), w.toUpperCase());
+  });
+});

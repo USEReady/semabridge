@@ -12,7 +12,7 @@
 import { useState, useEffect } from 'react';
 import { AlertTriangle, CheckCircle, Loader2 } from 'lucide-react';
 import Modal from './common/Modal';
-import { validateTargetName } from '../utils/validateTargetName';
+import { targetNameKind, validateTargetName } from '../utils/validateTargetName';
 import { renameImpactNote } from '../utils/nameChanges';
 import RenameImpactNote from './common/RenameImpactNote';
 
@@ -92,6 +92,7 @@ export default function FieldMappingEditor({
       targetPlatform,
       row?.source_type || '',
       targetDataType,
+      targetNameKind(row),
     );
     setValidationResult(result);
   }
@@ -105,6 +106,7 @@ export default function FieldMappingEditor({
         targetPlatform,
         row?.source_type || '',
         e.target.value,
+        targetNameKind(row),
       );
       setValidationResult(result);
     }
@@ -118,6 +120,7 @@ export default function FieldMappingEditor({
       targetPlatform,
       row?.source_type || '',
       targetDataType,
+      targetNameKind(row),
     );
     setValidationResult(result);
     if (!result.isValid) return; // keep modal open, error already shown
@@ -133,6 +136,7 @@ export default function FieldMappingEditor({
       targetPlatform,
       row?.source_type || '',
       targetDataType,
+      targetNameKind(row),
     );
     setValidationResult(result);
   }

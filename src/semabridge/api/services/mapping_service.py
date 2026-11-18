@@ -38,14 +38,11 @@ def _raise_if_store_failed() -> None:
 
 
 from semabridge.domain.exceptions import ExternalServiceError, NotFoundError, ValidationError
-from semabridge.utils.identifiers import IdentifierSanitizer
-
-AUTO_MAP_SNOWFLAKE_RESERVED = {
-    "SELECT", "GROUP", "ORDER", "TABLE", "COLUMN", "DATE", "FROM", "WHERE",
-    "BY", "JOIN", "VIEW", "UNION", "INSERT", "UPDATE", "DELETE", "CREATE",
-    "DROP", "HAVING", "LIMIT", "OFFSET", "INTO", "PRIMARY", "FOREIGN",
-    "KEY", "REFERENCES", "DATABASE", "SCHEMA", "WAREHOUSE", "ACCOUNT",
-}
+from semabridge.utils.identifiers import (
+    IdentifierSanitizer,
+    SNOWFLAKE_ALIAS_RESERVED_WORDS,
+    SNOWFLAKE_RESERVED_WORDS,
+)
 _SNOWFLAKE_SANITIZER = IdentifierSanitizer(force_uppercase=True, suppress_reserved=True)
 logger = logging.getLogger(__name__)
 
@@ -884,8 +881,14 @@ def _compat_serialize_auto_map_entity_mappings(
             collision_detected = True
         if validation_code == "OK" and validation_status == "valid":
             validation_message = ""
-        if connector == "snowflake" and target_name.upper() in AUTO_MAP_SNOWFLAKE_RESERVED:
-            suggested_target_name = f"COL_{target_name.upper()}"
+        row_kind = str(row.get("entity_kind") or "column").strip().lower() or "column"
+        # Same lists the deploy uses (utils/identifiers): columns -> real
+        # Snowflake reserved words only (DATE is fine), metrics -> legacy list.
+        reserved_words = SNOWFLAKE_ALIAS_RESERVED_WORDS if row_kind == "column" else SNOWFLAKE_RESERVED_WORDS
+        if connector == "snowflake" and target_name.lower() in reserved_words:
+            from semabridge.utils.identifiers import snowflake_target_name
+
+            suggested_target_name = snowflake_target_name(target_name, source_path, row_kind)
             collision_detected = True
             validation_status = "invalid"
             validation_code = "RESERVED_KEYWORD"

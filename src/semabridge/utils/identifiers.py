@@ -75,6 +75,13 @@ SNOWFLAKE_ALIAS_RESERVED_WORDS: frozenset = frozenset({
     "unique", "update", "values", "whenever", "where", "window", "with",
     "current_date", "current_time", "current_timestamp", "current_user",
     "localtime", "localtimestamp",
+    # Reserved by Snowflake in some contexts (joins, FROM/WHERE, CAST ...):
+    # unquoted queries against a dimension named e.g. LEFT or VIEW can fail,
+    # so these keep the COL_ prefix too.
+    "account", "case", "cast", "connection", "constraint", "cross", "database",
+    "false", "full", "gscluster", "inner", "issue", "join", "lateral", "left",
+    "natural", "organization", "right", "schema", "true", "try_cast", "using",
+    "view", "when",
 })
 
 SQL_FUNCTION_NAMES: Set[str] = {

@@ -14,10 +14,11 @@ def sanitize_col_name(emitter, name: str) -> str:
 
 
 def sanitize_semantic_name(emitter, name: str) -> str:
-    """Sanitize semantic name and ensure it does not start with a digit.
+    """DIMENSION / FACT name in the semantic view; never starts with a digit.
 
-    Alias rules (only real Snowflake reserved words get COL_); physical
-    column names keep sanitize_column."""
+    Semantic-alias rule (only real Snowflake reserved words get COL_, so
+    'Date' -> DATE). Physical column names keep sanitize_column, metric names
+    and relationship names keep the old rule (to_alias / sanitize_column)."""
     sanitized = emitter._id.sanitize_semantic_alias(name)
     if sanitized and sanitized[0].isdigit():
         sanitized = f"_{sanitized}"
@@ -29,8 +30,12 @@ def to_snowflake_relationship_name(emitter, name: str) -> str:
 
     Canonical model names retain the REL_ prefix. Snowflake output removes
     only that leading REL_ for cleaner relationship identifiers.
+    Uses sanitize_column (the rule relationship names were always built
+    with), so existing relationship names do not change on re-sync.
     """
-    rel_name = sanitize_semantic_name(emitter, name)
+    rel_name = sanitize_col_name(emitter, name)
+    if rel_name and rel_name[0].isdigit():
+        rel_name = f"_{rel_name}"
     if rel_name.startswith("REL_"):
         return rel_name[4:]
     return rel_name

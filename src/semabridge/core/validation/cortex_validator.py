@@ -33,6 +33,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from semabridge.utils.identifiers import SNOWFLAKE_ALIAS_RESERVED_WORDS
+
 logger = logging.getLogger(__name__)
 
 
@@ -71,12 +73,9 @@ class CortexValidator:
         otherwise they are warnings.
     """
 
-    # Cortex-specific reserved words that must not be used as bare identifiers
-    CORTEX_RESERVED = frozenset({
-        "TABLE", "VIEW", "COLUMN", "INDEX", "SELECT", "FROM", "WHERE",
-        "JOIN", "GROUP", "ORDER", "BY", "HAVING", "UNION", "INSERT",
-        "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "GRANT", "REVOKE",
-    })
+    # Words that must not be used as bare identifiers: Snowflake's reserved
+    # keywords (shared list: utils/identifiers), plus INDEX which Cortex rejects.
+    CORTEX_RESERVED = frozenset(w.upper() for w in SNOWFLAKE_ALIAS_RESERVED_WORDS) | {"INDEX"}
 
     def __init__(self, require_descriptions: bool = True) -> None:
         self.require_descriptions = require_descriptions

@@ -4,7 +4,7 @@ import SmartSearchBar from '../common/SmartSearchBar';
 import { matchesSmartQuery } from '../common/smartSearchQuery';
 import { resolveSourceTableName, sanitizeMappingName, isBlockingRow } from '../../utils/projectHelpers';
 import { INPUT, MAPPING_FILTERS } from '../../utils/constants';
-import { validateTargetName } from '../../utils/validateTargetName';
+import { targetNameKind, validateTargetName } from '../../utils/validateTargetName';
 import SourceIcon from '../common/SourceIcon';
 import { api, authFetch } from '../../utils/api';
 import { ToggleOption } from '../WizardUIComponents';
@@ -352,7 +352,7 @@ export function StepMappingOptions({
     // Optimistic update
     setRows((prev) => prev.map((row) => {
       if (row.id !== rowId) return row;
-      const validation = validateTargetName(value, primaryTargetConnector, row.source_type, row.target_type);
+      const validation = validateTargetName(value, primaryTargetConnector, row.source_type, row.target_type, targetNameKind(row));
       if (validation.isValid) {
         return {
           ...row,
@@ -719,6 +719,7 @@ export function StepMappingOptions({
             <DryRunMappingTable
               mappings={detectedMappings}
               summary={dryRunData?.summary}
+              deployedNamesKnown={Boolean(dryRunData?.deployed_names_known)}
               relationships={(() => {
                 try {
                   const stored = sessionStorage.getItem('detectedRelationships');

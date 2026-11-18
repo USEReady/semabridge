@@ -985,6 +985,15 @@ async def _run_dry_run_pipeline(
             "source_file": m.get("source_file") or source_label or None,
         })
 
+    # Columns whose Snowflake name changes vs the last deploy (e.g. COL_DATE
+    # -> DATE after the naming-rule change): marked so the UI warns that
+    # queries / reports using the old name must be updated.
+    from semabridge.api.services.deployed_name_changes import annotate_dry_run_rows
+
+    deployed_names_known = annotate_dry_run_rows(
+        filtered_mappings, project_id, (model_plan or {}).get("physical_namespace"),
+    )
+
     auto_count = sum(1 for m in filtered_mappings if m.get("status") == "auto")
     unmapped_count = sum(1 for m in filtered_mappings if m.get("status") == "unmapped")
     collision_count = sum(1 for m in filtered_mappings if m.get("status") == "collision")
@@ -1038,6 +1047,9 @@ async def _run_dry_run_pipeline(
         "source_type": source_type,
         "source_ref": (selected_sources[0] if len(selected_sources or []) == 1 else None),
         "entity_mappings": filtered_mappings,
+        # True when the last deployed names were read (rows then carry
+        # deployed_name_change where the name changes in Snowflake).
+        "deployed_names_known": deployed_names_known,
         "extraction_failed": extraction_failed,
         # Set when the only problem is that the model has no tables; the
         # dry-run job records the file as "skipped" with this reason.
