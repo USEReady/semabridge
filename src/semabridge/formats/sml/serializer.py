@@ -138,6 +138,7 @@ class SMLSerializer:
             "dimensions": [dim.unique_name for dim in model.dimensions],
             "metrics": [m.unique_name for m in model.metrics],
             "relationships": [SMLSerializer._relationship_to_dict(r) for r in model.relationships],
+            "verified_queries": [dict(vq) for vq in (model.verified_queries or [])],
         }
         (folder / "model.yaml").write_text(
             yaml.dump(model_data, default_flow_style=False, sort_keys=False),
@@ -234,6 +235,7 @@ class SMLSerializer:
             dimensions=dimensions,
             metrics=metrics,
             relationships=relationships,
+            verified_queries=[dict(vq) for vq in (model_data.get("verified_queries") or [])],
         )
     
     @staticmethod
@@ -253,6 +255,10 @@ class SMLSerializer:
             "dimensions": [SMLSerializer._dimension_to_dict(dim) for dim in model.dimensions],
             "metrics": [SMLSerializer._metric_to_dict(m) for m in model.metrics],
             "relationships": [SMLSerializer._relationship_to_dict(r) for r in model.relationships],
+            # Stored so a snapshot round-trips them: without this, upsert_delta
+            # saw every verified query as "added" against the snapshot and
+            # redeployed an unchanged model on every sync.
+            "verified_queries": [dict(vq) for vq in (model.verified_queries or [])],
         }
     
     @staticmethod
@@ -271,6 +277,7 @@ class SMLSerializer:
             dimensions=[SMLSerializer._dict_to_dimension(dim) for dim in data.get("dimensions", [])],
             metrics=[SMLSerializer._dict_to_metric(m) for m in data.get("metrics", [])],
             relationships=[SMLSerializer._dict_to_relationship(r) for r in data.get("relationships", [])],
+            verified_queries=[dict(vq) for vq in (data.get("verified_queries") or [])],
         )
     
     @staticmethod
