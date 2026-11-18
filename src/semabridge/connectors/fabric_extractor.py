@@ -47,6 +47,13 @@ class FabricExtractor:
         self.config = config
         self._access_token: Optional[str] = access_token.strip() if access_token else None
         self._token_expires_at: float = 0
+        # Seconds before _token_expires_at at which a cached token is no
+        # longer reused. Real expiries (service principal, refreshed tokens)
+        # keep a 5-min safety buffer; the short in-memory TTLs below are
+        # already conservative, so they use none -- with the 5-min buffer a
+        # 5-min TTL was never reused at all (04d075c) and a request-provided
+        # token was discarded before its first request.
+        self._token_refresh_buffer_s: float = 300
         self._model_cache: dict[str, dict] = {}  # Cache for model lookups
         self._skip_env_token_once: bool = False
 
@@ -55,6 +62,7 @@ class FabricExtractor:
             # Set to 5 min so the extractor re-checks the DB before the token
             # actually expires (avoids 401s from stale in-memory tokens).
             self._token_expires_at = time.time() + 300
+            self._token_refresh_buffer_s = 0
             logger.info("FabricExtractor initialized with request-provided access token")
 
     def list_workspaces(self) -> list[dict[str, Any]]:
@@ -355,7 +363,7 @@ class FabricExtractor:
         import os
 
         # 1. Cached token still valid?
-        if self._access_token and time.time() < self._token_expires_at - 300:
+        if self._access_token and time.time() < self._token_expires_at - self._token_refresh_buffer_s:
             return self._access_token
 
         # 1.5. Pre-issued token supplied via environment variable.
@@ -381,6 +389,7 @@ class FabricExtractor:
                 if exp_ts and exp_ts > int(time.time()) + 60:
                     token_valid = True
                     self._token_expires_at = exp_ts
+                    self._token_refresh_buffer_s = 300
                 else:
                     # Token is already expired or about to expire; do not use.
                     token_valid = False
@@ -388,6 +397,7 @@ class FabricExtractor:
                 # Unable to parse JWT; assume 1 hour validity but still check
                 # whether it's expired relative to current time.
                 self._token_expires_at = time.time() + 3600
+                self._token_refresh_buffer_s = 300
                 token_valid = time.time() < self._token_expires_at - 60
 
             if token_valid:
@@ -417,6 +427,7 @@ class FabricExtractor:
                 result = response.json()
                 self._access_token = result["access_token"]
                 self._token_expires_at = time.time() + result.get("expires_in", 3600)
+                self._token_refresh_buffer_s = 300
                 logger.debug("Successfully acquired service-principal access token")
                 return self._access_token
             except RequestException as e:
@@ -449,6 +460,7 @@ class FabricExtractor:
                     # Use 5-min in-memory TTL so the extractor re-reads from DB
                     # before the token actually expires, enabling silent refresh.
                     self._token_expires_at = time.time() + 300
+                    self._token_refresh_buffer_s = 0
                     logger.debug("Using stored device-code access token")
                     return self._access_token
 
@@ -475,6 +487,7 @@ class FabricExtractor:
                     )
                     self._access_token = result["access_token"]
                     self._token_expires_at = time.time() + result.get("expires_in", 3600)
+                    self._token_refresh_buffer_s = 300
                     logger.debug("Device-code token refreshed silently")
                     return self._access_token
                 else:
