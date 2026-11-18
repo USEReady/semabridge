@@ -52,10 +52,16 @@ def test_project_config_is_saved_to_project_yaml_not_repo_yaml(monkeypatch, tmp_
     updated_yaml = "project_id: \"cust_sf\"\ndisplay_name: \"Customer SF Updated\"\nproject_name: CUST UPDATED\nsource:\n  type: fabric\n"
     save_result = asyncio.run(ppi.save_project_config_compat(project_id, {"config_yaml": updated_yaml}))
 
-    assert save_result["yaml_path"].replace("\\", "/").endswith(f"Config/projects/{project_id}.yaml")
+    # The config root is resolved as config/ or Config/ (first that exists);
+    # on a case-insensitive filesystem that is config/ spelling of the same
+    # directory, so compare files, not path spellings.
+    assert Path(save_result["yaml_path"]).samefile(project_yaml_path)
     assert yaml.safe_load(project_yaml_path.read_text(encoding="utf-8")) == yaml.safe_load(updated_yaml)
     assert repo_yaml.read_text(encoding="utf-8") == "project_name: GLOBAL\nsource:\n  type: fabric\n"
 
     loaded = asyncio.run(ppi.get_project_config_compat(project_id))
     assert yaml.safe_load(loaded["config_yaml"]) == yaml.safe_load(updated_yaml)
-    assert loaded["yaml_path"].replace("\\", "/").endswith(f"Config/projects/{project_id}.yaml")
+    # The config root is resolved as config/ or Config/ (first that exists);
+    # on a case-insensitive filesystem that is config/ spelling of the same
+    # directory, so compare files, not path spellings.
+    assert Path(loaded["yaml_path"]).samefile(project_yaml_path)

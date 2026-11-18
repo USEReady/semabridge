@@ -9,6 +9,28 @@ from semabridge.api.services import project_projects_impl as ppi
 from semabridge.api.services import project_shared as _project_shared
 
 
+@pytest.fixture(autouse=True)
+def _empty_project_tables():
+    """Project lists merge the in-memory store with the projects and
+    project_config_versions tables. The test database is one shared
+    in-memory SQLite for the whole session, so projects created by earlier
+    test files (e.g. test_project_config_storage) would show up here; start
+    each test with those two tables empty."""
+    from sqlalchemy import delete
+
+    from semabridge.repository.orm.base import Base
+    from semabridge.repository.orm.models import Project
+    from semabridge.repository.orm.project_models import ProjectConfigVersion
+    from semabridge.repository.orm.session_factory import db_manager
+
+    Base.metadata.create_all(bind=db_manager.get_engine())
+    with db_manager.get_session() as session:
+        session.execute(delete(ProjectConfigVersion))
+        session.execute(delete(Project))
+        session.commit()
+    yield
+
+
 def _reset_compat_state() -> None:
     ppi._compat_projects.clear()
     ppi._compat_project_configs.clear()
