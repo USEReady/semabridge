@@ -649,11 +649,16 @@ class SyncOrchestrator:
 
             target_artifacts = self._deploy_to_target(osi_model, config, job)
             
-            # The deployer returns a dict of artifacts, the first value is the main identifier
-            target_id = next(iter(target_artifacts.values())) if target_artifacts else None
+            # _deploy_to_target returns the target identifier string; tolerate a
+            # dict of artifacts too (its first value is the main identifier).
+            # Calling .values() on the string failed every deployed item.
+            if isinstance(target_artifacts, dict):
+                target_id = next(iter(target_artifacts.values()), None)
+            else:
+                target_id = target_artifacts or None
             item.target_artifact_id = target_id
 
-            if self._artifact_exporter:
+            if self._artifact_exporter and isinstance(target_artifacts, dict):
                 self._artifact_exporter.export_target_artifacts(item, target_artifacts)
 
             # Step 6: Update mapping
