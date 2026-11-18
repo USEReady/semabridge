@@ -161,8 +161,9 @@ class MetricExpressionTranslator:
 
     def _sanitize_sql_markdown(self, sql: str) -> str:
         if not sql: return ""
-        sql = re.sub(r"```sql\s*", "", sql, flags=re.IGNORECASE)
-        sql = re.sub(r"```\s*", "", sql, flags=re.IGNORECASE)
+        # A fence may carry any language tag (```sql, ```python, ...): drop
+        # the tag only when it is alone on the fence line.
+        sql = re.sub(r"```(?:[A-Za-z0-9_+-]+[ \t]*(?=\r?\n))?\s*", "", sql)
         return sql.strip()
 
     @staticmethod
