@@ -1040,7 +1040,11 @@ def translate_iterator(dax: str, table_alias: str) -> Optional[str]:
     def repl_col(col_match: re.Match) -> str:
         tbl = (col_match.group(1) or col_match.group(2) or iterator_table).strip()
         col = col_match.group(3).strip()
-        return _column_ref(tbl, col, table_alias)
+        # A bare [Column] match swallows the whitespace before it (the
+        # pattern's `\s*\[`); keep it so `[A] * [B]` stays `A * B`.
+        text = col_match.group(0)
+        leading = text[: len(text) - len(text.lstrip())] if not (col_match.group(1) or col_match.group(2)) else ""
+        return leading + _column_ref(tbl, col, table_alias)
 
     col_pat = r"(?:'([^']+)'|([A-Za-z_][A-Za-z0-9_ ]*))?\s*\[\s*([^\]]+)\s*\]"
     expr_sql = re.sub(col_pat, repl_col, expression)
