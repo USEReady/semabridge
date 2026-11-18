@@ -99,14 +99,21 @@ class NLQueryEngine:
         from semabridge.utils.identifiers import IdentifierSanitizer
         return IdentifierSanitizer().to_alias(str(raw or "").strip() or "COL")
 
+    @staticmethod
+    def _to_dimension_name(raw: str) -> str:
+        """A dimension's name in the semantic view (emitter's semantic-name rules)."""
+        from semabridge.utils.identifiers import IdentifierSanitizer
+        return IdentifierSanitizer().sanitize_semantic_alias(str(raw or "").strip() or "COL")
+
     @classmethod
     def _sv_dim_ref(cls, concept: Any, attr: Any, lexicon: ProjectLexicon) -> str:
         """``TABLE_ALIAS.DIM_NAME`` of a dimension inside a deployed semantic view.
 
         Uses the alias recorded from the deployed view when known (the emitter
-        may have de-duplicated it). Otherwise falls back to the same
-        sanitisation the Snowflake emitter applies (``IdentifierSanitizer``:
-        reserved words -> ``COL_``, e.g. ``DATE`` -> ``COL_DATE``).
+        may have de-duplicated it). Otherwise falls back to the same naming
+        the Snowflake emitter applies to a dimension
+        (``IdentifierSanitizer.sanitize_semantic_alias``: only real Snowflake
+        reserved words get ``COL_``, so ``Date`` -> ``DATE``).
         """
         c_cf = str(getattr(concept, "name", "") or "").casefold()
         a_cf = str(getattr(attr, "name", "") or "").casefold()
@@ -114,7 +121,7 @@ class NLQueryEngine:
             if de.sv_dim_alias and de.concept.name.casefold() == c_cf and de.attribute.name.casefold() == a_cf:
                 return f"{cls._q_ident(de.sv_dim_alias[0])}.{cls._q_ident(de.sv_dim_alias[1])}"
         tbl = getattr(concept, "logical_name", None) or cls._to_logical_id(concept.name)
-        col = getattr(attr, "logical_name", None) or cls._to_logical_id(attr.name)
+        col = getattr(attr, "logical_name", None) or cls._to_dimension_name(attr.name)
         return f"{cls._q_ident(tbl)}.{cls._q_ident(col)}"
 
     @staticmethod

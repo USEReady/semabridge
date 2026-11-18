@@ -1100,13 +1100,13 @@ function CollisionPanel({ row, allRows, pendingRename, onRenameChange, onApply, 
           Use only letters, numbers, and underscores. Must start with a letter or underscore.
         </div>
       )}
-      {pendingRename && inputValid && finalizeTypedName(pendingRename) !== pendingRename.trim() && (
+      {pendingRename && inputValid && finalizeTypedName(pendingRename, 'snowflake', row.field_type || row.entity_kind) !== pendingRename.trim() && (
         <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-          Will be deployed as <code>{finalizeTypedName(pendingRename)}</code> (Snowflake identifier rules).
+          Will be deployed as <code>{finalizeTypedName(pendingRename, 'snowflake', row.field_type || row.entity_kind)}</code> (Snowflake identifier rules).
         </div>
       )}
-      {pendingRename && inputValid && renameImpactNote(row, finalizeTypedName(pendingRename)) && (
-        <RenameImpactNote text={renameImpactNote(row, finalizeTypedName(pendingRename))} />
+      {pendingRename && inputValid && renameImpactNote(row, finalizeTypedName(pendingRename, 'snowflake', row.field_type || row.entity_kind)) && (
+        <RenameImpactNote text={renameImpactNote(row, finalizeTypedName(pendingRename, 'snowflake', row.field_type || row.entity_kind))} />
       )}
     </div>
   );
@@ -1409,7 +1409,10 @@ export default function DryRunMappingTable({
   const applyRename = useCallback(async (rowId) => {
     // Store the name exactly as it will deploy (the emitter's to_alias
     // rules), so no later sanitization renames what the user picked.
-    const newName = finalizeTypedName((pendingRenames[rowId] || '').trim());
+    const renamedRow = mappings.find((r) => r.id === rowId);
+    const newName = finalizeTypedName(
+      (pendingRenames[rowId] || '').trim(), 'snowflake', renamedRow?.field_type || renamedRow?.entity_kind,
+    );
     if (!newName) return;
     setApplyingRename(rowId);
     try {
@@ -1424,7 +1427,7 @@ export default function DryRunMappingTable({
     } finally {
       setApplyingRename(null);
     }
-  }, [pendingRenames, onEdit]);
+  }, [pendingRenames, onEdit, mappings]);
 
   // ── Bulk resolve handler — uses table-prefix names, not hashes ──────────────
   const handleBulkResolve = useCallback(() => {

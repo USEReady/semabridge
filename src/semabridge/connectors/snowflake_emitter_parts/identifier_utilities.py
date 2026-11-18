@@ -14,8 +14,11 @@ def sanitize_col_name(emitter, name: str) -> str:
 
 
 def sanitize_semantic_name(emitter, name: str) -> str:
-    """Sanitize semantic name and ensure it does not start with a digit."""
-    sanitized = emitter._id.sanitize_column(name)
+    """Sanitize semantic name and ensure it does not start with a digit.
+
+    Alias rules (only real Snowflake reserved words get COL_); physical
+    column names keep sanitize_column."""
+    sanitized = emitter._id.sanitize_semantic_alias(name)
     if sanitized and sanitized[0].isdigit():
         sanitized = f"_{sanitized}"
     return sanitized

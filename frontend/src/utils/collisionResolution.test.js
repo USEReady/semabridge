@@ -55,15 +55,27 @@ const BACKEND_TO_ALIAS = {
   'Ä': 'COLUMN_UNKNOWN',
 };
 
-test('toSnowflakeAlias matches the backend to_alias for tricky names', () => {
+test('toSnowflakeAlias matches the backend to_alias for tricky names (metrics)', () => {
   Object.entries(BACKEND_TO_ALIAS).forEach(([input, expected]) => {
-    assert.equal(toSnowflakeAlias(input), expected, `to_alias(${JSON.stringify(input)})`);
+    assert.equal(toSnowflakeAlias(input, 'metric'), expected, `to_alias(${JSON.stringify(input)})`);
   });
+});
+
+test('column names use the semantic rules: only real Snowflake reserved words get COL_', () => {
+  // Backend IdentifierSanitizer.sanitize_semantic_alias.
+  assert.equal(toSnowflakeAlias('Date'), 'DATE');
+  assert.equal(toSnowflakeAlias('Value'), 'VALUE');
+  assert.equal(toSnowflakeAlias('Index'), 'INDEX');
+  assert.equal(toSnowflakeAlias('Order'), 'COL_ORDER');
+  assert.equal(toSnowflakeAlias('Group'), 'COL_GROUP');
+  assert.equal(toSnowflakeAlias('Net $ Rev'), 'NET_DOL_REV');
+  assert.equal(finalizeTypedName('date'), 'DATE');
+  assert.equal(finalizeTypedName('date', 'snowflake', 'measure'), 'COL_DATE');
 });
 
 test('sanitizeMappingName defaults to the Snowflake rules and is idempotent', () => {
   Object.values(BACKEND_TO_ALIAS).forEach((alias) => {
-    assert.equal(sanitizeMappingName(alias), alias);
+    assert.equal(sanitizeMappingName(alias, 'snowflake', 'metric'), alias);
   });
   assert.equal(sanitizeMappingName(''), '');
   assert.equal(sanitizeMappingName('2024 Sales', 'fabric'), 'N_2024_SALES');

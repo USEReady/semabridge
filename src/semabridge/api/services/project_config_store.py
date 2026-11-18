@@ -487,7 +487,8 @@ def _merge_legacy_store_edits(project_id: str, session: Any, parsed_cfg: Dict[st
             continue
         target = str(mapping.get("target_name") or "").strip()
         if sanitize is not None and target:
-            target = sanitize(target)
+            from semabridge.utils.identifiers import snowflake_target_name
+            target = snowflake_target_name(target, mapping.get("source_path"), mapping.get("entity_kind"))
         norm = _normalize_override_input({
             "source_path": mapping.get("source_path"), "target_name": target,
             "model": mapping.get("model"), "entity_kind": mapping.get("entity_kind"),

@@ -17,7 +17,7 @@ import re
 import hashlib
 import logging
 from dataclasses import dataclass, field
-from typing import Set, Optional, Dict, List, Tuple
+from typing import Any, Set, Optional, Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,29 @@ SNOWFLAKE_RESERVED_WORDS: frozenset = frozenset({
     "to", "qualify", "cross", "whenever", "increment", "natural", "following", "organization",
     "lateral", "rlike", "sample", "with", "cast", "using", "trigger", "regexp", "right",
     "gscluster", "full", "left", "connect", "of", "values",
+})
+
+# Keywords Snowflake actually reserves (cannot be unquoted identifiers):
+# https://docs.snowflake.com/en/sql-reference/reserved-keywords -- "Reserved by
+# ANSI / Snowflake / Snowflake and others", plus CURRENT_* and LOCALTIME*.
+# Type keywords (DATE, NUMBER, TIMESTAMP, ...) and words like KEY, VALUE,
+# COUNT, USER, ROLE are NOT reserved.
+#
+# Used ONLY for dimension / fact names (IdentifierSanitizer.sanitize_semantic_alias),
+# so 'Date' deploys as DATE, not COL_DATE. Physical column names, metric names
+# and SQL column references keep the broader SNOWFLAKE_RESERVED_WORDS above:
+# tables SemaBridge created have columns such as COL_DATE and metric SQL
+# refers to them, so those names must not change.
+SNOWFLAKE_ALIAS_RESERVED_WORDS: frozenset = frozenset({
+    "all", "alter", "and", "any", "as", "between", "by", "check", "column", "connect",
+    "create", "current", "delete", "distinct", "drop", "else", "exists", "following",
+    "for", "from", "grant", "group", "having", "ilike", "in", "increment", "insert",
+    "intersect", "into", "is", "like", "minus", "not", "null", "of", "on", "or",
+    "order", "qualify", "regexp", "revoke", "rlike", "row", "rows", "sample", "select",
+    "set", "some", "start", "table", "tablesample", "then", "to", "trigger", "union",
+    "unique", "update", "values", "whenever", "where", "window", "with",
+    "current_date", "current_time", "current_timestamp", "current_user",
+    "localtime", "localtimestamp",
 })
 
 SQL_FUNCTION_NAMES: Set[str] = {
@@ -116,6 +139,7 @@ class IdentifierSanitizer:
         self.always_quote = always_quote
         self.suppress_reserved = suppress_reserved
         self._reserved = SNOWFLAKE_RESERVED_WORDS | (additional_reserved or set())
+        self._alias_reserved = SNOWFLAKE_ALIAS_RESERVED_WORDS | (additional_reserved or set())
 
     @staticmethod
     def is_physical_source_column(source_expr: str) -> bool:
@@ -246,6 +270,28 @@ class IdentifierSanitizer:
         sanitized = self.sanitize_column(name)
         logger.debug(f"sanitize_alias: '{original}' → '{sanitized}'")
 
+        return sanitized
+
+    def sanitize_semantic_alias(self, name: str) -> str:
+        """Name of a DIMENSION or FACT in a semantic view (what users query).
+
+        Same character rules as ``sanitize_column``; only words Snowflake
+        really reserves (SNOWFLAKE_ALIAS_RESERVED_WORDS) get ``COL_``, so
+        'Date' is DATE, not COL_DATE. Physical column names, metric names
+        and SQL column references keep ``sanitize_column`` / ``to_alias``
+        (existing tables have columns such as COL_DATE, and metric SQL refers
+        to them), so only the semantic name changes.
+        """
+        if not name:
+            return "ALIAS"
+        suppress = self.suppress_reserved
+        self.suppress_reserved = False
+        try:
+            sanitized = self.sanitize_column(name)
+        finally:
+            self.suppress_reserved = suppress
+        if suppress and sanitized.lower() in self._alias_reserved:
+            sanitized = f"COL_{sanitized}"
         return sanitized
 
     def sanitize_table_name(self, name: str) -> str:
@@ -568,6 +614,37 @@ class IdentifierRegistry:
         """
         seed = f"{original_name}{sanitized_base}".encode("utf-8")
         return hashlib.sha256(seed).hexdigest()[:4].upper()
+
+
+def is_column_source_path(source_path: Any) -> bool:
+    """True for a mapping source path of a column (datasets.<T>.columns.<C>)."""
+    return ".columns." in str(source_path or "")
+
+
+def snowflake_target_name(name: str, source_path: Any = None, entity_kind: Any = None) -> str:
+    """The Snowflake name a field deploys under, given the name chosen for it.
+
+    Columns (dimensions / facts) use the semantic-name rules: only words
+    Snowflake really reserves get COL_ ('Date' -> DATE). Metrics keep
+    to_alias, which metric SQL references use.
+    """
+    sanitizer = IdentifierSanitizer(force_uppercase=True, suppress_reserved=True)
+    is_column = is_column_source_path(source_path) or str(entity_kind or "").strip().lower() == "column"
+    return sanitizer.sanitize_semantic_alias(name) if is_column else sanitizer.to_alias(name)
+
+
+def is_legacy_auto_column_name(source_name: Any, target_name: Any) -> bool:
+    """True when a saved column name is only the OLD automatic name, e.g.
+    'Date' saved as COL_DATE before type words like DATE stopped getting
+    COL_. Such a name was never chosen by the user, so it is ignored and the
+    current rule applies (the column deploys as DATE)."""
+    source = str(source_name or "").strip()
+    target = str(target_name or "").strip().upper()
+    if not source or not target:
+        return False
+    sanitizer = IdentifierSanitizer(force_uppercase=True, suppress_reserved=True)
+    legacy = sanitizer.to_alias(source).upper()
+    return target == legacy and legacy != sanitizer.sanitize_semantic_alias(source).upper()
 
 
 def clean_pbix_model_name(raw: str | Path | None) -> str:

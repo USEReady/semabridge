@@ -14,7 +14,26 @@ export function shortDeterministicHash(value) {
 // the mapping engine and config overrides all apply. A name picked here is
 // therefore deployed verbatim (no second sanitization renames it).
 // collisionResolution.test.js pins this against backend outputs.
+// Keywords Snowflake actually reserves for identifiers (backend
+// SNOWFLAKE_ALIAS_RESERVED_WORDS, from docs.snowflake.com/en/sql-reference/
+// reserved-keywords). Type keywords and words like DATE, KEY, COUNT, USER are
+// not reserved, so 'Date' deploys as DATE, not COL_DATE.
 export const SNOWFLAKE_RESERVED_WORDS = new Set([
+  'all', 'alter', 'and', 'any', 'as', 'between', 'by', 'check', 'column', 'connect',
+  'create', 'current', 'delete', 'distinct', 'drop', 'else', 'exists', 'following',
+  'for', 'from', 'grant', 'group', 'having', 'ilike', 'in', 'increment', 'insert',
+  'intersect', 'into', 'is', 'like', 'minus', 'not', 'null', 'of', 'on', 'or',
+  'order', 'qualify', 'regexp', 'revoke', 'rlike', 'row', 'rows', 'sample', 'select',
+  'set', 'some', 'start', 'table', 'tablesample', 'then', 'to', 'trigger', 'union',
+  'unique', 'update', 'values', 'whenever', 'where', 'window', 'with',
+  'current_date', 'current_time', 'current_timestamp', 'current_user',
+  'localtime', 'localtimestamp',
+]);
+
+// The backend's broader list (SNOWFLAKE_RESERVED_WORDS): still used for
+// METRIC names and physical columns, whose names and SQL references must
+// not change. Column (dimension/fact) names use SNOWFLAKE_RESERVED_WORDS.
+export const SNOWFLAKE_LEGACY_RESERVED_WORDS = new Set([
   'account', 'all', 'alter', 'and', 'any', 'as', 'avg', 'between', 'boolean', 'by', 'case', 'cast',
   'check', 'column', 'connect', 'connection', 'constraint', 'count', 'create', 'cross', 'current',
   'current_date', 'current_time', 'current_timestamp', 'current_user', 'database', 'date', 'default',
@@ -30,6 +49,7 @@ export const SNOWFLAKE_RESERVED_WORDS = new Set([
   'whenever', 'where', 'with',
 ]);
 
+
 // Same order as the backend's replacement table.
 const SNOWFLAKE_CHAR_REPLACEMENTS = [
   ['%', 'PCT'], ['$', 'DOL'], ['@', 'AT'], ['#', 'NUM'], ['&', 'AND'], ['*', 'STAR'], ['+', 'PLUS'],
@@ -38,8 +58,14 @@ const SNOWFLAKE_CHAR_REPLACEMENTS = [
   ['[', '_'], [']', '_'], [' ', '_'], ['-', '_'], ["'", ''], ['"', ''],
 ];
 
-/** Backend IdentifierSanitizer.to_alias, character for character. */
-export function toSnowflakeAlias(value) {
+const isMetricKind = (kind) => ['metric', 'measure'].includes(String(kind || '').toLowerCase());
+
+/**
+ * The backend's Snowflake name for a field, character for character:
+ * columns -> IdentifierSanitizer.sanitize_semantic_alias (only real reserved
+ * words get COL_, 'Date' -> DATE); metrics -> to_alias (broader list).
+ */
+export function toSnowflakeAlias(value, kind = 'column') {
   let name = String(value ?? '');
   if (!name) return '';
   SNOWFLAKE_CHAR_REPLACEMENTS.forEach(([from, to]) => { name = name.split(from).join(to); });
@@ -50,7 +76,8 @@ export function toSnowflakeAlias(value) {
   if (!clean) return 'COLUMN_UNKNOWN';
   if (/^[0-9]/.test(clean)) clean = `_${clean}`;
   let result = clean.toUpperCase();
-  if (SNOWFLAKE_RESERVED_WORDS.has(result.toLowerCase())) result = `COL_${result}`;
+  const reserved = isMetricKind(kind) ? SNOWFLAKE_LEGACY_RESERVED_WORDS : SNOWFLAKE_RESERVED_WORDS;
+  if (reserved.has(result.toLowerCase())) result = `COL_${result}`;
   return result;
 }
 
@@ -72,10 +99,10 @@ export function toGenericIdentifier(value) {
  * Snowflake emitter's rules (to_alias): "% Margin" -> PCT_MARGIN,
  * "Order" -> COL_ORDER, "2024 Sales" -> _2024_SALES.
  */
-export function sanitizeMappingName(value, targetType = 'snowflake') {
+export function sanitizeMappingName(value, targetType = 'snowflake', kind = 'column') {
   if (!String(value ?? '').trim()) return '';
   return String(targetType || 'snowflake').toLowerCase() === 'snowflake'
-    ? toSnowflakeAlias(value)
+    ? toSnowflakeAlias(value, kind)
     : toGenericIdentifier(value);
 }
 
@@ -89,8 +116,8 @@ export function normalizeTypedName(value) {
   return String(value ?? '').toUpperCase().replace(/[^A-Z0-9_]/g, '_');
 }
 
-export function finalizeTypedName(value, targetType = 'snowflake') {
-  return sanitizeMappingName(value, targetType);
+export function finalizeTypedName(value, targetType = 'snowflake', kind = 'column') {
+  return sanitizeMappingName(value, targetType, kind);
 }
 
 /** The namespace a row's target name must be unique in: its logical table

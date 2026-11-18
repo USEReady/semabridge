@@ -31,7 +31,7 @@ def _log_mapping_event(project_id: Any, event: Dict[str, Any]) -> None:
         }, default=str),
     )
 
-from semabridge.utils.identifiers import IdentifierSanitizer, SNOWFLAKE_RESERVED_WORDS
+from semabridge.utils.identifiers import IdentifierSanitizer, SNOWFLAKE_ALIAS_RESERVED_WORDS, SNOWFLAKE_RESERVED_WORDS
 from semabridge.core.drop_ledger import DropLedger, DropStage
 from semabridge.converter.dax_ast_parser import (
     ADVISORY_CATEGORY_UNREACHABLE_DIMENSION,
@@ -404,7 +404,7 @@ def extract_model_entities(
             cname = _column_name(col)
             if not cname:
                 continue
-            normalized_identifier = _default_target_identifier(cname, normalized_target_connector)
+            normalized_identifier = _default_target_identifier(cname, normalized_target_connector, "column")
             dedup_key = (dataset_name, normalized_identifier, "column")
 
             if dedup_key in dedup_cols:
@@ -425,7 +425,7 @@ def extract_model_entities(
             import json
             for rcol in removed_cols:
                 rcname = _column_name(rcol)
-                normalized_identifier = _default_target_identifier(rcname, normalized_target_connector)
+                normalized_identifier = _default_target_identifier(rcname, normalized_target_connector, "column")
                 _log_mapping_event(None, {
                     "layer": "metadata_deduplication",
                     "dataset_name": dataset_name,
@@ -543,9 +543,20 @@ def _normalize_connector_name(value: Optional[str]) -> str:
     return str(value or "").strip().lower()
 
 
-def _default_target_identifier(source_name: str, target_connector: Optional[str]) -> str:
+def _is_column_kind(entity_kind: Optional[str]) -> bool:
+    return str(entity_kind or "").strip().lower() == "column"
+
+
+def _default_target_identifier(
+    source_name: str, target_connector: Optional[str], entity_kind: Optional[str] = None,
+) -> str:
+    """The name a field deploys under. Snowflake columns (dimensions/facts)
+    use the semantic-name rules: only real Snowflake reserved words get COL_
+    ('Date' -> DATE). Metrics keep to_alias, which their SQL references use."""
     connector = _normalize_connector_name(target_connector)
     if connector == "snowflake":
+        if _is_column_kind(entity_kind):
+            return _SNOWFLAKE_SANITIZER.sanitize_semantic_alias(source_name)
         return _SNOWFLAKE_SANITIZER.to_alias(source_name)
     return sanitize_identifier(source_name)
 
@@ -556,10 +567,11 @@ def _validate_target_name(
     source_name: str,
     collision_detected: bool,
     target_connector: Optional[str],
+    entity_kind: Optional[str] = None,
 ) -> Dict[str, str]:
     connector = _normalize_connector_name(target_connector)
     resolved_target = str(target_name or "").strip()
-    fallback = _default_target_identifier(source_name, target_connector)
+    fallback = _default_target_identifier(source_name, target_connector, entity_kind)
 
     if collision_detected:
         return {
@@ -579,15 +591,16 @@ def _validate_target_name(
 
     if connector == "snowflake":
         upper_name = resolved_target.upper()
-        if upper_name.lower() in SNOWFLAKE_RESERVED_WORDS:
+        reserved = SNOWFLAKE_ALIAS_RESERVED_WORDS if _is_column_kind(entity_kind) else SNOWFLAKE_RESERVED_WORDS
+        if upper_name.lower() in reserved:
             return {
                 "validation_status": "invalid",
                 "validation_code": "RESERVED_KEYWORD",
                 "validation_message": "Target name is a Snowflake reserved keyword.",
-                "suggested_target_name": _SNOWFLAKE_SANITIZER.to_alias(resolved_target),
+                "suggested_target_name": _default_target_identifier(resolved_target, target_connector, entity_kind),
             }
 
-        sanitized = _SNOWFLAKE_SANITIZER.to_alias(resolved_target)
+        sanitized = _default_target_identifier(resolved_target, target_connector, entity_kind)
         if sanitized != upper_name:
             return {
                 "validation_status": "invalid",
@@ -773,7 +786,7 @@ def collision_resolution_suggestions(
     to_alias rules, so the name the user picks is deployed verbatim) and not
     in ``taken`` (upper-cased names already used in the row's namespace).
     The first option is the recommended one and is always present."""
-    alias = lambda value: _default_target_identifier(value, target_connector)  # noqa: E731
+    alias = lambda value: _default_target_identifier(value, target_connector, row.get("entity_kind"))  # noqa: E731
     # A column renamed during conversion ('Order-Date' -> 'Order-Date_2') is
     # suggested from its real name, not the generated one.
     source_name = str(row.get("renamed_from") or row.get("source_name") or row.get("target_name") or "field")
@@ -854,7 +867,7 @@ def _flag_hidden_collisions(rows: List[Dict[str, Any]], target_connector: Option
         # 1. Renamed during conversion and still carrying the automatic name.
         if kind == "column" and row.get("renamed_from") and target == automatic:
             original = str(row["renamed_from"])
-            clean = _default_target_identifier(original, target_connector)
+            clean = _default_target_identifier(original, target_connector, "column")
             _mark_collision(
                 row,
                 f"'{original}' and another column of {_table_label(row.get('parent_source_path'))} both become "
@@ -957,7 +970,7 @@ def build_entity_mappings(
 
         mapping_id = str(existing.get(source_path, {}).get("id") or f"{project_id}-{uuid.uuid5(uuid.NAMESPACE_URL, f'{project_id}:{source_path}').hex[:16]}")
         source_name = str(entity.get("source_name") or "").strip() or "unnamed"
-        sanitized = _default_target_identifier(source_name, normalized_target_connector)
+        sanitized = _default_target_identifier(source_name, normalized_target_connector, entity.get("entity_kind"))
         scope = _scope_key(entity)
         claimed_names.setdefault(scope, {})
         collision_key = sanitized
@@ -1087,6 +1100,7 @@ def build_entity_mappings(
             source_name=source_name,
             collision_detected=collision_detected,
             target_connector=normalized_target_connector,
+            entity_kind=entity.get("entity_kind"),
         )
 
         # JSON logging for collision instrumentation
@@ -1274,6 +1288,7 @@ def build_entity_mappings(
                 source_name=row["source_name"],
                 collision_detected=False,
                 target_connector=normalized_target_connector,
+                entity_kind=row.get("entity_kind"),
             )
             row["validation_status"] = val["validation_status"]
             row["validation_code"] = val["validation_code"]

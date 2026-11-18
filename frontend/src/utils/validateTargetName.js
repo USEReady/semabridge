@@ -5,10 +5,9 @@
  * and other components without circular imports.
  */
 
-const SNOWFLAKE_RESERVED = new Set([
-  'SELECT', 'GROUP', 'ORDER', 'TABLE', 'COLUMN', 'DATE', 'FROM', 'WHERE',
-  'BY', 'JOIN', 'VIEW', 'UNION', 'INSERT', 'UPDATE', 'DELETE', 'CREATE', 'DROP',
-]);
+import { SNOWFLAKE_RESERVED_WORDS } from './collisionResolution.js';
+
+const SNOWFLAKE_RESERVED = new Set([...SNOWFLAKE_RESERVED_WORDS].map((w) => w.toUpperCase())); // Snowflake's real reserved keywords (shared list; DATE is not one)
 
 function sanitizeIdentifier(value) {
   const raw = String(value || '').trim();

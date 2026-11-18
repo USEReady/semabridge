@@ -7,6 +7,7 @@
  * Step 4: Model mapping settings
  * Step 5: Finish and configure
  */
+import { SNOWFLAKE_RESERVED_WORDS } from '../utils/collisionResolution';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import './mapping-styles.css';
@@ -116,10 +117,7 @@ const MAPPING_FILTERS = [
   { id: 'collision', label: 'Collision/Error' },
 ];
 
-const SNOWFLAKE_RESERVED = new Set([
-  'SELECT', 'GROUP', 'ORDER', 'TABLE', 'COLUMN', 'DATE', 'FROM', 'WHERE',
-  'BY', 'JOIN', 'VIEW', 'UNION', 'INSERT', 'UPDATE', 'DELETE', 'CREATE', 'DROP',
-]);
+const SNOWFLAKE_RESERVED = new Set([...SNOWFLAKE_RESERVED_WORDS].map((w) => w.toUpperCase())); // Snowflake's real reserved keywords (shared list; DATE is not one)
 
 function shortDeterministicHash(value) {
   let hash = 2166136261;

@@ -21,7 +21,8 @@ function namingRuleDetail(source, target) {
   const replaced = SYMBOL_WORDS
     .filter(([symbol, word]) => source.includes(symbol) && target.includes(word))
     .map(([symbol, word]) => `"${symbol}" became ${word}`);
-  if (/^\d/.test(source.trim()) && /^N_/.test(target)) replaced.push('a leading digit got the N_ prefix');
+  if (/^\d/.test(source.trim()) && /^_\d/.test(target)) replaced.push('a leading digit got a "_" prefix');
+  if (/^COL_/.test(target) && !/^COL_/i.test(plainSnowflakeName(source))) replaced.push(`${target.slice(4)} is a Snowflake reserved word, so it got the COL_ prefix`);
   if (replaced.length) return `Snowflake naming rules: ${replaced.join(', ')}.`;
   return 'Snowflake naming rules: characters Snowflake does not allow in names were replaced.';
 }

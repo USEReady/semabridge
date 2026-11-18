@@ -141,13 +141,17 @@ def _compat_project_target_type(project_id: str) -> str:
     return str((target or {}).get("type") or "").strip().lower()
 
 
-def _compat_sanitize_target_name_for_project(project_id: str, target_name: str) -> str:
+def _compat_sanitize_target_name_for_project(
+    project_id: str, target_name: str, source_path: Any = None, entity_kind: Any = None,
+) -> str:
     raw = str(target_name or "").strip()
     if not raw:
         return raw
     if _compat_project_target_type(project_id) != "snowflake":
         return raw
-    return _SNOWFLAKE_SANITIZER.to_alias(raw)
+    from semabridge.utils.identifiers import snowflake_target_name
+
+    return snowflake_target_name(raw, source_path, entity_kind)
 
 
 def _compat_collect_manual_mapping_overrides(project_id: str) -> List[Dict[str, str]]:
@@ -163,7 +167,8 @@ def _compat_collect_manual_mapping_overrides(project_id: str) -> List[Dict[str, 
         source_path = str(row.get("source_path") or "").strip()
         target_name = str(row.get("target_name") or "").strip()
         if sanitize and target_name:
-            target_name = _SNOWFLAKE_SANITIZER.to_alias(target_name)
+            from semabridge.utils.identifiers import snowflake_target_name
+            target_name = snowflake_target_name(target_name, source_path)
         if not source_path or not target_name:
             continue
         override = {
@@ -532,7 +537,10 @@ def _compat_build_project_entity_mappings(
         if override:
             manual_target = str(override.get("target_name") or "").strip()
             if sanitize_targets and manual_target:
-                manual_target = _SNOWFLAKE_SANITIZER.to_alias(manual_target)
+                from semabridge.utils.identifiers import snowflake_target_name
+                manual_target = snowflake_target_name(
+                    manual_target, mapping.get("source_path"), mapping.get("entity_kind"),
+                )
             if manual_target:
                 merged["target_name"] = manual_target
                 merged["status"] = "manual"
@@ -1275,6 +1283,8 @@ async def update_mapping_compat(mapping_id: str, payload: dict):
         existing["target_name"] = _compat_sanitize_target_name_for_project(
             project_id,
             str(incoming.get("target_name") or "").strip(),
+            existing.get("source_path"),
+            existing.get("entity_kind"),
         )
         existing["status"] = "manual"
         existing["is_user_edited"] = True

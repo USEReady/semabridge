@@ -334,7 +334,7 @@ def test_semantic_view_ddl_emits_ai_verified_queries():
         behavior=MagicMock(),
         schema_manager=mock_schema,
         translator=MetricExpressionTranslator(),
-        identifier_sanitizer=MagicMock(to_alias=lambda x: x.upper(), sanitize_column=lambda x: x.upper()),
+        identifier_sanitizer=MagicMock(to_alias=lambda x: x.upper(), sanitize_column=lambda x: x.upper(), sanitize_alias=lambda x: x.upper(), sanitize_semantic_alias=lambda x: x.upper()),
         live_schema_metadata={"SALES": {"UNITS", "REVENUE", "REGION"}},
     )
 
@@ -376,7 +376,7 @@ def test_verified_query_ddl_escaping_quotes_and_backslashes():
         behavior=MagicMock(),
         schema_manager=mock_schema,
         translator=MetricExpressionTranslator(),
-        identifier_sanitizer=MagicMock(to_alias=lambda x: x.upper(), sanitize_column=lambda x: x.upper()),
+        identifier_sanitizer=MagicMock(to_alias=lambda x: x.upper(), sanitize_column=lambda x: x.upper(), sanitize_alias=lambda x: x.upper(), sanitize_semantic_alias=lambda x: x.upper()),
         live_schema_metadata={"SALES": {"STATUS", "NAME"}},
     )
 
@@ -425,7 +425,7 @@ def test_invalid_verified_query_reported_and_excluded():
         behavior=MagicMock(),
         schema_manager=mock_schema,
         translator=MetricExpressionTranslator(),
-        identifier_sanitizer=MagicMock(to_alias=lambda x: x.upper(), sanitize_column=lambda x: x.upper()),
+        identifier_sanitizer=MagicMock(to_alias=lambda x: x.upper(), sanitize_column=lambda x: x.upper(), sanitize_alias=lambda x: x.upper(), sanitize_semantic_alias=lambda x: x.upper()),
         live_schema_metadata={"SALES": {"UNITS", "REVENUE", "REGION"}},
     )
 

@@ -126,7 +126,7 @@ def test_customer_sales_builder_one_to_one_pk_consistency():
             _resolve_physical_column_name=lambda d, c, **k: c,
             _collect_physical_source_columns=lambda d: {c.unique_name: "VARCHAR" for c in d.columns},
         ),
-        identifier_sanitizer=MagicMock(sanitize_table_name=lambda t: t, sanitize_column=lambda c: c),
+        identifier_sanitizer=MagicMock(sanitize_table_name=lambda t: t, sanitize_column=lambda c: c, sanitize_alias=lambda c: c, sanitize_semantic_alias=lambda c: c),
         live_schema_metadata={"CUSTOMER": {"ID", "CUSTOMERNAME"}, "SALES": {"ID", "AMOUNT"}},
         behavior=MagicMock(snowflake=MagicMock(auto_add_anchors=False, source_table_mapping=None)),
     )
@@ -139,7 +139,7 @@ def test_customer_sales_builder_one_to_one_pk_consistency():
     )
 
     rel_builder = RelationshipsClauseBuilder(
-        identifier_sanitizer=MagicMock(sanitize_column=lambda c: c),
+        identifier_sanitizer=MagicMock(sanitize_column=lambda c: c, sanitize_alias=lambda c: c, sanitize_semantic_alias=lambda c: c),
         schema_manager=MagicMock(_resolve_physical_column_name=lambda d, c, **k: c),
         sanitizer=MagicMock(to_snowflake_relationship_name=lambda n: n),
     )

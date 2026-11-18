@@ -548,7 +548,14 @@ def _saved_names_for_dry_run(
             source_name = source_path[len("metrics."):]
         else:
             source_name = source_path.rsplit(".", 1)[-1]
-        default_name = _default_target_identifier(source_name, target_connector)
+        default_name = _default_target_identifier(
+            source_name, target_connector, "column" if ".columns." in source_path else "metric",
+        )
+        from semabridge.utils.identifiers import is_legacy_auto_column_name
+        if ".columns." in source_path and is_legacy_auto_column_name(source_name, target_name):
+            # Only the old automatic name (COL_DATE for Date): not a user
+            # choice, so the dry run shows the current rule's name (DATE).
+            continue
         existing[source_path] = {
             "target_name": target_name,
             "is_user_edited": target_name.upper() != str(default_name or "").upper(),
@@ -1294,7 +1301,8 @@ async def deploy_mappings(
         target_name = str(mapping.get("target_name") or "").strip()
         if target_connector_type == "snowflake" and target_name:
             # Same rules the Snowflake emitter (and config overrides) use.
-            target_name = _SNOWFLAKE_ALIAS(target_name)
+            from semabridge.utils.identifiers import snowflake_target_name
+            target_name = snowflake_target_name(target_name, source_path, mapping.get("entity_kind"))
         mapping_id = str(mapping.get("id") or "").strip()
         if not mapping_id:
             seed = source_path or source_name or f"row-{idx}"

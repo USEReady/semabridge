@@ -249,7 +249,7 @@ def test_d12_semantic_view_date_ref_matches_emitter_naming(engine):
 
     emitter_names = SemanticDDLSanitizer(IdentifierSanitizer())
     expected = f"{IdentifierSanitizer().to_alias('DIM_DATE')}.{emitter_names.sanitize_semantic_name('DATE')}"
-    assert expected == "DIM_DATE.COL_DATE"
+    assert expected == "DIM_DATE.DATE"  # DATE is not a Snowflake reserved word
     p = engine.resolve_query("cases in 2024", semantic_view="DB.SC.SUPPORT_SV")
     assert f"YEAR({expected}) = 2024" in p.generated_sql
 
@@ -266,7 +266,7 @@ def test_d12_sv_dim_ref_prefers_deployed_alias():
     ])
     assert NLQueryEngine._sv_dim_ref(c, a, deployed) == "DD.CALENDAR_DATE"
     # No deploy metadata -> emitter-consistent sanitised name.
-    assert NLQueryEngine._sv_dim_ref(c, a, SimpleNamespace(dimensions=[])) == "DIM_DATE.COL_DATE"
+    assert NLQueryEngine._sv_dim_ref(c, a, SimpleNamespace(dimensions=[])) == "DIM_DATE.DATE"
 
 
 # ---------------------------------------------------------------------------

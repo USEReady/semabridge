@@ -23,8 +23,12 @@ class SemanticDDLSanitizer:
         self.drop_ledger: DropLedger = drop_ledger if drop_ledger is not None else DropLedger()
 
     def sanitize_semantic_name(self, name: str) -> str:
-        """Sanitize semantic name and ensure it does not start with a digit."""
-        sanitized = self.identifier_sanitizer.sanitize_column(name)
+        """Sanitize semantic name and ensure it does not start with a digit.
+
+        Semantic names (dimension / fact / metric aliases) use the alias
+        rules: only words Snowflake really reserves get COL_ (DATE stays DATE).
+        Physical column names keep sanitize_column."""
+        sanitized = self.identifier_sanitizer.sanitize_semantic_alias(name)
         if sanitized and sanitized[0].isdigit():
             sanitized = f"_{sanitized}"
         return sanitized
