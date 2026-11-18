@@ -702,7 +702,7 @@ def translate_time_intelligence_with_anchors(
     """
     logger.debug(f"Attempting to translate time intelligence expression: {dax}")
     # Pattern for TOTALYTD, TOTALMTD, TOTALQTD
-    pattern = r"^\s*(TOTALYTD|TOTALMTD|TOTALQTD)\s*\((.+?),\s*'?(?:[\w\s]+)'?\[([\w\s]+)\]\s*\)\s*$"
+    pattern = r"^\s*(TOTALYTD|TOTALMTD|TOTALQTD)\s*\((.+?),\s*(?:'([^']+)'|([\w]+))?\s*\[([\w\s]+)\]\s*\)\s*$"
     match = re.match(pattern, dax, re.IGNORECASE)
 
     if not match:
@@ -712,7 +712,15 @@ def translate_time_intelligence_with_anchors(
     logger.debug("Time intelligence pattern matched.")
     time_func = match.group(1).upper()
     inner_agg_dax = match.group(2)
-    date_table_and_col = match.group(3) # This will now be just the column name
+    date_table = (match.group(3) or match.group(4) or "").strip()
+    date_col = match.group(5).strip()
+    if not date_table:
+        # A bare [Column] date argument names no table, and since bc7ccd6 no
+        # date table is guessed. Emitting the bare column would reference a
+        # column that is not qualified (and usually not on the fact table):
+        # decline, like the AST renderer does ("no date column found").
+        logger.debug("Time intelligence date argument has no table — declining.")
+        return None
 
     # Try parsing the inner aggregation using _parse_aggregation
     agg = _parse_aggregation(inner_agg_dax)
@@ -739,7 +747,7 @@ def translate_time_intelligence_with_anchors(
         logger.debug("Inner aggregation is not a direct aggregate call — declining to a measure reference.")
         return None
 
-    date_col_ref = f"{_quote_identifier(date_table_and_col)}"
+    date_col_ref = _column_ref(date_table, date_col, table_alias)
 
     period = ""
     shape_component = None
