@@ -180,7 +180,7 @@ def test_single_fold_and_multi_branch_coexistence():
     assert sml.metrics[2].parent_metric_name == "MULTI_KPI"
 
 
-def test_synonym_reassignment_on_selector_decomposition():
+def test_selector_metric_keeps_its_synonyms_and_is_not_decomposed():
     """
     (d) Test that when a parent metric carrying business synonyms is decomposed,
     the parent metric has its synonyms cleared (so dead CAST NULL placeholder metric
@@ -228,63 +228,14 @@ def test_synonym_reassignment_on_selector_decomposition():
     converter = OSIToSMLConverter()
     sml = converter.from_osi(osi_model)
 
-    # Locate parent metric and branch metrics in SML
+    # Commit 44766b0 ("keep selector KPI metrics single as built without
+    # splitting") disabled conversion-time decomposition on purpose: the
+    # selector metric stays ONE metric, keeps its authored synonyms, and no
+    # KPI01_BRANCH_* metrics are generated.
     parent_sml = next(m for m in sml.metrics if m.unique_name == "KPI01")
-    branch1_sml = next(m for m in sml.metrics if m.unique_name == "KPI01_BRANCH_1")
-    branch2_sml = next(m for m in sml.metrics if m.unique_name == "KPI01_BRANCH_2")
-
-    # Invariant 1: Parent metric synonyms MUST be completely cleared!
-    assert parent_sml.synonyms == [], f"Parent metric retained misleading synonyms: {parent_sml.synonyms}"
-    assert parent_sml.synonym_sources == {}
-
-    # Invariant 2: Child branches MUST NOT inherit parent business synonyms (e.g. 'KPI 01 Sales')
-    # and MUST receive only explicit, disambiguated branch label synonyms!
-    assert "KPI 01 Sales" not in branch1_sml.synonyms
-    assert "KPI 01 Sales" not in branch2_sml.synonyms
-    assert "KPI 01 Sales Branch 1" in branch1_sml.synonyms or "KPI01 Branch 1" in branch1_sml.synonyms
-    assert "KPI 01 Sales Branch 2" in branch2_sml.synonyms or "KPI01 Branch 2" in branch2_sml.synonyms
-
-    # Invariant 3: No two decomposed branches of the same metric ever share an identical synonym!
-    branch1_syns = set(branch1_sml.synonyms)
-    branch2_syns = set(branch2_sml.synonyms)
-    assert branch1_syns.isdisjoint(branch2_syns), (
-        f"Branches share duplicate synonyms: {branch1_syns & branch2_syns}"
-    )
-
-    # Invariant 4: DDL emission for dead/null-cast parent metric MUST NOT carry WITH SYNONYMS!
-    from semabridge.connectors.metrics_clause_builder import MetricsClauseBuilder
-    from semabridge.utils.identifiers import IdentifierSanitizer
-
-    from semabridge.connectors.translator import MetricExpressionTranslator
-
-    config = SimpleNamespace(database="TEST_DB", schema_name="PUBLIC")
-    builder = MetricsClauseBuilder(
-        identifier_sanitizer=IdentifierSanitizer(),
-        schema_manager=None,
-        sanitizer=None,
-        translator=MetricExpressionTranslator(identifier_sanitizer=IdentifierSanitizer()),
-        config=config,
-    )
-    dataset_aliases = {"FactSales": "FACTSALES", "FactCost": "FACTCOST", "KPI": "KPI"}
-    dataset_by_name = {}
-    dataset_col_lookup = {}
-    alias_by_raw = {}
-
-    metrics_lines = builder.build_for_sml(
-        sml=sml,
-        dataset_aliases=dataset_aliases,
-        dataset_by_name=dataset_by_name,
-        dataset_col_lookup=dataset_col_lookup,
-        alias_by_raw=alias_by_raw,
-        all_physical_col_names=set(),
-        emittable_metric_name_set=set(),
-    )
-
-    kpi01_ddl_line = next((line for line in metrics_lines if '"KPI01"' in line and "BRANCH" not in line), None)
-    if kpi01_ddl_line:
-        assert "WITH SYNONYMS" not in kpi01_ddl_line, (
-            f"Parent CAST NULL placeholder metric emitted WITH SYNONYMS in DDL: {kpi01_ddl_line}"
-        )
+    assert not any(m.unique_name.startswith("KPI01_BRANCH_") for m in sml.metrics)
+    assert not any(m.parent_metric_name == "KPI01" for m in sml.metrics)
+    assert set(parent_sml.synonyms) >= {"KPI 01 Sales", "KPI 01"}
 
 
 def test_no_duplicate_synonyms_across_decomposed_branches():
@@ -312,8 +263,11 @@ def test_no_duplicate_synonyms_across_decomposed_branches():
     converter = OSIToSMLConverter()
     sml = converter.from_osi(osi_model)
 
+    # Decomposition is disabled on purpose (commit 44766b0), so no branch
+    # metrics exist and therefore none can share a synonym; if it is ever
+    # re-enabled, the loop below still enforces uniqueness across branches.
     branch_metrics = [m for m in sml.metrics if m.parent_metric_name == "SELECT_METRIC"]
-    assert len(branch_metrics) == 2, f"Expected 2 branch metrics, got {len(branch_metrics)}"
+    assert branch_metrics == [], f"Selector metric must stay single, got {len(branch_metrics)} branches"
 
     all_branch_synonyms = []
     for b in branch_metrics:

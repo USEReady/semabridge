@@ -6,7 +6,11 @@ table (e.g. a Power BI field-parameter/what-if table with no real business
 key) whose DAX switches between other tables' aggregates based on the
 selector's own value.
 
-Proves the full story:
+NOTE: commit 44766b0 deliberately disabled this wiring (selector KPI
+metrics are kept single as built), so the main test below now pins THAT
+behaviour; the original intent is kept here for history.
+
+Originally proved:
   1. Each non-trivial branch becomes its own standalone metric, translated
      and deployable (sync_enabled=True, real sql_expression), anchored on
      the table its own expression actually needs.
@@ -119,36 +123,26 @@ def _build_osi_model() -> OSIModel:
     )
 
 
-def test_disconnected_selector_metric_is_decomposed_into_working_companions():
+def test_disconnected_selector_metric_is_kept_single_as_built():
+    """Commit 44766b0 ("keep selector KPI metrics single as built without
+    splitting") intentionally disabled the conversion-time decomposition
+    (osi_to_sml step 4a2). The selector metric must stay ONE metric, no
+    Switcher_BRANCH_* companions are generated, and its relationship-graph
+    problem is still surfaced through the unreachable-dimension advisory.
+    The decomposition helper itself (try_decompose_disconnected_selector_metric)
+    is still covered directly in test_dax_disconnected_selector_decomposition.py.
+    """
     sml_model = OSIToSMLConverter().from_osi(_build_osi_model())
 
     switcher = next(m for m in sml_model.metrics if m.unique_name == "Switcher")
-
-    # The original's sync_enabled/sql_expression are untouched either way
-    # (this codebase's own translator "succeeds" at inlining the
-    # cross-table measure references -- that's exactly the gap that
-    # motivated this feature, confirmed against a real customer deploy
-    # where Snowflake rejected identical SQL at DDL-execution time). What
-    # matters is the advisory: it's no longer a dead end.
-    assert ADVISORY_CATEGORY_DISCONNECTED_SELECTOR_DECOMPOSED in switcher.advisory_categories
-    assert any("BRANCH" in note for note in switcher.advisory_notes)
-
-    # The now-redundant unreachable-dimension advisory must be superseded,
-    # not just left alongside the new one.
-    assert ADVISORY_CATEGORY_UNREACHABLE_DIMENSION not in switcher.advisory_categories
+    assert ADVISORY_CATEGORY_DISCONNECTED_SELECTOR_DECOMPOSED not in switcher.advisory_categories
+    assert ADVISORY_CATEGORY_UNREACHABLE_DIMENSION in switcher.advisory_categories
     # advisory_notes/advisory_categories stay parallel (same length).
     assert len(switcher.advisory_notes) == len(switcher.advisory_categories)
 
     companions = [m for m in sml_model.metrics if m.unique_name.startswith("Switcher_BRANCH_")]
-    assert len(companions) == 2, f"expected 2 real branches (the blank one skipped), got {[m.unique_name for m in companions]}"
-
-    for companion in companions:
-        assert companion.sync_enabled is True, f"{companion.unique_name} should have translated successfully"
-        assert companion.sql_expression, f"{companion.unique_name} should have real SQL"
-        assert companion.dataset == "Fact"
-        assert ADVISORY_CATEGORY_DISCONNECTED_SELECTOR_DECOMPOSED in companion.advisory_categories
-        # Never references the disconnected selector table's alias/columns.
-        assert "SELECTOR" not in companion.sql_expression.upper()
+    assert companions == []
+    assert not any(m.parent_metric_name == "Switcher" for m in sml_model.metrics)
 
 
 def test_decomposed_metrics_map_to_needs_review_not_predicted_failure():
