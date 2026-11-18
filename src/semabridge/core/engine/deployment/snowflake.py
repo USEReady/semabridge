@@ -72,8 +72,6 @@ def target_snowflake_config(context: RunContext):
     ambient_warning = "Snowflake target credentials: ambient config (no linked account)"
 
     def _mark_ambient_fallback() -> None:
-        if hasattr(context, "source_warnings") and ambient_warning not in context.source_warnings:
-            context.source_warnings.append(ambient_warning)
         if hasattr(context, "target_warnings") and ambient_warning not in context.target_warnings:
             context.target_warnings.append(ambient_warning)
         if hasattr(context, "target_credential_origin"):

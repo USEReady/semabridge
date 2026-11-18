@@ -68,3 +68,146 @@ class SourceQueryError(SourceError):
         super().__init__(message)
         self.status = status
         self.body = body
+
+
+class SourceUnsupportedError(SourceError):
+    """The requested operation is not supported by this source adapter."""
+
+
+import abc
+from typing import Sequence, Dict, Any
+
+
+class SemanticSourceAdapter(abc.ABC):
+    """Uniform adapter interface for source systems (Fabric, PBIX, etc.)."""
+
+    source_type: SourceType
+
+    @abc.abstractmethod
+    def resolve_credentials(
+        self,
+        *,
+        identity_id: Optional[str] = None,
+        account_token: Optional[str] = None,
+        account_id: Optional[str] = None,
+        credential_manager: Any = None,
+        **kwargs: Any,
+    ) -> SourceCredentials:
+        """Resolve credentials for the source."""
+        ...
+
+    @abc.abstractmethod
+    def validate_and_resolve(
+        self,
+        refs: Sequence[Any],
+        workspace_id: Optional[str] = None,
+        creds: Optional[SourceCredentials] = None,
+        *,
+        max_models: int = 50,
+        lister: Any = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Validate model references against the source and resolve them to ModelIdentity instances."""
+        ...
+
+    @abc.abstractmethod
+    def fingerprint(
+        self,
+        source_payload: Any,
+        **kwargs: Any,
+    ) -> Optional[str]:
+        """Compute a deterministic fingerprint representing the source definition."""
+        ...
+
+    @abc.abstractmethod
+    def extract_model(
+        self,
+        identity: ModelIdentity,
+        creds: Optional[SourceCredentials] = None,
+        *,
+        drop_ledger: Any = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Extract the model definition (TMSL / schema)."""
+        ...
+
+    @abc.abstractmethod
+    def extract_report_layer(
+        self,
+        identity: ModelIdentity,
+        creds: Optional[SourceCredentials] = None,
+        *,
+        tmsl: Optional[Dict[str, Any]] = None,
+        extractor: Any = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Extract the report layer (field aliases, unresolved fields, ambiguous aliases)."""
+        ...
+
+    @abc.abstractmethod
+    def extract_stats(
+        self,
+        identity: ModelIdentity,
+        creds: Optional[SourceCredentials] = None,
+        *,
+        tmsl: Optional[Dict[str, Any]] = None,
+        extractor: Any = None,
+        batch_size: int = 40,
+        **kwargs: Any,
+    ) -> Any:
+        """Extract table row counts or table stats."""
+        ...
+
+    @abc.abstractmethod
+    def execute_dax(
+        self,
+        target: Any,
+        query: str,
+        creds: Optional[SourceCredentials] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """Execute a DAX query on the source/model."""
+        ...
+
+    @abc.abstractmethod
+    def live_definition(
+        self,
+        identity: ModelIdentity,
+        creds: Optional[SourceCredentials] = None,
+        *,
+        extractor: Any = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """Fetch the live definition of the model for drift detection."""
+        ...
+
+
+_ADAPTER_REGISTRY: Dict[str, SemanticSourceAdapter] = {}
+
+
+def register_source_adapter(source_type: str, adapter: SemanticSourceAdapter) -> None:
+    """Register an adapter instance for a source type."""
+    _ADAPTER_REGISTRY[source_type.strip().lower()] = adapter
+
+
+def get_source_adapter(source_type: str) -> SemanticSourceAdapter:
+    """Return the registered adapter for ``source_type``; raises SourceConfigError on unknown type."""
+    stype = str(source_type or "").strip().lower()
+    if not _ADAPTER_REGISTRY:
+        _init_default_adapters()
+    if stype not in _ADAPTER_REGISTRY:
+        supported = sorted(_ADAPTER_REGISTRY.keys())
+        raise SourceConfigError(
+            f"Unknown or unsupported source type: '{source_type}'. "
+            f"Supported source types: {supported}"
+        )
+    return _ADAPTER_REGISTRY[stype]
+
+
+def _init_default_adapters() -> None:
+    from semabridge.sources.fabric.adapter import FabricAdapter
+    from semabridge.sources.pbix.adapter import PbixAdapter
+
+    register_source_adapter("fabric", FabricAdapter())
+    register_source_adapter("pbix", PbixAdapter())
+

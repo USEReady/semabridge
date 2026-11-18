@@ -36,7 +36,7 @@ def test_target_snowflake_config_warns_and_records_ambient_origin():
 
     expected_warning = "Snowflake target credentials: ambient config (no linked account)"
     assert expected_warning in context.target_warnings
-    assert expected_warning in context.source_warnings
+    assert expected_warning not in context.source_warnings
     assert context.target_credential_origin == "ambient config (no linked account)"
 
     engine = ExecutionEngine()
@@ -49,7 +49,7 @@ def test_target_snowflake_config_warns_and_records_ambient_origin():
     summary = engine._step10_finalize(context, RunStatus.SUCCESS)
     assert summary.target_credential_origin == "ambient config (no linked account)"
     assert expected_warning in summary.target_warnings
-    assert expected_warning in summary.source_warnings
+    assert expected_warning not in summary.source_warnings
 
 
 @pytest.mark.asyncio
