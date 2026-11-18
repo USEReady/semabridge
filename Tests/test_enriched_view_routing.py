@@ -197,8 +197,22 @@ def test_dimension_alias_collision_scoping_per_dataset():
     from semabridge.utils.identifiers import IdentifierSanitizer
     from types import SimpleNamespace
 
+    # Like the real SnowflakeSchemaManager, resolve a column against the
+    # dataset's physical columns with an underscore-insensitive match
+    # (IsYTD -> IS_YTD). Since 5f70c6b (data-independent DDL emission) the
+    # builder no longer skips a column whose resolved name is missing from
+    # dataset_col_lookup, so the stub must resolve to the real physical name.
+    physical = {
+        "Product": {"IS_YTD"},
+        "SalesFact": {"IS_YTD", "ZIP", "ZIPCODE"},
+    }
+
     class _DummySchema:
         def _resolve_physical_column_name(self, dataset, column: str, model=None) -> str:
+            key = str(column).upper().replace("_", "")
+            for phys in physical.get(dataset.unique_name, set()):
+                if phys.replace("_", "") == key:
+                    return phys
             return IdentifierSanitizer().sanitize_column(column)
 
     model = SMLModel(
@@ -236,10 +250,7 @@ def test_dimension_alias_collision_scoping_per_dataset():
 
     dataset_aliases = {"Product": "PRODUCT", "SalesFact": "SALESFACT"}
     dataset_by_name = {"Product": model.datasets[0], "SalesFact": model.datasets[1]}
-    dataset_col_lookup = {
-        "Product": {"IS_YTD"},
-        "SalesFact": {"IS_YTD", "ZIP", "ZIPCODE"},
-    }
+    dataset_col_lookup = physical
 
     dims_lines, _ = builder.build_for_sml(
         model,
@@ -255,8 +266,12 @@ def test_dimension_alias_collision_scoping_per_dataset():
     assert 'SALESFACT."IS_YTD" AS SALESFACT."IS_YTD"' in clause
     assert 'SALESFACT."IS_YTD_2"' not in clause
 
-    # 2. Intra-table collision within SalesFact still gets _2 suffix
+    # 2. Intra-table collision within SalesFact: since 5f70c6b a column whose
+    # semantic name duplicates an earlier dimension points at that
+    # dimension's physical column and is therefore not emitted twice (no
+    # ZIP_2 alias); the other physical column stays exposed under its own name.
     assert 'SALESFACT."ZIP" AS SALESFACT."ZIP"' in clause
-    assert 'SALESFACT."ZIP_2" AS SALESFACT."ZIPCODE"' in clause
+    assert 'SALESFACT."ZIPCODE" AS SALESFACT."ZIPCODE"' in clause
+    assert 'SALESFACT."ZIP_2"' not in clause
 
 
