@@ -316,6 +316,11 @@ def _step10_finalize(
             context.source_format, "ambiguous_report_aliases", []
         )
     self._summary.source_warnings = list(getattr(context, "source_warnings", None) or [])
+    self._summary.target_warnings = list(getattr(context, "target_warnings", None) or [])
+    self._summary.target_credential_origin = getattr(context, "target_credential_origin", None)
+    for tw in self._summary.target_warnings:
+        if tw not in self._summary.source_warnings:
+            self._summary.source_warnings.append(tw)
     try:
         from semabridge.core.demo_mode import resolve_effective_demo_mode
         self._summary.demo_mode = resolve_effective_demo_mode(

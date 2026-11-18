@@ -458,3 +458,52 @@ def dax_expressions():
         "tier3_time_intel": "TOTALYTD(SUM([Revenue]), 'Date'[Date])",
         "tier3_iterator": "SUMX(Sales, Sales[Quantity] * Sales[Price])",
     }
+
+
+# -----------------------------------------------------------------------------
+# pbixray Detection & Skip Hook for Restricted Environments (e.g. Windows WDAC)
+# -----------------------------------------------------------------------------
+
+def _check_pbixray_support() -> tuple[bool, str]:
+    """Check once whether pbixray and its native extensions are loadable."""
+    try:
+        import pbixray
+        from pbixray import PBIXRay
+        import pbixray.core
+        return True, ""
+    except Exception as exc:
+        return False, f"pbixray native decoder is unavailable or blocked by Application Control ({exc})"
+
+
+PBIXRAY_AVAILABLE, PBIXRAY_SKIP_REASON = _check_pbixray_support()
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Skip pbixray-dependent tests when native extensions are blocked, except in CI."""
+    is_ci = (
+        os.getenv("CI") == "true"
+        or os.getenv("GITHUB_ACTIONS") == "true"
+        or os.getenv("SEMABRIDGE_REQUIRE_REAL_PBIX") == "1"
+    )
+    if not PBIXRAY_AVAILABLE and not is_ci:
+        skip_pbixray = pytest.mark.skip(reason=PBIXRAY_SKIP_REASON)
+        for item in items:
+            nodeid = item.nodeid.replace("\\", "/")
+            if "test_calculated_table_relationships.py" in nodeid:
+                if any(target in nodeid for target in (
+                    "test_a_keep_legitimate_calculated_table_relationship",
+                    "test_b_exclude_actual_auto_date_time_relationships",
+                    "test_c_inferred_column_name_fallback",
+                    "test_d_missing_endpoint_diagnostic",
+                )):
+                    item.add_marker(skip_pbixray)
+            elif "test_local_pbix_connector.py" in nodeid:
+                if any(target in nodeid for target in (
+                    "test_discover_end_to_end_succeeds_for_confirmed_empty_model",
+                    "test_extract_with_pbixray_logs_exception_type_and_traceback",
+                    "test_extract_with_pbixray_returns_empty_result",
+                )):
+                    item.add_marker(skip_pbixray)
+            elif "pbixray" in item.keywords:
+                item.add_marker(skip_pbixray)
+

@@ -154,3 +154,6 @@ class RunContext:
     # Non-fatal source warnings shown on the run (e.g. a Fabric report the
     # identity cannot read). Empty unless a source adds one.
     source_warnings: list[str] = _dataclass_field(default_factory=list)
+    # Target credential origin (account tag / ambient config) and warnings
+    target_credential_origin: Optional[str] = None
+    target_warnings: list[str] = _dataclass_field(default_factory=list)

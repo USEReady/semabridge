@@ -69,7 +69,18 @@ def target_snowflake_config(context: RunContext):
         if target_config and getattr(target_config, "type", "") == "snowflake":
             identity_id = str(getattr(target_config, "identity_id", "") or "").strip()
 
+    ambient_warning = "Snowflake target credentials: ambient config (no linked account)"
+
+    def _mark_ambient_fallback() -> None:
+        if hasattr(context, "source_warnings") and ambient_warning not in context.source_warnings:
+            context.source_warnings.append(ambient_warning)
+        if hasattr(context, "target_warnings") and ambient_warning not in context.target_warnings:
+            context.target_warnings.append(ambient_warning)
+        if hasattr(context, "target_credential_origin"):
+            context.target_credential_origin = "ambient config (no linked account)"
+
     if not identity_id:
+        _mark_ambient_fallback()
         return context.config.snowflake
 
     from sqlalchemy import select
@@ -90,6 +101,7 @@ def target_snowflake_config(context: RunContext):
                 "No linked Snowflake account found for identity_id %s; falling back to global Snowflake settings",
                 identity_id,
             )
+            _mark_ambient_fallback()
             return context.config.snowflake
 
         # Thread-safe: builds an isolated SnowflakeConfig object rather than
@@ -103,6 +115,8 @@ def target_snowflake_config(context: RunContext):
             "Snowflake target scoped to account %s (%s) — thread-safe config, no os.environ mutation",
             account.tag, identity_id,
         )
+        if hasattr(context, "target_credential_origin"):
+            context.target_credential_origin = account.tag or account.id or "account"
         return sf_cfg
 
 

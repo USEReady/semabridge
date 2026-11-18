@@ -216,6 +216,14 @@ def test_deploy_to_snowflake_falls_back_when_target_identity_is_unlinked(
     engine._deploy_to_snowflake(context)
 
     assert deployed_configs == [context.config.snowflake]
+    expected_warning = "Snowflake target credentials: ambient config (no linked account)"
+    assert expected_warning in context.target_warnings or expected_warning in context.source_warnings
+    assert context.target_credential_origin == "ambient config (no linked account)"
+
+    # Finalize records warning and target credential origin on the RunSummary
+    summary = engine._step10_finalize(context, RunStatus.SUCCESS)
+    assert summary.target_credential_origin == "ambient config (no linked account)"
+    assert expected_warning in summary.target_warnings or expected_warning in summary.source_warnings
 
 
 def test_finalize_marks_snapshot_failed_when_run_fails():
