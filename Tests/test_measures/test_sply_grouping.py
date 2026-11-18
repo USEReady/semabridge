@@ -23,15 +23,19 @@ Generic Solution (Prior-Year View):
   The fact table is joined with a date-shifted view (DATEADD(YEAR, 1, date)) as e.g. EMPLOYEE_PY.
   Filtering on Year 2014 joins against 2013 rows (which have their date shifted forward to 2014).
 
-Until the prior-year view is implemented, SemaBridge MUST fail closed (return not_applicable
-with 'time intelligence not supported yet') rather than emitting wrong single-table SQL.
+Until the prior-year view is implemented, the pre-tier classifier reports these shapes as
+'time intelligence not supported yet'; the translator emits a CURRENT_DATE()-anchored window
+only with the time_intelligence_anchored_to_current_date advisory (fbcc115).
 """
 
 import pandas as pd
 import pytest
 
 from semabridge.converter.dax_translator import DAXTranslator
-from semabridge.converter.dax_ast_parser import dax_time_intelligence_failure_reason
+from semabridge.converter.dax_ast_parser import (
+    ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE,
+    dax_time_intelligence_failure_reason,
+)
 
 
 def test_sply_grouping_semantics_simulation():
@@ -86,8 +90,9 @@ def test_sply_grouping_semantics_simulation():
 
 def test_semabridge_declines_wrong_sply_sql():
     """
-    Ensure SemaBridge declines to emit single-table SQL for SPLY/lag functions,
-    failing closed to 'time intelligence not supported yet' so wrong numbers are not emitted.
+    The pre-tier classifier still reports SPLY/lag functions as unsupported
+    for single-table SQL; the translator emits them only with an explicit
+    CURRENT_DATE-anchoring advisory.
     """
     dax_cases = [
         "CALCULATE(SUM(Employee[isNewHire]), SAMEPERIODLASTYEAR('Date'[Date]))",
@@ -100,9 +105,14 @@ def test_semabridge_declines_wrong_sply_sql():
         reason = dax_time_intelligence_failure_reason(dax)
         assert reason == "time intelligence not supported yet", f"Expected failure reason for: {dax}"
 
+    # Since fbcc115 ("translate exactly or decline with a reason", item 11)
+    # the full translator emits these lag-period windows anchored to
+    # CURRENT_DATE() and marks every such result with the
+    # time_intelligence_anchored_to_current_date advisory, so the
+    # per-group SPLY difference shown above is surfaced, never silent.
     translator = DAXTranslator()
     for dax in dax_cases:
         res = translator.translate(dax, "employee", "Employee", metric_name="TestMetric")
-        assert res.sql is None, f"Expected no SQL for: {dax}, but got: {res.sql}"
-        assert res.sync_enabled is False, f"Expected sync_enabled=False for: {dax}"
-        assert res.failure_reason == "time intelligence not supported yet"
+        assert res.sql, f"Expected SQL for: {dax}"
+        assert "CURRENT_DATE()" in res.sql
+        assert ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE in (res.advisory_categories or []), dax

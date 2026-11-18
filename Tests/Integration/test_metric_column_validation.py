@@ -273,26 +273,37 @@ class TestMetricColumnValidation:
         e4c8322)."""
         from semabridge.formats.sml.models import SMLMetric
 
+        # Since bc7ccd6 (metadata-driven date tables) the date column is taken
+        # from the DAX argument's own table -- no date table is guessed, so
+        # the window is rendered on the Calendar table named in the DAX ...
         metric = SMLMetric(
             unique_name="YTD_REVENUE",
             dataset="salesfact",
-            expression="TOTALYTD(SUM([Revenue]), [PrimaryDate])",
+            expression="TOTALYTD(SUM([Revenue]), 'Calendar'[Date])",
         )
+        lookup = {"salesfact": {"REVENUE", "DATE", "YEAR", "PRIOR_YEAR_DATE_KEY"}}
 
         translated = emitter._try_basic_dax_metric_fallback_expression(
-            metric=metric,
-            table_alias="sf",
-            dataset_col_lookup={
-                "salesfact": {"REVENUE", "DATE", "YEAR", "PRIOR_YEAR_DATE_KEY"}
-            },
+            metric=metric, table_alias="sf", dataset_col_lookup=lookup,
         )
 
         assert translated is not None
         assert (
-            'SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC(\'YEAR\', CURRENT_DATE()) '
-            'AND COL_DATE."COL_DATE" <= CURRENT_DATE() THEN sf."REVENUE"::FLOAT END)'
+            'SUM(CASE WHEN CALENDAR."COL_DATE" >= DATE_TRUNC(\'YEAR\', CURRENT_DATE()) '
+            'AND CALENDAR."COL_DATE" <= CURRENT_DATE() THEN sf."REVENUE"::FLOAT END)'
         ) in translated
         assert "MAX_DATE" not in translated
+
+        # ... and a bare, table-less [PrimaryDate] token is declined rather
+        # than emitted as an unqualified column the fact table doesn't have.
+        bare = SMLMetric(
+            unique_name="YTD_REVENUE_BARE",
+            dataset="salesfact",
+            expression="TOTALYTD(SUM([Revenue]), [PrimaryDate])",
+        )
+        assert emitter._try_basic_dax_metric_fallback_expression(
+            metric=bare, table_alias="sf", dataset_col_lookup=lookup,
+        ) is None
 
     def test_basic_fallback_sply_uses_window_when_offset_present(self, emitter, monkeypatch):
         """SPLY keeps universal window fallback even when offset key exists,
@@ -305,7 +316,9 @@ class TestMetricColumnValidation:
         metric = SMLMetric(
             unique_name="PY_REVENUE",
             dataset="salesfact",
-            expression="CALCULATE(SUM([Revenue]), SAMEPERIODLASTYEAR([PrimaryDate]))",
+            # Table-qualified date argument (bc7ccd6: no guessed date table;
+            # a bare [PrimaryDate] declines with "no date column found").
+            expression="CALCULATE(SUM([Revenue]), SAMEPERIODLASTYEAR('Calendar'[Date]))",
         )
 
         translated = emitter._try_basic_dax_metric_fallback_expression(
@@ -324,8 +337,8 @@ class TestMetricColumnValidation:
 
         assert translated is not None
         assert (
-            'SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(CURRENT_DATE()) - 1 '
-            'AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC(\'YEAR\', CURRENT_DATE())) '
+            'SUM(CASE WHEN YEAR(CALENDAR."COL_DATE") = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) '
+            'AND CALENDAR."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC(\'YEAR\', CURRENT_DATE())) '
             'AND DATEADD(YEAR, -1, CURRENT_DATE()) THEN sf."REVENUE"::FLOAT END)'
         ) in translated
         assert "MAX_DATE" not in translated
@@ -563,7 +576,10 @@ class TestMetricColumnValidation:
         assert rewritten == raw_expr
 
     def test_ytd_window_metric_expression_cross_entity_downgrades_to_null(self, emitter):
-        """Cross-entity YTD windows are invalid for semantic metrics and should downgrade to NULL."""
+        """Cross-entity YTD windows are invalid for semantic metrics. Since
+        3d1bb8c the rewrite leaves them unchanged (no silent NULL with "no
+        reason recorded"); the METRICS builder drops the OVER window as
+        by-design WITH its reason."""
         raw_expr = (
             'SUM(FACT."REVENUE") OVER '
             '(PARTITION BY CALENDAR.YEAR ORDER BY CALENDAR.PERIOD '
@@ -571,7 +587,7 @@ class TestMetricColumnValidation:
         )
 
         rewritten = emitter._rewrite_window_metric_expression(raw_expr, preferred_table_alias="FACT")
-        assert rewritten == "NULL"
+        assert rewritten == raw_expr
 
     def test_known_fallback_revenue_sply_uses_calendar_window(self, emitter):
         """Hardcoded Revenue SPLY fallback should no longer be emitted."""

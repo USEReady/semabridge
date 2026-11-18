@@ -107,7 +107,14 @@ def test_metric_invalid_column_reference_skipped():
     # Verify results
     assert ddl is not None
     assert "total_revenue" in ddl.lower()
-    assert "total_units" not in ddl.lower()  # Invalid metric should be skipped
+    # Since 7939c36a ("Metrics never fail a sync") an invalid metric is kept
+    # as a CAST(NULL AS DOUBLE) placeholder whose COMMENT carries the reason;
+    # its bad column reference never reaches the DDL.
+    units_lines = [line for line in ddl.splitlines() if "total_units" in line.lower()]
+    assert len(units_lines) == 1
+    assert "CAST(NULL AS DOUBLE)" in units_lines[0].upper()
+    assert "could not be resolved" in units_lines[0].lower()
+    assert '"UNITS"' not in ddl
     assert "SUM" in ddl  # Valid metric should be there
     
     print("✓ Test passed: Invalid metric was skipped, valid metric included")
