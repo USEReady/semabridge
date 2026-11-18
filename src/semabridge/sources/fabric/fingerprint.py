@@ -88,13 +88,17 @@ def compute_source_fingerprint(
     source_type: str,
     source_payload: Any,
 ) -> Optional[str]:
-    """Unified fingerprint entry point for source model definition."""
+    """Unified fingerprint entry point for source model definition via SemanticSourceAdapter."""
+    from semabridge.sources.base import get_source_adapter, SourceConfigError
+
     stype = str(source_type or "").strip().lower()
-    if stype == "fabric":
-        return get_fabric_fingerprint(source_payload)
-    if stype in ("pbix", "local_pbix", "powerbi"):
-        return get_pbix_fingerprint(source_payload)
-    return None
+    if stype in ("local_pbix", "powerbi"):
+        stype = "pbix"
+    try:
+        adapter = get_source_adapter(stype)
+        return adapter.fingerprint(source_payload)
+    except SourceConfigError:
+        return None
 
 
 def get_project_config_fingerprint(project_cfg: Optional[Dict[str, Any]]) -> str:

@@ -663,16 +663,18 @@ async def _perform_project_run_impl(run: dict, project_cfg: str, started: float)
         stype = str(source_cfg.get("type") or "fabric").lower()
 
         try:
-            from semabridge.sources.fabric.fingerprint import compute_source_fingerprint, compute_combined_fingerprint
-            raw_fp = None
-            if stype in ("pbix", "local_pbix", "powerbi"):
-                pbix_path = source_cfg.get("pbix_path") or source_cfg.get("path")
-                if pbix_path and os.path.exists(str(pbix_path)):
-                    raw_fp = compute_source_fingerprint(stype, pbix_path)
-            elif stype == "fabric":
-                model_payload = source_cfg.get("model_payload") or source_cfg.get("lastModifiedDateTime")
-                if model_payload:
-                    raw_fp = compute_source_fingerprint(stype, model_payload)
+            from semabridge.sources.base import get_source_adapter
+            from semabridge.sources.fabric.fingerprint import compute_combined_fingerprint
+
+            adapter_stype = "pbix" if stype in ("local_pbix", "powerbi") else stype
+            adapter = get_source_adapter(adapter_stype)
+            payload = (
+                source_cfg.get("pbix_path")
+                or source_cfg.get("path")
+                or source_cfg.get("model_payload")
+                or source_cfg.get("lastModifiedDateTime")
+            )
+            raw_fp = adapter.fingerprint(payload) if payload else None
             if raw_fp:
                 current_fingerprint = compute_combined_fingerprint(
                     source_fingerprint=raw_fp,
