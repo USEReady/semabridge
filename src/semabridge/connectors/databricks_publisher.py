@@ -2393,13 +2393,12 @@ class DatabricksPublisher:
                 # not match semantic names.
                 lines.append("source: " + self._build_metric_view_source_query(bindings, source_fq))
             else:
-                source_query = self._build_source_query_with_anchors(source_fq, ds_name, sml_model)
-                if "\n" in source_query:
-                    lines.append("source: |")
-                    for qline in source_query.split('\n'):
-                        lines.append(f"  {qline}")
-                else:
-                    lines.append("source: " + yaml_quote(source_query))
+                # 9f9aaf3 called _build_source_query_with_anchors here, a
+                # method that only exists on the Snowflake TablesClauseBuilder
+                # (AttributeError on every explicitly mapped dataset). Anchor
+                # columns are a Snowflake enriched-view concern, and that
+                # builder now returns the source unchanged anyway.
+                lines.append(f"source: {yaml_quote(source_fq.replace('`', ''))}")
         else:
             # Inline SQL query as source — no physical table needed
             # Generates a typed schema SELECT using CAST(NULL AS type)
