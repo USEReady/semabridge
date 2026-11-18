@@ -8260,6 +8260,13 @@ def _node_is_pure_literal(node: DaxNode) -> bool:
 
         return all(_node_is_pure_literal(v) for _, v in node.variables) and _node_is_pure_literal(node.body)
 
+    # BLANK() / TRUE() / FALSE() take no arguments and reference nothing:
+    # the usual "else BLANK()" tail of a selector IF-chain is a constant,
+    # not a branch that needs (or can get) its own metric.
+    if isinstance(node, FunctionCallNode) and not node.args and str(node.func).upper() in {"BLANK", "TRUE", "FALSE"}:
+
+        return True
+
     return False
 
 
