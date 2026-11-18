@@ -338,20 +338,12 @@ def _create_project_run(
             or "copy"
         )
 
-    # Intelligent Sync Guard: Initial deployment requires COPY to establish baseline schema and target objects.
-    initial_deployment_promoted = False
-    if str(sync_mode).lower() == "upsert":
-        prior_runs = _compat_project_runs.get(project_id, [])
-        has_prior_successful_run = bool(
-            prior_runs and any(str(r.get("status") or "").lower() in ("success", "active", "warning") for r in prior_runs)
-        )
-        if not has_prior_successful_run:
-            logger.info(
-                "Project '%s' has no prior successful runs. Automatically promoting initial deployment from UPSERT to COPY.",
-                project_id,
-            )
-            sync_mode = "copy"
-            initial_deployment_promoted = True
+    # Initial deployment: a model that was never deployed by this project
+    # (no deployed snapshot -- the authoritative fact) needs a COPY to create
+    # its target objects. SYNC starts decide this in _sync_safety_checks
+    # before the removed-fields check and pass the result as sync_mode, so
+    # this is a no-op for them; it covers the other run types.
+    sync_mode, promoted_models = _promote_initial_upsert(project_id, project_cfg, sync_mode)
 
     run = {
         "run_id": run_id,
@@ -370,7 +362,7 @@ def _create_project_run(
         "message": "Queued: waiting for a free execution slot.",
         "logs": [
             "LIVE Run queued. Waiting for execution engine...",
-            *(["Notice: Initial project deployment promoted from UPSERT to COPY to establish baseline target schema."] if initial_deployment_promoted else []),
+            *([_initial_copy_notice(promoted_models)] if promoted_models else []),
         ],
         "stage_states": _build_stage_states({}),
         "duration_ms": 0,
@@ -1055,6 +1047,169 @@ async def _assert_sync_ready(project_id: str, config_yaml: str, *, force: bool =
     return preview_id if preview_id and preview_id != project_id else None
 
 
+def _models_needing_initial_copy(project_id: str, config_yaml: str) -> Optional[List[str]]:
+    """Models of this sync with no deployed snapshot of this project (their
+    first deployment must be a COPY to create the target objects). None when
+    it cannot be determined (the requested mode is then kept)."""
+    from semabridge.api.services import duplicate_sync_service as dss
+
+    try:
+        return dss.models_never_deployed(project_id, config_yaml)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Initial-deployment check for project %s skipped: %s", project_id, exc)
+        return None
+
+
+def _promote_initial_upsert(project_id: str, config_yaml: str, sync_mode: Any) -> Tuple[str, List[str]]:
+    """(mode, models promoted for): an UPSERT of a project with a model that
+    was never deployed (no deployed snapshot -- the authoritative fact, not
+    the run history) runs as a COPY."""
+    mode = str(sync_mode or "copy").lower()
+    if mode != "upsert":
+        return mode, []
+    new_models = _models_needing_initial_copy(project_id, config_yaml)
+    if new_models:
+        logger.info(
+            "Project '%s': model(s) %s never deployed; running this UPSERT as COPY to create them.",
+            project_id, ", ".join(new_models),
+        )
+        return "copy", list(new_models)
+    return mode, []
+
+
+INITIAL_COPY_NOTICE = (
+    "Notice: UPSERT promoted to COPY because {models} {verb} never been deployed by this project "
+    "(a first deployment creates the target objects)."
+)
+
+
+def _initial_copy_notice(models: List[str]) -> str:
+    return INITIAL_COPY_NOTICE.format(models=", ".join(models), verb="has" if len(models) == 1 else "have")
+
+
+def _non_interactive_hint() -> str:
+    return "open the project and start the sync there to confirm"
+
+
+async def _sync_safety_checks(
+    project_id: str,
+    config_yaml: str,
+    payload: Dict[str, Any],
+    *,
+    dry_run_project_id: Optional[str],
+    interactive: bool,
+) -> Dict[str, Any]:
+    """The sync-start checks every SYNC start runs after the dry-run gate
+    (run-now, retry, deploy, job trigger, schedule):
+
+      1. sync mode: the requested mode, an UPSERT promoted to COPY when a
+         model was never deployed (decided BEFORE the removed-fields check,
+         so that check sees the real mode);
+      2. duplicates: a model already synced (or being synced) by another
+         project -- 409 "duplicate" unless ``acknowledge_duplicates``; a check
+         that cannot run fails CLOSED (409 "duplicate_check_failed");
+      3. removed fields (COPY only): fields of the deployed view the source
+         no longer has -- 409 "removed_fields" unless
+         ``acknowledge_removed_fields``; models whose incoming content cannot
+         be verified (no usable dry run) are listed as ``unverifiable``.
+
+    Raises HTTPException(409) with the detail the UI dialog shows. For
+    non-interactive starts (``interactive=False``: schedules, nobody to
+    answer) the detail's message says what to do instead; the caller records
+    the run as failed with it. Returns {"sync_mode", "promoted_models"}."""
+    from semabridge.api.services import duplicate_sync_service as dss
+
+    requested = _effective_sync_mode(project_id, config_yaml, payload)
+    mode, promoted = await asyncio.to_thread(_promote_initial_upsert, project_id, config_yaml, requested)
+
+    if not bool(payload.get("acknowledge_duplicates", False)):
+        try:
+            duplicates = await asyncio.to_thread(dss.find_duplicate_deployments, project_id, config_yaml, True)
+        except Exception as exc:  # noqa: BLE001 -- fail closed
+            logger.warning("Duplicate check for project %s could not run; sync not started: %s", project_id, exc)
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "status": "duplicate_check_failed",
+                    "error": str(exc),
+                    "message": (
+                        "Could not check whether these models are already synced by another project "
+                        f"({exc}). Confirm to sync anyway, or cancel and try again."
+                        if interactive else
+                        f"the duplicate check could not run ({exc}); {_non_interactive_hint()}"
+                    ),
+                },
+            )
+        if duplicates:
+            others = sorted({str(d.get("other_project_name") or d.get("other_project_id")) for d in duplicates})
+            models = sorted({str(d.get("model")) for d in duplicates})
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "status": "duplicate",
+                    "duplicates": duplicates,
+                    "message": (
+                        f"{len(models)} model(s) in this project are already synced by another project. "
+                        "Review them, then confirm to sync anyway."
+                        if interactive else
+                        f"{', '.join(models)} already synced by project {', '.join(others)}; "
+                        f"{_non_interactive_hint()}"
+                    ),
+                },
+            )
+
+    # COPY rebuilds the view from the source: fields that are in the deployed
+    # view but no longer in the source would disappear. Ask first (UPSERT
+    # keeps them, so it never asks).
+    if mode == "copy" and not bool(payload.get("acknowledge_removed_fields", False)):
+        findings = await asyncio.to_thread(dss.find_removed_fields, project_id, config_yaml, dry_run_project_id)
+        removed = [m for m in findings or [] if not m.get("unverifiable")]
+        unverifiable = [m for m in findings or [] if m.get("unverifiable")]
+        if removed or unverifiable:
+            total = sum(int(m.get("count") or 0) for m in removed)
+            unverified_names = ", ".join(str(m.get("model")) for m in unverifiable)
+            if interactive:
+                parts = []
+                if removed:
+                    parts.append(
+                        f"{total} field(s) in the deployed semantic view are no longer in the source. "
+                        "A Copy sync rebuilds the view, so they will be removed from Snowflake."
+                    )
+                if unverifiable:
+                    parts.append(
+                        f"Cannot verify which fields a Copy sync would remove for {unverified_names}: "
+                        "there is no successful dry run of the content about to be synced. "
+                        "Re-run the dry run, or sync as Upsert to keep every deployed field."
+                    )
+                message = " ".join(parts)
+            else:
+                parts = []
+                if removed:
+                    parts.append(
+                        f"{total} field(s) would be removed by a Copy sync; "
+                        "open the project and confirm, or switch to Upsert"
+                    )
+                if unverifiable:
+                    parts.append(
+                        f"cannot verify which fields a Copy sync would remove for {unverified_names} "
+                        "(no matching dry run); re-run the dry run, or switch to Upsert"
+                    )
+                message = "; ".join(parts)
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "status": "removed_fields",
+                    "sync_mode": "copy",
+                    "promoted_from_upsert": bool(promoted),
+                    "models": removed,
+                    "unverifiable": unverifiable,
+                    "total": total,
+                    "message": message,
+                },
+            )
+    return {"sync_mode": mode, "promoted_models": promoted}
+
+
 async def _execute_project_run(project_id: str, schedule_label: str = "Manual") -> dict:
     """Scheduled/triggered run: same config preparation and dry-run gate as
     run-now. A gate failure is recorded on the run instead of deploying; a
@@ -1078,9 +1233,11 @@ def _start_gated_project_run(project_id: str, schedule_label: str = "Manual") ->
 
 
 async def _gated_project_run(run: dict, project_cfg: str, started: float) -> dict:
-    """Lease -> dry-run gate -> execute. The project lease is taken BEFORE
-    the gate so a concurrent run is reported as skipped, not as a gate
-    failure, and released if the gate stops the run."""
+    """Lease -> dry-run gate -> sync-start checks -> execute (scheduled and
+    background-triggered runs). The project lease is taken BEFORE the gate so
+    a concurrent run is reported as skipped, not as a gate failure, and
+    released if the gate or a check stops the run (recorded as failed with
+    the reason: nobody is there to confirm a duplicate or removed fields)."""
     project_id = str(run.get("project_id") or "")
     run_id = str(run.get("run_id") or run.get("id") or "")
     lease = _acquire_project_lease(project_id, run_id)
@@ -1088,7 +1245,18 @@ async def _gated_project_run(run: dict, project_cfg: str, started: float) -> dic
         return _mark_run_skipped(run, started, lease)
     try:
         with run_coordination.live_run(run_id):
-            await _assert_sync_ready(project_id, project_cfg)
+            dry_run_project_id = await _assert_sync_ready(project_id, project_cfg)
+            # Same duplicate / removed-fields checks as run-now. Nobody can
+            # answer them here, so a finding stops the run (recorded below
+            # as failed with what to do); nothing is deployed or removed.
+            checks = await _sync_safety_checks(
+                project_id, project_cfg, {"sync_mode": run.get("sync_mode")},
+                dry_run_project_id=dry_run_project_id, interactive=False,
+            )
+            if checks["sync_mode"] != run.get("sync_mode"):
+                run["sync_mode"] = checks["sync_mode"]
+                if checks["promoted_models"]:
+                    run["logs"] = [*run.get("logs", []), _initial_copy_notice(checks["promoted_models"])]
     except Exception as exc:
         run_coordination.release_leases(run_id=run_id)
         detail = getattr(exc, "detail", None)
@@ -1375,7 +1543,8 @@ async def _start_project_run_request(
     """Shared HTTP entry for run-now, restore and retry.
 
     Order: project lease (409 "already running") -> dry-run gate (409
-    "blocked") -> duplicate check (409 "duplicate") -> run record (queued)
+    "blocked") -> _sync_safety_checks (sync mode, 409 "duplicate" /
+    "duplicate_check_failed" / "removed_fields") -> run record (queued)
     -> background execution. The lease is taken under the new run's id
     first, so a double click or a schedule firing meanwhile can never start
     a second sync of the project; every early exit releases it."""
@@ -1387,6 +1556,8 @@ async def _start_project_run_request(
     run_coordination.register_live_run(run_id)  # renews the lease during the gate
     try:
         config_override = None
+        sync_mode_for_run = payload.get("sync_mode")
+        promoted_models: List[str] = []
         if run_type == "SYNC":
             config_override = _prepare_sync_config(project_id)
             if scope_models:
@@ -1394,47 +1565,12 @@ async def _start_project_run_request(
             dry_run_project_id = await _assert_sync_ready(
                 project_id, config_override, force=bool(payload.get("force", False)),
             )
-            if not bool(payload.get("acknowledge_duplicates", False)):
-                from semabridge.api.services.duplicate_sync_service import find_duplicate_deployments
-
-                duplicates = await asyncio.to_thread(find_duplicate_deployments, project_id, config_override)
-                if duplicates:
-                    raise HTTPException(
-                        status_code=409,
-                        detail={
-                            "status": "duplicate",
-                            "duplicates": duplicates,
-                            "message": (
-                                f"{len(duplicates)} model(s) in this project are already synced by another project. "
-                                "Review them, then confirm to sync anyway."
-                            ),
-                        },
-                    )
-            # COPY rebuilds the view from the source: fields that are in the
-            # deployed view but no longer in the source would disappear.
-            # Ask first (UPSERT keeps them, so it never asks).
-            if (
-                not bool(payload.get("acknowledge_removed_fields", False))
-                and _effective_sync_mode(project_id, config_override, payload) == "copy"
-            ):
-                from semabridge.api.services.duplicate_sync_service import find_removed_fields
-
-                removed = await asyncio.to_thread(find_removed_fields, project_id, config_override, dry_run_project_id)
-                if removed:
-                    total = sum(m["count"] for m in removed)
-                    raise HTTPException(
-                        status_code=409,
-                        detail={
-                            "status": "removed_fields",
-                            "sync_mode": "copy",
-                            "models": removed,
-                            "total": total,
-                            "message": (
-                                f"{total} field(s) in the deployed semantic view are no longer in the source. "
-                                "A Copy sync rebuilds the view, so they will be removed from Snowflake."
-                            ),
-                        },
-                    )
+            checks = await _sync_safety_checks(
+                project_id, config_override, payload,
+                dry_run_project_id=dry_run_project_id, interactive=True,
+            )
+            sync_mode_for_run = checks["sync_mode"]
+            promoted_models = checks["promoted_models"]
 
         import sys
         pri_mod = sys.modules.get("semabridge.api.services.project_runs_impl")
@@ -1447,7 +1583,7 @@ async def _start_project_run_request(
             sync_mode=(
                 _compat_sync_mode_for_restore_snapshot(project_id, restore_snapshot_id, payload)
                 if run_type == "RESTORE" and restore_snapshot_id
-                else payload.get("sync_mode")
+                else sync_mode_for_run
             ),
             fallback_sync_mode=payload.get("sync_mode"),
             run_id=run_id,
@@ -1478,6 +1614,10 @@ async def _start_project_run_request(
         run["force"] = force
         if scope_models:
             run["scope_models"] = list(scope_models)
+        if promoted_models:
+            notice = _initial_copy_notice(promoted_models)
+            if notice not in (run.get("logs") or []):
+                run["logs"] = [*(run.get("logs") or []), notice]
         run_bg_fn = getattr(pri_mod, "_run_project_background", None) or _run_project_background
         background_tasks.add_task(run_bg_fn, run, project_cfg, started)
         handed_off = True

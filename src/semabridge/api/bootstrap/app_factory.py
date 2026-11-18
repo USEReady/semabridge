@@ -233,6 +233,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         _compat_ensure_loaded()
         for project_id, schedule_payload in list(_compat_project_schedules.items()):
             try:
+                # save_project_schedule keeps a disabled schedule (so the UI
+                # shows it) without registering a job: it never fires.
                 scheduler_service.save_project_schedule(project_id, schedule_payload)
             except Exception as schedule_exc:
                 logger.warning('Failed to restore project schedule %s: %s', project_id, schedule_exc)

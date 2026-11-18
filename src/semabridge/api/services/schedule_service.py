@@ -169,21 +169,48 @@ async def update_jobs_config_compat(payload: dict):
     return {"status": "saved", **merged}
 
 
+_TRIGGER_PASSTHROUGH_KEYS = ("acknowledge_duplicates", "acknowledge_removed_fields", "sync_mode", "user_id")
+
+
+def _is_enabled_schedule(schedule: Any) -> bool:
+    """A schedule that fires: enabled and not manual."""
+    if not isinstance(schedule, dict):
+        return False
+    if str(schedule.get("schedule_type") or "manual").strip().lower() == "manual":
+        return False
+    return bool(schedule.get("enabled", False))
+
+
+def _enabled_scheduled_project_ids() -> List[str]:
+    """Projects whose saved schedule is enabled and not manual."""
+    return [
+        pid for pid, schedule in _compat_project_schedules.items()
+        if pid in _compat_projects and _is_enabled_schedule(schedule)
+    ]
+
+
 async def trigger_job_compat(payload: dict, background_tasks: BackgroundTasks):
     _compat_ensure_loaded()
-    # Triggered runs go through the same saved-name merge and dry-run gate
-    # as run-now (see run_service._start_gated_project_run).
-    from semabridge.api.services.run_service import _start_gated_project_run
+    from semabridge.api.services import run_service
     from semabridge.api.services.project_ownership_service import is_project_owned_by_user
 
     project_id = str((payload or {}).get("project_id") or "").strip()
     user_id = (payload or {}).get("user_id")
 
     if project_id:
-        # Trigger a specific project
-        run = _start_gated_project_run(project_id, "Manual")
-        run["message"] = "Job trigger accepted."
-        return run
+        # One project, started by a user (Jobs page "Run"): the same
+        # synchronous checks as run-now -- lease, dry-run gate, duplicates,
+        # removed fields -- so a refusal is a 409 the UI dialog shows (with
+        # its options), never an "accepted" run that fails later.
+        body = {k: payload[k] for k in _TRIGGER_PASSTHROUGH_KEYS if (payload or {}).get(k) is not None}
+        body["schedule"] = "Manual"
+        result = await run_service._start_project_run_request(project_id, background_tasks, body, run_type="SYNC")
+        return {
+            **result,
+            "id": result.get("run_id"),
+            "project_id": project_id,
+            "message": "Job trigger accepted.",
+        }
 
     # No project_id — trigger every currently scheduled project. Deliberately
     # does NOT fall back to "all projects" when nothing is scheduled: that
@@ -194,10 +221,11 @@ async def trigger_job_compat(payload: dict, background_tasks: BackgroundTasks):
     # project in project memory). An empty schedule list means there is
     # genuinely nothing due to run right now — the caller gets a clear
     # no-op instead.
-    scheduled_ids = [
-        pid for pid, proj in _compat_projects.items()
-        if proj.get("schedule") or proj.get("schedule_type")
-    ]
+    # Only schedules that actually fire (enabled, not manual). These runs
+    # are recorded and checked in the background (run_service.
+    # _start_gated_project_run): a refused one shows as a failed run with
+    # the reason, nothing is deployed.
+    scheduled_ids = _enabled_scheduled_project_ids()
 
     if not scheduled_ids:
         return {"status": "no_projects", "message": "No scheduled jobs to run.", "triggered": 0}
@@ -215,7 +243,7 @@ async def trigger_job_compat(payload: dict, background_tasks: BackgroundTasks):
             logger.warning("Skipping scheduled trigger for %s: not owned by requesting user", pid)
             continue
         try:
-            triggered.append(_start_gated_project_run(pid, "Manual"))
+            triggered.append(run_service._start_gated_project_run(pid, "Manual"))
         except Exception as exc:
             logger.warning("Failed to trigger project %s: %s", pid, exc)
 

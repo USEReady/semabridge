@@ -9,9 +9,14 @@ in the same database.schema
   * has the same model name (upload prefix ignored: clean_pbix_model_name), or
   * shares most of its metrics and columns (same content under another name).
 
-Re-syncing the same project is an update, never a duplicate. The check is
-advisory: run-now refuses with 409 until the user confirms
-(``acknowledge_duplicates``).
+A model also counts when another project dry-ran the exact same file for the
+same target but has not deployed it yet (``same_file_dry_run``), or is
+syncing it right now (``same_file_in_progress``).
+
+Re-syncing the same project is an update, never a duplicate. Every sync
+start runs these checks (run_service._sync_safety_checks): interactive starts
+get a 409 until the user confirms (``acknowledge_duplicates``), scheduled
+runs are recorded as failed. A check that cannot run fails closed there.
 """
 
 from __future__ import annotations
@@ -156,34 +161,48 @@ def _latest_blob_of(project_ids: Iterable[str], rows: List[Any], *, view_name: O
     return None
 
 
-def _dry_run_blob(project_id: str, model_key: str, rows: List[Any]) -> Optional[dict]:
-    """The content about to be synced for one model: the snapshot of this
-    project's latest successful dry run of it (multi-model dry-run jobs)."""
+class SyncCheckError(RuntimeError):
+    """A sync-start check could not run; the caller must not take it as "no
+    finding" (fail closed)."""
+
+
+def accepted_previews(project_id: str, config: Dict[str, Any]) -> Dict[str, Optional[str]]:
+    """model_label -> preview project id of the dry run the sync gate accepts
+    for that model (same file content the sync will read; see
+    dry_run_job_service.accepted_dry_run_previews), None when there is none."""
+    from semabridge.api.services.dry_run_job_service import accepted_dry_run_previews
+
+    return accepted_dry_run_previews(project_id, config)
+
+
+def models_never_deployed(project_id: str, config_yaml: Any) -> List[str]:
+    """Labels of the models this sync deploys that have no deployed snapshot
+    of THIS project (the model's first deployment). Raises SyncCheckError
+    when that cannot be determined."""
     try:
-        from semabridge.repository.orm.dry_run_job_models import DryRunJob
+        config = yaml.safe_load(config_yaml) if isinstance(config_yaml, str) else (config_yaml or {})
+        if not isinstance(config, dict):
+            return []
+        planned = _planned_models(config)
+        if not planned:
+            return []
         from semabridge.repository.orm.session_factory import db_manager
-        from semabridge.utils.identifiers import clean_pbix_model_name
+        from semabridge.repository.orm.snapshot_models import SnapshotRow
         from sqlalchemy import select
 
         with db_manager.get_session() as session:
-            job = session.execute(
-                select(DryRunJob).where(DryRunJob.project_id == project_id).order_by(DryRunJob.created_at.desc())
-            ).scalars().first()
-            preview_ids = [
-                f.preview_project_id for f in (job.files if job else [])
-                if f.preview_project_id and f.status == "success"
-                and _norm(clean_pbix_model_name(f.source_ref or f.pbix_path or f.label or "")) == model_key
-            ]
-        return _latest_blob_of(preview_ids, rows)
+            deployed_views = {
+                _norm(v) for v in session.execute(
+                    select(SnapshotRow.view_name).where(
+                        SnapshotRow.project_id == project_id,
+                        SnapshotRow.deployed_at.is_not(None),
+                        SnapshotRow.deleted_at.is_(None),
+                    )
+                ).scalars().all() if v
+            }
     except Exception as exc:  # noqa: BLE001
-        logger.debug("Dry-run snapshot lookup for %s/%s skipped: %s", project_id, model_key, exc)
-        return None
-
-
-def _own_model_blob(project_id: str, model_key: str, view_name: str, rows: List[Any]) -> Optional[dict]:
-    """This project's own fields for a model: its latest dry-run snapshot
-    (the content about to be synced), else its own last deployment."""
-    return _dry_run_blob(project_id, model_key, rows) or _latest_blob_of([project_id], rows, view_name=view_name)
+        raise SyncCheckError(f"deployment history of project {project_id} unavailable: {exc}") from exc
+    return [m["model_label"] for m in planned if m["view_name"] not in deployed_views]
 
 
 def _field_names(blob: Any) -> Dict[str, Tuple[str, str]]:
@@ -215,9 +234,12 @@ def find_removed_fields(
     the source, so these disappear from Snowflake; an UPSERT keeps them.
 
     The content about to be synced is the dry run the sync gate just ran
-    (``dry_run_project_id``, single-model) or the project's latest dry-run
-    job (multi-model). Models never deployed, or without a dry run to
-    compare, are skipped. Never raises: on failure nothing is reported.
+    (``dry_run_project_id``, single-model) or, per model, the dry run the
+    gate accepts (same content hash as the file the sync reads -- see
+    dry_run_job_service.accepted_dry_run_previews). Models never deployed
+    are skipped (nothing to lose). A deployed model without a usable dry run
+    cannot be verified: it is reported with ``unverifiable: True`` (the
+    caller refuses the sync), never silently passed.
     """
     try:
         config = yaml.safe_load(config_yaml) if isinstance(config_yaml, str) else (config_yaml or {})
@@ -226,19 +248,35 @@ def find_removed_fields(
         planned = _planned_models(config)
         if not planned:
             return []
+    except Exception as exc:  # noqa: BLE001 -- the sync cannot build its jobs either
+        logger.warning("Removed-fields check skipped for %s (models not resolvable): %s", project_id, exc)
+        return []
+
+    def _unverifiable(model: Dict[str, Any], reason: str) -> Dict[str, Any]:
+        return {
+            "model": model["model_label"], "view_name": model["view_name"],
+            "removed": [], "count": 0, "unverifiable": True, "reason": reason,
+        }
+
+    use_gate_preview = bool(dry_run_project_id) and len(planned) == 1
+    try:
+        previews: Dict[str, Optional[str]] = (
+            {planned[0]["model_label"]: dry_run_project_id} if use_gate_preview
+            else accepted_previews(project_id, config)
+        )
         from semabridge.repository.orm.session_factory import db_manager
         from semabridge.repository.orm.snapshot_models import SnapshotRow
-        from sqlalchemy import or_, select
+        from sqlalchemy import select
 
-        ids = [project_id] + ([dry_run_project_id] if dry_run_project_id else [])
+        ids = sorted({project_id, *[p for p in previews.values() if p]})
         with db_manager.get_session() as session:
             rows = list(session.execute(
-                select(SnapshotRow).where(or_(SnapshotRow.project_id.in_(ids), SnapshotRow.project_id.like("preview%")))
+                select(SnapshotRow).where(SnapshotRow.project_id.in_(ids), SnapshotRow.deleted_at.is_(None))
             ).scalars().all())
             session.expunge_all()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Removed-fields check skipped for %s: %s", project_id, exc)
-        return []
+        logger.warning("Removed-fields check for %s could not run: %s", project_id, exc)
+        return [_unverifiable(m, f"check failed: {exc}") for m in planned]
 
     findings: List[Dict[str, Any]] = []
     for model in planned:
@@ -246,11 +284,10 @@ def find_removed_fields(
             deployed = _latest_blob_of([project_id], rows, view_name=model["view_name"], deployed_only=True)
             if deployed is None:
                 continue  # first deployment of this model: nothing to lose
-            incoming = (
-                _latest_blob_of([dry_run_project_id], rows) if dry_run_project_id and len(planned) == 1
-                else _dry_run_blob(project_id, model["model_key"], rows)
-            )
+            preview_id = previews.get(model["model_label"])
+            incoming = _latest_blob_of([preview_id], rows) if preview_id else None
             if incoming is None:
+                findings.append(_unverifiable(model, "no successful dry run of the content about to be synced"))
                 continue
             old, new = _field_names(deployed), _field_names(incoming)
             removed = [
@@ -259,7 +296,8 @@ def find_removed_fields(
                 if key not in new
             ]
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Removed-fields check for %s/%s skipped: %s", project_id, model["model_label"], exc)
+            logger.warning("Removed-fields check for %s/%s could not run: %s", project_id, model["model_label"], exc)
+            findings.append(_unverifiable(model, f"check failed: {exc}"))
             continue
         if removed:
             findings.append({
@@ -271,10 +309,71 @@ def find_removed_fields(
     return findings
 
 
-def find_duplicate_deployments(project_id: str, config_yaml: str) -> List[Dict[str, Any]]:
-    """Models of ``project_id`` already deployed by another project to the
-    same database.schema. Empty when there is nothing to warn about, or when
-    the check cannot run (it never blocks a sync on its own failure)."""
+def _projects_with_active_runs(exclude: str) -> Set[str]:
+    """Projects (other than ``exclude``) with a queued/running run or a
+    project lease held right now."""
+    from semabridge.core.run_coordination import ACTIVE_STATUSES
+    from semabridge.repository.orm.run_models import Run, RunLease
+    from semabridge.repository.orm.session_factory import db_manager
+    from sqlalchemy import select
+
+    active: Set[str] = set()
+    with db_manager.get_session() as session:
+        active.update(str(p) for p in session.execute(
+            select(Run.project_id).where(Run.status.in_(ACTIVE_STATUSES))
+        ).scalars().all() if p)
+        active.update(str(p) for p in session.execute(
+            select(RunLease.project_id).where(RunLease.lease_type == "project")
+        ).scalars().all() if p)
+    active.discard(exclude)
+    return active
+
+
+def _same_file_elsewhere(project_id: str, hashes: Set[str]) -> List[Tuple[str, str, Tuple[str, str]]]:
+    """(other project, content hash, (database, schema)) for every other
+    project whose successful dry run read a file with one of ``hashes``.
+    The target comes from that dry run's target config ("" when unknown)."""
+    import json
+
+    from semabridge.repository.orm.dry_run_job_models import DryRunJob, DryRunJobFile
+    from semabridge.repository.orm.session_factory import db_manager
+    from sqlalchemy import select
+
+    if not hashes:
+        return []
+    with db_manager.get_session() as session:
+        rows = session.execute(
+            select(DryRunJob.project_id, DryRunJobFile.content_hash, DryRunJob.target_config_json)
+            .join(DryRunJobFile, DryRunJobFile.job_id == DryRunJob.job_id)
+            .where(DryRunJobFile.content_hash.in_(sorted(hashes)), DryRunJobFile.status == "success")
+        ).all()
+    out = []
+    for other, content_hash, target_json in rows:
+        other = str(other or "")
+        if not other or other == project_id or other.startswith("preview"):
+            continue
+        try:
+            target = json.loads(target_json or "{}") or {}
+        except Exception:  # noqa: BLE001
+            target = {}
+        if not isinstance(target, dict):
+            target = {}
+        out.append((other, str(content_hash), (_norm(target.get("database")), _norm(target.get("schema")))))
+    return out
+
+
+def find_duplicate_deployments(project_id: str, config_yaml: str, strict: bool = False) -> List[Dict[str, Any]]:
+    """Models of ``project_id`` already synced -- or about to be synced -- by
+    another project to the same database.schema.
+
+    Besides deployed snapshots, the same file (content hash) dry-run by
+    another project that has not deployed it yet counts:
+    ``same_file_in_progress`` when that project has a sync queued/running
+    now, ``same_file_dry_run`` otherwise (two new projects of one model
+    would otherwise both pass, as neither is deployed yet).
+
+    When the check cannot run: ``strict`` raises SyncCheckError (callers
+    starting a sync fail closed); otherwise it logs and returns []."""
     try:
         config = yaml.safe_load(config_yaml) if isinstance(config_yaml, str) else (config_yaml or {})
         if not isinstance(config, dict):
@@ -292,14 +391,19 @@ def find_duplicate_deployments(project_id: str, config_yaml: str) -> List[Dict[s
         with db_manager.get_session() as session:
             rows = list(session.execute(select(SnapshotRow)).scalars().all())
             session.expunge_all()
-    except Exception as exc:
-        logger.warning("Duplicate-sync check skipped for %s: %s", project_id, exc)
+        file_hashes = _file_hashes_by_project()
+        pending = _same_file_elsewhere(project_id, {m["content_hash"] for m in planned if m["content_hash"]})
+        active = _projects_with_active_runs(project_id) if pending else set()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Duplicate-sync check for %s could not run: %s", project_id, exc)
+        if strict:
+            raise SyncCheckError(str(exc)) from exc
         return []
     try:
-        file_hashes = _file_hashes_by_project()
-    except Exception as exc:  # noqa: BLE001 -- the other reasons still apply
-        logger.debug("Same-file lookup skipped for %s: %s", project_id, exc)
-        file_hashes = {}
+        previews = accepted_previews(project_id, config)
+    except Exception as exc:  # noqa: BLE001 -- own content falls back to the last deployment
+        logger.warning("Dry-run lookup for the duplicate check of %s failed: %s", project_id, exc)
+        previews = {}
 
     from semabridge.api.services.project_shared import _compat_projects
 
@@ -321,10 +425,18 @@ def find_duplicate_deployments(project_id: str, config_yaml: str) -> List[Dict[s
             blob_cache[row.snapshot_id] = snap.sml_blob if snap and isinstance(snap.sml_blob, dict) else None
         return blob_cache[row.snapshot_id]
 
+    def _project_name(pid: str) -> str:
+        return str((_compat_projects.get(pid) or {}).get("name") or pid)
+
     findings: List[Dict[str, Any]] = []
     for model in planned:
-        own_blob = _own_model_blob(project_id, model["model_key"], model["view_name"], rows)
+        preview_id = previews.get(model["model_label"])
+        own_blob = (
+            (_latest_blob_of([preview_id], rows) if preview_id else None)
+            or _latest_blob_of([project_id], rows, view_name=model["view_name"])
+        )
         own_metrics, own_columns = _blob_fields(own_blob)
+        flagged: Set[str] = set()
         for (other_project, other_view), row in others.items():
             other_blob = _blob(row) or {}
             other_metrics, other_columns = _blob_fields(other_blob)
@@ -343,11 +455,13 @@ def find_duplicate_deployments(project_id: str, config_yaml: str) -> List[Dict[s
                 reasons.append("same_content")
             if not reasons:
                 continue
+            if "same_file" in reasons:
+                flagged.add(other_project)
             findings.append({
                 "model": model["model_label"],
                 "view_name": model["view_name"],
                 "other_project_id": other_project,
-                "other_project_name": str((_compat_projects.get(other_project) or {}).get("name") or other_project),
+                "other_project_name": _project_name(other_project),
                 "other_view_name": other_view,
                 "target": f"{database}.{schema}",
                 "reasons": reasons,
@@ -355,5 +469,27 @@ def find_duplicate_deployments(project_id: str, config_yaml: str) -> List[Dict[s
                 "metrics": metric_overlap,
                 "columns": column_overlap,
                 "deployed_at": row.deployed_at.isoformat() if row.deployed_at else None,
+            })
+        # The same file dry-run by another project that has not deployed it.
+        for other_project, content_hash, (other_db, other_schema) in pending:
+            if content_hash != model["content_hash"] or other_project in flagged:
+                continue
+            if other_project not in _compat_projects:
+                continue  # deleted project: its dry runs are history
+            if (other_db and other_db != database) or (other_schema and other_schema != schema):
+                continue  # dry-run for another target
+            flagged.add(other_project)
+            findings.append({
+                "model": model["model_label"],
+                "view_name": model["view_name"],
+                "other_project_id": other_project,
+                "other_project_name": _project_name(other_project),
+                "other_view_name": "",
+                "target": f"{database}.{schema}",
+                "reasons": ["same_file_in_progress" if other_project in active else "same_file_dry_run"],
+                "overwrites": False,
+                "metrics": _overlap(own_metrics, set()),
+                "columns": _overlap(own_columns, set()),
+                "deployed_at": None,
             })
     return findings

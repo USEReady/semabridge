@@ -101,7 +101,10 @@ class SchedulerService:
         scheduled_time_value = str((payload or {}).get("scheduled_time") or "").strip()
         date_value = str((payload or {}).get("date") or "").strip()
         time_value = str((payload or {}).get("time") or "").strip()
-        enabled = bool((payload or {}).get("enabled", True))
+        # Omitted/None means enabled (API callers that do not send it); an
+        # explicit false keeps the schedule without ever firing it.
+        enabled_value = (payload or {}).get("enabled")
+        enabled = True if enabled_value is None else bool(enabled_value)
         timezone = self._parse_timezone(timezone_name)
 
         if schedule_type == "manual":
@@ -140,19 +143,26 @@ class SchedulerService:
         else:
             raise ValueError("Unsupported schedule type. Use manual, cron, or time.")
 
-        job = self._scheduler.add_job(
-            self._run_scheduled_project,
-            trigger=trigger,
-            id=job_id,
-            replace_existing=True,
-            kwargs={
-                "project_id": project_id,
-                "schedule_type": schedule_type,
-            },
-        )
+        if enabled:
+            self._scheduler.add_job(
+                self._run_scheduled_project,
+                trigger=trigger,
+                id=job_id,
+                replace_existing=True,
+                kwargs={
+                    "project_id": project_id,
+                    "schedule_type": schedule_type,
+                },
+            )
+        else:
+            # A disabled schedule is kept (the UI shows and can re-enable
+            # it) but never fires: no APScheduler job.
+            if self._scheduler.get_job(job_id):
+                self._scheduler.remove_job(job_id)
+            next_run_at = None
 
         schedule = {
-            "id": job.id,
+            "id": job_id,
             "project_id": project_id,
             "schedule_type": schedule_type,
             "cron": cron if schedule_type == "cron" else "",
@@ -176,6 +186,12 @@ class SchedulerService:
             return
 
         schedule_label = "Scheduled" if schedule_type == "time" else "Cron"
+        with self._lock:
+            current = dict(self._schedules.get(str(project_id)) or {})
+        if not current or not bool(current.get("enabled", False)):
+            # Disabled (or removed) after the job was registered: never fire.
+            logger.info("Scheduled run of %s skipped: its schedule is disabled", project_id)
+            return
         # Every worker process restores the schedules (so the API can show
         # them), but only the scheduler leader -- the process holding the
         # PostgreSQL advisory lock -- fires them, so a schedule runs once.
@@ -247,7 +263,9 @@ class SchedulerService:
         if not project_id or self._scheduler is None:
             return schedule
         job = self._scheduler.get_job(self._job_id(project_id))
-        if job and getattr(job, "next_run_time", None):
+        if not schedule.get("enabled", True):
+            schedule["next_run_at"] = None
+        elif job and getattr(job, "next_run_time", None):
             schedule["next_run_at"] = self._to_utc_iso(job.next_run_time)
             if schedule.get("schedule_type") == "time":
                 schedule["scheduled_time"] = schedule["next_run_at"]

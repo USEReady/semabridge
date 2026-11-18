@@ -971,6 +971,101 @@ def _plan_blockers(result: Dict[str, Any], overrides: List[Dict[str, Any]], targ
     return issues
 
 
+def _load_gate_files(project_id: str) -> List[Dict[str, Any]]:
+    """This project's dry-run files, newest first (the job's creation, then
+    the file's own completion) -- what the sync gate chooses from."""
+    from semabridge.repository.orm.session_factory import db_manager
+
+    with db_manager.get_session() as session:
+        rows = (
+            session.query(DryRunJobFile, DryRunJob)
+            .join(DryRunJob, DryRunJobFile.job_id == DryRunJob.job_id)
+            .filter(DryRunJob.project_id == project_id)
+            .order_by(DryRunJob.created_at.desc(), DryRunJobFile.file_index)
+            .limit(500)
+            .all()
+        )
+        files = []
+        for f, job in rows:
+            files.append({
+                "status": f.status,
+                "error": f.error_message,
+                "label": f.label or f.display_name,
+                "result_json": f.result_json,
+                "content_hash": f.content_hash,
+                "config_hash": f.config_hash,
+                "preview_project_id": f.preview_project_id,
+                "keys": _name_keys(f.source_ref, f.pbix_path, f.label, f.display_name),
+                "order": _as_aware(f.completed_at or f.started_at or f.queued_at or job.created_at),
+                "job_created": _as_aware(job.created_at),
+            })
+    epoch = datetime.min.replace(tzinfo=timezone.utc)
+    files.sort(key=lambda f: (f["job_created"] or epoch, f["order"] or epoch), reverse=True)
+    return files
+
+
+def _pick_gate_candidate(job: Dict[str, Any], files: List[Dict[str, Any]]) -> tuple:
+    """(dry-run file, problem) the gate uses for one sync job.
+
+    The newest finished dry-run file whose content_hash equals the sha256 of
+    the file the sync will read; for sources without file content (Fabric)
+    the newest finished dry run of the model by name; else a legacy
+    (hash-less) dry run by name. ``problem`` is None, "legacy",
+    "in_progress" (newest by name still running), "changed" (dry runs exist
+    but of other content) or "missing"."""
+    from semabridge.api.services.sync_execution_service import file_content_sha256
+
+    job_keys = _name_keys(job.get("source_ref"), job.get("pbix_path"), job.get("model_label"))
+    by_name = [f for f in files if f["keys"] & job_keys]
+    if by_name and by_name[0]["status"] in ("running", "pending"):
+        return None, "in_progress"
+    content_hash = file_content_sha256(job.get("pbix_path") or job.get("source_ref"))
+    finished = lambda f: f["status"] not in ("running", "pending")  # noqa: E731
+    if content_hash:
+        hashed = [f for f in files if f["content_hash"] == content_hash and finished(f)]
+        if hashed:
+            return hashed[0], None
+    else:
+        named = next((f for f in by_name if finished(f)), None)
+        if named is not None:
+            return named, None
+    if by_name and any(f["content_hash"] for f in by_name):
+        return None, "changed"
+    legacy = next((f for f in by_name if not f["content_hash"] and finished(f)), None)
+    if legacy is None:
+        return None, "missing"
+    return legacy, "legacy"
+
+
+def accepted_dry_run_previews(project_id: str, config: Dict[str, Any]) -> Dict[str, Optional[str]]:
+    """model_label -> preview project id of the dry run the sync gate accepts
+    for that model (same file content as the sync will read, successful),
+    or None when the model has no usable dry run. Read-only; never raises
+    for a single model (a model that cannot be resolved maps to None)."""
+    _ensure_schema()
+    effective = dict(config or {})
+    jobs, _target_type = _gate_jobs(effective)
+    if not jobs:
+        return {}
+    files = _load_gate_files(project_id)
+    out: Dict[str, Optional[str]] = {}
+    for job in jobs:
+        label = str(job.get("model_label") or job.get("source_ref") or "")
+        try:
+            candidate, problem = _pick_gate_candidate(job, files)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Dry-run lookup for %s/%s failed: %s", project_id, label, exc)
+            candidate, problem = None, "error"
+        usable = (
+            candidate is not None
+            and problem in (None, "legacy")
+            and candidate["status"] == "success"
+            and candidate.get("preview_project_id")
+        )
+        out[label] = str(candidate["preview_project_id"]) if usable else None
+    return out
+
+
 def validate_multi_model_dry_run_readiness(
     project_id: str,
     source_cfg: Dict[str, Any],
@@ -999,10 +1094,8 @@ def validate_multi_model_dry_run_readiness(
     _ensure_schema()
     from semabridge.api.services.sync_execution_service import (
         _config_with_model_scoped_overrides,
-        file_content_sha256,
         model_config_fingerprint,
     )
-    from semabridge.repository.orm.session_factory import db_manager
 
     effective = dict(config) if isinstance(config, dict) else _load_project_sync_config(project_id, source_cfg)
     effective["source"] = dict(source_cfg or effective.get("source") or {})
@@ -1012,83 +1105,43 @@ def validate_multi_model_dry_run_readiness(
     if not jobs:
         return
 
-    with db_manager.get_session() as session:
-        rows = (
-            session.query(DryRunJobFile, DryRunJob)
-            .join(DryRunJob, DryRunJobFile.job_id == DryRunJob.job_id)
-            .filter(DryRunJob.project_id == project_id)
-            .order_by(DryRunJob.created_at.desc(), DryRunJobFile.file_index)
-            .limit(500)
-            .all()
-        )
-        files = []
-        for f, job in rows:
-            files.append({
-                "status": f.status,
-                "error": f.error_message,
-                "label": f.label or f.display_name,
-                "result_json": f.result_json,
-                "content_hash": f.content_hash,
-                "config_hash": f.config_hash,
-                "keys": _name_keys(f.source_ref, f.pbix_path, f.label, f.display_name),
-                "order": _as_aware(f.completed_at or f.started_at or f.queued_at or job.created_at),
-                "job_created": _as_aware(job.created_at),
-            })
+    files = _load_gate_files(project_id)
     if not files:
         raise ValidationError(
             f"Multi-model project '{project_id}' cannot be synced: "
             "no dry-run job found for this project. Every model must have a completed, "
             "successful dry run with no unresolved blockers before deployment."
         )
-    # Newest first: the job's creation, then the file's own completion.
-    epoch = datetime.min.replace(tzinfo=timezone.utc)
-    files.sort(key=lambda f: (f["job_created"] or epoch, f["order"] or epoch), reverse=True)
 
     skipped_models: List[str] = []
     deployable_models = 0
     for job in jobs:
         label = str(job.get("source_ref") or job.get("model_label"))
         display = str(job.get("model_label") or label)
-        job_keys = _name_keys(job.get("source_ref"), job.get("pbix_path"), job.get("model_label"))
-        by_name = [f for f in files if f["keys"] & job_keys]
-        if by_name and by_name[0]["status"] in ("running", "pending"):
+        config_hash = model_config_fingerprint(effective, job, target_type)
+        candidate, problem = _pick_gate_candidate(job, files)
+        if problem == "in_progress":
             raise ValidationError(
                 f"Multi-model project '{project_id}' cannot be synced: "
                 f"a dry run of model '{display}' is currently in progress. Wait for it to complete."
             )
-        content_hash = file_content_sha256(job.get("pbix_path") or job.get("source_ref"))
-        config_hash = model_config_fingerprint(effective, job, target_type)
-
-        candidate = None
-        if content_hash:
-            hashed = [f for f in files if f["content_hash"] == content_hash and f["status"] not in ("running", "pending")]
-            candidate = hashed[0] if hashed else None
-        if candidate is None and not content_hash:
-            # No file content to compare (Fabric model): the newest dry run of
-            # this model by name, whose plan must still match below.
-            candidate = next((f for f in by_name if f["status"] not in ("running", "pending")), None)
-        if candidate is None:
-            legacy = next(
-                (f for f in by_name if not f["content_hash"] and f["status"] not in ("running", "pending")),
-                None,
+        if problem == "changed":
+            raise ValidationError(
+                f"Multi-model project '{project_id}' cannot be synced: "
+                f"model '{display}' changed since its dry run — re-run the dry run."
             )
-            if by_name and any(f["content_hash"] for f in by_name):
-                raise ValidationError(
-                    f"Multi-model project '{project_id}' cannot be synced: "
-                    f"model '{display}' changed since its dry run — re-run the dry run."
-                )
-            if legacy is None:
-                raise ValidationError(
-                    f"Multi-model project '{project_id}' cannot be synced: "
-                    f"model '{label}' has not been dry-run in the latest dry-run job."
-                )
+        if problem == "missing" or candidate is None:
+            raise ValidationError(
+                f"Multi-model project '{project_id}' cannot be synced: "
+                f"model '{label}' has not been dry-run in the latest dry-run job."
+            )
+        if problem == "legacy":
             logger.warning(
                 "Dry-run gate: project %s model '%s' only has a legacy dry run (no content hash); "
                 "allowing it without checking the file content or deploy plan. Re-run the dry run "
                 "to enable change detection.",
                 project_id, display,
             )
-            candidate = legacy
 
         if candidate["status"] == "skipped":
             # No tables (e.g. a thin report): the sync skips this model too.

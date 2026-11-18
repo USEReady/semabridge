@@ -38,11 +38,27 @@ def _fake_start_gated_project_run(project_id, schedule_label="Manual"):
     return {"id": f"run-{project_id}", "project_id": project_id}
 
 
+_REQUESTS: list = []
+
+
+async def _fake_start_project_run_request(project_id, background_tasks, payload, **kwargs):
+    # A single-project trigger runs run-now's synchronous checks.
+    _REQUESTS.append((project_id, dict(payload), kwargs))
+    return {"run_id": f"run-{project_id}", "status": "queued", "run_type": "SYNC"}
+
+
 @pytest.fixture(autouse=True)
 def _wire_fakes(monkeypatch):
     monkeypatch.setattr(ss, "_compat_ensure_loaded", lambda: None)
+    monkeypatch.setattr(ss, "_compat_project_schedules", {})
     monkeypatch.setattr(run_service, "_start_gated_project_run", _fake_start_gated_project_run)
+    monkeypatch.setattr(run_service, "_start_project_run_request", _fake_start_project_run_request)
     _STARTED.clear()
+    _REQUESTS.clear()
+
+
+def _cron(enabled=True):
+    return {"schedule_type": "cron", "cron": "0 * * * *", "enabled": enabled}
 
 
 @pytest.mark.asyncio
@@ -64,9 +80,12 @@ async def test_no_project_id_and_nothing_scheduled_is_a_clear_noop(monkeypatch):
 @pytest.mark.asyncio
 async def test_no_project_id_triggers_only_scheduled_projects_the_user_owns(monkeypatch):
     monkeypatch.setattr(ss, "_compat_projects", {
-        "proj-scheduled-owned": {"name": "A", "schedule_type": "cron"},
-        "proj-scheduled-not-owned": {"name": "B", "schedule_type": "cron"},
+        "proj-scheduled-owned": {"name": "A"},
+        "proj-scheduled-not-owned": {"name": "B"},
         "proj-unscheduled": {"name": "C"},  # not scheduled -- must never be triggered
+    })
+    monkeypatch.setattr(ss, "_compat_project_schedules", {
+        "proj-scheduled-owned": _cron(), "proj-scheduled-not-owned": _cron(),
     })
     monkeypatch.setattr(
         pos, "is_project_owned_by_user",
@@ -85,10 +104,13 @@ async def test_no_project_id_triggers_only_scheduled_projects_the_user_owns(monk
 
 @pytest.mark.asyncio
 async def test_no_project_id_triggers_all_scheduled_projects_when_all_owned(monkeypatch):
-    monkeypatch.setattr(ss, "_compat_projects", {
-        "proj-1": {"schedule_type": "cron"},
-        "proj-2": {"schedule": {"cron": "* * * * *"}},
-        "proj-3": {},  # unscheduled, must be excluded
+    monkeypatch.setattr(ss, "_compat_projects", {"proj-1": {}, "proj-2": {}, "proj-3": {}, "proj-4": {}, "proj-5": {}})
+    monkeypatch.setattr(ss, "_compat_project_schedules", {
+        "proj-1": _cron(),
+        "proj-2": {"schedule_type": "time", "date": "2099-01-01", "time": "10:00", "enabled": True},
+        # proj-3: unscheduled; proj-4: disabled; proj-5: manual -- all excluded.
+        "proj-4": _cron(enabled=False),
+        "proj-5": {"schedule_type": "manual", "enabled": True},
     })
     monkeypatch.setattr(pos, "is_project_owned_by_user", lambda project_id, user_id, **kwargs: True)
     background_tasks = _FakeBackgroundTasks()
@@ -106,7 +128,30 @@ async def test_explicit_project_id_is_unaffected_by_scheduled_project_logic(monk
     monkeypatch.setattr(ss, "_compat_projects", {"proj-x": {}})
     background_tasks = _FakeBackgroundTasks()
 
-    result = await ss.trigger_job_compat({"project_id": "proj-x"}, background_tasks)
+    result = await ss.trigger_job_compat(
+        {"project_id": "proj-x", "user_id": "9", "acknowledge_duplicates": True}, background_tasks,
+    )
 
-    assert result["project_id"] == "proj-x"
-    assert len(_STARTED) == 1
+    assert result["project_id"] == "proj-x" and result["id"] == "run-proj-x"
+    # The single-project trigger runs run-now's checks synchronously (a
+    # refusal is a 409 for the UI dialog), not the background gated start.
+    assert _STARTED == []
+    assert len(_REQUESTS) == 1
+    pid, body, kwargs = _REQUESTS[0]
+    assert pid == "proj-x" and body["acknowledge_duplicates"] is True and body["user_id"] == "9"
+    assert kwargs.get("run_type") == "SYNC"
+
+
+@pytest.mark.asyncio
+async def test_explicit_project_id_refusal_is_a_409_not_an_accepted_run(monkeypatch):
+    from fastapi import HTTPException
+
+    async def refuse(project_id, background_tasks, payload, **kwargs):
+        raise HTTPException(status_code=409, detail={"status": "removed_fields", "models": [], "total": 3})
+
+    monkeypatch.setattr(ss, "_compat_projects", {"proj-x": {}})
+    monkeypatch.setattr(run_service, "_start_project_run_request", refuse)
+    with pytest.raises(HTTPException) as exc:
+        await ss.trigger_job_compat({"project_id": "proj-x"}, _FakeBackgroundTasks())
+    assert exc.value.status_code == 409 and exc.value.detail["status"] == "removed_fields"
+    assert _STARTED == []
