@@ -250,9 +250,10 @@ class LiveDriftResult:
 
 
 def _fetch_definition(identity: ModelIdentity, creds: Any) -> Dict[str, Any]:
-    from semabridge.sources.fabric.model_reader import _extractor
+    from semabridge.sources.base import get_source_adapter
 
-    return _extractor(identity, creds).get_model_definition(identity.model_id)
+    adapter = get_source_adapter("fabric")
+    return adapter.live_definition(identity, creds)
 
 
 def _project_models(project_id: str) -> List[Any]:
