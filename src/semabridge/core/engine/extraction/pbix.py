@@ -109,9 +109,12 @@ def _extract_pbix(
     source_cfg.pbix_path = pbix_path
 
     drop_ledger = getattr(context, "drop_ledger", None)
+    from semabridge.sources.base import ModelIdentity, get_source_adapter
+    adapter = get_source_adapter("pbix")
+    ident = ModelIdentity(source_type="pbix", model_id=pbix_path, display_name=p.name)
     connector = LocalPBIXConnector({"pbix_path": pbix_path}, drop_ledger=drop_ledger)
     discovered = connector.discover()
-    tmsl = connector.extract() if discovered.get("raw_tmsl") is None else discovered.get("raw_tmsl")
+    tmsl = adapter.extract_model(ident, drop_ledger=drop_ledger)
 
     if not tmsl:
         raise ExtractionError(

@@ -138,7 +138,15 @@ def _extract_fabric(
     except SourceError as exc:
         raise ExtractionError(str(exc)) from exc
 
-    tmsl = extractor.get_model_definition(resolved_dataset_id)
+    from semabridge.sources.base import ModelIdentity, get_source_adapter
+    adapter = get_source_adapter("fabric")
+    identity = ModelIdentity(
+        source_type="fabric",
+        model_id=resolved_dataset_id,
+        display_name=extractor.get_model_display_name(resolved_dataset_id) or resolved_dataset_id,
+        workspace_id=ws_id,
+    )
+    tmsl = adapter.extract_model(identity, extractor=extractor)
     if context.behavior.features.fabric_real_row_counts:
         # COUNTROWS counts are kept for row-count parity only and never reach
         # fact/dimension classification (facts come from relationships), so
