@@ -409,15 +409,19 @@ class TablesClauseBuilder:
             # "Value" from {1}, "Column1" from an empty #table) that no measure
             # reads. Those placeholders are not data -- treat the table as
             # measure-only so its measures are re-homed like any other.
+            # Only drop a measure-only table when the model has other tables
+            # to re-home its measures to, and never a fact table.
+            droppable = not getattr(d, "is_fact", False) and len(datasets) > 1
             if (
-                non_dummy_cols
+                droppable
+                and non_dummy_cols
                 and metric_counts_by_dataset.get(d_name, 0) > 0
                 and str(d_name).casefold() not in related_dataset_names
                 and all(getattr(c, "is_hidden", False) for c in non_dummy_cols)
                 and not self._columns_used_by_metrics(d_name, non_dummy_cols)
             ):
                 non_dummy_cols = []
-            if (is_measure_table or len(non_dummy_cols) == 0) and str(d_name).casefold() not in related_dataset_names:
+            if droppable and (is_measure_table or len(non_dummy_cols) == 0) and str(d_name).casefold() not in related_dataset_names:
                 logger.info("Omitting unlinked measure-only table '%s' from semantic view TABLES clause", d_name)
                 if self.drop_ledger is not None:
                     self.drop_ledger.record(
