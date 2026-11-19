@@ -17,7 +17,8 @@ class _FakeEmitter:
         self.physical_namespace = physical_namespace
         self.drop_ledger = None
 
-    def generate_ddls(self, sml):
+    # Target conversion uses the live-schema build since 230d12e.
+    def generate_ddls_live(self, sml):
         return [f"-- ddl for {getattr(sml, 'unique_name', None) or self.physical_namespace or 'single'}"]
 
     def generate_cortex_yaml(self, sml):
@@ -44,6 +45,7 @@ def _run(monkeypatch, namespace):
         sml_model=_FakeModel(namespace),
         project_id="proj_x",
         drop_ledger=None,
+        config_payload={},  # read by table_binding_scope
     )
     tgt._convert_to_snowflake_target(engine, context)
     return context.staged_target_artifact_paths

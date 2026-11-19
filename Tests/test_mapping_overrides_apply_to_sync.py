@@ -176,7 +176,10 @@ def test_execution_engine_applies_mapping_overrides_from_config(tmp_path: Path):
     ExecutionEngine._apply_mapping_overrides_from_config(model, cfg)
 
     assert model.metrics[0].unique_name == "REV_TOTAL"
-    assert model.datasets[0].columns[0].unique_name == "SALES_AMOUNT"
+    # A column override renames the semantic label only; the physical
+    # unique_name stays (85eb508), extraction/CTAS paths depend on it.
+    assert model.datasets[0].columns[0].label == "SALES_AMOUNT"
+    assert model.datasets[0].columns[0].unique_name == "amount"
 
 
 def test_execution_engine_applies_metric_override_with_space_underscore_variants(tmp_path: Path):

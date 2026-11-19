@@ -136,26 +136,32 @@ def _install_fake_write_pandas(monkeypatch, captured: dict, success=True):
 
 
 # ---------------------------------------------------------------------------
-# 1. _ensure_source_tables_exist records which columns it just added.
+# 1. _ensure_source_tables_exist never alters an existing table.
+#    Since 047584a it binds an existing compatible table and leaves it
+#    untouched (no ALTER ADD COLUMN), so it records no "newly added" columns;
+#    it used to ALTER the missing column in and record it here.
 # ---------------------------------------------------------------------------
 
-def test_ensure_source_tables_exist_records_newly_added_columns():
+def test_ensure_source_tables_exist_leaves_existing_table_untouched():
     sm = _build_schema_manager(connection_manager=_RecordingConnectionManager())
     dataset = _product_dataset()
 
     cursor = MagicMock()
     # 1) SHOW TABLES -> PRODUCT already exists.
     # 2) SHOW VIEWS -> none.
-    # 3) DESC TABLE (via _verify_table_columns) -> missing ISVANARSDEL.
+    # 3) information_schema.columns -> PRODUCT without ISVANARSDEL.
     cursor.fetchall.side_effect = [
         [(None, "PRODUCT")],
         [],
-        [("PRODUCTID",), ("PRODUCT",), ("SEGMENT",)],
+        [("PRODUCT", "PRODUCTID", "NUMBER"), ("PRODUCT", "PRODUCT", "TEXT"), ("PRODUCT", "SEGMENT", "TEXT")],
     ]
 
     sm._ensure_source_tables_exist(cursor, types_namespace(datasets=[dataset]))
 
-    assert sm._newly_added_columns.get("PRODUCT") == {"ISVANARSDEL"}
+    executed = " ".join(str(c.args[0]) for c in cursor.execute.call_args_list if c.args).upper()
+    assert "ALTER TABLE" not in executed
+    assert "CREATE TABLE" not in executed
+    assert sm._newly_added_columns == {}
 
 
 def types_namespace(**kwargs):
