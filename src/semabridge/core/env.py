@@ -7,9 +7,18 @@ from functools import lru_cache
 from pathlib import Path
 
 
+def dotenv_disabled() -> bool:
+    """True when SEMABRIDGE_DISABLE_DOTENV is set: no .env file is loaded
+    into the process. The test suite sets it so a developer's .env (real
+    Fabric/Snowflake credentials, demo/mock flags) never leaks into tests."""
+    return os.environ.get("SEMABRIDGE_DISABLE_DOTENV", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 @lru_cache()
 def load_repo_dotenv() -> None:
     """Load the repository .env file if python-dotenv is available."""
+    if dotenv_disabled():
+        return
     try:
         from dotenv import load_dotenv
     except ImportError:

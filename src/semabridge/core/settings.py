@@ -770,6 +770,10 @@ def get_settings() -> Settings:
     To reload settings, call get_settings.cache_clear().
     """
     # Ensure we're looking for .env in the right place
+    from semabridge.core.env import dotenv_disabled
+
+    if dotenv_disabled():
+        return Settings(_env_file=None)
     env_file = Path.cwd() / ".env"
     if not env_file.exists():
         # Try parent directories. Previously this os.chdir()'d into the

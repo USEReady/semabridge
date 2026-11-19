@@ -39,6 +39,9 @@ try:
         Path.cwd() / '.env',
         Path(__file__).resolve().parent.parent.parent.parent / '.env',
     ]
+    import os as _os
+    if _os.environ.get("SEMABRIDGE_DISABLE_DOTENV", "").strip().lower() in ("1", "true", "yes", "on"):
+        possible_paths = []
     for env_path in possible_paths:
         if env_path.exists():
             load_dotenv(env_path, override=False)

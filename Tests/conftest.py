@@ -12,12 +12,23 @@ from pathlib import Path
 
 import pytest
 
-# Load .env so SEMABRIDGE_DATABASE_URL (PostgreSQL) is visible to pytest
-try:
-    from dotenv import load_dotenv
-    load_dotenv(Path(__file__).parent.parent / ".env", override=False)
-except ImportError:
-    pass  # python-dotenv not installed; rely on shell environment
+# Tests are hermetic by default: no .env is loaded (a developer's .env holds
+# real Fabric/Snowflake credentials and demo/mock switches such as
+# SEMABRIDGE_MOCK_PARITY, which silently changed what tests exercised and
+# sent real logins to login.microsoftonline.com). SEMABRIDGE_DISABLE_DOTENV
+# is honoured by every .env loader in src/ and must be set before semabridge
+# is imported. Live tests (SEMABRIDGE_LIVE_TESTS=1) load .env as before.
+LIVE_TESTS_ENABLED = os.environ.get("SEMABRIDGE_LIVE_TESTS", "").strip().lower() in ("1", "true", "yes", "on")
+if LIVE_TESTS_ENABLED:
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(Path(__file__).parent.parent / ".env", override=False)
+    except ImportError:
+        pass  # python-dotenv not installed; rely on shell environment
+else:
+    os.environ["SEMABRIDGE_DISABLE_DOTENV"] = "1"
+    # The API test clients run without a login; auth tests set it explicitly.
+    os.environ.setdefault("AUTH_ENABLED", "false")
 
 # Add src directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -26,6 +37,36 @@ from semabridge.formats.sml.models import (
     SMLModel, SMLDataset, SMLColumn, SMLMetric, SMLRelationship,
     DataType, AggregationType, Cardinality
 )
+
+
+if not LIVE_TESTS_ENABLED:
+    # pydantic-settings classes read ./.env themselves (env_file=".env");
+    # point them at no file so running from a checkout that has a .env stays
+    # hermetic too.
+    try:
+        from pydantic_settings import BaseSettings as _BaseSettings
+        import semabridge.core.settings as _settings_module
+
+        for _obj in vars(_settings_module).values():
+            if isinstance(_obj, type) and issubclass(_obj, _BaseSettings) and _obj is not _BaseSettings:
+                if _obj.model_config.get("env_file"):
+                    _obj.model_config["env_file"] = None
+    except Exception:  # pragma: no cover - settings import problems surface in tests
+        pass
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list) -> None:
+    """Skip ``live`` tests (real Fabric / Snowflake / login.microsoftonline.com)
+    unless SEMABRIDGE_LIVE_TESTS=1, and ``slow`` (wall-clock) tests unless
+    SEMABRIDGE_SLOW_TESTS=1."""
+    run_slow = os.environ.get("SEMABRIDGE_SLOW_TESTS", "").strip().lower() in ("1", "true", "yes", "on")
+    skip_live = pytest.mark.skip(reason="live service test: set SEMABRIDGE_LIVE_TESTS=1 to run")
+    skip_slow = pytest.mark.skip(reason="wall-clock timing test: set SEMABRIDGE_SLOW_TESTS=1 to run")
+    for item in items:
+        if not LIVE_TESTS_ENABLED and "live" in item.keywords:
+            item.add_marker(skip_live)
+        if not run_slow and "slow" in item.keywords:
+            item.add_marker(skip_slow)
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

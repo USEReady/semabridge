@@ -38,7 +38,8 @@ from typing import Optional
 # override=False means already-set OS env vars are never overwritten.
 try:
     from dotenv import load_dotenv as _load_dotenv
-    _load_dotenv(Path(__file__).parents[3] / ".env", override=False)
+    if os.environ.get("SEMABRIDGE_DISABLE_DOTENV", "").strip().lower() not in ("1", "true", "yes", "on"):
+        _load_dotenv(Path(__file__).parents[3] / ".env", override=False)
 except ImportError:
     pass  # python-dotenv is optional; rely on OS env vars when absent.
 
