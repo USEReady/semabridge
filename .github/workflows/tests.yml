@@ -1,0 +1,73 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend test suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # In-memory SQLite; Tests/conftest.py also forces it and keeps any .env
+      # out of the run. Live tests (real Fabric / Snowflake) and wall-clock
+      # tests are skipped: SEMABRIDGE_LIVE_TESTS / SEMABRIDGE_SLOW_TESTS unset.
+      SEMABRIDGE_DATABASE_URL: "sqlite:///file::memory:?cache=shared&uri=true"
+      SEMABRIDGE_DB_BACKEND: orm
+      PYTHONPATH: ${{ github.workspace }}/src
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install -r requirements.txt pytest-asyncio
+
+      - name: Run backend tests
+        # Fails the job on any failed test or collection error.
+        run: >
+          python -m pytest -q -p no:cacheprovider -o addopts=""
+          -o faulthandler_timeout=300
+          Tests
+
+  frontend:
+    name: Frontend unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        # npm ci needs frontend/package-lock.json, which .gitignore currently
+        # excludes; fall back to npm install until the lockfile is committed.
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install --no-audit --no-fund
+          fi
+
+      - name: Run node tests
+        run: node --test src/utils/*.test.js
