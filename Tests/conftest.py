@@ -226,6 +226,24 @@ def _isolate_tier5_translation_cache():
     tier5_cache_module.reset_default_persistent_cache_for_tests(None)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_dax_engine_disk_cache(tmp_path, monkeypatch):
+    """converter/dax_engine.DaxTranslationCache reads and appends
+    ./.dax_translation_cache.jsonl -- a tracked file in the repo root. Tests
+    rewrote it on every run and read back translations cached by earlier
+    tests or runs (order dependence). Point it at a per-test file."""
+    from semabridge.converter import dax_engine
+
+    original_init = dax_engine.DaxTranslationCache.__init__
+    per_test_file = str(tmp_path / ".dax_translation_cache.jsonl")
+
+    def _init(self, cache_file=None):
+        original_init(self, cache_file or per_test_file)
+
+    monkeypatch.setattr(dax_engine.DaxTranslationCache, "__init__", _init)
+    yield
+
+
 # -----------------------------------------------------------------------------
 # SML Model Fixtures
 # -----------------------------------------------------------------------------
