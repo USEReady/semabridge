@@ -29,6 +29,8 @@ else:
     os.environ["SEMABRIDGE_DISABLE_DOTENV"] = "1"
     # The API test clients run without a login; auth tests set it explicitly.
     os.environ.setdefault("AUTH_ENABLED", "false")
+    os.environ.setdefault("SEMABRIDGE_DATABASE_URL", "sqlite:///file::memory:?cache=shared&uri=true")
+    os.environ.setdefault("SEMABRIDGE_DB_BACKEND", "orm")
 
 # Add src directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
