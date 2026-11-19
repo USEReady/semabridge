@@ -92,6 +92,7 @@ export function DriftView({ projectId = '' }) {
           target_type: tType,
           change_type: cType,
           project_id: projectId || undefined,
+          mock_mode: true,
         }),
       });
       const data = await res.json();

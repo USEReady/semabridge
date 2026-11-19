@@ -71,22 +71,24 @@ def _cfg(source_type, tmp_path, models, **src):
 def test_model_validation(source_type, tmp_path, recorded_fabric, caplog):
     from semabridge.domain.exceptions import ValidationError
 
-    jobs, *_ = ses._build_sync_jobs(_cfg(source_type, tmp_path, ["Sales", "Finance"]))
     if source_type == "pbix":
+        jobs, *_ = ses._build_sync_jobs(_cfg(source_type, tmp_path, ["Sales", "Finance"]))
         assert [Path(j["pbix_path"]).stem for j in jobs] == ["Sales", "Finance"]
         assert all("identity" not in j for j in jobs) and recorded_fabric == []  # no Fabric call for PBIX
         return
 
+    # Fabric model validation runs via validate_fabric_project (at save / sync execution)
+    jobs = ses.validate_fabric_project(_cfg(source_type, tmp_path, ["Sales", "Finance"]))
     assert [(j["model_label"], j["dataset_id"]) for j in jobs] == [("Sales", SALES), ("Finance", FINANCE)]
     assert jobs[0]["identity"] == {"source_type": "fabric", "model_id": SALES, "display_name": "Sales", "workspace_id": WS}
     # by GUID, and a GUID + its name listed together -> one model, with a warning
     with caplog.at_level(logging.WARNING):
-        jobs, *_ = ses._build_sync_jobs(_cfg(source_type, tmp_path, [SALES, "sales"]))
+        jobs = ses.validate_fabric_project(_cfg(source_type, tmp_path, [SALES, "sales"]))
     assert [j["dataset_id"] for j in jobs] == [SALES] and "listed more than once" in caplog.text
     with pytest.raises(ValidationError, match=f"'Inventory' is ambiguous in workspace '{WS}'.*33333333.*44444444"):
-        ses._build_sync_jobs(_cfg(source_type, tmp_path, ["Inventory"]))
+        ses.validate_fabric_project(_cfg(source_type, tmp_path, ["Inventory"]))
     with pytest.raises(ValidationError, match=f"'Payroll' was not found in workspace '{WS}'"):
-        ses._build_sync_jobs(_cfg(source_type, tmp_path, ["Payroll"]))
+        ses.validate_fabric_project(_cfg(source_type, tmp_path, ["Payroll"]))
     from semabridge.sources.base import SourceConfigError
     from semabridge.sources.fabric.validation import list_workspace_models, validate_fabric_models
 
@@ -110,13 +112,13 @@ def test_override_matching_by_guid_or_display_name(source_type, tmp_path, record
 
     # project configured by NAME, override saved under the GUID (and the reverse)
     by_name = _cfg("fabric", tmp_path, ["Sales", "Finance"])
-    sales_job = ses._build_sync_jobs(by_name)[0][0]
+    sales_job = ses.validate_fabric_project(by_name)[0]
     rows = [{"model": SALES, "source_path": "m.A", "target_name": "BY_GUID"},
             {"model": FINANCE, "source_path": "m.B", "target_name": "OTHER_MODEL"}]
     scoped = ses._config_with_model_scoped_overrides({**by_name, "mappings_overrides": rows}, sales_job)
     assert [r["target_name"] for r in scoped["mappings_overrides"]] == ["BY_GUID"]
     by_guid = _cfg("fabric", tmp_path, [SALES, FINANCE])
-    sales_job = ses._build_sync_jobs(by_guid)[0][0]
+    sales_job = ses.validate_fabric_project(by_guid)[0]
     rows = [{"model": "Sales", "source_path": "m.A", "target_name": "BY_NAME"},
             {"model": "Finance", "source_path": "m.B", "target_name": "OTHER_MODEL"}]
     scoped = ses._config_with_model_scoped_overrides({**by_guid, "mappings_overrides": rows}, sales_job)

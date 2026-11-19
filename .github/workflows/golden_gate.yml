@@ -25,6 +25,9 @@ on:
       - fabric/batch-4-ontology
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: golden-gate-${{ github.ref }}
   cancel-in-progress: false
@@ -35,10 +38,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: "pip"

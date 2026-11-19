@@ -24,9 +24,9 @@ def _validate_fabric_models_on_save(config: Dict[str, Any], account_id: Any = No
         return
     if not (source.get("models") or source.get("dataset_id") or source.get("model")):
         return
-    from semabridge.api.services.sync_execution_service import _build_sync_jobs
+    from semabridge.api.services.sync_execution_service import validate_fabric_project
 
-    _build_sync_jobs(config, account_id=str(account_id) if account_id else None)
+    validate_fabric_project(config, account_id=str(account_id) if account_id else None)
 
 
 def _yaml_mapping(config_yaml) -> Dict[str, Any]:

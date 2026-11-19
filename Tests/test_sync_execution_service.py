@@ -24,6 +24,7 @@ def test_execute_sync_request_exposes_routing_summary(monkeypatch) -> None:
 
     monkeypatch.setattr(ses, "reload_settings", lambda: None)
     monkeypatch.setattr(ses, "_load_config", lambda payload, normalizer: ("semabridge.yaml", {}))
+    monkeypatch.setattr(ses, "_attach_fabric_identities", lambda config, sc, jobs, *a, **kw: jobs)
     monkeypatch.setattr(
         ses,
         "_build_sync_jobs",
@@ -73,6 +74,7 @@ def test_execute_sync_request_exposes_routing_summary(monkeypatch) -> None:
 def test_execute_sync_request_returns_none_routing_summary_when_missing(monkeypatch) -> None:
     monkeypatch.setattr(ses, "reload_settings", lambda: None)
     monkeypatch.setattr(ses, "_load_config", lambda payload, normalizer: ("semabridge.yaml", {}))
+    monkeypatch.setattr(ses, "_attach_fabric_identities", lambda config, sc, jobs, *a, **kw: jobs)
     monkeypatch.setattr(
         ses,
         "_build_sync_jobs",
@@ -120,6 +122,7 @@ def test_execute_sync_request_returns_none_routing_summary_when_missing(monkeypa
 def test_execute_sync_request_forwards_requested_project_id(monkeypatch) -> None:
     monkeypatch.setattr(ses, "reload_settings", lambda: None)
     monkeypatch.setattr(ses, "_load_config", lambda payload, normalizer: ("semabridge.yaml", {}))
+    monkeypatch.setattr(ses, "_attach_fabric_identities", lambda config, sc, jobs, *a, **kw: jobs)
     monkeypatch.setattr(
         ses,
         "_build_sync_jobs",

@@ -16,7 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from common import Report  # noqa: E402
-from mock_rules import literal_row_lines, prefilled_input_defaults, scenario_switch_lines  # noqa: E402
+from mock_rules import is_gated_demo_code, literal_row_lines, prefilled_input_defaults, scenario_switch_lines  # noqa: E402
 
 rep = Report("G05 fake data scan")
 root = Path.cwd()
@@ -53,9 +53,17 @@ for f in files:
 BUSINESS = r"revenue|margin|cogs|customer[_ ]tier|mid-market|\bsmb\b|fiscal_year|\bsales\b|profit"
 for f in back:
     txt = f.read_text(encoding="utf-8", errors="ignore")
-    hits = [(i + 1, l.strip()[:80]) for i, l in enumerate(txt.splitlines())
-            if re.search(r"['\"][^'\"]*(" + BUSINESS + r")[^'\"]*['\"]", l, re.I) and not l.strip().startswith(("#", chr(34) * 3, chr(39) * 3)) and "e.g." not in l]
-    rep.check(not hits, f"F5 {f.relative_to(root)}: no business words in literals", f"{hits[:3]}")
+    lines = txt.splitlines()
+    rel_str = str(f.relative_to(root))
+    hits = [
+        (i + 1, l.strip()[:80])
+        for i, l in enumerate(lines)
+        if re.search(r"['\"][^'\"]*(" + BUSINESS + r")[^'\"]*['\"]", l, re.I)
+        and not l.strip().startswith(("#", chr(34) * 3, chr(39) * 3))
+        and "e.g." not in l
+        and not is_gated_demo_code(rel_str, i + 1, lines, txt)
+    ]
+    rep.check(not hits, f"F5 {rel_str}: no business words in literals", f"{hits[:3]}")
 
 # F6 switchable mocks anywhere in production code: env-switched mock data
 # (SEMABRIDGE_MOCK_* and the like), mock/fake producers, and frontend

@@ -187,3 +187,71 @@ def test_hint_exact_case_quoted_matching():
     assert res == "Special_Orders"
 
 
+def test_table_binding_precedence():
+    """Verify table-binding precedence:
+
+    1. A saved per-project binding (explicit / pinned) wins.
+    2. The Power Query (M source) hint ranks next.
+    3. Today's name / column matching applies when hint is absent or disabled.
+    """
+    # Schema contains 3 candidate tables:
+    # - ORDERS: exact name match with the dataset
+    # - HINTED_ORDERS: what the Power Query M-hint points to
+    # - SAVED_ORDERS: what an earlier sync saved / pinned for this project
+    live_meta = LiveSchemaMetadata({
+        "ORDERS": {"ORDER_ID", "AMOUNT", "CUSTOMER_ID"},
+        "HINTED_ORDERS": {"ORDER_ID", "AMOUNT", "CUSTOMER_ID"},
+        "SAVED_ORDERS": {"ORDER_ID", "AMOUNT", "CUSTOMER_ID"},
+    })
+    live_meta.pinned_bindings = {"orders": "SAVED_ORDERS"}
+
+    cols = ["ORDER_ID", "AMOUNT", "CUSTOMER_ID"]
+    m_hint = {"database": "SALES_DB", "schema": "PUBLIC", "table": "HINTED_ORDERS"}
+
+    # Level 1: Saved per-project binding wins over both M-hint and exact name matching
+    res_saved = resolve_dataset_to_physical_table(
+        "Orders",
+        cols,
+        live_meta,
+        source_hint=m_hint,
+        bind_from_m_source=True,
+    )
+    assert res_saved == "SAVED_ORDERS"
+
+    # Explicit mapping also wins over M-hint and exact name matching
+    res_explicit = resolve_dataset_to_physical_table(
+        "Orders",
+        cols,
+        live_meta,
+        explicit_mapping={"Orders": "SAVED_ORDERS"},
+        source_hint=m_hint,
+        bind_from_m_source=True,
+    )
+    assert res_explicit == "SAVED_ORDERS"
+
+    # Level 2: When no saved/pinned binding exists, Power Query hint wins over exact name matching
+    live_meta_no_saved = LiveSchemaMetadata({
+        "ORDERS": {"ORDER_ID", "AMOUNT", "CUSTOMER_ID"},
+        "HINTED_ORDERS": {"ORDER_ID", "AMOUNT", "CUSTOMER_ID"},
+    })
+    res_hint = resolve_dataset_to_physical_table(
+        "Orders",
+        cols,
+        live_meta_no_saved,
+        source_hint=m_hint,
+        bind_from_m_source=True,
+    )
+    assert res_hint == "HINTED_ORDERS"
+
+    # Level 3: When bind_from_m_source is False (or hint is absent), exact name matching wins
+    res_exact = resolve_dataset_to_physical_table(
+        "Orders",
+        cols,
+        live_meta_no_saved,
+        source_hint=m_hint,
+        bind_from_m_source=False,
+    )
+    assert res_exact == "ORDERS"
+
+
+

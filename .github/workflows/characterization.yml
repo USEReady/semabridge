@@ -4,14 +4,11 @@ name: Characterization (golden snapshots)
 # Tests/characterization. The real sample reports (Examples/**/*.pbix) need
 # pbixray's native decoder, so they are generated and checked here on Linux.
 #
-#  bootstrap : on a push to a feature branch, generates the real-PBIX
+#  bootstrap : on manual workflow_dispatch, generates the real-PBIX
 #              snapshots from the BASE -- the commit this branch forked from
 #              integrate/relationship-direction-fixes (git merge-base) -- by
-#              running this branch's builder against the base's src/. The base
-#              commit is recorded in snapshots/real_pbix/BASE_COMMIT; snapshots
-#              are regenerated whenever that marker is missing or names another
-#              commit, and committed back to the branch.
-#  check     : on every PR (and push), runs Tests/characterization against the
+#              running this branch's builder against the base's src/.
+#  check     : on every PR and push, runs Tests/characterization against the
 #              BRANCH's code with SEMABRIDGE_REQUIRE_REAL_PBIX=1 -> a skip, a
 #              missing snapshot or any difference from the base output fails.
 
@@ -20,6 +17,9 @@ on:
   push:
     branches-ignore: [main, master]
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: characterization-${{ github.ref }}
@@ -32,17 +32,15 @@ env:
 jobs:
   bootstrap:
     name: "Generate real-PBIX snapshots from the base commit"
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ github.ref }}
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: "pip"
@@ -77,28 +75,16 @@ jobs:
           grep -q "semabridge loaded from: /tmp/base/src/semabridge" /tmp/build.log
           echo "${{ steps.base.outputs.sha }}" > "$SNAP_DIR/BASE_COMMIT"
 
-      - name: Commit snapshots
-        if: steps.base.outputs.regen == 'true'
-        run: |
-          git add "$SNAP_DIR"
-          if git diff --cached --quiet; then echo "No snapshot changes."; exit 0; fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "characterization: real-PBIX snapshots generated from base ${{ steps.base.outputs.sha }} on Linux CI"
-          git push
-
   check:
     name: "Golden gate (fixture + real PBIX vs base)"
-    needs: [bootstrap]
-    if: always() && (needs.bootstrap.result == 'success' || needs.bootstrap.result == 'skipped')
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
-          # after bootstrap, the branch head includes the base snapshots
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: "pip"

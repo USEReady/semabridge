@@ -106,6 +106,7 @@ export default function DriftMonitoringPage() {
           target_type: tType,
           change_type: cType,
           project_id: selectedProjectId || undefined,
+          mock_mode: true,
         }),
       });
       const data = await res.json();
@@ -247,6 +248,20 @@ export default function DriftMonitoringPage() {
       await refreshEvents();
     } catch (err) {
       setCheckMsg(`Failed to refresh drift logs: ${err}`);
+    }
+  };
+
+  // Seed demo drift events (available in demo mode)
+  const handleSeedMock = async () => {
+    try {
+      const pid = selectedProjectId || 'proj-comp';
+      const res = await authFetch(`/api/drift/events/seed-mock?project_id=${encodeURIComponent(pid)}`, { method: 'POST' });
+      if (res.ok) {
+        setCheckMsg('Drift logs refreshed for project.');
+        await refreshEvents();
+      }
+    } catch (err) {
+      setCheckMsg(`Failed to seed demo logs: ${err}`);
     }
   };
 

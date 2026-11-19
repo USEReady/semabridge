@@ -620,7 +620,13 @@ def resolve_dataset_to_physical_table(
 
 
 
-    pinned = (getattr(live_schema_metadata, "pinned_bindings", None) or {}).get(clean_ident(dataset_name))
+    pinned_map = getattr(live_schema_metadata, "pinned_bindings", None) or {}
+    pinned = pinned_map.get(clean_ident(dataset_name))
+    if not pinned:
+        for pk, pv in pinned_map.items():
+            if clean_ident(pk) == clean_ident(dataset_name):
+                pinned = pv
+                break
 
     if pinned and pinned.upper() in live_schema_metadata:
 

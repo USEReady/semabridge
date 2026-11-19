@@ -13,8 +13,11 @@ from semabridge.governance.drift_service import (
     delete_schedule,
     list_drift_events,
     list_schedules,
+    reset_simulated_metric_drift,
     resolve_drift_event,
     run_drift_check,
+    seed_mock_drift_events,
+    simulate_metric_drift,
 )
 
 router = APIRouter(prefix="/api/drift", tags=["drift_monitoring"])
@@ -28,6 +31,17 @@ class DriftCheckRequest(BaseModel):
 
 class DriftResolutionRequest(BaseModel):
     reason: str = ""
+
+
+class SimulateMetricChangeRequest(BaseModel):
+    project_id: str
+    metric_name: Optional[str] = "TOTAL_UNITS"
+    new_expression: Optional[str] = None
+
+
+class ResetMetricChangeRequest(BaseModel):
+    project_id: str
+    metric_name: Optional[str] = "TOTAL_UNITS"
 
 
 class CreateScheduleRequest(BaseModel):
@@ -76,6 +90,54 @@ def refresh_drift_events(request: Request, project_id: str) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail=f"Drift check failed for project '{pid}': {exc}") from exc
     events = list_drift_events(project_id=pid)
     return {"success": True, "count": len(events), "events": events, "check": check}
+
+
+@router.post("/events/seed-mock", response_model=Dict[str, Any])
+def seed_mock_events(request: Request, project_id: Optional[str] = "proj-comp") -> Dict[str, Any]:
+    """"Refresh drift logs": always runs real drift detection for the
+    project; demo events are layered on top only when demo/mock-drift mode
+    is enabled (SEMABRIDGE_DEMO_MODE / SEMABRIDGE_MOCK_DRIFT). Demo events
+    never replace or delete real ones."""
+    from semabridge.core.demo_mode import demo_mode_globally_armed as is_demo_mode_enabled
+    from semabridge.reconciliation.mock_parity import is_mock_drift_enabled
+
+    pid = project_id or "proj-comp"
+    uid = getattr(request.state, "user_id", None)
+    check: Dict[str, Any] = {}
+    try:
+        check = run_drift_check(project_id=pid, owner_id=str(uid) if uid else None)
+    except Exception as exc:
+        check = {"error": str(exc)}
+    demo = is_mock_drift_enabled() or is_demo_mode_enabled()
+    if demo:
+        seed_mock_drift_events(pid)
+    events = list_drift_events(project_id=pid)
+    return {"success": True, "count": len(events), "events": events, "demo_events": demo, "check": check}
+
+
+@router.post("/simulate-change", response_model=Dict[str, Any])
+def simulate_change(req: SimulateMetricChangeRequest) -> Dict[str, Any]:
+    try:
+        res = simulate_metric_drift(
+            project_id=req.project_id,
+            metric_name=req.metric_name,
+            new_expression=req.new_expression,
+        )
+        return {"success": True, **res}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/reset-change", response_model=Dict[str, Any])
+def reset_change(req: ResetMetricChangeRequest) -> Dict[str, Any]:
+    try:
+        res = reset_simulated_metric_drift(
+            project_id=req.project_id,
+            metric_name=req.metric_name,
+        )
+        return {"success": True, **res}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.post("/events/{event_id}/approve", response_model=Dict[str, Any])

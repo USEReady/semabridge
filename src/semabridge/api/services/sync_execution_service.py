@@ -245,17 +245,22 @@ def _attach_fabric_identities(
     workspace_id = _fabric_source_workspace(config, source_cfg, _fabric_env_workspace())
     identity_id = str(source_cfg.get("identity_id") or account_id or "").strip() or None
     resolver = model_resolver or _default_fabric_model_resolver
+
+    def _ref(j: Dict[str, Any]) -> str:
+        return str(j.get("source_ref") or j.get("dataset_id") or j.get("model_label") or "")
+
     try:
-        check = resolver([j["source_ref"] for j in jobs], workspace_id, identity_id)
+        check = resolver([_ref(j) for j in jobs], workspace_id, identity_id)
     except SourceError as exc:
         raise ValidationError(str(exc)) from exc
     out: List[Dict[str, Any]] = []
     used: set = set()
     for job in jobs:
-        ident = check.by_ref.get(job["source_ref"])
+        ref = _ref(job)
+        ident = check.by_ref.get(ref)
         if ident is None:
             raise ValidationError(
-                f"Model '{job['source_ref']}' was not resolved in workspace '{workspace_id}'."
+                f"Model '{ref}' was not resolved in workspace '{workspace_id}'."
             )
         if ident.model_id.lower() in used:
             continue
@@ -271,6 +276,24 @@ def _attach_fabric_identities(
             },
         })
     return out
+
+
+def validate_fabric_project(
+    config: Dict[str, Any],
+    *,
+    account_id: Optional[str] = None,
+    model_resolver: Any = None,
+) -> List[Dict[str, Any]]:
+    """Validate Fabric configuration and resolve live model identities against the workspace.
+
+    Runs at project save and at sync execution only.
+    """
+    source_cfg = config.get("source", {}) or {}
+    source_type = _normalize_connector_type(source_cfg.get("type", "fabric"), "fabric")
+    if source_type != "fabric":
+        return []
+    sync_jobs, _source_type, _target_type, _s, _t = _build_sync_jobs(config)
+    return _attach_fabric_identities(config, source_cfg, sync_jobs, account_id=account_id, model_resolver=model_resolver)
 
 
 def _build_sync_jobs(
@@ -336,7 +359,8 @@ def _build_sync_jobs(
                 raise ValidationError(
                     f"{len(sync_jobs)} Fabric models configured; at most {MAX_BATCH_MODELS} are supported per project."
                 )
-        sync_jobs = _attach_fabric_identities(config, source_cfg, sync_jobs, account_id, model_resolver)
+        # Live Fabric validation is removed from _build_sync_jobs.
+        # Run it at project save and at sync execution only (validate_fabric_project).
 
     elif source_type == "pbix":
         explicit_pbix = source_cfg.get("pbix_path")
@@ -1401,6 +1425,9 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
     config_path = str(Path(_config_path).resolve()) if _config_path else ""
     requested_project_id = str(payload.get("project_id") or config.get("project_id") or "").strip() or None
     sync_jobs, source_type, target_type, source_cfg, target_cfg = _build_sync_jobs(config, account_id=account_id)
+    if source_type == "fabric":
+        resolver = payload.get("model_resolver") or payload.get("fabric_model_resolver")
+        sync_jobs = _attach_fabric_identities(config, source_cfg, sync_jobs, account_id, resolver)
     # Dry run of ONE model of a project: naming was computed over the whole
     # configured model list above (exactly as the project's sync computes
     # it); only the scoped model actually runs.

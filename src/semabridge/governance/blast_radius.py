@@ -24,6 +24,81 @@ logger = logging.getLogger("semabridge.governance.blast_radius")
 _VALID_TARGET_TYPES = frozenset({"COLUMN", "TABLE", "METRIC"})
 _VALID_CHANGE_TYPES = frozenset({"DROP", "RENAME", "MODIFY_TYPE", "MODIFY_EXPRESSION"})
 
+_MOCK_BI_REPORTS = [
+    {
+        "name": "Executive Marketing & Market Share Overview",
+        "platform": "Power BI",
+        "steward": "Sarah Jenkins (VP Commercial Analytics)",
+        "details": "C-Suite strategic KPI scorecard monitoring corporate unit volume, net revenue, and competitor market share.",
+        "metrics": {"TOTAL_UNITS", "TOTAL_UNITS_YTD", "PCT_UNITS_MARKET_SHARE", "SALES_DOL", "MARGIN_PCT", "KPI01", "KPI02"},
+        "tables": {"SalesFact", "Product", "Date"},
+        "columns": {"Units", "Revenue", "Discount", "Date", "Month", "Year"},
+    },
+    {
+        "name": "Competitive Intelligence & Brand Benchmarking",
+        "platform": "Power BI",
+        "steward": "David Vance (Market Intelligence Lead)",
+        "details": "Tracks VanArsdel brand dominance, competitor market penetration, and category growth waterfall.",
+        "metrics": {"TOTAL_VANARSDEL_UNITS", "TOTAL_OTHER_UNITS", "TOTAL_VANARSDEL_UNITS_YTD", "TOTAL_OTHER_UNITS_YTD", "PCT_CATEGORY_COMPETE_SHARE", "TOTAL_CATEGORY_VOLUME", "TOTAL_COMPETE_VOLUME"},
+        "tables": {"Product", "SalesFact", "Category"},
+        "columns": {"isVanArsdel", "Manufacturer", "Category", "Units"},
+    },
+    {
+        "name": "Regional Sales & Territory Performance Matrix",
+        "platform": "Tableau",
+        "steward": "Marcus Brody (Director of Sales Operations)",
+        "details": "Geographic territory analysis tracking district dispatch volumes, regional growth variations, and quota attainment.",
+        "metrics": {"TOTAL_UNITS", "TOTAL_UNITS_YTD", "TOTAL_UNITS_YTD_VAR", "TOTAL_UNITS_YTD_VAR_PCT", "TOTAL_CATEGORY_VOLUME"},
+        "tables": {"Geo", "SalesFact", "Date"},
+        "columns": {"Region", "District", "State", "Zip", "Units"},
+    },
+    {
+        "name": "Product Portfolio Assortment & Sentiment Deep-Dive",
+        "platform": "Power BI",
+        "steward": "Elena Rostova (Product Line Strategy)",
+        "details": "Assortment lifecycle breakdown linking active SKU counts, consumer sentiment scores, and unit momentum.",
+        "metrics": {"COUNT_OF_PRODUCT", "SENTIMENT_SCORE", "TOTAL_UNITS", "PCT_UNITS_MARKET_SHARE_R12M"},
+        "tables": {"Product", "Sentiment", "SalesFact"},
+        "columns": {"Product", "Segment", "Score", "Units"},
+    },
+    {
+        "name": "Commercial Revenue & Discount Audit Scorecard",
+        "platform": "Tableau",
+        "steward": "Robert Sterling (Commercial Finance Controller)",
+        "details": "Financial reconciliation auditing gross-to-net leakage, promotional discounts, and margin realization.",
+        "metrics": {"SALES_DOL", "MARGIN_PCT", "TOTAL_UNITS"},
+        "tables": {"SalesFact", "Product"},
+        "columns": {"Revenue", "Discount", "Units", "Status"},
+    },
+]
+
+_MOCK_AI_TOOLS = [
+    {
+        "name": 'Executive NL Assistant: "What is total unit volume by manufacturer?"',
+        "steward": "Enterprise AI Steward",
+        "details": "Cortex NL verified query driving leadership Teams & Slack bot.",
+        "metrics": {"TOTAL_UNITS", "TOTAL_UNITS_YTD", "COUNT_OF_PRODUCT"},
+        "tables": {"SalesFact", "Product"},
+        "columns": {"Units", "Manufacturer"},
+    },
+    {
+        "name": 'Competitive Market Share Agent: "Compare VanArsdel unit volume against competitors YTD"',
+        "steward": "Commercial AI Steward",
+        "details": "Automated weekly market share synthesis agent monitoring brand penetration.",
+        "metrics": {"PCT_UNITS_MARKET_SHARE", "TOTAL_VANARSDEL_UNITS", "PCT_CATEGORY_COMPETE_SHARE"},
+        "tables": {"SalesFact", "Product"},
+        "columns": {"isVanArsdel", "Units"},
+    },
+    {
+        "name": 'Pricing & Margin Insights Bot: "Summarize revenue and discount variance by region"',
+        "steward": "Finance AI Steward",
+        "details": "Financial forecast pipeline bot querying net revenue and promo discount delta.",
+        "metrics": {"MARGIN_PCT", "SALES_DOL", "NET_REVENUE"},
+        "tables": {"SalesFact", "Date"},
+        "columns": {"Revenue", "Discount", "Region"},
+    },
+]
+
 
 class ImpactedItem(BaseModel):
     name: str
@@ -91,11 +166,13 @@ class BlastRadiusSimulator:
         ontology: Optional[FederatedEnterpriseOntology] = None,
         verified_queries: Optional[List[Dict[str, Any]]] = None,
         certified_metrics: Optional[Set[str]] = None,
+        mock_mode: bool = False,
     ):
         self.osi_model = osi_model
         self.ontology = ontology
         self.verified_queries = list(verified_queries or [])
         self.certified_metrics = {str(m).strip().casefold() for m in (certified_metrics or set()) if str(m).strip()}
+        self.mock_mode = mock_mode
 
     @staticmethod
     def _concept_matches_table(concept: Optional[DomainConcept], table_name: str) -> bool:
@@ -125,6 +202,7 @@ class BlastRadiusSimulator:
         table_context: Optional[str] = None,
         project_id: Optional[str] = None,
         allowed_domains: Optional[List[str]] = None,
+        mock_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> BlastRadiusReport:
         """Alias for simulate_impact accepting alternative keyword argument names."""
@@ -145,6 +223,7 @@ class BlastRadiusSimulator:
             change_type=change_type,
             table_context=table_context,
             allowed_domains=allowed_domains,
+            mock_mode=mock_mode,
         )
 
     def simulate_impact(
@@ -154,6 +233,7 @@ class BlastRadiusSimulator:
         change_type: str = "DROP",
         table_context: Optional[str] = None,
         allowed_domains: Optional[List[str]] = None,
+        mock_mode: Optional[bool] = None,
     ) -> BlastRadiusReport:
         """Calculate direct and transitive downstream impact for a column, table, or metric change."""
         target_clean = str(target_name or "").strip()
@@ -535,6 +615,108 @@ class BlastRadiusSimulator:
                         )
                         edges.append({"from": m_name, "to": vq_q, "relationship": "verified_query_uses"})
                     break
+
+        # 5. Downstream BI Reports & Mock Downstream Items (Demo mode only)
+        from semabridge.core.demo_mode import demo_mode_globally_armed
+
+        # Blast Radius demo reports appear only in demo mode
+        active_mock = demo_mode_globally_armed() and (self.mock_mode if mock_mode is None else mock_mode)
+        if active_mock:
+            target_upper = target_clean.upper()
+            affected_metric_names = {m.name.upper() for m in affected_metrics}
+            seen_bi_names: Set[str] = {b.name.casefold() for b in affected_bi}
+
+            for report_spec in _MOCK_BI_REPORTS:
+                r_name = report_spec["name"]
+                if r_name.casefold() in seen_bi_names:
+                    continue
+
+                spec_metrics = {m.upper() for m in report_spec["metrics"]}
+                spec_tables = {t.upper() for t in report_spec["tables"]}
+                spec_columns = {c.upper() for c in report_spec["columns"]}
+
+                is_direct = (
+                    (ttype_upper == "METRIC" and target_upper in spec_metrics)
+                    or (ttype_upper == "TABLE" and target_upper in spec_tables)
+                    or (ttype_upper == "COLUMN" and target_upper in spec_columns)
+                )
+                shared_metrics = affected_metric_names & spec_metrics
+
+                if is_direct:
+                    seen_bi_names.add(r_name.casefold())
+                    affected_bi.append(
+                        ImpactedItem(
+                            name=r_name,
+                            item_type="BI_REPORT",
+                            impact_level="DIRECT",
+                            steward=report_spec["steward"],
+                            details=f"[DEMO] {report_spec['platform']} report directly binds to {ttype_upper.lower()} '{target_clean}': {report_spec['details']}",
+                            source="demo",
+                        )
+                    )
+                    edges.append({"from": target_clean, "to": r_name, "relationship": "visualized_in", "source": "demo"})
+                elif shared_metrics:
+                    hit_metric = sorted(shared_metrics)[0]
+                    seen_bi_names.add(r_name.casefold())
+                    affected_bi.append(
+                        ImpactedItem(
+                            name=r_name,
+                            item_type="BI_REPORT",
+                            impact_level="TRANSITIVE",
+                            steward=report_spec["steward"],
+                            details=f"[DEMO] {report_spec['platform']} report uses derived metric '{hit_metric}': {report_spec['details']}",
+                            source="demo",
+                        )
+                    )
+                    edges.append({"from": hit_metric, "to": r_name, "relationship": "visualized_in", "source": "demo"})
+
+            # Ensure primary BI dashboard is represented if impact exists
+            if not affected_bi and (affected_metrics or ttype_upper in ("METRIC", "TABLE", "COLUMN")):
+                default_report = _MOCK_BI_REPORTS[0]
+                affected_bi.append(
+                    ImpactedItem(
+                        name=default_report["name"],
+                        item_type="BI_REPORT",
+                        impact_level="TRANSITIVE" if affected_metrics else "DIRECT",
+                        steward=default_report["steward"],
+                        details=f"[DEMO] {default_report['platform']} dashboard queries commercial data models: {default_report['details']}",
+                        source="demo",
+                    )
+                )
+                from_node = affected_metrics[0].name if affected_metrics else target_clean
+                edges.append({"from": from_node, "to": default_report["name"], "relationship": "visualized_in", "source": "demo"})
+
+            # Mock AI Tools when verified queries are not yet registered
+            if not affected_ai:
+                seen_ai_names: Set[str] = set()
+                for ai_spec in _MOCK_AI_TOOLS:
+                    spec_metrics = {m.upper() for m in ai_spec["metrics"]}
+                    spec_tables = {t.upper() for t in ai_spec["tables"]}
+                    spec_columns = {c.upper() for c in ai_spec["columns"]}
+
+                    is_direct = (
+                        (ttype_upper == "METRIC" and target_upper in spec_metrics)
+                        or (ttype_upper == "TABLE" and target_upper in spec_tables)
+                        or (ttype_upper == "COLUMN" and target_upper in spec_columns)
+                    )
+                    shared_metrics = affected_metric_names & spec_metrics
+
+                    if is_direct or shared_metrics:
+                        a_name = ai_spec["name"]
+                        if a_name.casefold() not in seen_ai_names:
+                            seen_ai_names.add(a_name.casefold())
+                            from_node = target_clean if is_direct else sorted(shared_metrics)[0]
+                            affected_ai.append(
+                                ImpactedItem(
+                                    name=a_name,
+                                    item_type="AI_TOOL",
+                                    impact_level="DIRECT" if is_direct else "TRANSITIVE",
+                                    steward=ai_spec["steward"],
+                                    details=f"[DEMO] {ai_spec['details']}",
+                                    source="demo",
+                                )
+                            )
+                            edges.append({"from": from_node, "to": a_name, "relationship": "ai_tool_uses", "source": "demo"})
 
         total_impact = len(affected_metrics) + len(affected_bi) + len(affected_ai)
 

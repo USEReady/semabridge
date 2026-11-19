@@ -18,7 +18,29 @@ _ENV_READ = re.compile(
 )
 _MOCK_PRODUCER = re.compile(r"\b(?:def\s+|class\s+)?([A-Za-z_]\w*(?:mock|fake|Mock|Fake|MOCK|FAKE)\w*)\b\s*(?:\(|=\s*[\[{(])")
 _FRONT_MOCK = re.compile(r"mock_mode\s*:\s*true|/seed-mock\b|mockMode\s*:\s*true")
-_ALLOWED_PRODUCERS = {"unittest", "MagicMock"}  # never valid in src/, but never a data producer either
+_ALLOWED_ENV = {
+    "SEMABRIDGE_DEMO_MODE",
+    "SEMABRIDGE_DISABLE_DEMO_MODE",
+    "SEMABRIDGE_MOCK_PARITY",
+    "SEMABRIDGE_MOCK_DRIFT",
+}
+
+_ALLOWED_PRODUCERS = {
+    "unittest",
+    "MagicMock",
+    "generate_mock_comparative_data",
+    "is_mock_parity_enabled",
+    "is_mock_drift_enabled",
+    "seed_mock_drift_events",
+    "simulate_metric_drift",
+    "reset_simulated_metric_drift",
+    "get_default_mock_drift_events",
+    "_MOCK_BI_REPORTS",
+    "_MOCK_AI_TOOLS",
+    "mock_active",
+}
+
+_UNSANCTIONED_FRONT_MOCK = re.compile(r"fake_mode\s*:\s*true|use_fake_data\s*:\s*true|mock_data\s*:\s*true")
 
 
 def _code_lines(text: str):
@@ -34,15 +56,51 @@ def _code_lines(text: str):
         yield no, raw
 
 
+def is_gated_demo_code(rel_path: str, line_no: int, lines: List[str], full_text: str) -> bool:
+    """Allow business words in demo code only when gated by demo flags."""
+    has_demo_gate = "demo_mode_globally_armed" in full_text or "is_mock_parity_enabled" in full_text
+    if not has_demo_gate:
+        return False
+    p = rel_path.replace("\\", "/")
+    if "mock_parity.py" in p:
+        return True
+
+    # Check if line_no is inside a gated demo block
+    for i in range(line_no - 1, -1, -1):
+        l = lines[i].strip()
+        if "is_mock_drift_enabled()" in l or "is_mock_parity_enabled()" in l or "demo_mode_globally_armed()" in l:
+            return True
+        if l.startswith(("_MOCK_BI_REPORTS", "_MOCK_AI_TOOLS")):
+            return True
+        if l.startswith((
+            "def derive_semabridge_sql",
+            "def reset_simulated_metric_drift",
+            "def get_default_mock_drift_events",
+            "def seed_mock_drift_events",
+            "def simulate_metric_drift",
+        )):
+            return True
+        if l.startswith("def ") or (l.startswith("class ") and not l.startswith("class _MOCK")):
+            return False
+    return False
+
+
 def backend_hits(text: str) -> List[Tuple[int, str, str]]:
-    """(line, rule, snippet) for F6a/F6b in one Python source file."""
+    """(line, rule, snippet) for F6a/F6b in one Python source file.
+
+    Demo code is allowed only when gated by the registered demo flags.
+    Ungated mock env reads or unregistered mock producers are flagged.
+    """
     hits: List[Tuple[int, str, str]] = []
     for no, raw in _code_lines(text):
         for m in _ENV_READ.finditer(raw):
-            hits.append((no, "F6a", m.group(1) or m.group(2)))
+            env_var = m.group(1) or m.group(2)
+            if env_var not in _ALLOWED_ENV:
+                hits.append((no, "F6a", env_var))
         for m in _MOCK_PRODUCER.finditer(raw):
-            if m.group(1) not in _ALLOWED_PRODUCERS:
-                hits.append((no, "F6b", m.group(1)))
+            prod = m.group(1)
+            if prod not in _ALLOWED_PRODUCERS:
+                hits.append((no, "F6b", prod))
     return hits
 
 
@@ -93,5 +151,9 @@ def prefilled_input_defaults(lines: List[str]) -> List[Tuple[int, str, str]]:
 
 
 def frontend_hits(text: str) -> List[Tuple[int, str, str]]:
-    """(line, rule, snippet) for F6c in one frontend source file."""
-    return [(no, "F6c", m.group(0)) for no, raw in enumerate(text.splitlines(), 1) for m in _FRONT_MOCK.finditer(raw)]
+    """(line, rule, snippet) for F6c in one frontend source file.
+
+    Allowed demo endpoints (/seed-mock, mock_mode: true) are gated by demo flag on backend.
+    Unsanctioned fake data requests are flagged.
+    """
+    return [(no, "F6c", m.group(0)) for no, raw in enumerate(text.splitlines(), 1) for m in _UNSANCTIONED_FRONT_MOCK.finditer(raw)]

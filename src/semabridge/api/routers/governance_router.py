@@ -23,6 +23,7 @@ class BlastRadiusRequest(BaseModel):
     change_type: str = "DROP"    # 'DROP', 'RENAME', 'MODIFY_TYPE', 'MODIFY_EXPRESSION'
     table_context: Optional[str] = None
     project_id: Optional[str] = None
+    mock_mode: Optional[bool] = None
 
 
 class LintOptions(BaseModel):
@@ -79,6 +80,7 @@ def simulate_blast_radius(req: BlastRadiusRequest) -> BlastRadiusReport:
         ontology=fed,
         verified_queries=verified_queries,
         certified_metrics=certified_names,
+        mock_mode=bool(req.mock_mode),
     )
     try:
         report = simulator.simulate_impact(
@@ -87,6 +89,7 @@ def simulate_blast_radius(req: BlastRadiusRequest) -> BlastRadiusReport:
             change_type=req.change_type,
             table_context=req.table_context,
             allowed_domains=allowed_domains,
+            mock_mode=req.mock_mode,
         )
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))

@@ -735,17 +735,17 @@ def run_drift_check(
                 "domain": dom.domain,
                 "domain_id": dom.id,
                 "model_id": getattr(dom, "source_model_id", None),
-                "semantic_view": getattr(dom, "semantic_view_name", None),
+                "semantic_view": sv,
                 "metric_name": m_name,
                 "drift_type": "EXPRESSION_MISMATCH",
                 "bi_definition": bi_updated,
                 "snowflake_definition": sf_expr,
                 "proposed_snowflake_definition": propose_snowflake_sql(m_name, bi_updated, mock=True),
-                "mock": True,
-                "affected_objects": [sv, f"METRICS.{m_name}"],
+                "affected_objects": [str(sv), f"METRICS.{m_name}"],
                 "status": "pending",
                 "resolution_reason": "",
                 "detected_at": now,
+                "mock": True,
             }
             new_events.append(ev)
 
@@ -838,6 +838,205 @@ def _project_domain_for_metric(store: Any, project_id: str, metric_name: Optiona
             if any(m.name.lower() == metric_name.lower() for m in d.metrics):
                 return d
     return doms[0] if doms else None
+
+
+def simulate_metric_drift(
+    project_id: str,
+    metric_name: Optional[str] = None,
+    new_expression: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Simulate changing a metric definition in the domain ontology so scheduled run reflects it as drift."""
+    from semabridge.ontology.store import ontology_store
+    target_dom = _project_domain_for_metric(ontology_store, project_id, metric_name)
+    if not target_dom:
+        raise ValueError(f"No domain found for project '{project_id}'")
+
+    m_target = None
+    if metric_name:
+        for m in target_dom.metrics:
+            if m.name.lower() == metric_name.lower():
+                m_target = m
+                break
+    if not m_target:
+        for m in target_dom.metrics:
+            if m.name in ("TOTAL_UNITS", "SALES_DOL", "COUNT_OF_PRODUCT"):
+                m_target = m
+                break
+        if not m_target and target_dom.metrics:
+            m_target = target_dom.metrics[0]
+
+    if not m_target:
+        raise ValueError("No metrics found in domain to modify.")
+
+    orig_expr = m_target.sql_expression or m_target.dax_expression or "COUNT(*)"
+
+    # Record baseline for original expression before modifying
+    state = _load_state()
+    p_clean_target = project_id.lower().removeprefix("proj-").strip()
+    proj_baselines = state.setdefault("baselines", {}).setdefault(p_clean_target, {})
+    if m_target.name not in proj_baselines:
+        proj_baselines[m_target.name] = orig_expr
+    _save_state(state)
+
+    if not new_expression:
+        if "UNIT" in m_target.name.upper():
+            mod_expr = "SUM(CASE WHEN SALESFACT.STATUS NOT IN ('Cancelled', 'Returned') THEN SALESFACT.UNITS ELSE 0 END)"
+        elif "DOL" in m_target.name.upper() or "REVENUE" in m_target.name.upper() or "SALES" in m_target.name.upper():
+            mod_expr = "SUM(SALESFACT.REVENUE) - SUM(COALESCE(SALESFACT.DISCOUNT, 0))"
+        elif "PRODUCT" in m_target.name.upper():
+            mod_expr = "COUNT(DISTINCT CASE WHEN PRODUCT.IS_ACTIVE = TRUE THEN PRODUCT.PRODUCT_ID END)"
+        else:
+            mod_expr = f"SUM(CASE WHEN STATUS != 'Cancelled' THEN ({orig_expr}) ELSE 0 END)"
+    else:
+        mod_expr = new_expression
+
+    updated_metrics = []
+    for m in target_dom.metrics:
+        if m.name.lower() == m_target.name.lower():
+            updated_metrics.append(m.model_copy(update={"sql_expression": mod_expr}))
+        else:
+            updated_metrics.append(m)
+
+    updated_dom = target_dom.model_copy(update={"metrics": updated_metrics})
+    ontology_store.add_or_update_domain(updated_dom, original=target_dom.domain, enforce_bi_formula_readonly=False)
+
+    return {
+        "project_id": project_id,
+        "domain": target_dom.domain,
+        "metric_name": m_target.name,
+        "original_expression": orig_expr,
+        "modified_expression": mod_expr,
+        "message": f"Successfully updated metric '{m_target.name}' to '{mod_expr}'. Run project schedule to see drift approval trigger.",
+    }
+
+
+def reset_simulated_metric_drift(
+    project_id: str,
+    metric_name: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Reset a metric formula back to standard baseline expression."""
+    from semabridge.ontology.store import ontology_store
+    target_dom = _project_domain_for_metric(ontology_store, project_id, metric_name or "TOTAL_UNITS")
+
+    baselines = {
+        "TOTAL_UNITS": 'SUM(SALESFACT."UNITS")',
+        "SALES_DOL": 'SUM(SALESFACT."REVENUE")',
+        "COUNT_OF_PRODUCT": 'COUNT(PRODUCT."PRODUCT")',
+        "SENTIMENT": 'AVG(SENTIMENT."SCORE")',
+    }
+    m_name = (metric_name or "TOTAL_UNITS").upper()
+    reset_expr = baselines.get(m_name)
+    if not reset_expr and target_dom:
+        for m in target_dom.metrics:
+            if m.name.upper() == m_name:
+                curr = m.sql_expression or ""
+                reset_expr = curr.split(" * 1.05")[0].split(" -- DRIFT")[0]
+                break
+
+    if target_dom and reset_expr:
+        updated_metrics = []
+        for m in target_dom.metrics:
+            if m.name.upper() == m_name:
+                updated_metrics.append(m.model_copy(update={"sql_expression": reset_expr}))
+            else:
+                updated_metrics.append(m)
+
+        updated_dom = target_dom.model_copy(update={"metrics": updated_metrics})
+        ontology_store.add_or_update_domain(updated_dom, original=target_dom.domain, enforce_bi_formula_readonly=False)
+
+    return {
+        "project_id": project_id,
+        "metric_name": m_name,
+        "reset_expression": reset_expr or "RESTORED",
+        "message": f"Reset metric '{m_name}' back to baseline.",
+    }
+
+
+def get_default_mock_drift_events(project_id: str = "proj-comp") -> List[Dict[str, Any]]:
+    """Return high-fidelity mock drift events for project demonstration and monitoring."""
+    now = datetime.now(timezone.utc)
+    t8_res = (now - timedelta(days=1, hours=2, minutes=30)).isoformat()
+    t9 = (now - timedelta(days=2, hours=5)).isoformat()
+    t9_res = (now - timedelta(days=2, hours=4)).isoformat()
+
+    pid_lower = (project_id or "").lower()
+    if "sales" in pid_lower:
+        return []
+
+    return [
+        {
+            "id": "drift-comp-mkt-share",
+            "project_id": project_id,
+            "domain": "COMP_ANALYSIS",
+            "metric_name": "PCT_UNITS_MARKET_SHARE",
+            "drift_type": "EXPRESSION_MISMATCH",
+            "badges": ["EXPRESSION_MISMATCH", "FILTER_ADDED", "WINDOW_CHANGED", "PENDING_APPROVAL"],
+            "story": "Marketing changed how share is measured. Share now counts only valid sales, is measured within the segments VanArsdel actually competes in, and uses a rolling 12 months.",
+            "bi_definition": "SUM(CASE WHEN PRODUCT.MANUFACTURER = 'VanArsdel' AND SALESFACT.STATUS NOT IN ('Cancelled', 'Returned') THEN SALESFACT.UNITS ELSE 0 END) / NULLIF(SUM(CASE WHEN SALESFACT.STATUS NOT IN ('Cancelled', 'Returned') AND PRODUCT.SEGMENT IN (SELECT DISTINCT SEGMENT FROM PRODUCT WHERE MANUFACTURER = 'VanArsdel') THEN SALESFACT.UNITS ELSE 0 END), 0) -- window: rolling 12 months ending on selected date",
+            "snowflake_definition": "SUM(CASE WHEN PRODUCT.MANUFACTURER = 'VanArsdel' THEN SALESFACT.UNITS ELSE 0 END) / NULLIF(SUM(SALESFACT.UNITS), 0) -- window: selected period",
+            "proposed_snowflake_definition": 'DIV0(SUM(IFF(PRODUCT."MANUFACTURER" = \'VanArsdel\' AND NOT (SALESFACT."STATUS" IN (\'Cancelled\', \'Returned\')), SALESFACT."UNITS", 0)), SUM(IFF(NOT (SALESFACT."STATUS" IN (\'Cancelled\', \'Returned\')) AND PRODUCT."SEGMENT" IN (SELECT DISTINCT "SEGMENT" FROM PRODUCT WHERE "MANUFACTURER" = \'VanArsdel\'), SALESFACT."UNITS", 0))) * 100',
+            "what_changed": [
+                "Cancelled and returned units are excluded from both numerator and denominator (matches TOTAL_UNITS drift)",
+                "The market is now only the segments VanArsdel competes in, not every segment",
+                "The period is now a rolling 12 months instead of the selected period",
+            ],
+            "value_impact": "Q3 2026: 13.8% (Snowflake) vs 17.2% (BI), a +3.4 percentage point difference.",
+            "affected_objects": ["SEMANTIC_VIEWS.COMP_ANALYSIS", "METRICS.PCT_UNITS_MARKET_SHARE", "REPORTS.EXECUTIVE_DASHBOARD", "REPORTS.MARKET_SHARE_BY_REGION"],
+            "resolved_at": t8_res,
+            "mock": True,
+        },
+        {
+            "id": "drift-52be9934c7",
+            "project_id": project_id,
+            "domain": "COMP_ANALYSIS",
+            "metric_name": "SENTIMENT_SCORE",
+            "drift_type": "MISSING_IN_SNOWFLAKE",
+            "badges": ["MISSING_IN_SNOWFLAKE", "IGNORED"],
+            "story": "Experimental consumer sentiment index created in BI workbook for testing.",
+            "bi_definition": "AVERAGE(SENTIMENT.SCORE)",
+            "snowflake_definition": "(not present in semantic view)",
+            "proposed_snowflake_definition": 'AVG(IFF(SENTIMENT."SCORE" IS NOT NULL, CAST(SENTIMENT."SCORE" AS FLOAT), NULL))',
+            "what_changed": ["Ad-hoc metric kept isolated in local BI workspace"],
+            "value_impact": "No warehouse impact.",
+            "affected_objects": ["SEMANTIC_VIEWS.COMP_ANALYSIS", "METRICS.SENTIMENT_SCORE", "REPORTS.PORTFOLIO_DEEP_DIVE"],
+            "status": "ignored",
+            "resolution_reason": "Ignored: experimental BI metric not designated for warehouse promotion.",
+            "detected_at": t9,
+            "resolved_at": t9_res,
+            "mock": True,
+        },
+    ]
+
+
+def seed_mock_drift_events(project_id: str = "proj-comp") -> List[Dict[str, Any]]:
+    """Re-populate the demo drift events of ``project_id`` (flagged ``mock``).
+
+    Only previously seeded demo events of that project are replaced: real
+    drift events -- of this or any other project -- are never touched, and a
+    real event for a metric always wins over a demo one."""
+    from semabridge.core.demo_mode import demo_mode_globally_armed
+    from semabridge.reconciliation.mock_parity import is_mock_drift_enabled
+
+    if not (demo_mode_globally_armed() or is_mock_drift_enabled()):
+        return []
+
+    state = _load_state()
+    events = list(state.get("events") or [])
+    pid = project_id or "proj-comp"
+    kept = [e for e in events if not (e.get("mock") and e.get("project_id") == pid)]
+    real_metrics = {
+        str(e.get("metric_name") or "").lower()
+        for e in kept
+        if e.get("project_id") == pid and not e.get("mock")
+    }
+    seeded = []
+    for e in get_default_mock_drift_events(pid):
+        if str(e.get("metric_name") or "").lower() in real_metrics:
+            continue
+        seeded.append({**e, "mock": True})
+    state["events"] = seeded + kept
+    _save_state(state)
+    return [e for e in state["events"] if e.get("project_id") == pid]
 
 
 def resolve_drift_event(event_id: str, action: str, reason: str = "") -> Optional[Dict[str, Any]]:
