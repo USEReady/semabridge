@@ -192,9 +192,34 @@ class SemanticLinter:
         if domain_list:
             known_concepts = {str(k).casefold() for k in (ontology.concepts or {}).keys()}
             known_metrics = {str(k).casefold() for k in (ontology.metrics or {}).keys()}
+            for m in (ontology.metrics or {}).values():
+                if getattr(m, "logical_name", None):
+                    known_metrics.add(str(m.logical_name).casefold())
+                if getattr(m, "label", None):
+                    known_metrics.add(str(m.label).casefold())
+                if getattr(m, "synonyms", None):
+                    known_metrics.update(str(s).casefold() for s in m.synonyms if s)
             for dom in domain_list:
-                known_concepts.update(str(c.name).casefold() for c in dom.concepts if c.name)
-                known_metrics.update(str(m.name).casefold() for m in dom.metrics if m.name)
+                for c in dom.concepts:
+                    if c.name:
+                        known_concepts.add(str(c.name).casefold())
+                    if getattr(c, "logical_name", None):
+                        known_concepts.add(str(c.logical_name).casefold())
+                for m in dom.metrics:
+                    if m.name:
+                        known_metrics.add(str(m.name).casefold())
+                    if getattr(m, "logical_name", None):
+                        known_metrics.add(str(m.logical_name).casefold())
+                    if getattr(m, "label", None):
+                        known_metrics.add(str(m.label).casefold())
+                    if getattr(m, "synonyms", None):
+                        known_metrics.update(str(s).casefold() for s in m.synonyms if s)
+
+            def _norm_metric(k: Any) -> str:
+                return re.sub(r"[\s_\-]+", "", str(k or "").casefold())
+
+            known_metrics_norm = {_norm_metric(k) for k in known_metrics}
+
             for dom in domain_list:
                 for rel in dom.relationships or []:
                     rel_label = rel.name or f"{rel.from_concept}->{rel.to_concept}"
@@ -206,7 +231,11 @@ class SemanticLinter:
                                 doms.append(dom.domain)
                 for m in dom.metrics:
                     for dep in getattr(m, "derives_from", None) or []:
-                        if dep and str(dep).casefold() not in known_metrics:
+                        if (
+                            dep
+                            and str(dep).casefold() not in known_metrics
+                            and _norm_metric(dep) not in known_metrics_norm
+                        ):
                             msg = f"Metric '{m.name}' derives_from unknown metric: '{dep}'"
                             doms = unresolved.setdefault(msg, [])
                             if dom.domain not in doms:

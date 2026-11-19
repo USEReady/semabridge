@@ -314,17 +314,24 @@ def save_verified_query_record(
     return {"verified_item": _row_to_dict(row), "artifact_path": f"database:ai_verified_queries/{row.id}"}
 
 
-def list_verified_queries_for_project(project_id: str) -> List[Dict[str, Any]]:
-    """Return verified queries strictly scoped to ``project_id``."""
+def list_verified_queries_for_project(
+    project_id: str,
+    domain: Optional[str] = None,
+    view_name: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Return verified queries strictly scoped to ``project_id`` (and optionally ``domain`` / ``view_name``)."""
     pid = _clean_project_id(project_id)
     if not pid:
         return []
     _ensure_tables_exist()
     with db_manager.get_session() as session:
+        stmt = select(AIVerifiedQueryRow).where(AIVerifiedQueryRow.project_id == pid)
+        if domain:
+            stmt = stmt.where(AIVerifiedQueryRow.domain == domain)
+        if view_name:
+            stmt = stmt.where(AIVerifiedQueryRow.view_name == view_name)
         rows = session.execute(
-            select(AIVerifiedQueryRow)
-            .where(AIVerifiedQueryRow.project_id == pid)
-            .order_by(AIVerifiedQueryRow.created_at.asc())
+            stmt.order_by(AIVerifiedQueryRow.created_at.asc())
         ).scalars().all()
         return [_row_to_dict(r) for r in rows]
 
