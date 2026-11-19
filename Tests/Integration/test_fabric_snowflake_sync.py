@@ -32,13 +32,14 @@ def connector_behavior():
     return ConnectorBehavior()
 
 
-def test_sync_identity_bim_to_snowflake(sample_tmsl_json, snowflake_config, connector_behavior):
+def test_sync_identity_bim_to_snowflake(sample_tmsl_json, snowflake_config, connector_behavior, monkeypatch):
     """
     Slice 1: Verify that a minimal Fabric BIM file correctly syncs to Snowflake DDL.
     Focus: TABLES and DIMENSIONS clauses for a single table.
     """
-    import os
-    os.environ["SNOWFLAKE_SCHEMA"] = "TEST_SCHEMA"
+    # monkeypatch, not os.environ: the old direct write leaked into every
+    # later test of the session.
+    monkeypatch.setenv("SNOWFLAKE_SCHEMA", "TEST_SCHEMA")
     
     # 1. Convert TMSL to OSI
     converter = TMSLToOSIConverter()
@@ -49,27 +50,14 @@ def test_sync_identity_bim_to_snowflake(sample_tmsl_json, snowflake_config, conn
     }
     osi_model = converter.to_osi(source_data)
     
-    from unittest.mock import MagicMock
-    from semabridge.utils.identifiers import IdentifierSanitizer
-    
-    mock_schema_manager = MagicMock()
-    mock_translator = MagicMock()
-    # Mock some basic behaviors if needed
-    mock_schema_manager._resolve_physical_column_name.side_effect = lambda ds, col: col
-    mock_translator._normalize_metric_column_references.side_effect = lambda expr, *args, **kwargs: expr
-    mock_translator._build_safe_sum_sql.side_effect = lambda expr, *args, **kwargs: f"SUM({expr}::FLOAT)"
-    
-    builder = SemanticViewBuilder(
-        config=snowflake_config,
-        behavior=connector_behavior,
-        identifier_sanitizer=IdentifierSanitizer(),
-        live_schema_metadata={},
-        schema_manager=mock_schema_manager,
-        translator=mock_translator
-    )
+    # Use the real emitter's builder (real schema manager + DAX translator):
+    # the MagicMock collaborators this test used to wire in by hand broke on
+    # every new collaborator call (e.g. model= since 44ba7e0). No connection
+    # is opened -- generate_ddls_from_osi only renders DDL.
+    from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
 
+    builder = SnowflakeEmitter(config=snowflake_config, behavior=connector_behavior)
 
-    
     ddls = builder.generate_ddls_from_osi(osi_model)
     
     # 3. Assertions
