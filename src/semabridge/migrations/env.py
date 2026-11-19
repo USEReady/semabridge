@@ -19,11 +19,14 @@ from alembic import context
 
 # Load .env so SEMABRIDGE_DATABASE_URL is available when running
 # `alembic upgrade head` directly from the terminal.
-try:
-    from dotenv import load_dotenv
-    load_dotenv(Path(__file__).parents[3] / ".env", override=False)
-except ImportError:
-    pass
+# Honours SEMABRIDGE_DISABLE_DOTENV like every other .env loader (tests set
+# it so a developer's .env -- e.g. SEMABRIDGE_MOCK_PARITY -- never leaks in).
+if os.environ.get("SEMABRIDGE_DISABLE_DOTENV", "").strip().lower() not in ("1", "true", "yes", "on"):
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(Path(__file__).parents[3] / ".env", override=False)
+    except ImportError:
+        pass
 
 # ---------------------------------------------------------------------------
 # Alembic config object

@@ -15,7 +15,8 @@ from pathlib import Path as _Path
 _dotenv_path = _Path(__file__).resolve().parents[3] / ".env"
 try:
     from dotenv import load_dotenv as _load_dotenv
-    _load_dotenv(dotenv_path=_dotenv_path, override=False)
+    if _os.environ.get("SEMABRIDGE_DISABLE_DOTENV", "").strip().lower() not in ("1", "true", "yes", "on"):  # tests set SEMABRIDGE_DISABLE_DOTENV
+        _load_dotenv(dotenv_path=_dotenv_path, override=False)
 except ImportError:
     pass  # python-dotenv optional — env vars already set by the OS are used as-is
 

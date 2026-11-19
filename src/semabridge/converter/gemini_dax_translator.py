@@ -28,10 +28,14 @@ try:
         Path(__file__).resolve().parent.parent.parent.parent / '.env',
     ]
     
-    for env_path in possible_paths:
-        if env_path.exists():
-            load_dotenv(env_path, override=False)
-            break
+    import os as _os
+
+    # Tests set SEMABRIDGE_DISABLE_DOTENV so a developer's .env never leaks in.
+    if _os.environ.get("SEMABRIDGE_DISABLE_DOTENV", "").strip().lower() not in ("1", "true", "yes", "on"):
+        for env_path in possible_paths:
+            if env_path.exists():
+                load_dotenv(env_path, override=False)
+                break
 except ImportError:
     pass
 
