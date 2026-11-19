@@ -265,3 +265,20 @@ class TestDataIntegrityChecker:
         disc = check_table_integrity(mock_cursor, "CATEGORY", table_info)
         assert len(disc) == 1
         assert "Column CHANNEL: Non-null count mismatch" in disc[0]
+
+
+def test_validate_read_only_sql_blocks_side_effecting_system_functions():
+    from semabridge.connectors.sql_guard import validate_read_only_sql, SQLSecurityGuardError
+    import pytest
+
+    # Safe read-only system functions are allowed
+    assert validate_read_only_sql("SELECT SYSTEM$TYPEOF(123)") is True
+
+    # Side-effecting system functions are rejected
+    with pytest.raises(SQLSecurityGuardError) as exc:
+        validate_read_only_sql("SELECT SYSTEM$CANCEL_QUERY('xyz')")
+    assert "potentially side-effecting system function" in str(exc.value)
+
+    with pytest.raises(SQLSecurityGuardError) as exc:
+        validate_read_only_sql("SELECT SYSTEM$ABORT_SESSION(12345)")
+    assert "potentially side-effecting system function" in str(exc.value)

@@ -38,6 +38,7 @@ from semabridge.connectors.sql_guard import (
     SQLSecurityGuardError,
     split_statements,
     strip_sql_comments,
+    validate_read_only_sql,
     validate_safe_sql,
 )
 from semabridge.ontology.store import ontology_store
@@ -441,6 +442,7 @@ def _guard_statements(exec_sql: str) -> None:
     for stmt in statements:
         try:
             validate_safe_sql(stmt)
+            validate_read_only_sql(stmt)
         except SQLSecurityGuardError as sge:
             logger.warning("SQL execution guard rejected query: %s", sge)
             raise HTTPException(status_code=400, detail=str(sge))
