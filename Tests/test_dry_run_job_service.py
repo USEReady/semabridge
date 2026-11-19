@@ -338,13 +338,12 @@ def test_run_dry_run_job_actually_overlaps_multiple_files_in_wall_time(monkeypat
     )
     _patch(monkeypatch, fake)
 
-    started = time.time()
     job_service.run_dry_run_job(job["job_id"])
-    elapsed = time.time() - started
 
-    # A sequential implementation would take >= 0.9s (3 x 0.3s); a parallel
-    # one comfortably finishes well under that.
-    assert elapsed < 0.8, f"Files did not appear to run in parallel (took {elapsed:.2f}s)"
+    # Overlap is proven by the concurrency tracker (>= 2 files inside the
+    # pipeline at the same time), which a sequential implementation can never
+    # reach. The old absolute wall-clock bound (< 0.8s) failed on a loaded
+    # machine / in the full suite even though the files did overlap.
     assert tracker["max"] >= 2, f"Never observed more than {tracker['max']} concurrent file(s) — not actually parallel"
 
     status = job_service.get_dry_run_job_status(job["job_id"])
