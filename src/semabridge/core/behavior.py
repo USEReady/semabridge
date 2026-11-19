@@ -386,6 +386,14 @@ class FeatureFlags(BaseModel):
         default=True,
         description="Generate Cortex Analyst YAML artifacts"
     )
+    enable_parallel_execution: bool = Field(
+        default=False,
+        description="Experimental: Parallel execution of unrelated tasks"
+    )
+    skip_validation_on_dry_run: bool = Field(
+        default=True,
+        description="Skip deep validation during dry runs"
+    )
     offline_mode: bool = Field(
         default=False,
         description="Run fabric source flows without Fabric API calls using local raw model JSON"

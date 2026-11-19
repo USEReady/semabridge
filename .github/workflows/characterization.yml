@@ -26,7 +26,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  BASE_BRANCH: integrate/relationship-direction-fixes
+  BASE_BRANCH: dev
   SNAP_DIR: Tests/characterization/snapshots/real_pbix
 
 jobs:
