@@ -152,6 +152,12 @@ FLAGS: List[FeatureFlag] = [
     FeatureFlag("SEMABRIDGE_ALLOWED_SOURCE_ROOTS", "path", None,
                 "Extra directories (os.pathsep-separated) user-supplied file paths may live under.",
                 "auth/file_access.py"),
+    FeatureFlag("SEMABRIDGE_TLS_CA_BUNDLE", "path", None,
+                "CA bundle used to verify TLS for outbound token requests (e.g. a corporate proxy's CA).",
+                "utils/tls.py"),
+    FeatureFlag("SEMABRIDGE_INSECURE_SKIP_TLS_VERIFY", "bool", "false",
+                "Turn OFF TLS certificate checks for outbound token requests. Insecure; logged on every use.",
+                "utils/tls.py"),
 ]
 
 _BY_NAME = {flag.name: flag for flag in FLAGS}

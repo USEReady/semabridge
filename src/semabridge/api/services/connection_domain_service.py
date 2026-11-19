@@ -15,7 +15,8 @@ from pathlib import Path as _Path
 _dotenv_path = _Path(__file__).resolve().parents[3] / ".env"
 try:
     from dotenv import load_dotenv as _load_dotenv
-    _load_dotenv(dotenv_path=_dotenv_path, override=False)
+    if _os.environ.get("SEMABRIDGE_DISABLE_DOTENV", "").strip().lower() not in ("1", "true", "yes", "on"):  # tests set SEMABRIDGE_DISABLE_DOTENV
+        _load_dotenv(dotenv_path=_dotenv_path, override=False)
 except ImportError:
     pass  # python-dotenv optional — env vars already set by the OS are used as-is
 
@@ -1388,9 +1389,12 @@ async def snowflake_oauth_test(body: Dict[str, Any]) -> Dict[str, Any]:
         payload["scope"] = scope
 
     try:
-        import urllib3
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        resp = _requests.post(token_endpoint, data=payload, timeout=30, verify=False)
+        from semabridge.utils.tls import requests_verify
+
+        resp = _requests.post(
+            token_endpoint, data=payload, timeout=30,
+            verify=requests_verify("Snowflake OAuth token request"),
+        )
         if resp.status_code != 200:
             error_msg = f"Azure AD returned {resp.status_code}: {resp.text}"
             logger.error(f"Snowflake OAuth token acquisition failed: {error_msg}")

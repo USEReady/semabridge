@@ -197,13 +197,13 @@ def _acquire_oauth_token(config: SnowflakeConfig) -> str:
     }
 
     try:
-        import urllib3
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        from semabridge.utils.tls import requests_verify
+
         resp = _requests.post(
             oauth_token_endpoint,
             data=payload,
             timeout=30,
-            verify=False
+            verify=requests_verify("Snowflake OAuth token request"),
         )
         resp.raise_for_status()
         token_data = resp.json()
