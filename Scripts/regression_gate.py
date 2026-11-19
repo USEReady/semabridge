@@ -55,7 +55,17 @@ def _run_gate(
     except ImportError:
         pass
 
-    cmd = [python_bin, "-m", "pytest", "--tb=no", "-q", "-p", "no:cacheprovider"]
+    gate_basetemp = tempfile.mkdtemp(prefix="sb_gate_bt_")
+    cmd = [
+        python_bin,
+        "-m",
+        "pytest",
+        "--tb=no",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        f"--basetemp={gate_basetemp}",
+    ]
     if has_xdist:
         cmd.extend(["-n", "auto"])
 
@@ -63,14 +73,17 @@ def _run_gate(
         cmd.extend(pytest_args)
 
     print(f"🚀 Running test suite: {' '.join(cmd)}")
-    proc = subprocess.run(
-        cmd,
-        cwd=str(target_dir),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(target_dir),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    finally:
+        shutil.rmtree(gate_basetemp, ignore_errors=True)
 
     output = proc.stdout + "\n" + proc.stderr
 

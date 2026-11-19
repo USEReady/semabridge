@@ -1425,7 +1425,7 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
     config_path = str(Path(_config_path).resolve()) if _config_path else ""
     requested_project_id = str(payload.get("project_id") or config.get("project_id") or "").strip() or None
     sync_jobs, source_type, target_type, source_cfg, target_cfg = _build_sync_jobs(config, account_id=account_id)
-    if source_type == "fabric":
+    if source_type == "fabric" and not payload.get("dry_run"):
         resolver = payload.get("model_resolver") or payload.get("fabric_model_resolver")
         sync_jobs = _attach_fabric_identities(config, source_cfg, sync_jobs, account_id, resolver)
     # Dry run of ONE model of a project: naming was computed over the whole
@@ -1476,7 +1476,10 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
         pass  # Fabric not configured in .env — credentials come from Account table via identity_id
 
     if source_type == "fabric":
-        resolved_workspace_id = _fabric_source_workspace(config, source_cfg, _fabric_env_workspace_id)
+        if payload.get("dry_run"):
+            resolved_workspace_id = str(source_cfg.get("workspace_id") or _fabric_env_workspace_id or "default")
+        else:
+            resolved_workspace_id = _fabric_source_workspace(config, source_cfg, _fabric_env_workspace_id)
     else:
         resolved_workspace_id = str(
             source_cfg.get("workspace_id")
