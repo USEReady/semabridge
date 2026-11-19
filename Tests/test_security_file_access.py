@@ -38,7 +38,10 @@ def test_symlink_escape_rejected(root):
     outside = root.parent / "outside.pbix"
     outside.write_bytes(b"x")
     link = root / "link.pbix"
-    os.symlink(outside, link)
+    try:
+        os.symlink(outside, link)
+    except OSError as exc:
+        pytest.skip(f"Symlinks not supported on this host: {exc}")
     with pytest.raises(DomainPermissionError):
         fa.resolve_allowed_path(str(link))
 
