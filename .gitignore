@@ -130,7 +130,6 @@ src/.semantic_metadata/logs/
 *.pbism
 git_concurrency_log.txt
 test_results.txt
-package-lock.json
 agent-skills/
 
 # ============================================================================

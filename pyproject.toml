@@ -116,7 +116,7 @@ warn_unused_ignores = true
 disallow_untyped_defs = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["Tests"]
 python_files = "test_*.py"
 addopts = "-v --tb=short"
 asyncio_mode = "auto"
