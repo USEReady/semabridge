@@ -119,3 +119,29 @@ def test_api_reconciliation_endpoints():
     assert verify_resp.status_code == 200
     res_data = verify_resp.json()
     assert res_data["status"] == "CERTIFIED"
+
+
+def test_by_period_variant_selection():
+    verifier = GoldenQueryVerifier()
+    available = {"NEW_HIRES_SPLY", "NEW_HIRES_SPLY__BY_PERIOD"}
+
+    sql_card = verifier.generate_sql_query(
+        metric_name="NEW_HIRES_SPLY",
+        metric_sql_expression="NEW_HIRES_SPLY",
+        target_table_or_view="SEMABRIDGE.HUMAN_RESOURCES.HR_SEMANTIC",
+        dimensions=[],
+        target_kind="semantic_view",
+        available_metrics=available,
+    )
+    assert "NEW_HIRES_SPLY__BY_PERIOD" not in sql_card
+    assert "NEW_HIRES_SPLY" in sql_card
+
+    sql_by_year = verifier.generate_sql_query(
+        metric_name="NEW_HIRES_SPLY",
+        metric_sql_expression="NEW_HIRES_SPLY",
+        target_table_or_view="SEMABRIDGE.HUMAN_RESOURCES.HR_SEMANTIC",
+        dimensions=["COL_DATE.YEAR"],
+        target_kind="semantic_view",
+        available_metrics=available,
+    )
+    assert "NEW_HIRES_SPLY__BY_PERIOD" in sql_by_year

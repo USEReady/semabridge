@@ -2806,6 +2806,8 @@ class DaxSqlRenderer:
                 return var_sql
             if col_cf in self._measure_sql_map_by_casefold:
                 val = self._measure_sql_map_by_casefold[col_cf]
+                if "CAST(NULL AS" in val.upper():
+                    raise self.DaxRenderError(f"depends on untranslatable part: [{col_clean}]")
                 if val.strip().upper() == "NULL":
                     return "NULL"
                 if self.row_context_stack:
@@ -2818,6 +2820,8 @@ class DaxSqlRenderer:
         elif qualified_cf:
             if qualified_cf in self._measure_sql_map_by_casefold:
                 val = self._measure_sql_map_by_casefold[qualified_cf]
+                if "CAST(NULL AS" in val.upper():
+                    raise self.DaxRenderError(f"depends on untranslatable part: [{node.raw}]")
                 if val.strip().upper() == "NULL":
                     return "NULL"
                 return f"({val})"
@@ -3120,6 +3124,8 @@ class DaxSqlRenderer:
         name_cf = node.name.casefold()
         if name_cf in self._measure_sql_map_by_casefold:
             val = self._measure_sql_map_by_casefold[name_cf]
+            if "CAST(NULL AS" in val.upper():
+                raise self.DaxRenderError(f"depends on untranslatable part: [{node.name}]")
             if val.strip().upper() == "NULL":
                 return "NULL"
             if self.row_context_stack:
@@ -3865,6 +3871,10 @@ class DaxSqlRenderer:
         # IF
         if func == "IF":
             return self._render_if(node.args)
+
+        # TREATAS
+        if func == "TREATAS":
+            raise self.DaxRenderError("not applicable: virtual relationship (TREATAS) not supported in semantic views")
 
         # Registry-driven templates (if configured)
 
@@ -5034,6 +5044,8 @@ class DaxSqlRenderer:
 
         try:
             agg_expr = self._render_node(filtered_args[0])
+            if not agg_expr or agg_expr.strip().upper() == "NULL" or "CAST(NULL AS" in agg_expr.upper():
+                raise self.DaxRenderError("depends on untranslatable part: base aggregation is untranslatable")
 
             filter_clauses: List[str] = []
 
@@ -6431,6 +6443,29 @@ def _refs_any_data(node: DaxNode) -> bool:
     return False
 
 
+def _has_treatas(node: Optional[DaxNode]) -> bool:
+    if node is None:
+        return False
+    stack = [node]
+    while stack:
+        cur = stack.pop()
+        if cur is None:
+            continue
+        if isinstance(cur, FunctionCallNode):
+            if cur.func.upper() == "TREATAS":
+                return True
+            stack.extend(cur.args)
+        elif isinstance(cur, BinaryOpNode):
+            stack.extend([cur.left, cur.right])
+        elif isinstance(cur, UnaryOpNode):
+            stack.append(cur.operand)
+        elif isinstance(cur, VarNode):
+            for _, expr in getattr(cur, "variables", []):
+                stack.append(expr)
+            stack.append(getattr(cur, "body", None))
+    return False
+
+
 def _has_ranking_function(node: DaxNode) -> bool:
     res = False
     def _walk(cur):
@@ -6816,6 +6851,10 @@ def classify_dax_ast_not_applicable(
     # CASE WHEN / IF over a window metric (Snowflake error 010258 / 010273)
     if _has_case_when_or_if(parsed_ast) and _has_window_construct(parsed_ast):
         return "not applicable: CASE WHEN over a window metric is not supported in Snowflake semantic views"
+
+    # Virtual relationships (TREATAS)
+    if _has_treatas(parsed_ast):
+        return "not applicable: virtual relationship (TREATAS) not supported in semantic views"
 
     # 3. Ranking functions
     if _has_ranking_function(parsed_ast):

@@ -2624,141 +2624,17 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
     def _auto_execute_precompute_suggestions(self, model, cursor) -> None:
         """
         Automatically execute pre-compute suggestions in Snowflake.
-        Only adds denormalized columns to fact/bridge tables when the column
-        truly does NOT already exist in that table.
+        Base-table mutation is disabled by architecture; SemaBridge never modifies physical tables.
         """
         suggestions = self.semantic_view_builder._precompute_suggestions(model)
-
         if not suggestions:
             return
-
-        logger.info("🚀 Auto-executing pre-compute suggestions...")
 
         logger.info(
             "Physical base-table mutation is disabled by architecture. "
             "SemaBridge never modifies physical tables."
         )
         return
-
-        # Build a live lookup: table_name_upper -> set of existing column names (upper)
-        live_meta: dict[str, set[str]] = {}
-        if hasattr(self, 'semantic_view_builder') and hasattr(self.semantic_view_builder, 'live_schema_metadata'):
-            live_meta = {
-                k.upper(): {c.upper() for c in v}
-                for k, v in self.semantic_view_builder.live_schema_metadata.items()
-            }
-
-        if not live_meta:
-            sf_meta = self.schema_manager._fetch_schema_metadata(cursor)
-            if not sf_meta:
-                datasets = list(getattr(model, "datasets", []) or [])
-                sf_meta = self.schema_manager._fetch_model_table_metadata(cursor, datasets)
-            if sf_meta:
-                self._live_schema_metadata.update(sf_meta)
-                live_meta = {
-                    k.upper(): {c.upper() for c in v}
-                    for k, v in sf_meta.items()
-                }
-
-        for table, cols in suggestions.items():
-            table_upper = table.upper()
-            if self.physical_namespace:
-                # Namespaced model: the dataset's physical table is its
-                # (namespaced) source_table, never the bare dataset name,
-                # which could be ANOTHER model's table in the shared schema.
-                table_upper = self._dataset_physical_table_key(model, table)
-
-            # Resolve physical table name (model name may differ from Snowflake name)
-            existing_cols = live_meta.get(table_upper, set())
-
-            # Skip suggestion entirely if ALL referenced columns already exist in
-            # the target table — these are DAX self-references (e.g. 'Date'[MonthIndex])
-            # not actual cross-table denormalization requests.
-            cols_needing_add = []
-            for col in cols:
-                col_upper = col.upper().replace(' ', '_')
-                # Map common DAX name -> physical name (e.g. Date -> COL_DATE)
-                physical = self._resolve_physical_col_name(col, existing_cols)
-                if physical in existing_cols or col_upper in existing_cols:
-                    logger.debug(
-                        "Skipping pre-compute for %s.%s: column already exists as %s",
-                        table, col, physical or col_upper
-                    )
-                else:
-                    cols_needing_add.append(col)
-
-            if not cols_needing_add:
-                logger.info(
-                    "Skipping all pre-compute suggestions for %s: columns already present", table
-                )
-                continue
-
-            # Check table exists
-            try:
-                cursor.execute(f"SHOW TABLES LIKE '{table_upper}'")
-                if not cursor.fetchone():
-                    logger.warning("Table %s not found, skipping pre-compute", table)
-                    continue
-            except Exception as _show_tables_exc:
-                # Was a silent `except Exception: continue` -- indistinguishable
-                # from the "table genuinely doesn't exist" branch above, but this
-                # one can also fire for a real connection/permission/syntax
-                # problem, which would then vanish with zero trace on a live,
-                # paid deploy. Always log which table and why before skipping.
-                logger.warning(
-                    "Could not verify existence of table %s before pre-compute "
-                    "(skipping this table's pre-compute suggestions): %s",
-                    table, _show_tables_exc,
-                )
-                continue
-
-            for col in cols_needing_add:
-                col_safe = col.upper().replace(' ', '_')
-                source_table = self._find_source_table_for_precompute(table, col)
-                if not source_table:
-                    logger.warning("Could not find source table for %s.%s; skipping", table, col)
-                    continue
-
-                # Resolve source column physical name
-                source_physical = (
-                    self._dataset_physical_table_key(model, source_table)
-                    if self.physical_namespace
-                    else source_table.upper()
-                )
-                source_existing = live_meta.get(source_physical, set())
-                src_col_phys = self._resolve_physical_col_name(col, source_existing) or col_safe
-
-                # Resolve join keys
-                from_key = self._get_directional_join_key(table, source_table, from_side=table)
-                to_key = self._get_directional_join_key(table, source_table, from_side=source_table)
-                if not from_key or not to_key:
-                    logger.warning("No model relationship between %s and %s; skipping pre-compute join for %s", table, source_table, col)
-                    continue
-
-                # Add column if not exists
-                try:
-                    cursor.execute(
-                        f'ALTER TABLE "{table_upper}" ADD COLUMN IF NOT EXISTS "{col_safe}" VARCHAR'
-                    )
-                    logger.info("Added column %s to %s", col_safe, table)
-                except Exception as e:
-                    logger.debug("Column %s may already exist in %s: %s", col_safe, table, e)
-
-                # Populate using Snowflake-compatible correlated UPDATE
-                update_sql = (
-                    f'UPDATE "{table_upper}" t '
-                    f'SET t."{col_safe}" = ('
-                    f'  SELECT s."{src_col_phys}" FROM "{source_physical}" s '
-                    f'  WHERE s."{to_key}" = t."{from_key}" LIMIT 1'
-                    f')'
-                )
-                try:
-                    cursor.execute(update_sql)
-                    logger.info("Populated %s in %s from %s", col_safe, table, source_table)
-                except Exception as e:
-                    logger.warning("Could not auto-populate %s: %s", col_safe, e)
-
-        logger.info("✅ Pre-compute suggestions executed successfully")
 
     def _resolve_physical_col_name(self, dax_col_name: str, existing_cols: set[str]) -> str:
         """
