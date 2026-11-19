@@ -229,7 +229,7 @@ def _isolate_tier5_translation_cache():
 @pytest.fixture(autouse=True)
 def _isolate_dax_engine_disk_cache(tmp_path, monkeypatch):
     """converter/dax_engine.DaxTranslationCache reads and appends
-    ./.dax_translation_cache.jsonl -- a tracked file in the repo root. Tests
+    ./.dax_translation_cache.jsonl -- a (gitignored) file in the repo root. Tests
     rewrote it on every run and read back translations cached by earlier
     tests or runs (order dependence). Point it at a per-test file."""
     from semabridge.converter import dax_engine
