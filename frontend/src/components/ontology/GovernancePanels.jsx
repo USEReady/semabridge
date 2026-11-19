@@ -35,7 +35,8 @@ const PANEL = {
 
 const itemLabel = (x) => (x && typeof x === 'object' ? x.name || x.object_name || String(x) : String(x));
 
-function ImpactGroup({ title, items, tone }) {
+function ImpactGroup({ title, items, tone, onOpenParity }) {
+  const isMetrics = title === 'Metrics';
   return (
     <div style={{
       padding: 12,
@@ -66,10 +67,12 @@ function ImpactGroup({ title, items, tone }) {
             const hop = obj?.hop_level || (obj?.impact_level === 'TRANSITIVE' ? 'TRANSITIVE' : 'DIRECT');
             const src = obj?.source || obj?.dependency_source;
             const recert = Boolean(obj?.re_certify || obj?.re_certification_required);
+            const mName = itemLabel(it);
             return (
               <div
                 key={i}
-                title={obj?.details || itemLabel(it)}
+                title={isMetrics && onOpenParity ? `${obj?.details || ''} (Click to test in Golden Query Verifier)` : (obj?.details || mName)}
+                onClick={isMetrics && onOpenParity ? () => onOpenParity(mName) : undefined}
                 style={{
                   display: 'flex',
                   alignItems: 'flex-start',
@@ -84,6 +87,7 @@ function ImpactGroup({ title, items, tone }) {
                   minWidth: 0,
                   maxWidth: '100%',
                   boxSizing: 'border-box',
+                  cursor: isMetrics && onOpenParity ? 'pointer' : 'default',
                 }}
               >
                 <span style={{
@@ -95,7 +99,7 @@ function ImpactGroup({ title, items, tone }) {
                   fontWeight: 500,
                   lineHeight: 1.35,
                 }}>
-                  {itemLabel(it)}
+                  {mName}
                 </span>
                 <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0, marginTop: 1 }}>
                   {obj && (
@@ -104,7 +108,18 @@ function ImpactGroup({ title, items, tone }) {
                     </span>
                   )}
                   {src && <span style={{ fontSize: 9, color: 'var(--text-tertiary)' }}>[{src}]</span>}
-                  {recert && <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-error)' }}>[Re-certify]</span>}
+                  {recert && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenParity && onOpenParity(mName);
+                      }}
+                      style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-error)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+                    >
+                      [Re-certify]
+                    </button>
+                  )}
                 </div>
               </div>
             );
@@ -120,7 +135,7 @@ function ImpactGroup({ title, items, tone }) {
   );
 }
 
-export function ImpactReport({ report, onPickSuggestion }) {
+export function ImpactReport({ report, onPickSuggestion, onOpenParity }) {
   if (!report) return null;
   const sev = report.severity;
   const sevTone = sev === 'BREAKING' ? 'bad' : sev === 'SAFE' ? 'ok' : sev === 'NOT_FOUND' ? 'n' : 'warn';
@@ -157,7 +172,7 @@ export function ImpactReport({ report, onPickSuggestion }) {
 
       {sev !== 'NOT_FOUND' && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10, minWidth: 0 }}>
-          <ImpactGroup title="Metrics" items={report.affected_metrics || []} tone="var(--color-warning)" />
+          <ImpactGroup title="Metrics" items={report.affected_metrics || []} tone="var(--color-warning)" onOpenParity={onOpenParity} />
           <ImpactGroup title="BI reports" items={report.affected_bi_reports || []} tone="var(--color-error)" />
           <ImpactGroup title="AI agents" items={report.affected_ai_tools || []} tone="var(--accent-purple)" />
         </div>
@@ -171,13 +186,42 @@ export function ImpactReport({ report, onPickSuggestion }) {
               <li key={i}>{s}</li>
             ))}
           </ul>
+          {onOpenParity && (
+            <div style={{ marginTop: 10 }}>
+              <button
+                type="button"
+                style={{
+                  ...BTN_SM,
+                  background: 'var(--accent-blue, #2563eb)',
+                  color: '#ffffff',
+                  border: 'none',
+                  fontWeight: 600,
+                  padding: '5px 12px',
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  boxShadow: '0 1px 2px rgba(0,0,0,0.2)',
+                }}
+                onClick={() => {
+                  const firstMetric = report.affected_metrics?.[0];
+                  const mName = typeof firstMetric === 'object' ? (firstMetric.name || firstMetric.object_name) : firstMetric;
+                  onOpenParity(mName || report.target_object);
+                }}
+                title="Open Golden Query Verifier (Parity check) with this metric prefilled"
+              >
+                Run Golden Query Verifier (Parity) →
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-export function WhatIfSimulator({ gov, metricOptions }) {
+export function WhatIfSimulator({ gov, metricOptions, onOpenParity }) {
   const {
     blastTarget,
     setBlastTarget,
@@ -194,6 +238,8 @@ export function WhatIfSimulator({ gov, metricOptions }) {
     onRunBlast,
     blastReport,
   } = gov;
+
+  const effectiveOpenParity = onOpenParity || gov?.onOpenParity;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -269,6 +315,7 @@ export function WhatIfSimulator({ gov, metricOptions }) {
       </div>
       <ImpactReport
         report={blastReport}
+        onOpenParity={effectiveOpenParity}
         onPickSuggestion={(sug) => {
           setBlastTarget(sug);
           onRunBlast(sug);
@@ -278,7 +325,7 @@ export function WhatIfSimulator({ gov, metricOptions }) {
   );
 }
 
-export function ParityPanel({ gov, onOpenMetric, metricOptions = [], dimensionOptions = [], semanticViewOptions = [] }) {
+export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimensionOptions = [], semanticViewOptions = [] }) {
   const {
     govProjectId = '',
     setGovProjectId,
