@@ -278,6 +278,8 @@ def test_model_slots_are_global(processes):
 
 
 def test_drift_events_are_shared(processes, monkeypatch, tmp_path):
+    monkeypatch.setenv("SEMABRIDGE_DEMO_MODE", "true")
+    monkeypatch.setenv("SEMABRIDGE_MOCK_DRIFT", "true")
     a, b, switch = processes
     switch(a)
     monkeypatch.setattr(drift_service, "_state_path", lambda: tmp_path / "a_drift.json")
