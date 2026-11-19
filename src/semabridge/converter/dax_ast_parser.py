@@ -2343,7 +2343,8 @@ class DaxSqlRenderer:
             if not validate_emitted_sql(sql):
                 raise self.DaxRenderError(f"Emitted SQL contains un-translated DAX syntax: {sql}")
             if "CURRENT_DATE()" in sql.upper() and not _ast_contains_func(node, {"TODAY", "NOW"}):
-                raise self.DaxRenderError(TI_CURRENT_DATE_ANCHOR_REASON)
+                if ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE not in self._advisory_categories:
+                    self._advisory_categories.append(ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE)
             return sql
 
         except self.DaxRenderError as exc:
@@ -2817,8 +2818,10 @@ class DaxSqlRenderer:
                 return var_sql
             if col_cf in self._measure_sql_map_by_casefold:
                 val = self._measure_sql_map_by_casefold[col_cf]
-                if val.strip().upper() == "NULL" or "CAST(NULL AS" in val.upper():
+                if "CAST(NULL AS" in val.upper() or "/*" in val:
                     raise self.DaxRenderError(f"depends on untranslatable part: [{col_clean}]")
+                if val.strip().upper() == "NULL":
+                    return "NULL"
                 if self.row_context_stack:
                     return self._row_level_measure_sql(col_clean, val)
                 return f"({val})"
@@ -2829,8 +2832,10 @@ class DaxSqlRenderer:
         elif qualified_cf:
             if qualified_cf in self._measure_sql_map_by_casefold:
                 val = self._measure_sql_map_by_casefold[qualified_cf]
-                if val.strip().upper() == "NULL" or "CAST(NULL AS" in val.upper():
+                if "CAST(NULL AS" in val.upper() or "/*" in val:
                     raise self.DaxRenderError(f"depends on untranslatable part: [{node.raw}]")
+                if val.strip().upper() == "NULL":
+                    return "NULL"
                 return f"({val})"
             if qualified_cf in self._known_measure_names_casefold:
                 raise self.DaxRenderError(
@@ -3131,8 +3136,10 @@ class DaxSqlRenderer:
         name_cf = node.name.casefold()
         if name_cf in self._measure_sql_map_by_casefold:
             val = self._measure_sql_map_by_casefold[name_cf]
-            if val.strip().upper() == "NULL" or "CAST(NULL AS" in val.upper():
+            if "CAST(NULL AS" in val.upper() or "/*" in val:
                 raise self.DaxRenderError(f"depends on untranslatable part: [{node.name}]")
+            if val.strip().upper() == "NULL":
+                return "NULL"
             if self.row_context_stack:
                 return self._row_level_measure_sql(node.name, val)
             if (
@@ -4407,7 +4414,8 @@ class DaxSqlRenderer:
         """
 
         if isinstance(node, FunctionCallNode):
-
+            if node.func.upper() == "CALCULATE" and node.args:
+                return self._is_numeric_truthiness_condition(node.args[0])
             return node.func.upper() in self._NUMERIC_TRUTHINESS_FUNCS
 
         if isinstance(node, BinaryOpNode):

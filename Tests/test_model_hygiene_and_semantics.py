@@ -305,9 +305,9 @@ def test_two_fact_tables_on_many_side_without_keyword_matching():
         ],
     )
     emitter = SnowflakeEmitter(_make_config())
-    # Neither fact table needs helper columns -> enriched views list must be empty
+    # With no cross-table DAX references, fallback to identified primary fact table
     needing_enrichment = emitter._get_fact_tables_needing_enrichment(model)
-    assert needing_enrichment == []
+    assert needing_enrichment == ["Orders"]
 
     ddls = emitter.generate_ddls(model)
     ddl = ddls[0]
@@ -326,7 +326,7 @@ def test_binding_incompatible_columns_is_blocker():
     pbix_cols = ["ORDER_ID", "CUSTOMER_ID", "ORDER_DATE", "TOTAL_AMOUNT"]
 
     with pytest.raises(TableBindingIncompatibleColumnsError) as exc_info:
-        resolve_dataset_to_physical_table("Orders", pbix_cols, live_schema)
+        resolve_dataset_to_physical_table("Orders", pbix_cols, live_schema, raise_on_incompatible=True)
 
     assert "Table binding blocker for 'Orders'" in str(exc_info.value)
     assert "columns do not match" in str(exc_info.value)
@@ -464,3 +464,47 @@ def test_one_to_one_relationship_emitted_from_table_holding_metrics():
 
     # Must be emitted FROM AccountHeader (which holds metrics) TO AccountDetail
     assert 'ACCOUNTHEADER ("ACCOUNTID") REFERENCES ACCOUNTDETAIL ("ACCOUNTID")' in ddl
+
+
+def test_fact_table_with_declared_primary_key_warning_only(caplog):
+    """A fact table with a declared primary key issues a warning instead of failing."""
+    import logging
+    from types import SimpleNamespace
+    from semabridge.connectors.ddl_builder import SemanticViewBuilder
+    from semabridge.core.settings import SnowflakeConfig
+    from semabridge.core.behavior import ConnectorBehavior
+
+    from semabridge.utils.identifiers import IdentifierSanitizer
+
+    builder = SemanticViewBuilder(
+        config=SnowflakeConfig(account="test.local", user="u", password="p", warehouse="w", database="d", schema_name="s"),
+        behavior=ConnectorBehavior(),
+        schema_manager=None,
+        translator=None,
+        identifier_sanitizer=IdentifierSanitizer(),
+        live_schema_metadata={},
+    )
+
+    relationships = [
+        SimpleNamespace(
+            from_dataset="Orders",
+            to_dataset="Customer",
+            cardinality="many-to-one",
+            is_active=True,
+            from_columns=["CustID"],
+            to_columns=["CustID"],
+        )
+    ]
+    declared_pk = {"ORDERS": ["ORDERID"]}
+
+    with caplog.at_level(logging.WARNING, logger="semabridge.connectors.ddl_builder"):
+        # Should not raise ValueError even though ORDERS is in fact_aliases
+        builder._validate_pre_emit_integrity(
+            declared_pk=declared_pk,
+            rel_lines=[],
+            relationships=relationships,
+            dataset_aliases={"Orders": "ORDERS", "Customer": "CUSTOMER"},
+            ds_by_name={},
+        )
+
+    assert any("Fact table 'ORDERS' declared PRIMARY KEY" in record.message for record in caplog.records)

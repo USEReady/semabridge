@@ -2270,6 +2270,9 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
         if fact_tables:
             return fact_tables
 
+        primary = self._identify_fact_table(model)
+        if primary and not _is_virtual_dataset(primary):
+            return [primary]
         return []
 
     def _resolve_fact_anchor_info(self, model: Any, fact_table: str) -> Optional[Dict[str, Any]]:

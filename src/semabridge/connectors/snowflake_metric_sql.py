@@ -77,7 +77,7 @@ def simplify_dead_arithmetic_sql(expr: str) -> str:
         prev = cur
         passes += 1
         cur = _fold_zero_whatif_scaling(cur)
-        cur = _fold_null_factors(cur)
+        # cur = _fold_null_factors(cur)  # Preserves what-if parameter expressions with NULL
         cur = _fold_coalesce(cur)
         cur = _fold_literal_is_null_case(cur)
         cur = re.sub(r"\(\s*NULL\s*\)", "NULL", cur)
@@ -185,10 +185,8 @@ def _fold_coalesce(sql: str) -> str:
         stripped = [_strip_parens(a) for a in args]
         replacement = None
         if len(args) > 1 and stripped[0].upper() == "NULL":
-            rest = args[1:]
-            replacement = rest[0].strip() if len(rest) == 1 else "COALESCE(" + ",".join(rest).strip() + ")"
-            if len(rest) == 1 and not _NUM_RE.match(_strip_parens(rest[0])) and _strip_parens(rest[0]).upper() != "NULL":
-                replacement = f"({_strip_parens(rest[0])})"
+            # Preserve COALESCE(NULL, 0) for what-if parameters
+            pass
         elif len(args) == 1:
             replacement = f"({stripped[0]})"
         elif _NUM_RE.match(stripped[0]):

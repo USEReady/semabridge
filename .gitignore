@@ -249,3 +249,6 @@ venv/
 .dax_translation_cache.jsonl
 .dax_translation_cache.lock
 
+# Test artifacts
+feature_test_results/
+

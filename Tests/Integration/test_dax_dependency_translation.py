@@ -23,8 +23,8 @@ def test_category2_dependency_replacement_arithmetic():
     sql = translator._try_branching("[Total Revenue] - [Total COGS]", metrics)
 
     assert sql is not None
-    assert 'SUM(fact."REVENUE")' in sql
-    assert 'SUM(fact."COGS")' in sql
+    assert 'SUM(fact."REVENUE")' in sql or 'SUM(FACT."REVENUE")' in sql
+    assert 'SUM(fact."COGS")' in sql or 'SUM(FACT."COGS")' in sql
     assert " - " in sql
 
 

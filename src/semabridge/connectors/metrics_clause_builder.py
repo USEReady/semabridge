@@ -2775,6 +2775,9 @@ class MetricsClauseBuilder:
                     continue
 
                 refs = set(re.findall(r'(?:[A-Za-z0-9_]+\.)?"([A-Za-z0-9_]+)"', expr))
+                for m_candidate in metric_name_set:
+                    if m_candidate != name and re.search(rf'(?<![A-Za-z0-9_\."])\b{re.escape(m_candidate)}\b(?!\s*[\.\("])', expr):
+                        refs.add(m_candidate)
                 metric_refs = [r for r in refs if r in metric_name_set and r != name]
 
                 # 1. Fail-closed: a reference to an undefined metric emits NULL placeholder;
@@ -2860,7 +2863,9 @@ class MetricsClauseBuilder:
                                 flags=re.IGNORECASE
                             )
                             pattern = rf'(?:[A-Z0-9_]+\.)?"{re.escape(ref_name)}"'
+                            bare_pattern = rf'(?<![A-Za-z0-9_\."])\b{re.escape(ref_name)}\b(?!\s*[\.\("])'
                             expanded_expr = re.sub(pattern, f'({clean_ref_expr.strip()})', expanded_expr)
+                            expanded_expr = re.sub(bare_pattern, f'({clean_ref_expr.strip()})', expanded_expr)
                             already_inlined.add(ref_name)
                             substituted = True
 

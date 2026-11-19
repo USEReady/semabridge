@@ -360,6 +360,19 @@ def validate_read_only_sql(sql: str, *, warn_only: Optional[bool] = None) -> boo
                 f"Read-only SQL guard blocked forbidden operation '{op_name}': {preview!r}."
             )
 
+    # Block side-effecting system functions (e.g. SELECT SYSTEM$CANCEL_QUERY(...))
+    for m in re.finditer(r"\b(SYSTEM\$[A-Za-z0-9_]+)\b", clean, re.IGNORECASE):
+        sys_func = m.group(1).upper()
+        if sys_func not in {
+            "SYSTEM$TYPEOF",
+            "SYSTEM$EXPLAIN_PLAN_JSON",
+            "SYSTEM$ESTIMATE_SEARCH_OPTIMIZATION_COSTS",
+        }:
+            preview = clean[:120].replace("\n", " ")
+            return _reject(
+                f"Read-only SQL guard blocked potentially side-effecting system function '{sys_func}': {preview!r}."
+            )
+
     for pattern, action_name in _ALLOWLIST_PATTERNS:
         if action_name in _READ_ONLY_ALLOWED_ACTIONS and pattern.search(clean):
             return True

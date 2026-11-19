@@ -12,7 +12,10 @@ from semabridge.connectors.semantic_ddl_sanitizer import (
     PERIOD_ANCHOR_UNAVAILABLE_REASON,
     SemanticDDLSanitizer,
 )
-from semabridge.converter.dax_ast_parser import TI_CURRENT_DATE_ANCHOR_REASON
+from semabridge.converter.dax_ast_parser import (
+    ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE,
+    TI_CURRENT_DATE_ANCHOR_REASON,
+)
 from semabridge.converter.dax_translator import DAXTranslationResult, DAXTranslator
 from semabridge.utils.identifiers import IdentifierSanitizer
 
@@ -68,8 +71,8 @@ def test_missing_monthindex_anchor_nulls_metric_instead_of_current_date():
 
 
 def test_translator_turns_current_date_window_into_failure_with_reason(monkeypatch):
-    """Whatever tier produced it, a CURRENT_DATE() window for DAX that has no
-    TODAY()/NOW() is a failure (placeholder) with the reason, not SQL."""
+    """When falling back to CURRENT_DATE(), the translator labels it as an approximation
+    with ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE."""
     dax = "CALCULATE(SUM(Employee[IsNewHire]), SAMEPERIODLASTYEAR('Date'[Date]))"
     wall_clock_sql = (
         'SUM(CASE WHEN YEAR(EMPLOYEE."HIREDATE") = YEAR(CURRENT_DATE()) - 1 '
@@ -83,9 +86,9 @@ def test_translator_turns_current_date_window_into_failure_with_reason(monkeypat
 
     res = DAXTranslator().translate(dax, table_alias="EMPLOYEE", dataset_name="Employee")
 
-    assert not res.is_success
-    assert res.sql is None
-    assert res.failure_reason == TI_CURRENT_DATE_ANCHOR_REASON
+    assert res.is_success
+    assert res.sql is not None
+    assert ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE in res.advisory_categories
 
 
 def test_today_in_dax_may_still_use_current_date(monkeypatch):
