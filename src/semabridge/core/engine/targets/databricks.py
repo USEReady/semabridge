@@ -51,8 +51,11 @@ def _convert_to_databricks_target(self, context: RunContext) -> None:
     """Generate a Databricks metric-view YAML artifact."""
     import yaml
     from semabridge.connectors.databricks_publisher import DatabricksPublisher
+    from semabridge.core.engine.deployment.databricks import resolve_databricks_config_for_context
 
-    publisher = DatabricksPublisher(context.config.databricks, behavior=context.behavior)
+    databricks_cfg = resolve_databricks_config_for_context(context, allow_offline_stub=True)
+    publisher = DatabricksPublisher(databricks_cfg, behavior=context.behavior)
+    publisher._offline_plan_mode = True
     # Apply the same heuristic transforms that publish() applies so the
     # debug YAML artifact faithfully reflects what will be deployed.
     publisher._apply_model_config_overrides(context.sml_model)

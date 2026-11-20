@@ -92,6 +92,84 @@ export function StepConnectorConfig({
   const [snowflakeSchemaLoading, setSnowflakeSchemaLoading] = useState(false);
   const [snowflakeDiscoveryError, setSnowflakeDiscoveryError] = useState('');
 
+  // Dynamic Databricks discovery states (populated via /api/connections/databricks/test & /schemas)
+  const [databricksCatalogs, setDatabricksCatalogs] = useState([]);
+  const [databricksSchemasByCatalog, setDatabricksSchemasByCatalog] = useState({});
+  const [databricksWarehouseInfo, setDatabricksWarehouseInfo] = useState(null);
+  const [databricksDiscoveryLoading, setDatabricksDiscoveryLoading] = useState(false);
+  const [databricksSchemaLoading, setDatabricksSchemaLoading] = useState(false);
+  const [databricksDiscoveryError, setDatabricksDiscoveryError] = useState('');
+
+  const fetchDatabricksMetadata = useCallback(async (acctId = databricksAccountId) => {
+    setDatabricksDiscoveryLoading(true);
+    setDatabricksDiscoveryError('');
+    try {
+      const payload = {};
+      if (acctId) payload.connection_id = acctId;
+      if (targetDatabase) payload.catalog = targetDatabase;
+      if (targetSchema) payload.schema_name = targetSchema;
+      const res = await api.testDatabricksConnection(payload);
+      const cats = Array.isArray(res?.catalogs) ? res.catalogs : [];
+      const schMap = res?.schemas_by_catalog && typeof res.schemas_by_catalog === 'object'
+        ? res.schemas_by_catalog
+        : {};
+      setDatabricksCatalogs(cats);
+      setDatabricksSchemasByCatalog(schMap);
+      setDatabricksWarehouseInfo(res?.warehouse || null);
+      if (res?.status === 'failed' && cats.length === 0) {
+        setDatabricksDiscoveryError(res?.message || 'Could not load Databricks catalogs.');
+      } else {
+        let nextCat = targetDatabase;
+        if ((!nextCat || !cats.includes(nextCat)) && cats.length > 0) {
+          nextCat = cats[0];
+          setTargetDatabase(nextCat);
+        }
+        const schemasForCat = schMap[nextCat] || res?.schemas || [];
+        if ((!targetSchema || !schemasForCat.includes(targetSchema)) && schemasForCat.length > 0) {
+          setTargetSchema(schemasForCat[0]);
+        }
+      }
+    } catch (err) {
+      setDatabricksDiscoveryError(err?.message || 'Failed to load Databricks catalogs.');
+    } finally {
+      setDatabricksDiscoveryLoading(false);
+    }
+  }, [databricksAccountId, targetDatabase, targetSchema, setTargetDatabase, setTargetSchema]);
+
+  useEffect(() => {
+    if (!targetConnectors.has('databricks')) return;
+    fetchDatabricksMetadata(databricksAccountId);
+  }, [targetConnectors.has('databricks'), databricksAccountId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleDatabricksCatalogChange = async (nextCatalog) => {
+    setTargetDatabase(nextCatalog);
+    if (!nextCatalog) {
+      setTargetSchema('');
+      return;
+    }
+    if (Array.isArray(databricksSchemasByCatalog[nextCatalog])) {
+      const list = databricksSchemasByCatalog[nextCatalog];
+      setTargetSchema(list.includes(targetSchema) ? targetSchema : (list[0] || ''));
+      return;
+    }
+    setDatabricksSchemaLoading(true);
+    setDatabricksDiscoveryError('');
+    try {
+      const res = await api.listDatabricksSchemas({
+        ...(databricksAccountId ? { connection_id: databricksAccountId } : {}),
+        catalog: nextCatalog,
+      });
+      const list = Array.isArray(res?.schemas) ? res.schemas : [];
+      setDatabricksSchemasByCatalog(prev => ({ ...prev, [nextCatalog]: list }));
+      setTargetSchema(list[0] || '');
+    } catch (err) {
+      setDatabricksDiscoveryError(err?.message || `Could not load schemas for catalog '${nextCatalog}'.`);
+      setTargetSchema('');
+    } finally {
+      setDatabricksSchemaLoading(false);
+    }
+  };
+
   // Race condition protection refs
   const latestAccountIdRef = useRef(snowflakeAccountId);
   const activeSnowflakeDatabase = sourceConnector === 'snowflake' ? snowflakeDatabase : targetDatabase;
@@ -937,9 +1015,54 @@ export function StepConnectorConfig({
 
                   {target === 'databricks' && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                      {databricksAccounts.length > 0 && (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-secondary)' }}>
+                          Unity Catalog Target
+                        </span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          {databricksWarehouseInfo?.state && databricksWarehouseInfo.state !== 'UNKNOWN' && (
+                            <span style={{
+                              fontSize: 10.5,
+                              fontWeight: 600,
+                              padding: '2px 8px',
+                              borderRadius: 999,
+                              background: databricksWarehouseInfo.state === 'RUNNING'
+                                ? 'rgba(52,211,153,0.12)'
+                                : 'rgba(245,158,11,0.12)',
+                              color: databricksWarehouseInfo.state === 'RUNNING' ? '#34d399' : '#f59e0b',
+                            }}>
+                              Warehouse: {databricksWarehouseInfo.state}
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => fetchDatabricksMetadata(databricksAccountId)}
+                            disabled={databricksDiscoveryLoading}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 4,
+                              padding: '4px 8px',
+                              borderRadius: 6,
+                              border: '1px solid var(--border-main)',
+                              background: 'transparent',
+                              color: 'var(--text-secondary)',
+                              fontSize: 11,
+                              cursor: databricksDiscoveryLoading ? 'not-allowed' : 'pointer',
+                              opacity: databricksDiscoveryLoading ? 0.6 : 1,
+                            }}
+                          >
+                            {databricksDiscoveryLoading
+                              ? <Loader2 size={11} className="animate-spin" />
+                              : <RefreshCw size={11} />}
+                            {databricksDiscoveryLoading ? 'Loading…' : 'Refresh catalogs'}
+                          </button>
+                        </div>
+                      </div>
+
+                      {databricksAccounts.length > 0 ? (
                         <div>
-                          <label style={LABEL}>Databricks Account</label>
+                          <label style={LABEL}>Databricks Connection</label>
                           <select
                             value={databricksAccountId}
                             onChange={e => setDatabricksAccountId(e.target.value)}
@@ -947,19 +1070,75 @@ export function StepConnectorConfig({
                           >
                             {databricksAccounts.map(acc => (
                               <option key={getAccountId(acc)} value={getAccountId(acc)}>
-                                {(acc.tag || acc.identity_email || acc.id)} ({acc.identity_email || 'N/A'})
+                                {getAccountLabel(acc)}
                               </option>
                             ))}
                           </select>
                           <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
-                            Select which Databricks identity to use for deployment.
+                            Select which saved Databricks connection to use for deployment.
                           </p>
                         </div>
-                      )}
-                      {databricksAccounts.length === 0 && (
+                      ) : (
                         <div style={{ fontSize: 12, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
-                          No Databricks accounts configured. This target will use global connection defaults from Settings.
+                          No Databricks accounts configured. Configure a Databricks connection in Settings &gt; Connections.
                         </div>
+                      )}
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                        <div>
+                          <label style={LABEL}>Target Catalog</label>
+                          <select
+                            value={targetDatabase}
+                            onChange={e => handleDatabricksCatalogChange(e.target.value)}
+                            disabled={databricksDiscoveryLoading || (databricksCatalogs.length === 0 && !targetDatabase)}
+                            style={INPUT}
+                          >
+                            {databricksCatalogs.length === 0 && !targetDatabase ? (
+                              <option value="">{databricksDiscoveryLoading ? 'Loading catalogs…' : 'No catalogs loaded'}</option>
+                            ) : (
+                              <>
+                                <option value="">Select catalog…</option>
+                                {(databricksCatalogs.length > 0 ? databricksCatalogs : [targetDatabase]).map(cat => (
+                                  <option key={cat} value={cat}>{cat}</option>
+                                ))}
+                              </>
+                            )}
+                          </select>
+                        </div>
+                        <div>
+                          <label style={LABEL}>
+                            Target Schema {databricksSchemaLoading ? '(loading…)' : ''}
+                          </label>
+                          {(() => {
+                            const schemasForCat = databricksSchemasByCatalog[targetDatabase] || [];
+                            const opts = schemasForCat.length > 0 ? schemasForCat : (targetSchema ? [targetSchema] : []);
+                            return (
+                              <select
+                                value={targetSchema}
+                                onChange={e => setTargetSchema(e.target.value)}
+                                disabled={databricksSchemaLoading || opts.length === 0}
+                                style={INPUT}
+                              >
+                                {opts.length === 0 ? (
+                                  <option value="">{targetDatabase ? 'No schemas loaded' : 'Select catalog first'}</option>
+                                ) : (
+                                  <>
+                                    <option value="">Select schema…</option>
+                                    {opts.map(sch => (
+                                      <option key={sch} value={sch}>{sch}</option>
+                                    ))}
+                                  </>
+                                )}
+                              </select>
+                            );
+                          })()}
+                        </div>
+                      </div>
+
+                      {databricksDiscoveryError && (
+                        <p style={{ fontSize: 11, color: 'var(--color-error)', margin: 0 }}>
+                          {databricksDiscoveryError}
+                        </p>
                       )}
                     </div>
                   )}

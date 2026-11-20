@@ -35,6 +35,36 @@ const PANEL = {
 
 const itemLabel = (x) => (x && typeof x === 'object' ? x.name || x.object_name || String(x) : String(x));
 
+function resolveGovernanceTarget(govProjectId, projectsList = [], explicitTarget = '') {
+  const proj = (projectsList || []).find(
+    (p) => (p.id || p.name) === govProjectId || String(p.id || '').toLowerCase() === String(govProjectId || '').toLowerCase()
+  );
+  const raw =
+    explicitTarget ||
+    proj?.target_type ||
+    (typeof proj?.target === 'string' ? proj.target : proj?.target?.type) ||
+    (Array.isArray(proj?.targets) && (typeof proj.targets[0] === 'string' ? proj.targets[0] : proj.targets[0]?.type)) ||
+    'snowflake';
+  const isDatabricks = String(raw || '').toLowerCase().includes('databricks');
+  return isDatabricks
+    ? {
+        isDatabricks: true,
+        warehouseName: 'Databricks',
+        warehouseSqlLabel: 'Databricks SQL',
+        warehouseEngineLabel: 'Databricks SQL Warehouse',
+        viewLabel: 'Databricks Metric View',
+        rlsLabel: 'Databricks Unity Catalog Row Filter SQL DDL',
+      }
+    : {
+        isDatabricks: false,
+        warehouseName: 'Snowflake',
+        warehouseSqlLabel: 'Snowflake SQL',
+        warehouseEngineLabel: 'Snowflake Warehouse',
+        viewLabel: 'Snowflake Semantic View',
+        rlsLabel: 'Snowflake ROW ACCESS POLICY DDL',
+      };
+}
+
 function ImpactGroup({ title, items, tone, onOpenParity }) {
   const isMetrics = title === 'Metrics';
   return (
@@ -584,6 +614,10 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
   }, [expectedPbiTotal, sfTotalSum, reconMaxMismatchPct, reconAbsTol]);
 
   const isMismatch = reconResult && reconResult.status !== 'CERTIFIED';
+  const targetInfo = React.useMemo(
+    () => resolveGovernanceTarget(govProjectId, projectsList, gov?.targetType || reconResult?.target_type || ''),
+    [govProjectId, projectsList, gov?.targetType, reconResult?.target_type]
+  );
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -598,8 +632,21 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
         border: '1px solid var(--border-main)',
       }}>
         <div>
-          <label style={{ display: 'block', fontSize: 11.5, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 6 }}>
-            1. Select Project
+          <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11.5, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 6 }}>
+            <span>1. Select Project</span>
+            {govProjectId && (
+              <span style={{
+                fontSize: 10,
+                fontWeight: 700,
+                padding: '1px 6px',
+                borderRadius: 4,
+                background: targetInfo.isDatabricks ? 'rgba(255, 54, 33, 0.12)' : 'rgba(56, 189, 248, 0.12)',
+                border: targetInfo.isDatabricks ? '1px solid rgba(255, 54, 33, 0.35)' : '1px solid rgba(56, 189, 248, 0.35)',
+                color: targetInfo.isDatabricks ? '#ff5c45' : '#38bdf8',
+              }}>
+                {targetInfo.warehouseEngineLabel}
+              </span>
+            )}
           </label>
           <select
             value={govProjectId || ''}
@@ -707,7 +754,7 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
           )}
         </div>
 
-        {/* Right: Snowflake SQL */}
+        {/* Right: Warehouse SQL */}
         <div style={{
           ...PANEL,
           padding: 14,
@@ -716,7 +763,7 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
         }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>Generated Snowflake SQL</span>
+              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>Generated {targetInfo.warehouseSqlLabel}</span>
               {reconTable && <Pill tone="ok">{reconTable}</Pill>}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -724,7 +771,7 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
                 type="button"
                 onClick={() => setIsEditingSql((v) => !v)}
                 style={{ ...BTN_SM, padding: '2px 8px', fontSize: 11, ...(isEditingSql ? { borderColor: 'var(--accent-blue)', color: 'var(--accent-blue)' } : {}) }}
-                title="Edit Snowflake SQL expression"
+                title={`Edit ${targetInfo.warehouseSqlLabel} expression`}
               >
                 <Edit3 size={11} /> {isEditingSql ? 'Close Editor' : 'Edit SQL'}
               </button>
@@ -733,7 +780,7 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
                   type="button"
                   onClick={() => copyToClipboard(reconQueries.sql_query, 'sql')}
                   style={{ ...BTN_SM, padding: '2px 8px', fontSize: 11 }}
-                  title="Copy Snowflake SQL Query"
+                  title={`Copy ${targetInfo.warehouseSqlLabel} Query`}
                 >
                   {copiedKey === 'sql' ? <Check size={11} color="var(--color-success)" /> : <Copy size={11} />}
                   {copiedKey === 'sql' ? 'Copied' : 'Copy'}
@@ -743,7 +790,7 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
           </div>
 
           <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 4 }}>
-            Compiled Snowflake SQL Expression:
+            Compiled {targetInfo.warehouseSqlLabel} Expression:
           </div>
           <div style={{
             padding: '8px 10px',
@@ -763,7 +810,7 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
           {showQueries && reconQueries?.sql_query && (
             <div style={{ marginTop: 8 }}>
               <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 4 }}>
-                Compiled Snowflake Execution Query:
+                Compiled {targetInfo.warehouseName} Execution Query:
               </div>
               <pre style={{
                 margin: 0,
@@ -800,7 +847,7 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <Edit3 size={15} style={{ color: isMismatch ? 'var(--color-error)' : 'var(--accent-blue)' }} />
               <strong style={{ fontSize: 12.5 }}>
-                {isMismatch ? 'Drift Detected — Tune Snowflake SQL Expression' : 'Edit Snowflake SQL Expression'}
+                {isMismatch ? `Drift Detected — Tune ${targetInfo.warehouseSqlLabel} Expression` : `Edit ${targetInfo.warehouseSqlLabel} Expression`}
               </strong>
             </div>
             <span style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>
@@ -810,7 +857,7 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
 
           {isMismatch && (
             <div style={{ fontSize: 12, color: 'var(--color-error)', lineHeight: 1.4 }}>
-              Power BI DAX and Snowflake SQL values do not match. You can tune the SQL formula below (e.g. adjust rounding, COALESCE, or column casting) and click <strong>Update SQL &amp; Re-Check</strong> to re-verify parity.
+              Power BI DAX and {targetInfo.warehouseSqlLabel} values do not match. You can tune the SQL formula below (e.g. adjust rounding, COALESCE, or column casting) and click <strong>Update SQL &amp; Re-Check</strong> to re-verify parity.
             </div>
           )}
 
@@ -891,7 +938,7 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
             disabled={runningRecon || !reconMetric.trim() || !reconTable.trim()}
             onClick={onRunLiveSql}
           >
-            Run Live Snowflake SQL
+            Run Live {targetInfo.warehouseSqlLabel}
           </button>
 
           <label
@@ -974,7 +1021,7 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
             <li>Open your report on <strong>Power BI Service (app.powerbi.com)</strong>.</li>
             <li>On the visual displaying this measure, click <strong>`...` (More options) &rarr; Export data</strong>.</li>
             <li>Select <strong>Summarized data &rarr; .csv</strong> (or copy the visual data directly to clipboard).</li>
-            <li>Click <strong>Upload Power BI Web CSV</strong> above (or paste the data below). SemaBridge will automatically execute the Snowflake SQL live on your warehouse and compare the slices!</li>
+            <li>Click <strong>Upload Power BI Web CSV</strong> above (or paste the data below). SemaBridge will automatically execute the {targetInfo.warehouseSqlLabel} live on your {targetInfo.warehouseEngineLabel} and compare the slices!</li>
           </ol>
         </div>
       )}
@@ -1011,7 +1058,7 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
             <div>
               <label style={{ display: 'block', fontSize: 11, color: 'var(--text-secondary)', marginBottom: 4 }}>Target Kind</label>
               <select value={reconTargetKind || 'semantic_view'} onChange={(e) => setReconTargetKind?.(e.target.value)} style={SELECT_STYLE}>
-                <option value="semantic_view">Target: SEMANTIC_VIEW</option>
+                <option value="semantic_view">Target: {targetInfo.isDatabricks ? 'Databricks Metric View' : 'SEMANTIC_VIEW'}</option>
                 <option value="table">Target: Table / View</option>
               </select>
             </div>
@@ -1137,8 +1184,8 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
                   {reconResult.status === 'CERTIFIED'
-                    ? 'Values in Snowflake match Power BI within specified tolerances.'
-                    : 'Mathematical discrepancy identified between Power BI and Snowflake.'}
+                    ? `Values in ${targetInfo.warehouseName} match Power BI within specified tolerances.`
+                    : `Mathematical discrepancy identified between Power BI and ${targetInfo.warehouseName}.`}
                 </div>
               </div>
             </div>
@@ -1230,7 +1277,7 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
             alignItems: 'center',
             justifyContent: 'space-between',
           }}>
-            <strong style={{ fontSize: 12.5 }}>Slice-by-Slice Parity &amp; Drift Comparison (Power BI vs Snowflake)</strong>
+            <strong style={{ fontSize: 12.5 }}>Slice-by-Slice Parity &amp; Drift Comparison (Power BI vs {targetInfo.warehouseName})</strong>
             <span style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>
               {reconSliceRows.length} slice{reconSliceRows.length === 1 ? '' : 's'} evaluated
             </span>
@@ -1240,7 +1287,7 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
               <tr style={{ background: 'var(--bg-app)', textAlign: 'left', color: 'var(--text-secondary)' }}>
                 <th style={{ padding: '8px 12px', fontWeight: 600 }}>Slice Dimension</th>
                 <th style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600 }}>Power BI Value</th>
-                <th style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600 }}>Snowflake SQL</th>
+                <th style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600 }}>{targetInfo.warehouseSqlLabel}</th>
                 <th style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600 }}>Difference (Δ)</th>
                 <th style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600 }}>Drift % (Δ%)</th>
                 <th style={{ padding: '8px 12px', textAlign: 'center', fontWeight: 600 }}>Status</th>
@@ -1288,7 +1335,7 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
             gap: 10,
           }}>
             <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
-              <strong style={{ fontSize: 13 }}>Live Snowflake Warehouse Execution Results</strong>
+              <strong style={{ fontSize: 13 }}>Live {targetInfo.warehouseEngineLabel} Execution Results</strong>
               <Pill tone="ok">{parsedSqlRows.length} rows returned</Pill>
               {sfTotalSum !== null && (
                 <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
@@ -1344,7 +1391,7 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
                   <strong style={{ fontFamily: MONO }}>{benchmarkComparison.pbiTotal.toLocaleString()}</strong>
                 </div>
                 <div>
-                  <span style={{ color: 'var(--text-secondary)' }}>Snowflake: </span>
+                  <span style={{ color: 'var(--text-secondary)' }}>{targetInfo.warehouseName}: </span>
                   <strong style={{ fontFamily: MONO }}>{benchmarkComparison.sfTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })}</strong>
                 </div>
                 <div>
@@ -1407,6 +1454,8 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
 
 export function AccessPanel({ gov }) {
   const {
+    govProjectId = '',
+    projectsList = [],
     rlsRoleName,
     setRlsRoleName,
     rlsTableName,
@@ -1423,14 +1472,15 @@ export function AccessPanel({ gov }) {
     rlsStatus,
     rlsReason,
   } = gov;
+  const targetInfo = resolveGovernanceTarget(govProjectId, projectsList, gov?.targetType || '');
   const ready = rlsRoleName.trim() && rlsTableName.trim() && rlsDaxExpr.trim() && rlsTargetDb.trim() && rlsTargetSchema.trim();
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-        Translate exact Power BI column comparison rules (combined with AND / OR) into Snowflake ROW ACCESS POLICY DDL. Dynamic functions like USERPRINCIPALNAME() or RELATED() return "not translated".
+        Translate exact Power BI column comparison rules (combined with AND / OR) into {targetInfo.rlsLabel}. Dynamic functions like USERPRINCIPALNAME() or RELATED() return "not translated".
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
-        <input type="text" value={rlsTargetDb} onChange={(e) => setRlsTargetDb(e.target.value)} placeholder="Target database (required)" style={INPUT_STYLE} />
+        <input type="text" value={rlsTargetDb} onChange={(e) => setRlsTargetDb(e.target.value)} placeholder={targetInfo.isDatabricks ? 'Target catalog (required)' : 'Target database (required)'} style={INPUT_STYLE} />
         <input type="text" value={rlsTargetSchema} onChange={(e) => setRlsTargetSchema(e.target.value)} placeholder="Target schema (required)" style={INPUT_STYLE} />
         <input type="text" value={rlsRoleName} onChange={(e) => setRlsRoleName(e.target.value)} placeholder="Role name" style={INPUT_STYLE} />
         <input type="text" value={rlsTableName} onChange={(e) => setRlsTableName(e.target.value)} placeholder="Table name" style={INPUT_STYLE} />
@@ -1442,7 +1492,7 @@ export function AccessPanel({ gov }) {
           style={{ ...INPUT_STYLE, fontFamily: MONO }}
         />
         <button type="button" disabled={runningRls || !ready} onClick={onTranslateRls} style={{ ...BTN_PRIMARY, opacity: runningRls || !ready ? 0.6 : 1 }}>
-          <Lock size={13} /> {runningRls ? 'Compiling…' : 'Compile to Snowflake'}
+          <Lock size={13} /> {runningRls ? 'Compiling…' : `Compile to ${targetInfo.warehouseName}`}
         </button>
       </div>
       {rlsStatus === 'not translated' && (

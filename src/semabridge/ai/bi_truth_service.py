@@ -571,14 +571,49 @@ def set_batch_truth_case_status(
     return count
 
 
+def _detect_project_target(project_id: Optional[str]) -> str:
+    """Detect whether ``project_id`` targets Databricks or Snowflake."""
+    pid = (project_id or "").strip()
+    if not pid:
+        return "SNOWFLAKE"
+    try:
+        from semabridge.ai.project_connection import _project_meta
+
+        meta = _project_meta(pid) or {}
+        candidates = [
+            meta.get("target_type"),
+            (meta.get("target") or {}).get("type") if isinstance(meta.get("target"), dict) else None,
+        ]
+        targets = meta.get("targets")
+        if isinstance(targets, list) and targets and isinstance(targets[0], dict):
+            candidates.append(targets[0].get("type"))
+        for raw in candidates:
+            if raw and "databricks" in str(raw).strip().lower():
+                return "DATABRICKS"
+    except Exception:
+        pass
+    try:
+        from semabridge.repository.model_repository import ModelRepository
+
+        info = ModelRepository().get_project_deployment_info(pid) or {}
+        for key in ("target_type", "platform", "target"):
+            val = info.get(key)
+            if val and "databricks" in str(val).strip().lower():
+                return "DATABRICKS"
+    except Exception:
+        pass
+    return "SNOWFLAKE"
+
+
 def run_truth_suite(
     *,
     project_id: Optional[str] = None,
     owner_id: Optional[str] = None,
     max_cases: int = 50,
 ) -> Dict[str, Any]:
-    """Execute approved BI-truth questions against Cortex / NL engine and record accuracy."""
+    """Execute approved BI-truth questions against Cortex, Databricks SQL Warehouse, or NL engine."""
     from concurrent.futures import ThreadPoolExecutor
+    from semabridge.ai.databricks_genie_service import execute_databricks_sql
     from semabridge.ai.nl_query_engine import NLQueryEngine
     from semabridge.ai.project_connection import resolve_project_scope, resolve_project_warehouse_config
     from semabridge.ontology.store import ontology_store
@@ -595,13 +630,21 @@ def run_truth_suite(
 
     # Pre-resolve project scopes and configs once to avoid repetitive DB lookups
     scopes_cache: Dict[str, Any] = {}
+    target_cache: Dict[str, str] = {}
     sf_cache: Dict[str, Any] = {}
+    db_cache: Dict[str, Any] = {}
 
     def _get_scope(pid: Optional[str]):
         p = pid or ""
         if p not in scopes_cache:
             scopes_cache[p] = resolve_project_scope(p)
         return scopes_cache[p]
+
+    def _get_target(pid: Optional[str]) -> str:
+        p = pid or ""
+        if p not in target_cache:
+            target_cache[p] = _detect_project_target(p)
+        return target_cache[p]
 
     def _get_sf(pid: Optional[str]):
         p = pid or ""
@@ -612,23 +655,73 @@ def run_truth_suite(
                 sf_cache[p] = None
         return sf_cache[p]
 
+    def _get_db(pid: Optional[str]):
+        p = pid or ""
+        if p not in db_cache:
+            try:
+                db_cache[p] = resolve_project_warehouse_config(p, "DATABRICKS", owner_id=owner_id)
+            except Exception:
+                db_cache[p] = None
+        return db_cache[p]
+
     def _evaluate_case(c: Dict[str, Any]) -> Dict[str, Any]:
         pid = c.get("project_id") or project_id
         scope = _case_scope(_get_scope(pid), c)
-        sf = _get_sf(pid)
+        project_target = _get_target(pid)
         generated_sql = ""
         mode = "local"
         err = None
+        row_count: Optional[int] = None
 
         try:
-            if sf is not None and getattr(sf, "private_key", None) and getattr(scope, "semantic_view", None):
-                try:
-                    from semabridge.ai.cortex_analyst_client import call_cortex_analyst
-                    resp = call_cortex_analyst(prompt=c["question"], semantic_view=scope.semantic_view, config=sf)
-                    generated_sql = (resp.get("generated_sql") or "").strip()
-                    mode = "cortex"
-                except Exception as cx_err:
-                    # Gracefully fall back to local semantic engine if Cortex network call is unavailable/times out
+            if project_target == "DATABRICKS":
+                plan = engine.resolve_query(
+                    c["question"],
+                    dialect="DATABRICKS",
+                    semantic_view=getattr(scope, "semantic_view", None),
+                    allowed_domains=getattr(scope, "allowed_domains", []),
+                )
+                generated_sql = (plan.generated_sql or "").strip()
+                is_refusal = generated_sql.lstrip().startswith("-- SemaBridge AI Query Refusal")
+                sql_to_run = (
+                    (c.get("expected_sql") or "").strip()
+                    if (not generated_sql or is_refusal)
+                    else generated_sql
+                )
+                db_cfg = _get_db(pid)
+                if db_cfg is not None and sql_to_run:
+                    exec_res = execute_databricks_sql(db_cfg, sql_to_run)
+                    if exec_res.get("success"):
+                        mode = "databricks_sql"
+                        row_count = exec_res.get("row_count", 0)
+                        if not generated_sql or is_refusal:
+                            generated_sql = sql_to_run
+                    elif exec_res.get("not_configured"):
+                        mode = "databricks_local"
+                    else:
+                        mode = "databricks_sql"
+                        err = exec_res.get("error") or "Databricks SQL execution failed"
+                else:
+                    mode = "databricks_local"
+            else:
+                sf = _get_sf(pid)
+                if sf is not None and getattr(sf, "private_key", None) and getattr(scope, "semantic_view", None):
+                    try:
+                        from semabridge.ai.cortex_analyst_client import call_cortex_analyst
+                        resp = call_cortex_analyst(prompt=c["question"], semantic_view=scope.semantic_view, config=sf)
+                        generated_sql = (resp.get("generated_sql") or "").strip()
+                        mode = "cortex"
+                    except Exception:
+                        # Gracefully fall back to local semantic engine if Cortex network call is unavailable/times out
+                        plan = engine.resolve_query(
+                            c["question"],
+                            dialect="SNOWFLAKE",
+                            semantic_view=getattr(scope, "semantic_view", None),
+                            allowed_domains=getattr(scope, "allowed_domains", []),
+                        )
+                        generated_sql = (plan.generated_sql or "").strip()
+                        mode = "local_fallback"
+                else:
                     plan = engine.resolve_query(
                         c["question"],
                         dialect="SNOWFLAKE",
@@ -636,29 +729,24 @@ def run_truth_suite(
                         allowed_domains=getattr(scope, "allowed_domains", []),
                     )
                     generated_sql = (plan.generated_sql or "").strip()
-                    mode = "local_fallback"
-            else:
-                plan = engine.resolve_query(
-                    c["question"],
-                    dialect="SNOWFLAKE",
-                    semantic_view=getattr(scope, "semantic_view", None),
-                    allowed_domains=getattr(scope, "allowed_domains", []),
-                )
-                generated_sql = (plan.generated_sql or "").strip()
         except Exception as exc:
             err = str(exc)
 
-        ok = bool(generated_sql) and not err
-        return {
+        ok = bool(generated_sql) and not generated_sql.lstrip().startswith("-- SemaBridge AI Query Refusal") and not err
+        result_item: Dict[str, Any] = {
             "case_id": c["id"],
             "question": c["question"],
             "metric_name": c.get("metric_name") or "",
             "expected_sql": c.get("expected_sql") or "",
             "passed": ok,
             "mode": mode,
+            "target": project_target,
             "generated_sql": generated_sql,
             "error": err,
         }
+        if row_count is not None:
+            result_item["row_count"] = row_count
+        return result_item
 
     # Parallelize evaluations with ThreadPoolExecutor
     workers = min(6, max(1, len(approved)))

@@ -71,7 +71,7 @@ export function StepSourceBrowser({
           <div>
             <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>PBIX Source Ready</h2>
             <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>
-              PBIX sync skips model discovery. Continue to the finish step to launch the pipeline and monitor Extraction, OSI Conversion, SML Generation, and Snowflake Deployment.
+              PBIX sync skips model discovery. Continue to the finish step to launch the pipeline and monitor Extraction, OSI Conversion, SML Generation, and Target Deployment.
             </p>
           </div>
           <div style={{ padding: '18px 20px', borderRadius: 12, border: '1px solid var(--border-main)', background: 'var(--bg-surface)' }}>
@@ -166,7 +166,12 @@ export function StepSourceBrowser({
 
   if (sourceConnector === 'databricks') {
     // Flatten all tables for search
-    const allTables = (databricksObjects || []).flatMap(obj =>
+    const normalizedDatabricksSources = Array.isArray(databricksObjects)
+      ? databricksObjects
+      : (Array.isArray(databricksObjects?.sources)
+        ? databricksObjects.sources
+        : (Array.isArray(databricksObjects?.schemas) ? databricksObjects.schemas : []));
+    const allTables = normalizedDatabricksSources.flatMap(obj =>
       (obj.tables || []).map(tbl => ({
         catalog: obj.catalog,
         schema: obj.schema,

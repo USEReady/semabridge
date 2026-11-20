@@ -911,12 +911,15 @@ def _plan_blockers(result: Dict[str, Any], overrides: List[Dict[str, Any]], targ
 
     issues: List[str] = []
     from semabridge.utils.identifiers import (
+        databricks_target_name,
         is_column_source_path,
         is_legacy_auto_column_name,
         snowflake_target_name,
     )
 
-    is_snowflake = str(target_type or "").lower() == "snowflake"
+    target_lower = str(target_type or "").strip().lower()
+    is_snowflake = target_lower == "snowflake"
+    is_databricks = target_lower in ("databricks", "databricks_sql", "dbx", "databricks_metric_view")
     override_names: Dict[str, str] = {}
     for row in overrides or []:
         if isinstance(row, dict) and str(row.get("source_path") or "").strip() and str(row.get("target_name") or "").strip():
@@ -932,6 +935,8 @@ def _plan_blockers(result: Dict[str, Any], overrides: List[Dict[str, Any]], targ
                 # Same rule the sync deploys with (columns: semantic alias,
                 # metrics: to_alias), so 'Value' clashes with VALUE here too.
                 name = snowflake_target_name(name, source_path)
+            elif is_databricks:
+                name = databricks_target_name(name, source_path)
             override_names[source_path.lower()] = name
 
     rows = [r for r in (result.get("entity_mappings") or []) if isinstance(r, dict)]
@@ -968,6 +973,26 @@ def _plan_blockers(result: Dict[str, Any], overrides: List[Dict[str, Any]], targ
         conflicts = (result.get("ontology_changes") or {}).get("blocking_conflicts")
     if conflicts:
         issues.append(f"{len(conflicts)} ontology blocking conflict(s)")
+
+    tbp = result.get("table_binding_plan")
+    if isinstance(tbp, dict):
+        tbp_blocked = [b for b in (tbp.get("blocked") or []) if b]
+        if tbp_blocked:
+            issues.append(f"{len(tbp_blocked)} blocked target table binding(s)")
+
+    dbx_plan = result.get("databricks_plan")
+    if isinstance(dbx_plan, dict):
+        if dbx_plan.get("error"):
+            issues.append(f"Databricks plan error ({dbx_plan['error']})")
+        dbx_blocked = [b for b in (dbx_plan.get("blocked") or []) if b]
+        if dbx_blocked:
+            issues.append(f"{len(dbx_blocked)} Databricks blocked item(s)")
+        dbx_missing = [t for t in (dbx_plan.get("missing_tables") or []) if t]
+        if dbx_missing:
+            issues.append(f"{len(dbx_missing)} Databricks missing source table(s)")
+        dbx_skipped = [v for v in (dbx_plan.get("views") or []) if isinstance(v, dict) and v.get("skipped")]
+        if dbx_skipped:
+            issues.append(f"{len(dbx_skipped)} Databricks skipped view(s)")
     return issues
 
 

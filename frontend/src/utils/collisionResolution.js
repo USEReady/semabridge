@@ -96,7 +96,7 @@ export function toPhysicalColumnName(value) {
   return toSnowflakeAlias(value, 'metric');
 }
 
-/** Generic identifier rules (non-Snowflake targets): backend sanitize_identifier. */
+/** Generic identifier rules (non-Snowflake/Databricks targets): backend sanitize_identifier. */
 export function toGenericIdentifier(value) {
   const raw = String(value || '').trim();
   if (!raw) return '';
@@ -109,16 +109,82 @@ export function toGenericIdentifier(value) {
   return /^\d/.test(cleaned) ? `N_${cleaned}` : cleaned;
 }
 
+// ── Databricks identifier rules ────────────────────────────────────────────
+// Exact mirror of the backend's databricks_target_name / databricks_sanitize_identifier
+// (src/semabridge/utils/identifiers.py) and DatabricksPublisher's naming rules.
+// Pinned against frontend/src/utils/databricksNamingTable.json in both backend
+// and frontend tests.
+export const DATABRICKS_MAX_IDENTIFIER_LENGTH = 255;
+
+export const DATABRICKS_RESERVED_WORDS = new Set([
+  'all', 'alter', 'and', 'anti', 'any', 'array', 'as', 'at', 'authorization',
+  'between', 'both', 'by', 'case', 'cast', 'check', 'collate', 'column',
+  'commit', 'constraint', 'create', 'cross', 'cube', 'current',
+  'current_date', 'current_time', 'current_timestamp', 'current_user',
+  'delete', 'describe', 'distinct', 'div', 'drop', 'else', 'end', 'escape',
+  'except', 'exists', 'external', 'extract', 'false', 'fetch', 'filter',
+  'for', 'foreign', 'from', 'full', 'function', 'global', 'grant', 'group',
+  'grouping', 'having', 'in', 'inner', 'insert', 'intersect', 'interval',
+  'into', 'is', 'join', 'lateral', 'leading', 'left', 'like', 'limit',
+  'local', 'minus', 'natural', 'not', 'null', 'of', 'offset', 'on', 'only',
+  'or', 'order', 'outer', 'over', 'overlaps', 'partition', 'percent',
+  'position', 'primary', 'range', 'references', 'revoke', 'right', 'rlike',
+  'rollback', 'rollup', 'row', 'rows', 'select', 'semi', 'session_user',
+  'set', 'some', 'start', 'table', 'tablesample', 'then', 'time', 'to',
+  'trailing', 'true', 'union', 'unique', 'unknown', 'update', 'user',
+  'using', 'values', 'view', 'when', 'where', 'window', 'with',
+]);
+
+export function quoteDatabricksIdentifier(value) {
+  const safe = String(value ?? '').replace(/`/g, '``');
+  return `\`${safe}\``;
+}
+
+function sanitizeDatabricksIdentifier(value, fallback = 'unnamed', maxLength = DATABRICKS_MAX_IDENTIFIER_LENGTH) {
+  const raw = String(value ?? '').trim().replace(/`/g, '');
+  const safe = raw
+    .replace(/[^0-9A-Za-z_]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  let result = safe || fallback;
+  if (maxLength > 0 && result.length > maxLength) {
+    result = result.slice(0, maxLength).replace(/_+$/g, '') || fallback;
+  }
+  return result;
+}
+
+/**
+ * The backend's Databricks name for a field, character for character:
+ * - metrics/measures: % -> _Pct, # -> Num_, whitespace/hyphens -> _, then sanitize (fallback 'measure')
+ * - columns/tables/views: sanitize (fallback 'unnamed'), preserving case, max 255 chars.
+ */
+export function toDatabricksIdentifier(value, kind = 'column') {
+  if (isMetricKind(kind)) {
+    const raw = String(value ?? '').trim();
+    if (!raw) return 'measure';
+    const normalized = raw
+      .replace(/%/g, '_Pct')
+      .replace(/#/g, 'Num_')
+      .replace(/[\s-]+/g, '_');
+    return sanitizeDatabricksIdentifier(normalized, 'unnamed') || 'measure';
+  }
+  return sanitizeDatabricksIdentifier(value, 'unnamed');
+}
+
 /**
  * Target-name sanitizer used across the mapping UI. Defaults to the
  * Snowflake emitter's rules (to_alias): "% Margin" -> PCT_MARGIN,
  * "Order" -> COL_ORDER, "2024 Sales" -> _2024_SALES.
+ * For Databricks, uses toDatabricksIdentifier (matching DatabricksPublisher).
  */
 export function sanitizeMappingName(value, targetType = 'snowflake', kind = 'column') {
   if (!String(value ?? '').trim()) return '';
-  return String(targetType || 'snowflake').toLowerCase() === 'snowflake'
-    ? toSnowflakeAlias(value, kind)
-    : toGenericIdentifier(value);
+  const target = String(targetType || 'snowflake').toLowerCase();
+  if (target === 'snowflake') return toSnowflakeAlias(value, kind);
+  if (target === 'databricks' || target === 'databricks_sql' || target === 'dbx' || target === 'databricks_metric_view') {
+    return toDatabricksIdentifier(value, kind);
+  }
+  return toGenericIdentifier(value);
 }
 
 /**

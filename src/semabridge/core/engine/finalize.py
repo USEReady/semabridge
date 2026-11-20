@@ -84,31 +84,57 @@ def _step7_persist_artifacts(
         sml_dict = context.sml_model.model_dump(mode='json') if context.sml_model else {}
         sync_mode = getattr(context, 'sync_mode', 'copy')
 
-        sf_cfg = None
-        try:
-            from semabridge.core.engine.deployment.snowflake import target_snowflake_config
-            sf_cfg = target_snowflake_config(context)
-        except Exception as cfg_exc:
-            logger.warning(
-                "Run %s: could not resolve the Snowflake target config (%s); the snapshot is recorded "
-                "without target database/schema (next UPSERT baseline may not match)",
-                getattr(context, "run_id", None), cfg_exc,
-            )
-        t_db = getattr(sf_cfg, "database", None)
-        t_schema = getattr(sf_cfg, "schema_name", None) or getattr(sf_cfg, "schema", None)
+        t_db = None
+        t_schema = None
         t_vn = getattr(context, "deployed_view_name", None)
-        if not t_vn and context.sml_model:
+        if context.target_type == "databricks":
             try:
-                from semabridge.utils.name_translator import get_target_deployment_name
-                t_vn = get_target_deployment_name(
-                    getattr(context.sml_model, "unique_name", None) or getattr(context.sml_model, "label", None) or "model",
-                    "snowflake",
-                )
-            except Exception as name_exc:
+                from semabridge.core.engine.deployment.databricks_preview import target_databricks_config
+                dbx_cfg = target_databricks_config(context)
+                t_db = getattr(dbx_cfg, "catalog", None)
+                t_schema = getattr(dbx_cfg, "schema_name", None) or getattr(dbx_cfg, "schema", None)
+            except Exception as cfg_exc:
                 logger.warning(
-                    "Run %s: could not derive the target view name (%s); the snapshot is recorded without it",
-                    getattr(context, "run_id", None), name_exc,
+                    "Run %s: could not resolve the Databricks target config (%s); the snapshot is recorded "
+                    "without target catalog/schema",
+                    getattr(context, "run_id", None), cfg_exc,
                 )
+            if not t_vn and context.sml_model:
+                try:
+                    from semabridge.utils.identifiers import databricks_view_name
+                    t_vn = databricks_view_name(
+                        getattr(context.sml_model, "unique_name", None) or getattr(context.sml_model, "label", None) or "model",
+                    )
+                except Exception as name_exc:
+                    logger.warning(
+                        "Run %s: could not derive the Databricks target view name (%s); the snapshot is recorded without it",
+                        getattr(context, "run_id", None), name_exc,
+                    )
+        else:
+            sf_cfg = None
+            try:
+                from semabridge.core.engine.deployment.snowflake import target_snowflake_config
+                sf_cfg = target_snowflake_config(context)
+            except Exception as cfg_exc:
+                logger.warning(
+                    "Run %s: could not resolve the Snowflake target config (%s); the snapshot is recorded "
+                    "without target database/schema (next UPSERT baseline may not match)",
+                    getattr(context, "run_id", None), cfg_exc,
+                )
+            t_db = getattr(sf_cfg, "database", None)
+            t_schema = getattr(sf_cfg, "schema_name", None) or getattr(sf_cfg, "schema", None)
+            if not t_vn and context.sml_model:
+                try:
+                    from semabridge.utils.name_translator import get_target_deployment_name
+                    t_vn = get_target_deployment_name(
+                        getattr(context.sml_model, "unique_name", None) or getattr(context.sml_model, "label", None) or "model",
+                        "snowflake",
+                    )
+                except Exception as name_exc:
+                    logger.warning(
+                        "Run %s: could not derive the target view name (%s); the snapshot is recorded without it",
+                        getattr(context, "run_id", None), name_exc,
+                    )
 
         try:
             committed, snapshot_id = self.db_manager.commit_model(
@@ -355,6 +381,8 @@ def _step10_finalize(
         self._summary.upsert_delta = _annotated_upsert_delta(self._summary, context)
     if context.table_binding_plan is not None:
         self._summary.table_binding_plan = context.table_binding_plan
+    if context.databricks_plan is not None:
+        self._summary.databricks_plan = context.databricks_plan
 
     if status == RunStatus.FAILED and self._summary.sml_snapshot_id:
         failure_message = self._summary.errors[-1].message if self._summary.errors else None

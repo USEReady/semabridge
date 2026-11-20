@@ -1241,6 +1241,34 @@ async def save_connection(service: str, payload: Dict[str, Any], user_id: int = 
 
     try:
         cm = CredentialManager()
+        if service == "databricks":
+            from semabridge.api.services.databricks_connection_service import (
+                DATABRICKS_SECRET_KEYS,
+                encrypt_databricks_payload,
+            )
+
+            encrypted_payload = encrypt_databricks_payload(payload)
+            saved = cm.save_credentials(service, encrypted_payload, user_id=user_id)
+            # Only inject non-secret Databricks settings into os.environ; secrets stay
+            # encrypted in the DB and are decrypted on demand per request/account.
+            _dbx_non_secret_env = {
+                "host": "DATABRICKS_HOST",
+                "auth_type": "DATABRICKS_AUTH_TYPE",
+                "client_id": "DATABRICKS_CLIENT_ID",
+                "warehouse_id": "DATABRICKS_WAREHOUSE_ID",
+                "catalog": "DATABRICKS_CATALOG",
+                "schema_name": "DATABRICKS_SCHEMA",
+            }
+            for k, env_name in _dbx_non_secret_env.items():
+                if k not in DATABRICKS_SECRET_KEYS and encrypted_payload.get(k):
+                    os.environ[env_name] = str(encrypted_payload[k])
+            reload_settings()
+            return {
+                "status": "saved",
+                "service": service,
+                "fields_saved": saved,
+            }
+
         saved = cm.save_credentials(service, payload, user_id=user_id)
         # Inject to os.environ using the full precedence chain so that
         # connectors initialised in this process pick up the new values.
@@ -1281,6 +1309,13 @@ async def test_connection(service: str, user_id: int = 0):
     Args:
         user_id: Authenticated user ID.  ``0`` uses global/system credentials.
     """
+    if service == "databricks":
+        from semabridge.api.services.databricks_connection_service import (
+            run_databricks_connection_test,
+        )
+
+        return run_databricks_connection_test(user_id=user_id)
+
     from semabridge.repository.credential_manager import CredentialManager
 
     cm = CredentialManager()
@@ -1310,33 +1345,6 @@ async def test_connection(service: str, user_id: int = 0):
             conn.cursor().execute("SELECT CURRENT_VERSION()")
             conn.close()
             return {"status": "success", "message": "Snowflake connection successful"}
-        except Exception as e:
-            return {"status": "failed", "message": str(e)}
-
-    if service == "databricks":
-        try:
-            cfg = reload_settings()
-            publisher = make_target_emitter("databricks", cfg.databricks)
-            token = publisher._resolve_token()
-            # Fire a lightweight query to validate warehouse access
-            import requests as _requests
-
-            resp = _requests.post(
-                f"https://{cfg.databricks.host}/api/2.0/sql/statements",
-                json={
-                    "statement": "SHOW CATALOGS",
-                    "warehouse_id": cfg.databricks.warehouse_id,
-                    "wait_timeout": "10s",
-                },
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json",
-                },
-                timeout=15,
-            )
-            if resp.status_code == 200:
-                return {"status": "success", "message": "Databricks connection successful"}
-            return {"status": "failed", "message": f"Databricks API returned {resp.status_code}: {resp.text[:200]}"}
         except Exception as e:
             return {"status": "failed", "message": str(e)}
 

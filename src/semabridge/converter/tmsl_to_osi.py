@@ -521,7 +521,10 @@ class TMSLToOSIConverter(BaseConverter):
                 "calculated table — not materialized in Snowflake; "
                 "materialize it as a table/view to include it"
             )
-        logger.info("Dataset '%s' is a %s: %s", dataset.unique_name, kind, reason)
+        from semabridge.core.target_rules import adapt_target_message
+
+        target_type = getattr(self.drop_ledger, "target_type", "snowflake")
+        logger.info("Dataset '%s' is a %s: %s", dataset.unique_name, kind, adapt_target_message(reason, target_type))
         self.drop_ledger.record(
             "table",
             dataset.unique_name,

@@ -482,6 +482,8 @@ def _step2_init_identifiers(
         ),
         resolved_pbix_display_name=resolved_display_name,
     )
+    if getattr(context, "drop_ledger", None) is not None:
+        context.drop_ledger.target_type = str(context.target_type or "snowflake").strip().lower()
 
     # Register the project + run row in the DB immediately.
     # source_artifacts (step 7) has a FK -> runs.run_id -> projects.project_id,

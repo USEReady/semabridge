@@ -317,9 +317,16 @@ function getAuthHeaders() {
 }
 
 // Safe wrapper for callers expecting a Databricks sources helper. Keeps
-// API surface stable; implementation delegates to discovery endpoint.
-async function _getDatabricksSources(connectionId = '') {
-    const query = connectionId ? `?identity_id=${encodeURIComponent(connectionId)}` : '';
+// API surface stable; implementation delegates to paginated discovery endpoint.
+async function _getDatabricksSources(connectionId = '', options = {}) {
+    const params = new URLSearchParams();
+    if (connectionId) params.set('identity_id', connectionId);
+    if (options.catalog) params.set('catalog', options.catalog);
+    if (options.schema_name) params.set('schema_name', options.schema_name);
+    if (options.page_size) params.set('page_size', String(options.page_size));
+    if (options.page_token) params.set('page_token', options.page_token);
+    const qs = params.toString();
+    const query = qs ? `?${qs}` : '';
     const res = await authFetch(`${API_BASE_URL}/discovery/databricks/sources${query}`);
     return handleResponse(res);
 }
@@ -1290,7 +1297,7 @@ export const api = {
         return handleResponse(res);
     },
 
-    // ── Databricks Native OAuth (U2M / PKCE) ──────
+    // ── Databricks Native OAuth (U2M / PKCE) & Diagnostics ──────
     async databricksLogin(host, clientId, redirectUri) {
         const res = await authFetch(`${API_BASE_URL}/connections/databricks/login`, {
             method: 'POST',
@@ -1319,6 +1326,46 @@ export const api = {
             method: 'POST',
         });
         return handleResponse(res);
+    },
+
+    async testDatabricksConnection(payload = {}) {
+        const res = await authFetch(`${API_BASE_URL}/connections/databricks/test`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload || {}),
+        });
+        return handleResponse(res);
+    },
+
+    async startDatabricksWarehouse(payload = {}) {
+        const res = await authFetch(`${API_BASE_URL}/connections/databricks/warehouse/start`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload || {}),
+        });
+        return handleResponse(res);
+    },
+
+    async listDatabricksSchemas(payload = {}) {
+        const res = await authFetch(`${API_BASE_URL}/connections/databricks/schemas`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload || {}),
+        });
+        return handleResponse(res);
+    },
+
+    async checkDatabricksPermissions(payload = {}) {
+        const res = await authFetch(`${API_BASE_URL}/connections/databricks/permissions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload || {}),
+        });
+        return handleResponse(res);
+    },
+
+    async getDatabricksSources(connectionId = '', options = {}) {
+        return _getDatabricksSources(connectionId, options);
     },
 
     // --- DuckDB Snapshot Explorer ---
@@ -2580,6 +2627,37 @@ export const api = {
     },
     async getDatabricksSources(connectionId = '') {
         return _getDatabricksSources(connectionId);
+    },
+
+    async generateDatabricksGenieSpace(projectId, { spaceTitle = null, description = null, deploy = false } = {}) {
+        const pid = String(projectId || '').trim();
+        if (!pid) throw new Error('projectId is required to generate a Genie Space.');
+        const res = await authFetch(`${API_BASE_URL}/ai/databricks/genie-space`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                project_id: pid,
+                space_title: spaceTitle || undefined,
+                description: description || undefined,
+                deploy: Boolean(deploy),
+            }),
+        });
+        return handleResponse(res);
+    },
+
+    async evaluateDatabricksGenieSpace(projectId, spaceId) {
+        const pid = String(projectId || '').trim();
+        const sid = String(spaceId || '').trim();
+        if (!pid || !sid) throw new Error('projectId and spaceId are required to evaluate a Genie Space.');
+        const res = await authFetch(`${API_BASE_URL}/ai/databricks/genie-space/evaluate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                project_id: pid,
+                space_id: sid,
+            }),
+        });
+        return handleResponse(res);
     },
 
     // ── Password Reset ────────────────────────────────────────────────────

@@ -1149,12 +1149,16 @@ class SnowflakeMetricCandidate(BaseModel):
 
 class SnowflakeSimilarityRequest(BaseModel):
     project_id: Optional[str] = None
+    target_type: Optional[str] = "snowflake"
+    catalog: Optional[str] = None
+    schema_name: Optional[str] = None
+    connection_id: Optional[str] = None
     metrics: List[SnowflakeMetricCandidate] = Field(default_factory=list)
 
 
 @review_router.post("/snowflake-similarity", response_model=Dict[str, Any])
 def check_snowflake_metric_similarity(req: SnowflakeSimilarityRequest, request: Request) -> Dict[str, Any]:
-    """Compare incoming model metrics against existing Snowflake Semantic Views and ontology."""
+    """Compare incoming model metrics against existing Snowflake Semantic Views or Databricks Metric Views and ontology."""
     import re
     from difflib import SequenceMatcher
     from semabridge.ai.project_connection import resolve_project_warehouse_config
@@ -1163,71 +1167,229 @@ def check_snowflake_metric_similarity(req: SnowflakeSimilarityRequest, request: 
     _review_access(request, req.project_id)
     uid = getattr(request.state, "user_id", None)
     owner_id = str(uid) if uid else None
+    target_type = str(req.target_type or "snowflake").strip().lower()
 
     existing_items: List[Dict[str, str]] = []
     sf_connected = False
     sf_error: Optional[str] = None
     views_scanned = 0
 
-    try:
-        sf = resolve_project_warehouse_config(req.project_id, "SNOWFLAKE", owner_id=owner_id)
-        if sf is not None:
-            kw = get_snowflake_connect_kwargs(sf)
-            if kw.get("account") and kw.get("user"):
-                import snowflake.connector
+    if target_type == "databricks":
+        try:
+            import json as _json
+            import requests as _requests
+            from semabridge.utils.tls import requests_verify
+            from semabridge.repository.credential_manager import CredentialManager
+            from semabridge.repository.orm.account_models import Account
+            from semabridge.repository.orm.session_factory import db_manager
+            from sqlalchemy import select as _sa_select
 
-                conn = snowflake.connector.connect(**kw)
+            creds: Dict[str, Any] = {}
+            # 1. Try explicit connection_id or user's saved DATABRICKS Account
+            try:
+                with db_manager.get_session() as _sess:
+                    acct = None
+                    if req.connection_id:
+                        acct = _sess.execute(
+                            _sa_select(Account).where(Account.id == req.connection_id)
+                        ).scalars().first()
+                    if acct is None:
+                        stmt = _sa_select(Account).where(Account.connector_type == "DATABRICKS")
+                        if uid is not None:
+                            stmt = stmt.where((Account.owner_id == uid) | (Account.owner_id == None))
+                        acct = _sess.execute(stmt).scalars().first()
+                    if acct is not None and getattr(acct, "credentials_json", None):
+                        raw = acct.credentials_json
+                        parsed = _json.loads(raw) if isinstance(raw, str) else (raw if isinstance(raw, dict) else {})
+                        if isinstance(parsed, dict):
+                            creds.update(parsed)
+            except Exception as _acct_exc:
+                logger.debug("Databricks Account lookup skipped: %s", _acct_exc)
+
+            # 2. Supplement from CredentialManager (Settings > Connections store)
+            if not creds.get("host") or not (creds.get("token") or creds.get("access_token") or creds.get("client_secret")):
                 try:
-                    cur = conn.cursor()
-                    db = getattr(sf, "database", None)
-                    sch = getattr(sf, "schema_name", None)
-                    scope_clause = f' IN SCHEMA "{db}"."{sch}"' if (db and sch) else (f' IN DATABASE "{db}"' if db else "")
-                    cur.execute(f"SHOW SEMANTIC VIEWS{scope_clause}")
-                    cols = [d[0].lower() for d in cur.description] if cur.description else []
-                    rows = [dict(zip(cols, r)) for r in cur.fetchall()]
-                    for vr in rows[:10]:
-                        v_db = vr.get("database_name") or db or ""
-                        v_sch = vr.get("schema_name") or sch or ""
-                        v_name = vr.get("name") or ""
-                        if not v_name:
-                            continue
-                        fqn = ".".join(p for p in (v_db, v_sch, v_name) if p)
-                        views_scanned += 1
-                        try:
-                            cur.execute(f"DESCRIBE SEMANTIC VIEW {fqn}")
-                            dcols = [d[0].lower() for d in cur.description] if cur.description else []
-                            for dr in cur.fetchall():
-                                rec = dict(zip(dcols, dr))
-                                kind = str(rec.get("object_kind") or rec.get("kind") or "").upper()
-                                obj_name = str(rec.get("object_name") or rec.get("name") or "").strip()
-                                prop = str(rec.get("property") or "").upper()
-                                prop_val = str(rec.get("property_value") or "").strip()
-                                if kind in ("METRIC", "METRICS", "") and obj_name:
-                                    existing_items.append({
-                                        "metric": obj_name,
-                                        "view": fqn,
-                                        "expression": prop_val if prop == "EXPRESSION" else "",
-                                        "source": "snowflake",
-                                    })
-                        except Exception:
-                            existing_items.append({"metric": v_name, "view": fqn, "expression": "", "source": "snowflake_view"})
-                    sf_connected = True
-                finally:
-                    conn.close()
-    except Exception as exc:
-        sf_error = str(exc)
+                    cm = CredentialManager()
+                    cm_creds = cm.get_credentials("databricks", user_id=int(uid) if uid else 0) or {}
+                    if not cm_creds and uid:
+                        cm_creds = cm.get_credentials("databricks", user_id=0) or {}
+                    for k, v in cm_creds.items():
+                        if v and not creds.get(k):
+                            creds[k] = v
+                except Exception as _cm_exc:
+                    logger.debug("Databricks CredentialManager lookup skipped: %s", _cm_exc)
 
-    # Supplement with deployed ontology metrics
-    fed = ontology_store.get_federated_ontology()
-    for dname, dom in fed.domains.items():
-        sv = getattr(dom, "semantic_view_name", None) or dname
-        for m in dom.metrics:
-            existing_items.append({
-                "metric": m.name,
-                "view": sv,
-                "expression": m.sql_expression or m.dax_expression or "",
-                "source": "ontology",
-            })
+            # 3. Last fallback: project/env DatabricksConfig
+            if not creds.get("host"):
+                try:
+                    dbx = resolve_project_warehouse_config(req.project_id, "DATABRICKS", owner_id=owner_id)
+                    if dbx is not None:
+                        creds.setdefault("host", getattr(dbx, "host", ""))
+                        tok = getattr(dbx, "token", None)
+                        if tok is not None:
+                            creds.setdefault("token", tok.get_secret_value() if hasattr(tok, "get_secret_value") else str(tok))
+                        creds.setdefault("catalog", getattr(dbx, "catalog", ""))
+                        creds.setdefault("schema_name", getattr(dbx, "schema_name", ""))
+                except Exception as _env_exc:
+                    logger.debug("Databricks env config fallback skipped: %s", _env_exc)
+
+            host = str(creds.get("host") or "").strip().rstrip("/")
+            if host.startswith("https://"):
+                host = host[len("https://"):]
+            elif host.startswith("http://"):
+                host = host[len("http://"):]
+
+            token = str(creds.get("token") or creds.get("access_token") or "").strip()
+            verify = requests_verify()
+
+            # Support OAuth M2M Service Principal token exchange when no PAT/access_token
+            if host and not token and creds.get("client_id") and creds.get("client_secret"):
+                oidc_resp = _requests.post(
+                    f"https://{host}/oidc/v1/token",
+                    data={"grant_type": "client_credentials", "scope": "all-apis"},
+                    auth=(str(creds["client_id"]), str(creds["client_secret"])),
+                    timeout=15,
+                    verify=verify,
+                )
+                if oidc_resp.status_code == 200:
+                    token = str((oidc_resp.json() or {}).get("access_token") or "").strip()
+
+            cat = str(req.catalog or creds.get("catalog") or "").strip()
+            sch = str(req.schema_name or creds.get("schema_name") or creds.get("schema") or "").strip()
+
+            if host and token:
+                from semabridge.ai.databricks_genie_service import create_databricks_rest_client
+                from semabridge.api.services.databricks_connection_service import DatabricksAPIError
+
+                uc_client = create_databricks_rest_client(
+                    host,
+                    token,
+                    timeout=15.0,
+                    verify_override=verify,
+                    requests_mod=_requests,
+                )
+                target_pairs: List[tuple] = []
+                if cat and sch:
+                    target_pairs.append((cat, sch))
+                else:
+                    # Discover catalogs/schemas automatically when not yet specified
+                    cats_to_scan: List[str] = [cat] if cat else []
+                    if not cats_to_scan:
+                        catalog_items, _ = uc_client.list_catalogs()
+                        cats_to_scan = [
+                            c["name"]
+                            for c in catalog_items
+                            if c.get("name") and c["name"] not in ("system", "samples", "hive_metastore")
+                        ][:3]
+                    for c_name in cats_to_scan:
+                        try:
+                            schema_items, _ = uc_client.list_schemas(c_name)
+                        except DatabricksAPIError as _sch_exc:
+                            logger.debug("Databricks schema listing skipped for catalog %s: %s", c_name, _sch_exc)
+                            continue
+                        for s_obj in schema_items:
+                            s_name = s_obj.get("name")
+                            if s_name and s_name != "information_schema":
+                                target_pairs.append((c_name, s_name))
+                                if len(target_pairs) >= 5:
+                                    break
+                        if len(target_pairs) >= 5:
+                            break
+
+                for c_name, s_name in target_pairs:
+                    try:
+                        tables, _ = uc_client.list_tables(c_name, s_name)
+                    except DatabricksAPIError as _tbl_exc:
+                        logger.debug(
+                            "Databricks table listing skipped for %s.%s: %s",
+                            c_name,
+                            s_name,
+                            _tbl_exc,
+                        )
+                        continue
+                    for tbl in tables[:25]:
+                        ttype = str(tbl.get("table_type") or "").upper()
+                        if "VIEW" not in ttype and "METRIC" not in ttype:
+                            continue
+                        fqn = str(tbl.get("full_name") or f"{c_name}.{s_name}.{tbl.get('name', '')}")
+                        views_scanned += 1
+                        for col in tbl.get("columns") or []:
+                            cname = str(col.get("name") or "").strip()
+                            if cname:
+                                existing_items.append({
+                                    "metric": cname,
+                                    "view": fqn,
+                                    "expression": str(col.get("comment") or ""),
+                                    "source": "databricks",
+                                })
+                sf_connected = True
+            else:
+                sf_error = "No Databricks host/token configured in Settings > Connections"
+        except Exception as exc:
+            logger.debug("Databricks similarity scan unavailable: %s", exc)
+            err_txt = str(exc)
+            sf_error = err_txt.split("[type=")[0].strip() if "[type=" in err_txt else err_txt
+    else:
+        try:
+            sf = resolve_project_warehouse_config(req.project_id, "SNOWFLAKE", owner_id=owner_id)
+            if sf is not None:
+                kw = get_snowflake_connect_kwargs(sf)
+                if kw.get("account") and kw.get("user"):
+                    import snowflake.connector
+
+                    conn = snowflake.connector.connect(**kw)
+                    try:
+                        cur = conn.cursor()
+                        db = getattr(sf, "database", None)
+                        sch = getattr(sf, "schema_name", None)
+                        scope_clause = f' IN SCHEMA "{db}"."{sch}"' if (db and sch) else (f' IN DATABASE "{db}"' if db else "")
+                        cur.execute(f"SHOW SEMANTIC VIEWS{scope_clause}")
+                        cols = [d[0].lower() for d in cur.description] if cur.description else []
+                        rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+                        for vr in rows[:10]:
+                            v_db = vr.get("database_name") or db or ""
+                            v_sch = vr.get("schema_name") or sch or ""
+                            v_name = vr.get("name") or ""
+                            if not v_name:
+                                continue
+                            fqn = ".".join(p for p in (v_db, v_sch, v_name) if p)
+                            views_scanned += 1
+                            try:
+                                cur.execute(f"DESCRIBE SEMANTIC VIEW {fqn}")
+                                dcols = [d[0].lower() for d in cur.description] if cur.description else []
+                                for dr in cur.fetchall():
+                                    rec = dict(zip(dcols, dr))
+                                    kind = str(rec.get("object_kind") or rec.get("kind") or "").upper()
+                                    obj_name = str(rec.get("object_name") or rec.get("name") or "").strip()
+                                    prop = str(rec.get("property") or "").upper()
+                                    prop_val = str(rec.get("property_value") or "").strip()
+                                    if kind in ("METRIC", "METRICS", "") and obj_name:
+                                        existing_items.append({
+                                            "metric": obj_name,
+                                            "view": fqn,
+                                            "expression": prop_val if prop == "EXPRESSION" else "",
+                                            "source": "snowflake",
+                                        })
+                            except Exception:
+                                existing_items.append({"metric": v_name, "view": fqn, "expression": "", "source": "snowflake_view"})
+                        sf_connected = True
+                    finally:
+                        conn.close()
+        except Exception as exc:
+            sf_error = str(exc)
+
+    # Supplement with deployed ontology metrics (Snowflake-only: never mix Snowflake semantic views into Databricks matches)
+    if target_type != "databricks":
+        fed = ontology_store.get_federated_ontology()
+        for dname, dom in fed.domains.items():
+            sv = getattr(dom, "semantic_view_name", None) or dname
+            for m in dom.metrics:
+                existing_items.append({
+                    "metric": m.name,
+                    "view": sv,
+                    "expression": m.sql_expression or m.dax_expression or "",
+                    "source": "ontology",
+                })
 
     def _norm(s: str) -> str:
         return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
@@ -1273,6 +1435,9 @@ def check_snowflake_metric_similarity(req: SnowflakeSimilarityRequest, request: 
         })
 
     return {
+        "target_type": target_type,
+        "connected": sf_connected,
+        "target_error": sf_error,
         "snowflake_connected": sf_connected,
         "snowflake_error": sf_error,
         "views_scanned": views_scanned,

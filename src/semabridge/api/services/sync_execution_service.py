@@ -520,16 +520,45 @@ def model_config_fingerprint(config: Dict[str, Any], job: Dict[str, Any], target
 
     source_cfg = config.get("source") if isinstance(config.get("source"), dict) else {}
     target_cfg = _resolve_target_config(config) or {}
+    target_kind = _normalize_connector_type(target_type or target_cfg.get("type"), "snowflake")
+    if target_kind == "databricks":
+        from semabridge.utils.identifiers import databricks_view_name
+
+        dbx_block = config.get("databricks") if isinstance(config.get("databricks"), dict) else {}
+        catalog = str(target_cfg.get("catalog") or dbx_block.get("catalog") or target_cfg.get("database") or "").strip().upper()
+        schema = str(
+            target_cfg.get("schema")
+            or target_cfg.get("schema_name")
+            or dbx_block.get("schema")
+            or dbx_block.get("schema_name")
+            or ""
+        ).strip().upper()
+        view_prefix = str(target_cfg.get("view_prefix") or dbx_block.get("view_prefix") or "mv").strip()
+        raw_view_names = job.get("databricks_view_names") or target_cfg.get("view_names")
+        if isinstance(raw_view_names, (list, tuple)):
+            view_names = sorted(str(v).strip().upper() for v in raw_view_names if str(v or "").strip())
+        else:
+            base = str(job.get("resolved_display_name") or job.get("model_label") or "").strip()
+            view_names = [databricks_view_name(base, view_prefix=view_prefix).upper()] if base else []
+        target_payload: Dict[str, Any] = {
+            "type": target_kind,
+            "catalog": catalog,
+            "schema": schema,
+            "view_prefix": view_prefix.upper(),
+            "view_names": view_names,
+        }
+    else:
+        target_payload = {
+            "type": target_kind,
+            "database": str(target_cfg.get("database") or "").strip().upper(),
+            "schema": str(target_cfg.get("schema") or target_cfg.get("schema_name") or "").strip().upper(),
+        }
     payload = {
         "source_type": _normalize_connector_type(source_cfg.get("type", "fabric"), "fabric"),
         "multi_mode": bool(job.get("multi_mode")),
         "view_base_name": str(job.get("resolved_display_name") or "").upper() or None,
         "physical_namespace": str(job.get("physical_namespace") or "").upper() or None,
-        "target": {
-            "type": _normalize_connector_type(target_type or target_cfg.get("type"), "snowflake"),
-            "database": str(target_cfg.get("database") or "").strip().upper(),
-            "schema": str(target_cfg.get("schema") or target_cfg.get("schema_name") or "").strip().upper(),
-        },
+        "target": target_payload,
     }
     return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
 

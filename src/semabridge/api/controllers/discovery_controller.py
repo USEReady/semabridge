@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 
+from semabridge.api.services.databricks_connection_service import discover_databricks_sources
 from semabridge.api.services.discovery_service import (
     discover_fabric_models,
     discover_fabric_models_by_workspace,
@@ -19,6 +20,7 @@ router.get('/api/discovery/snowflake')(discover_snowflake)
 router.get('/api/discovery/snowflake/warehouses')(discover_snowflake_warehouses)
 router.get('/api/discovery/snowflake/databases')(discover_snowflake_databases)
 router.get('/api/discovery/snowflake/databases/{database}/schemas')(discover_snowflake_schemas)
+router.get('/api/discovery/databricks/sources')(discover_databricks_sources)
 router.get('/api/discovery/repository')(discover_repository)
 router.get('/api/discovery/semantic', response_model=None)(discover_semantic)
 router.post('/api/multi-workspace/discover')(discover_multi_workspace)

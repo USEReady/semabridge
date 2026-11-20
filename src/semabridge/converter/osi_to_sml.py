@@ -88,11 +88,20 @@ class OSIToSMLConverter(BaseConverter):
     Transforms OSI Model into SML Model with semantic enrichment.
     """
 
-    def __init__(self, drop_ledger: Optional["DropLedger"] = None):
+    def __init__(
+        self,
+        drop_ledger: Optional["DropLedger"] = None,
+        target_type: str = "snowflake",
+    ):
         from semabridge.core.drop_ledger import DropLedger
 
+        self._target_type = str(target_type or "snowflake").strip().lower()
         self.dax_translator = DAXTranslator()
-        self.drop_ledger = drop_ledger if drop_ledger is not None else DropLedger()
+        self.drop_ledger = (
+            drop_ledger
+            if drop_ledger is not None
+            else DropLedger(target_type=self._target_type)
+        )
 
     def to_osi(self, sml_model: SMLModel) -> OSIModel:
         """
@@ -371,6 +380,36 @@ class OSIToSMLConverter(BaseConverter):
             # _flag_reachable_dimension_filters_pending_enrichment). Must
             # run after 4a and after Step 3 for the same reasons.
             self._flag_reachable_dimension_filters_pending_enrichment(sml)
+
+            # 5. Databricks target-specific measure normalization and advisory adaptation
+            if self._target_type == "databricks":
+                from semabridge.connectors.databricks_measure_translation import (
+                    DatabricksMeasureTranslator,
+                )
+                from semabridge.core.target_rules import adapt_target_message
+
+                dbx_tr = DatabricksMeasureTranslator()
+                for m in sml.metrics:
+                    if (not m.sync_enabled or not m.sql_expression) and m.expression:
+                        dbx_sql = (
+                            dbx_tr.try_text_dax_to_sql(m.expression)
+                            or dbx_tr.try_simple_dax_to_sql(m.expression)
+                        )
+                        if dbx_sql:
+                            m.sql_expression = dbx_sql
+                            m.sync_enabled = True
+                            m.sync_failure_reason = None
+                    if m.sql_expression:
+                        m.sql_expression = dbx_tr.normalize_dialect_sql(m.sql_expression)
+                    if m.sync_failure_reason:
+                        m.sync_failure_reason = adapt_target_message(
+                            m.sync_failure_reason, "databricks"
+                        )
+                    if getattr(m, "advisory_notes", None):
+                        m.advisory_notes = [
+                            adapt_target_message(n, "databricks")
+                            for n in m.advisory_notes
+                        ]
 
             # 6. Ensure status consistency: any metric with a source expression but no
             # sql_expression must never be left as sync_enabled=True.

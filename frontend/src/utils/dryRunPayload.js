@@ -4,10 +4,12 @@ export function buildDryRunPayload({
   fabricAccountId,
   fabricWorkspaceId,
   snowflakeAccountId,
+  databricksAccountId,
   snowflakeDatabase,
   snowflakeSchema,
   targetDatabase,
   targetSchema,
+  targetWarehouse,
   selectedModelNames,
   pbixPath,
 }) {
@@ -43,6 +45,13 @@ export function buildDryRunPayload({
   if (targetConfig.type === 'fabric') {
     if (fabricAccountId) targetConfig.identity_id = fabricAccountId;
     if (fabricWorkspaceId) targetConfig.workspace_id = fabricWorkspaceId;
+  }
+
+  if (targetConfig.type === 'databricks') {
+    if (databricksAccountId) targetConfig.identity_id = databricksAccountId;
+    if (targetDatabase) targetConfig.catalog = targetDatabase;
+    if (targetSchema) targetConfig.schema = targetSchema;
+    if (targetWarehouse) targetConfig.warehouse_id = targetWarehouse;
   }
 
   return { sourceConfig, targetConfig };

@@ -42,6 +42,8 @@ function connectorDetail(conn) {
   const host = creds.account || creds.host || creds.server_hostname || creds.workspace_url;
   if (host) bits.push(String(host).replace(/^https?:\/\//, ''));
   if (creds.warehouse) bits.push(creds.warehouse);
+  else if (creds.warehouse_id) bits.push(creds.warehouse_id);
+  if (creds.catalog && creds.schema_name) bits.push(`${creds.catalog}.${creds.schema_name}`);
   if (!bits.length && conn.identity_email) bits.push(conn.identity_email);
   return bits.join(' · ') || 'Configured';
 }
@@ -97,7 +99,9 @@ export default function SettingsConnections() {
   const runTest = async (id) => {
     setTests((t) => ({ ...t, [id]: { running: true, result: null } }));
     try {
-      const result = await api.testConnection(id);
+      const result = id === 'databricks'
+        ? await api.testDatabricksConnection(status?.databricks?.account_id ? { connection_id: status.databricks.account_id } : {})
+        : await api.testConnection(id);
       setTests((t) => ({ ...t, [id]: { running: false, result } }));
     } catch (err) {
       setTests((t) => ({ ...t, [id]: { running: false, result: { status: 'failed', message: err?.message || 'Test failed' } } }));
@@ -160,10 +164,42 @@ export default function SettingsConnections() {
                   {test?.result && (
                     <div style={{
                       fontSize: 11.5, marginTop: 6, wordBreak: 'break-word',
-                      color: test.result.status === 'success' ? 'var(--color-success)' : 'var(--color-error)',
+                      color: test.result.status === 'success'
+                        ? 'var(--color-success)'
+                        : test.result.status === 'warning'
+                          ? 'var(--color-warning, #f59e0b)'
+                          : 'var(--color-error)',
                     }}>
-                      {test.result.status === 'success' ? 'Test passed' : 'Test failed'}
+                      {test.result.status === 'success'
+                        ? 'Test passed'
+                        : test.result.status === 'warning'
+                          ? 'Connected with warnings'
+                          : 'Test failed'}
                       {test.result.message ? ` — ${test.result.message}` : ''}
+                      {Array.isArray(test.result.steps) && test.result.steps.length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+                          {test.result.steps.map((st) => (
+                            <span
+                              key={st.id}
+                              style={{
+                                fontSize: 10,
+                                padding: '1px 6px',
+                                borderRadius: 999,
+                                border: '1px solid var(--border-main)',
+                                color: st.status === 'passed'
+                                  ? 'var(--color-success)'
+                                  : st.status === 'warning'
+                                    ? 'var(--color-warning, #f59e0b)'
+                                    : st.status === 'failed'
+                                      ? 'var(--color-error)'
+                                      : 'var(--text-tertiary)',
+                              }}
+                            >
+                              {st.label}: {st.status}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

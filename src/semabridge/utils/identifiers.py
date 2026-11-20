@@ -807,3 +807,139 @@ def inactive_role_alias(rel: Any, relationships: Any, model: Any) -> str:
         return alias
     fk = (getattr(rel, "from_columns", None) or [""])[0]
     return inactive_alias(getattr(rel, "to_dataset", ""), fk) if fk else ""
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# Databricks SQL / Unity Catalog Naming (Single Rule)
+# ───────────────────────────────────────────────────────────────────────────
+
+DATABRICKS_MAX_IDENTIFIER_LENGTH: int = 255
+
+# Databricks SQL reserved keywords (ANSI mode / Spark SQL).
+# Identifiers matching these words are valid in Databricks SQL when quoted
+# with backticks (`...`), which DatabricksPublisher always emits.
+DATABRICKS_RESERVED_WORDS: frozenset = frozenset({
+    "all", "alter", "and", "anti", "any", "array", "as", "at", "authorization",
+    "between", "both", "by", "case", "cast", "check", "collate", "column",
+    "commit", "constraint", "create", "cross", "cube", "current",
+    "current_date", "current_time", "current_timestamp", "current_user",
+    "delete", "describe", "distinct", "div", "drop", "else", "end", "escape",
+    "except", "exists", "external", "extract", "false", "fetch", "filter",
+    "for", "foreign", "from", "full", "function", "global", "grant", "group",
+    "grouping", "having", "in", "inner", "insert", "intersect", "interval",
+    "into", "is", "join", "lateral", "leading", "left", "like", "limit",
+    "local", "minus", "natural", "not", "null", "of", "offset", "on", "only",
+    "or", "order", "outer", "over", "overlaps", "partition", "percent",
+    "position", "primary", "range", "references", "revoke", "right", "rlike",
+    "rollback", "rollup", "row", "rows", "select", "semi", "session_user",
+    "set", "some", "start", "table", "tablesample", "then", "time", "to",
+    "trailing", "true", "union", "unique", "unknown", "update", "user",
+    "using", "values", "view", "when", "where", "window", "with",
+})
+
+
+def is_databricks_reserved_word(name: Any) -> bool:
+    """True when *name* (ignoring surrounding backticks/case) is a Databricks SQL reserved word."""
+    return str(name or "").strip().strip("`").lower() in DATABRICKS_RESERVED_WORDS
+
+
+def quote_databricks_identifier(name: Any) -> str:
+    """Quote an identifier for Databricks SQL with backticks (escaping inner backticks)."""
+    safe = str(name or "").replace("`", "``")
+    return f"`{safe}`"
+
+
+def format_databricks_fqn(catalog: str, schema: str, name: str) -> str:
+    """Format a 3-part Unity Catalog name with backtick quoting."""
+    return (
+        f"{quote_databricks_identifier(catalog)}."
+        f"{quote_databricks_identifier(schema)}."
+        f"{quote_databricks_identifier(name)}"
+    )
+
+
+def databricks_sanitize_identifier(
+    value: Any,
+    *,
+    fallback: str = "unnamed",
+    max_length: int = DATABRICKS_MAX_IDENTIFIER_LENGTH,
+) -> str:
+    """Sanitize an identifier for Databricks Unity Catalog objects/columns.
+
+    Matches ``DatabricksPublisher._sanitize_identifier`` character-for-character
+    for all inputs within Databricks' 255-character identifier limit:
+    - strips surrounding whitespace and backticks
+    - replaces characters outside ``[0-9A-Za-z_]`` with ``_``
+    - collapses runs of ``_`` and strips leading/trailing ``_``
+    - preserves original letter case (Databricks SQL is case-insensitive
+      for resolution and preserves display case in Unity Catalog)
+    - enforces Databricks' 255-character max identifier length.
+    """
+    raw = str(value or "").strip().replace("`", "")
+    safe = re.sub(r"[^0-9A-Za-z_]", "_", raw)
+    safe = re.sub(r"_+", "_", safe).strip("_")
+    result = safe or fallback
+    if max_length > 0 and len(result) > max_length:
+        result = result[:max_length].rstrip("_") or fallback
+    return result
+
+
+def databricks_target_name(
+    name: str,
+    source_path: Any = None,
+    entity_kind: Any = None,
+) -> str:
+    """The Databricks name a field deploys under (single shared rule).
+
+    Matches ``DatabricksPublisher`` exactly so dry-run previews and deployed
+    objects never disagree:
+    - Metrics/measures use ``_normalize_metric_identifier`` rules:
+      ``%`` -> ``_Pct``, ``#`` -> ``Num_``, whitespace/hyphens -> ``_``,
+      then ``databricks_sanitize_identifier(..., fallback="measure")``.
+    - Columns, tables, and views use ``databricks_sanitize_identifier(..., fallback="unnamed")``.
+    """
+    kind = str(entity_kind or "").strip().lower()
+    path = str(source_path or "").strip()
+    is_metric = (
+        kind in ("metric", "measure")
+        or (not kind and path.startswith("metrics."))
+    )
+    if is_metric:
+        raw = str(name or "").strip()
+        if not raw:
+            return "measure"
+        normalized = raw.replace("%", "_Pct").replace("#", "Num_")
+        normalized = re.sub(r"[\s\-]+", "_", normalized)
+        return databricks_sanitize_identifier(normalized, fallback="unnamed") or "measure"
+    return databricks_sanitize_identifier(name, fallback="unnamed")
+
+
+def databricks_view_name(
+    model_name: str,
+    dataset_name: str = "",
+    *,
+    view_prefix: str = "mv",
+    per_fact: bool = False,
+) -> str:
+    """Derive a Databricks metric-view name matching ``DatabricksPublisher``.
+
+    - Standard metric view (``dataset_name`` given, ``per_fact=False``):
+      ``{prefix}_{safe_model}_{safe_ds}``
+    - Per-fact metric view (``dataset_name`` given, ``per_fact=True``):
+      ``{safe_model}_fact_{safe_ds}_metric_view``
+    - Model-level view/table identifier (no ``dataset_name``):
+      ``{safe_model}``
+    """
+    safe_model = databricks_sanitize_identifier(model_name)
+    if dataset_name:
+        safe_ds = databricks_sanitize_identifier(dataset_name)
+        if per_fact:
+            raw = f"{safe_model}_fact_{safe_ds}_metric_view"
+        else:
+            prefix = databricks_sanitize_identifier(view_prefix or "mv")
+            raw = f"{prefix}_{safe_model}_{safe_ds}"
+    else:
+        raw = safe_model
+    if len(raw) > DATABRICKS_MAX_IDENTIFIER_LENGTH:
+        raw = raw[:DATABRICKS_MAX_IDENTIFIER_LENGTH].rstrip("_") or "unnamed"
+    return raw

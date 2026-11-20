@@ -137,6 +137,12 @@ class RunSummary(BaseModel):
         description="Dry-run table binding preview ({tables, error})",
     )
 
+    # Dry run only (Databricks target): metric-view deployment plan preview.
+    databricks_plan: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Dry-run Databricks metric-view plan ({target, views, missing_tables, blocked, warnings, error})",
+    )
+
     # Error details for FAILED/PARTIAL
     errors: List[ErrorDetail] = Field(default_factory=list)
 

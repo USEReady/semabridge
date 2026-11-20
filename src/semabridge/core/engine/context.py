@@ -88,6 +88,10 @@ class RunContext:
     # "bind"|"create", table, matched_by, tie}], "error"} — see
     # SnowflakeSchemaManager.plan_source_tables.
     table_binding_plan: Optional[Dict[str, Any]] = None
+    # Dry run only (Databricks target): {"target": "catalog.schema", "source",
+    # "views": [...], "missing_tables": [...], "blocked": [...], "warnings": [...],
+    # "error": None} — see deployment/databricks_preview.py.
+    databricks_plan: Optional[Dict[str, Any]] = None
     # Dry run: Step 8 builds the target DDL (against the live schema) for
     # the preview but writes no target artifacts.
     dry_run: bool = False

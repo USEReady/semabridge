@@ -135,7 +135,7 @@ function ReconciliationSummary({ reconciliation }) {
 
 const STAGE_CONFIG = {
   ddl_deployment: {
-    label: 'Snowflake Deployment',
+    label: 'Target Deployment',
     color: '#ef4444',
     bg: 'rgba(239, 68, 68, 0.12)',
     border: 'rgba(239, 68, 68, 0.35)',
@@ -534,7 +534,7 @@ function DroppedFieldsSection({ droppedEntities }) {
                         </span>
                       ) : (
                         <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 3, background: 'rgba(239, 68, 68, 0.15)', color: '#ef4444', fontWeight: 700, border: '1px solid rgba(239, 68, 68, 0.3)' }}>
-                          {isSnowflakeReject ? 'Snowflake Rejection' : 'Sync Error'}
+                          {isSnowflakeReject ? 'Target Rejection' : 'Sync Error'}
                         </span>
                       )}
                     </div>

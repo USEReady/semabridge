@@ -667,11 +667,12 @@ def test_generate_sql_statements_creates_single_model_table_with_rows():
         ],
     )
 
-    sql = "\n".join(DatabricksPublisher(cfg).generate_sql_statements(model))
+    behavior = ConnectorBehavior(databricks=DatabricksBehavior(create_metadata_table=True))
+    sql = "\n".join(DatabricksPublisher(cfg, behavior=behavior).generate_sql_statements(model))
 
     assert "SEMABRIDGE_MODEL_SNAPSHOT" not in sql
-    assert "DROP TABLE IF EXISTS `main`.`public`.`annual`" in sql
-    assert "CREATE TABLE `main`.`public`.`annual`" in sql
+    assert "DROP TABLE IF EXISTS" not in sql
+    assert "CREATE OR REPLACE TABLE `main`.`public`.`annual_semabridge_metadata`" in sql
     assert "'Sales', 'region', 'dimension'" in sql
     assert "'Sales', 'revenue', 'measure'" in sql
 
@@ -692,7 +693,8 @@ def test_generate_sql_statements_uses_int_for_calendar_dimensions():
         ],
     )
 
-    sql = "\n".join(DatabricksPublisher(cfg).generate_sql_statements(model))
+    behavior = ConnectorBehavior(databricks=DatabricksBehavior(create_metadata_table=True))
+    sql = "\n".join(DatabricksPublisher(cfg, behavior=behavior).generate_sql_statements(model))
 
     assert "'Year', 'dimension', 'INT'" in sql
     assert "'Quarter', 'dimension', 'INT'" in sql
@@ -716,10 +718,11 @@ def test_generate_sql_statements_sanitizes_invalid_identifiers():
         ],
     )
 
-    sql = "\n".join(DatabricksPublisher(cfg).generate_sql_statements(model))
+    behavior = ConnectorBehavior(databricks=DatabricksBehavior(create_metadata_table=True))
+    sql = "\n".join(DatabricksPublisher(cfg, behavior=behavior).generate_sql_statements(model))
 
-    assert "DROP TABLE IF EXISTS `main`.`public`.`continent`" in sql
-    assert "CREATE TABLE `main`.`public`.`continent`" in sql
+    assert "DROP TABLE IF EXISTS" not in sql
+    assert "CREATE OR REPLACE TABLE `main`.`public`.`continent_semabridge_metadata`" in sql
     assert "'continent_1', 'country_name', 'dimension'" in sql
     assert "'continent_1', 'total_sales', 'measure'" in sql
 
@@ -1552,10 +1555,14 @@ class TestDependencyValidation:
 class TestMetadataTableDeployStatus:
     """Verify deploy_status and deploy_reason in metadata table rows."""
 
+    @staticmethod
+    def _meta_behavior() -> ConnectorBehavior:
+        return ConnectorBehavior(databricks=DatabricksBehavior(create_metadata_table=True))
+
     def test_deployed_measure_has_deployed_status(self):
         """Measures with valid SQL have deploy_status=DEPLOYED in metadata."""
         model = _sales_model(with_source_column=True)
-        publisher = DatabricksPublisher(_cfg())
+        publisher = DatabricksPublisher(_cfg(), behavior=self._meta_behavior())
 
         sql = "\n".join(publisher.generate_sql_statements(model))
 
@@ -1564,7 +1571,7 @@ class TestMetadataTableDeployStatus:
     def test_dax_only_measure_has_not_deployed_status(self):
         """DAX-only measures have deploy_status=NOT_DEPLOYED in metadata."""
         model = _sales_model(dax_only=True)
-        publisher = DatabricksPublisher(_cfg())
+        publisher = DatabricksPublisher(_cfg(), behavior=self._meta_behavior())
 
         sql = "\n".join(publisher.generate_sql_statements(model))
 
@@ -1574,10 +1581,10 @@ class TestMetadataTableDeployStatus:
     def test_metadata_table_has_status_and_translation_columns(self):
         """Metadata table DDL includes deploy_status, deploy_reason, and translation_type."""
         model = _sales_model(with_source_column=True)
-        publisher = DatabricksPublisher(_cfg())
+        publisher = DatabricksPublisher(_cfg(), behavior=self._meta_behavior())
 
         stmts = publisher.generate_sql_statements(model)
-        create_table = next(s for s in stmts if s.startswith("CREATE TABLE"))
+        create_table = next(s for s in stmts if s.startswith("CREATE OR REPLACE TABLE"))
 
         assert "deploy_status STRING" in create_table
         assert "deploy_reason STRING" in create_table
@@ -1586,7 +1593,7 @@ class TestMetadataTableDeployStatus:
     def test_deployed_measure_has_translation_type_in_metadata(self):
         """Deployed measures include translation_type in INSERT row."""
         model = _sales_model(with_source_column=True)
-        publisher = DatabricksPublisher(_cfg())
+        publisher = DatabricksPublisher(_cfg(), behavior=self._meta_behavior())
 
         sql = "\n".join(publisher.generate_sql_statements(model))
 
@@ -1595,20 +1602,24 @@ class TestMetadataTableDeployStatus:
     def test_sql_native_translation_type(self):
         """Measures with sql_expression get SQL_NATIVE translation type."""
         model = _sales_model(with_sql_expression=True)
-        publisher = DatabricksPublisher(_cfg())
+        publisher = DatabricksPublisher(_cfg(), behavior=self._meta_behavior())
 
         sql = "\n".join(publisher.generate_sql_statements(model))
 
         assert TRANSLATION_TYPE_SQL_NATIVE in sql
 
     def test_schema_evolution_uses_drop_create(self):
-        """Schema evolution uses DROP+CREATE instead of CREATE IF NOT EXISTS."""
+        """Schema evolution uses CREATE OR REPLACE TABLE (never DROP TABLE) on _semabridge_metadata."""
         model = _sales_model(with_source_column=True)
-        publisher = DatabricksPublisher(_cfg())
+        publisher = DatabricksPublisher(_cfg(), behavior=self._meta_behavior())
 
         stmts = publisher.generate_sql_statements(model)
 
-        assert any("DROP TABLE IF EXISTS" in s for s in stmts)
+        assert any(
+            s.startswith("CREATE OR REPLACE TABLE") and "_semabridge_metadata" in s
+            for s in stmts
+        )
+        assert not any("DROP TABLE IF EXISTS" in s for s in stmts)
         assert not any("CREATE TABLE IF NOT EXISTS" in s for s in stmts)
 
 
@@ -3411,8 +3422,12 @@ class TestEmptyEdgeCases:
             ],
         )
 
-        statements = DatabricksPublisher(_cfg()).generate_sql_statements(model)
-        insert_statements = [s for s in statements if s.startswith("INSERT INTO `main`.`public`.`batch_model`")]
+        behavior = ConnectorBehavior(databricks=DatabricksBehavior(create_metadata_table=True))
+        statements = DatabricksPublisher(_cfg(), behavior=behavior).generate_sql_statements(model)
+        insert_statements = [
+            s for s in statements
+            if s.startswith("INSERT INTO `main`.`public`.`batch_model_semabridge_metadata`")
+        ]
 
         # One batched INSERT for all rows
         assert len(insert_statements) == 1
@@ -4269,8 +4284,7 @@ class TestMetricViewGeneration:
                 with patch.object(publisher, "execute_statements", side_effect=_mock_execute):
                     publisher.publish(model)
 
-        assert any("CREATE TABLE IF NOT EXISTS `main`.`public`.`device_inventory`" in sql for sql in executed_sql)
-        assert any("CREATE TABLE IF NOT EXISTS `main`.`public`.`device_date`" in sql for sql in executed_sql)
+        assert not any("CREATE TABLE IF NOT EXISTS" in sql for sql in executed_sql)
         assert any("WITH METRICS LANGUAGE YAML" in sql for sql in executed_sql)
 
     def test_publish_per_model_metric_view_skips_shell_table_preflight(self):
@@ -4338,7 +4352,7 @@ class TestMetricViewGeneration:
         ):
             publisher.publish(model)
 
-        assert any("CREATE TABLE IF NOT EXISTS" in sql for sql in executed_sql)
+        assert not any("CREATE TABLE IF NOT EXISTS" in sql for sql in executed_sql)
         assert any("WITH METRICS LANGUAGE YAML" in sql for sql in executed_sql)
 
     def test_sql_view_fallback_still_works(self):
@@ -4666,8 +4680,7 @@ class TestMetricViewGeneration:
         ):
             publisher.publish(model)
 
-        assert any(sql.startswith("DROP VIEW IF EXISTS") for sql in executed_sql)
-        assert any(sql.startswith("DROP TABLE IF EXISTS") for sql in executed_sql)
+        assert not any(sql.startswith("DROP TABLE IF EXISTS") for sql in executed_sql)
 
     def test_publish_metric_view_unresolved_column_degrades_only_failing_measure(self):
         """UNRESOLVED_COLUMN in metric YAML should remove the failing measure and keep the view."""
@@ -5008,6 +5021,7 @@ class TestPerModelArtifactMode:
                 model_metadata_suffix="metadata",
                 model_metric_view_suffix="metric_view",
                 measure_view_type="sql_view",
+                create_metadata_table=True,
             )
         )
         model = SMLModel(
@@ -5033,12 +5047,12 @@ class TestPerModelArtifactMode:
 
         stmts = publisher.generate_sql_statements(model, view_type_override=VIEW_TYPE_SQL)
 
-        create_tables = [s for s in stmts if s.startswith("CREATE TABLE")]
+        create_tables = [s for s in stmts if s.startswith("CREATE OR REPLACE TABLE")]
         create_views = [s for s in stmts if s.startswith("CREATE OR REPLACE VIEW")]
 
         assert len(create_tables) == 1
         assert len(create_views) == 1
-        assert "`main`.`public`.`SalesModel_metadata`" in create_tables[0]
+        assert "`main`.`public`.`SalesModel_semabridge_metadata`" in create_tables[0]
         assert "`main`.`public`.`SalesModel_metric_view`" in create_views[0]
 
     def test_per_model_mode_includes_dimension_dataset_in_single_metric_view(self):

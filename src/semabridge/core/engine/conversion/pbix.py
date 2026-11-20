@@ -128,7 +128,10 @@ def _convert_pbix_to_sml(self, context: RunContext) -> SMLModel:
     )
 
     # Phase 2: OSI → SML
-    sml_model = OSIToSMLConverter(drop_ledger=context.drop_ledger).from_osi(
+    sml_model = OSIToSMLConverter(
+        drop_ledger=context.drop_ledger,
+        target_type=getattr(context, "target_type", None) or "snowflake",
+    ).from_osi(
         osi_model,
         row_counts=sf.row_counts,
     )

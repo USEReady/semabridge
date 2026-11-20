@@ -119,8 +119,18 @@ def _step3_resolve_auth(self, context: RunContext) -> None:
         else:
             auth_sources.append("ENV")
     elif context.target_type == "databricks":
-        if not config.validate_databricks():
+        databricks_env_ok = config.validate_databricks()
+        tgt_identity_id = str(getattr(getattr(config, "target", None), "identity_id", "") or "").strip()
+        databricks_identity_ok = bool(tgt_identity_id) or bool(getattr(context, "account_id", None))
+        databricks_stored_ok = _has_databricks_stored_auth()
+        if not (databricks_env_ok or databricks_identity_ok or databricks_stored_ok):
             missing.append("Databricks credentials (DATABRICKS_*)")
+        elif databricks_identity_ok:
+            auth_sources.append("DB identity")
+        elif databricks_stored_ok:
+            auth_sources.append("UI token")
+        else:
+            auth_sources.append("ENV")
 
     if missing:
         msg = f"Missing authentication: {', '.join(missing)}"
@@ -132,6 +142,33 @@ def _step3_resolve_auth(self, context: RunContext) -> None:
         self._record_step(3, StepStatus.SUCCESS, f"Authentication resolved from {source_label}")
     else:
         self._record_step(3, StepStatus.SUCCESS, "Authentication resolved")
+
+def _has_databricks_stored_auth() -> bool:
+    """Return True when Databricks credentials exist in CredentialManager or Account table."""
+    try:
+        from semabridge.repository.credential_manager import CredentialManager
+
+        cm = CredentialManager()
+        creds = cm.get_credentials("databricks") or {}
+        if creds.get("host") and (creds.get("token") or creds.get("access_token") or (creds.get("client_id") and creds.get("client_secret"))):
+            return True
+    except Exception as exc:
+        logger.warning("_has_databricks_stored_auth: credential lookup failed: %s", exc)
+    try:
+        from sqlalchemy import select
+        from semabridge.repository.orm.account_models import Account
+        from semabridge.repository.orm.session_factory import db_manager
+
+        with db_manager.get_session() as session:
+            acct = session.execute(
+                select(Account).where(Account.connector_type == "DATABRICKS")
+            ).scalars().first()
+            if acct is not None:
+                return True
+    except Exception as exc:
+        logger.warning("_has_databricks_stored_auth: account lookup failed: %s", exc)
+    return False
+
 
 def _has_fabric_interactive_auth(self) -> bool:
     """Return True when a valid Fabric interactive token exists in credential store."""

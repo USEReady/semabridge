@@ -392,6 +392,10 @@ class ExecutionEngine:
                 from semabridge.core.engine.deployment.snowflake import preview_table_bindings
 
                 context.table_binding_plan = preview_table_bindings(context)
+            elif dry_run and target == "databricks":
+                from semabridge.core.engine.deployment.databricks_preview import preview_databricks_plan
+
+                context.databricks_plan = preview_databricks_plan(context)
 
             # Step 8: Convert to Target Format (Optional). A Snowflake dry
             # run builds the DDL too (read-only, against the live schema) so
@@ -417,25 +421,45 @@ class ExecutionEngine:
                 # against it.
                 if context.sml_snapshot_id:
                     try:
-                        sf_cfg = None
-                        try:
-                            from semabridge.core.engine.deployment.snowflake import target_snowflake_config
-                            sf_cfg = target_snowflake_config(context)
-                        except Exception as cfg_exc:
-                            logger.warning(
-                                "Run %s: could not resolve the Snowflake target config (%s); the deployed-"
-                                "snapshot marker is recorded without target database/schema",
-                                getattr(context, "run_id", None), cfg_exc,
-                            )
-                        t_db = getattr(sf_cfg, "database", None)
-                        t_schema = getattr(sf_cfg, "schema_name", None) or getattr(sf_cfg, "schema", None)
+                        t_db = None
+                        t_schema = None
                         t_vn = getattr(context, "deployed_view_name", None)
-                        if not t_vn and context.sml_model:
-                            from semabridge.utils.name_translator import get_target_deployment_name
-                            t_vn = get_target_deployment_name(
-                                getattr(context.sml_model, "unique_name", None) or getattr(context.sml_model, "label", None) or "model",
-                                "snowflake",
-                            )
+                        if target == "databricks":
+                            try:
+                                from semabridge.core.engine.deployment.databricks_preview import target_databricks_config
+                                dbx_cfg = target_databricks_config(context)
+                                t_db = getattr(dbx_cfg, "catalog", None)
+                                t_schema = getattr(dbx_cfg, "schema_name", None) or getattr(dbx_cfg, "schema", None)
+                            except Exception as cfg_exc:
+                                logger.warning(
+                                    "Run %s: could not resolve the Databricks target config (%s); the deployed-"
+                                    "snapshot marker is recorded without target catalog/schema",
+                                    getattr(context, "run_id", None), cfg_exc,
+                                )
+                            if not t_vn and context.sml_model:
+                                from semabridge.utils.identifiers import databricks_view_name
+                                t_vn = databricks_view_name(
+                                    getattr(context.sml_model, "unique_name", None) or getattr(context.sml_model, "label", None) or "model",
+                                )
+                        else:
+                            sf_cfg = None
+                            try:
+                                from semabridge.core.engine.deployment.snowflake import target_snowflake_config
+                                sf_cfg = target_snowflake_config(context)
+                            except Exception as cfg_exc:
+                                logger.warning(
+                                    "Run %s: could not resolve the Snowflake target config (%s); the deployed-"
+                                    "snapshot marker is recorded without target database/schema",
+                                    getattr(context, "run_id", None), cfg_exc,
+                                )
+                            t_db = getattr(sf_cfg, "database", None)
+                            t_schema = getattr(sf_cfg, "schema_name", None) or getattr(sf_cfg, "schema", None)
+                            if not t_vn and context.sml_model:
+                                from semabridge.utils.name_translator import get_target_deployment_name
+                                t_vn = get_target_deployment_name(
+                                    getattr(context.sml_model, "unique_name", None) or getattr(context.sml_model, "label", None) or "model",
+                                    "snowflake",
+                                )
 
                         try:
                             self.db_manager.mark_snapshot_deployed(

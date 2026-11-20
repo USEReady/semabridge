@@ -141,7 +141,15 @@ def resolve_project_warehouse_config(
 
     connector = connector.upper()
     cfg = reload_settings()
-    base = cfg.snowflake if connector == "SNOWFLAKE" else cfg.databricks
+    base = None
+    if connector == "SNOWFLAKE":
+        base = cfg.snowflake
+    else:
+        try:
+            base = cfg.databricks
+        except Exception as exc:
+            logger.debug("Global env DatabricksConfig unavailable in project_connection: %s", exc)
+            base = None
     meta = _project_meta(project_id) if project_id else {}
 
     for account_id in _candidate_account_ids(meta):
@@ -153,6 +161,35 @@ def resolve_project_warehouse_config(
         built = _build_from_owner(owner_id, connector, base, meta)
         if built is not None:
             return built
+
+    if connector == "DATABRICKS" and base is None:
+        try:
+            from semabridge.core.settings import DatabricksConfig
+            from semabridge.repository.credential_manager import CredentialManager
+            from semabridge.api.services.databricks_connection_service import decrypt_databricks_secret
+
+            cm = CredentialManager()
+            uid_int = int(owner_id) if (owner_id and str(owner_id).isdigit()) else 0
+            creds = cm.get_credentials("databricks", mask_secrets=False, user_id=uid_int) or {}
+            if not creds.get("host") and uid_int != 0:
+                creds = cm.get_credentials("databricks", mask_secrets=False, user_id=0) or {}
+            host = str(creds.get("host") or "").strip()
+            if host:
+                pt = _project_target_fields(meta) if meta else {}
+                base = DatabricksConfig(
+                    host=host,
+                    auth_type=str(creds.get("auth_type") or "pat"),
+                    token=decrypt_databricks_secret(creds.get("token")) or None,
+                    access_token=decrypt_databricks_secret(creds.get("access_token")) or None,
+                    refresh_token=decrypt_databricks_secret(creds.get("refresh_token")) or None,
+                    client_id=str(creds.get("client_id") or "").strip() or None,
+                    client_secret=decrypt_databricks_secret(creds.get("client_secret")) or None,
+                    warehouse_id=str(pt.get("warehouse_id") or pt.get("warehouse") or creds.get("warehouse_id") or "").strip(),
+                    catalog=str(pt.get("catalog") or pt.get("database") or creds.get("catalog") or "main").strip(),
+                    schema_name=str(pt.get("schema") or creds.get("schema_name") or creds.get("schema") or "semabridge").strip(),
+                )
+        except Exception as exc:
+            logger.debug("Databricks CredentialManager fallback failed in project_connection: %s", exc)
 
     if connector == "SNOWFLAKE" and base is not None and meta:
         from semabridge.auth.credential_builder import apply_project_snowflake_target

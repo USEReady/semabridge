@@ -14,6 +14,7 @@ import MultiFileDryRunStatus from './MultiFileDryRunStatus';
 import UpsertChangesView, { OntologyChangesList } from '../UpsertChangesView';
 import PanelBoundary from '../common/PanelBoundary';
 import TableBindingPlan from '../TableBindingPlan';
+import DatabricksPlan from '../DatabricksPlan';
 import { resolveMultiModelReadiness, flattenSectionRows } from '../../utils/multiFileDryRunReadiness';
 
 const hasOntologyChanges = (c) => Boolean(c && typeof c === 'object' && (
@@ -186,6 +187,8 @@ export function StepMappingOptions({
   onMultiSynonymUpdate,
   onRetryMultiFile,
   onRemoveMultiFile,
+  databricksOptions,
+  onDatabricksOptionsChange,
 }) {
   const [autoMappingMode, setAutoMappingMode] = useState(true);
   const [rows, setRows] = useState([]);
@@ -194,6 +197,46 @@ export function StepMappingOptions({
   const [showAllMappings, setShowAllMappings] = useState(false);
   const mappingTableRef = useRef(null);
   const aiToggleInitRef = useRef(false);
+
+  // Databricks Round-2 options (multi-fact deployment strategy & optional materialization).
+  // Controlled when parent passes databricksOptions / onDatabricksOptionsChange;
+  // falls back to local state when rendered standalone.
+  const [localDbxOptions, setLocalDbxOptions] = useState(() => ({
+    multi_fact_mode: databricksOptions?.multi_fact_mode || 'separate_views',
+    selected_fact_tables: Array.isArray(databricksOptions?.selected_fact_tables) ? databricksOptions.selected_fact_tables : [],
+    enable_materialization: Boolean(databricksOptions?.enable_materialization),
+    materialization_schedule: databricksOptions?.materialization_schedule || 'every 1 day',
+  }));
+  const effectiveDbxOptions = useMemo(() => ({
+    multi_fact_mode: 'separate_views',
+    selected_fact_tables: [],
+    enable_materialization: false,
+    materialization_schedule: 'every 1 day',
+    ...(databricksOptions || localDbxOptions),
+  }), [databricksOptions, localDbxOptions]);
+  const updateDbxOptions = useCallback((patch) => {
+    const next = { ...effectiveDbxOptions, ...patch };
+    if (onDatabricksOptionsChange) {
+      onDatabricksOptionsChange(next);
+    } else {
+      setLocalDbxOptions(next);
+    }
+  }, [effectiveDbxOptions, onDatabricksOptionsChange]);
+
+  const isDatabricksTarget = Boolean(
+    String(primaryTargetConnector || '').toLowerCase() === 'databricks' ||
+    (targetConnectors && typeof targetConnectors.has === 'function' && targetConnectors.has('databricks')) ||
+    dryRunData?.databricks_plan
+  );
+  const databricksPlanViews = useMemo(
+    () => (Array.isArray(dryRunData?.databricks_plan?.views) ? dryRunData.databricks_plan.views : []),
+    [dryRunData?.databricks_plan?.views],
+  );
+  const databricksFactNames = useMemo(
+    () => Array.from(new Set(databricksPlanViews.map((v) => String(v?.fact || v?.name || '').trim()).filter(Boolean))),
+    [databricksPlanViews],
+  );
+  const showDatabricksMultiFactBar = isDatabricksTarget && databricksPlanViews.length > 1;
 
   // Multi-model readiness: the job being CREATED (dryRunStatus='success' in
   // the parent) is not the job being DONE. Gate on every model's own
@@ -614,6 +657,109 @@ export function StepMappingOptions({
         </div>
       </div>
 
+      {/* Databricks Round-2 options bar: multi-fact strategy & optional materialization */}
+      {showDatabricksMultiFactBar && (
+        <div style={{ ...card, gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={lbl}>Databricks Metric View Options</span>
+              <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+                {databricksFactNames.length} fact views detected
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-primary)' }}>
+                <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>Multi-fact strategy:</span>
+                <select
+                  value={effectiveDbxOptions.multi_fact_mode || 'separate_views'}
+                  onChange={(e) => {
+                    const nextMode = e.target.value;
+                    const nextSelected =
+                      nextMode === 'selected_facts' && (!effectiveDbxOptions.selected_fact_tables || effectiveDbxOptions.selected_fact_tables.length === 0)
+                        ? databricksFactNames
+                        : effectiveDbxOptions.selected_fact_tables || [];
+                    updateDbxOptions({ multi_fact_mode: nextMode, selected_fact_tables: nextSelected });
+                  }}
+                  style={{
+                    fontSize: 11.5,
+                    padding: '4px 8px',
+                    borderRadius: 6,
+                    border: '1px solid var(--border-main)',
+                    background: 'var(--bg-input, var(--bg-surface))',
+                    color: 'var(--text-primary)',
+                  }}
+                >
+                  <option value="separate_views">Separate view per fact (Recommended)</option>
+                  <option value="primary_fact_only">Primary fact table only</option>
+                  <option value="selected_facts">Selected fact tables</option>
+                </select>
+              </label>
+
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(effectiveDbxOptions.enable_materialization)}
+                  onChange={(e) => updateDbxOptions({ enable_materialization: e.target.checked })}
+                />
+                <span>Materialization</span>
+              </label>
+
+              {effectiveDbxOptions.enable_materialization && (
+                <select
+                  aria-label="Materialization schedule"
+                  value={effectiveDbxOptions.materialization_schedule || 'every 1 day'}
+                  onChange={(e) => updateDbxOptions({ materialization_schedule: e.target.value })}
+                  style={{
+                    fontSize: 11.5,
+                    padding: '4px 8px',
+                    borderRadius: 6,
+                    border: '1px solid var(--border-main)',
+                    background: 'var(--bg-input, var(--bg-surface))',
+                    color: 'var(--text-primary)',
+                  }}
+                >
+                  <option value="every 1 hour">Every 1 hour</option>
+                  <option value="every 1 day">Every 1 day</option>
+                  <option value="every 1 week">Every 1 week</option>
+                </select>
+              )}
+            </div>
+          </div>
+
+          {effectiveDbxOptions.multi_fact_mode === 'selected_facts' && databricksFactNames.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', paddingTop: 4, borderTop: '1px solid var(--border-light)' }}>
+              <span style={{ fontSize: 11, color: 'var(--text-tertiary)', marginRight: 4 }}>Deploy facts:</span>
+              {databricksFactNames.map((factName) => {
+                const selectedList = effectiveDbxOptions.selected_fact_tables || [];
+                const isSelected = selectedList.some((n) => n.toLowerCase() === factName.toLowerCase());
+                return (
+                  <button
+                    key={factName}
+                    type="button"
+                    onClick={() => {
+                      const next = isSelected
+                        ? selectedList.filter((n) => n.toLowerCase() !== factName.toLowerCase())
+                        : [...selectedList, factName];
+                      updateDbxOptions({ selected_fact_tables: next });
+                    }}
+                    style={{
+                      ...smallBtn,
+                      padding: '2px 8px',
+                      fontSize: 11,
+                      borderColor: isSelected ? 'var(--accent-blue)' : 'var(--border-main)',
+                      background: isSelected ? 'color-mix(in srgb, var(--accent-blue) 14%, transparent)' : 'var(--bg-surface)',
+                      color: isSelected ? 'var(--accent-blue)' : 'var(--text-secondary)',
+                    }}
+                  >
+                    {isSelected ? '✓ ' : ''}{factName}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* To decide before continuing */}
       <div style={{ ...card, gap: 0, padding: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px' }}>
@@ -691,6 +837,9 @@ export function StepMappingOptions({
           <PanelBoundary name="Target tables">
             <TableBindingPlan plan={dryRunData?.table_binding_plan} style={{ marginTop: 0, marginBottom: 12 }} />
           </PanelBoundary>
+          <PanelBoundary name="Databricks metric views">
+            <DatabricksPlan plan={dryRunData?.databricks_plan} style={{ marginTop: 0, marginBottom: 12 }} />
+          </PanelBoundary>
           {(dryRunData?.blocking_conflicts?.length > 0 ||
             dryRunData?.ontology_changes?.conflict_resolution?.resolved?.length > 0 ||
             hasOntologyChanges(dryRunData?.ontology_changes)) && (
@@ -720,6 +869,7 @@ export function StepMappingOptions({
               mappings={detectedMappings}
               summary={dryRunData?.summary}
               deployedNamesKnown={Boolean(dryRunData?.deployed_names_known)}
+              targetPlatform={Array.from(targetConnectors || new Set())[0] || (dryRunData?.databricks_plan ? 'databricks' : 'snowflake')}
               relationships={(() => {
                 try {
                   const stored = sessionStorage.getItem('detectedRelationships');

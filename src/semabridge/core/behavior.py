@@ -119,8 +119,12 @@ class CompatibilityBehavior(BaseModel):
 class DatabricksBehavior(BaseModel):
     """Databricks-specific deployment behavior controls."""
     create_metadata_table: bool = Field(
-        default=True,
-        description="Create Semabridge metadata Delta table (set false for metric-view-only deployment)"
+        default=False,
+        description="Create Semabridge metadata Delta table (_semabridge_metadata); disabled by default for metric-view-only deployment"
+    )
+    create_schema_if_not_exists: bool = Field(
+        default=False,
+        description="Allow CREATE SCHEMA IF NOT EXISTS for the configured target schema (default false: target schema must already exist)"
     )
     create_measure_views: bool = Field(
         default=True,
@@ -238,6 +242,14 @@ class DatabricksBehavior(BaseModel):
             "models to SQL view generation. Keep disabled to enforce metric-view-first deployment."
         ),
     )
+    allow_sql_view_fallback: bool = Field(
+        default=False,
+        description=(
+            "When true, allow publish-time downgrade to plain SQL views if native "
+            "metric-view deployment fails. Default false so metric view failures are "
+            "reported clearly instead of silently downgrading."
+        ),
+    )
     allow_sql_fallback_on_metric_view_failure: bool = Field(
         default=False,
         description=(
@@ -352,8 +364,9 @@ class DatabricksBehavior(BaseModel):
         description=(
             "Action when source table doesn't exist: "
             "'plan' (generate SQL, save to output/, warn), "
-            "'skip' (silently skip view creation), "
-            "'fail' (raise error, halt deployment)"
+            "'skip' (skip view creation), "
+            "'fail' (raise error, halt deployment), "
+            "'stub' (deploy Metric View with inline SQL SELECT CAST(NULL AS ...) WHERE 1=0 source — zero CREATE TABLE statements)"
         ),
     )
     grant_select_to_groups: list[str] = Field(
@@ -377,6 +390,46 @@ class DatabricksBehavior(BaseModel):
         description=(
             "List of model names to exclude from semantic router processing, even when "
             "semantic_router_enabled is true. Useful for testing transitions. Example: ['OldModel', 'LegacyDatamart']"
+        ),
+    )
+    enable_materialization: bool = Field(
+        default=False,
+        description=(
+            "Emit a native Unity Catalog Metric View 'materialization' section in the "
+            "generated YAML. Off by default."
+        ),
+    )
+    materialization_schedule: str = Field(
+        default="every 1 day",
+        description="Refresh schedule for metric view materialization (e.g. 'every 1 day', 'every 1 hour').",
+    )
+    materialization_mode: str = Field(
+        default="relaxed",
+        description="Materialization mode for Unity Catalog Metric Views (e.g. 'relaxed').",
+    )
+    multi_fact_mode: Literal["separate_views", "primary_fact_only", "selected_facts"] = Field(
+        default="separate_views",
+        description=(
+            "Deployment strategy for models with multiple fact tables: "
+            "'separate_views' (one metric view per fact dataset, default), "
+            "'primary_fact_only' (deploy only the top-ranked primary fact dataset), or "
+            "'selected_facts' (deploy only fact datasets listed in selected_fact_tables)."
+        ),
+    )
+    selected_fact_tables: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Fact dataset names to deploy when multi_fact_mode='selected_facts' "
+            "(matched case-insensitively)."
+        ),
+    )
+    cleanup_orphan_views_on_copy: bool = Field(
+        default=True,
+        description=(
+            "When sync_mode is 'copy', drop previously deployed SemaBridge-managed "
+            "views (verified via semabridge.managed=true) that are no longer in the "
+            "current deployment plan. Never drops tables or non-SemaBridge views; "
+            "skipped in merge/upsert mode."
         ),
     )
 

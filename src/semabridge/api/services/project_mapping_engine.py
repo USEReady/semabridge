@@ -32,9 +32,12 @@ def _log_mapping_event(project_id: Any, event: Dict[str, Any]) -> None:
     )
 
 from semabridge.utils.identifiers import (
+    DATABRICKS_MAX_IDENTIFIER_LENGTH,
     IdentifierSanitizer,
     SNOWFLAKE_ALIAS_RESERVED_WORDS,
     SNOWFLAKE_RESERVED_WORDS,
+    databricks_sanitize_identifier,
+    databricks_target_name,
     snowflake_target_name,
 )
 from semabridge.core.drop_ledger import DropLedger, DropStage
@@ -480,6 +483,17 @@ def extract_model_entities(
                 "renamed_from": column.get("renamed_from"),
             })
 
+    dbx_translator = None
+    adapt_target_msg_fn = None
+    if normalized_target_connector == "databricks":
+        from semabridge.connectors.databricks_measure_translation import (
+            DatabricksMeasureTranslator,
+        )
+        from semabridge.core.target_rules import adapt_target_message as _adapt_target_msg
+
+        dbx_translator = DatabricksMeasureTranslator()
+        adapt_target_msg_fn = _adapt_target_msg
+
     for metric_index, metric in enumerate(_iter_metrics(model), start=1):
         metric_name = _metric_name(metric) or f"metric_{metric_index}"
         measure_tables = _extract_metric_source_tables(metric, dataset_lookup)
@@ -495,6 +509,18 @@ def extract_model_entities(
             if not m_sync_reason:
                 m_sync_reason = "DAX translation unavailable: no SQL expression produced"
 
+        m_advisory_notes = list(metric.get("advisory_notes") or [])
+        m_validation_notes = list(metric.get("validation_notes") or [])
+        if normalized_target_connector == "databricks" and dbx_translator is not None and adapt_target_msg_fn is not None:
+            if m_sync_reason:
+                m_sync_reason = adapt_target_msg_fn(m_sync_reason, "databricks")
+            if m_target_sql:
+                m_target_sql = dbx_translator.normalize_dialect_sql(str(m_target_sql))
+            if m_advisory_notes:
+                m_advisory_notes = [adapt_target_msg_fn(n, "databricks") for n in m_advisory_notes]
+            if m_validation_notes:
+                m_validation_notes = [adapt_target_msg_fn(n, "databricks") for n in m_validation_notes]
+
         entities.append({
             "entity_kind": "metric",
             "model_name": model_name,
@@ -507,14 +533,14 @@ def extract_model_entities(
             "target_expression": m_target_sql,
             "sync_enabled": m_sync_enabled,
             "sync_failure_reason": m_sync_reason,
-            "advisory_notes": list(metric.get("advisory_notes") or []),
+            "advisory_notes": m_advisory_notes,
             "advisory_categories": list(metric.get("advisory_categories") or []),
             "depends_on_measures": list(metric.get("depends_on_measures") or []),
             "synonyms": list(metric.get("synonyms") or []),
             "synonym_sources": dict(metric.get("synonym_sources") or {}),
             "has_report_alias": bool(metric.get("has_report_alias")),
             "complexity_tier": metric.get("complexity_tier"),
-            "validation_notes": list(metric.get("validation_notes") or []),
+            "validation_notes": m_validation_notes,
             "llm_self_reported_confidence": metric.get("llm_self_reported_confidence"),
             "source_file": metric.get("source_file"),
             # Table the metric is emitted under (SALES."TOTAL"): a column of
@@ -557,11 +583,14 @@ def _default_target_identifier(
 ) -> str:
     """The name a field deploys under. Snowflake columns (dimensions/facts)
     use the semantic-name rules: only real Snowflake reserved words get COL_
-    ('Date' -> DATE). Metrics keep to_alias, which their SQL references use."""
+    ('Date' -> DATE). Metrics keep to_alias, which their SQL references use.
+    Databricks uses ``databricks_target_name`` (the single shared rule)."""
     connector = _normalize_connector_name(target_connector)
     if connector == "snowflake":
         # The one naming rule (utils/identifiers.snowflake_target_name).
         return snowflake_target_name(source_name, entity_kind="column" if _is_column_kind(entity_kind) else "metric")
+    if connector in ("databricks", "databricks_sql", "dbx", "databricks_metric_view"):
+        return databricks_target_name(source_name, entity_kind="column" if _is_column_kind(entity_kind) else "metric")
     return sanitize_identifier(source_name)
 
 
@@ -611,6 +640,23 @@ def _validate_target_name(
                 "validation_code": "UNSUPPORTED_CHARACTERS",
                 "validation_message": "Target name has unsupported characters for Snowflake.",
                 "suggested_target_name": sanitized,
+            }
+
+    if connector in ("databricks", "databricks_sql", "dbx", "databricks_metric_view"):
+        if len(resolved_target) > DATABRICKS_MAX_IDENTIFIER_LENGTH:
+            return {
+                "validation_status": "invalid",
+                "validation_code": "MAX_LENGTH_EXCEEDED",
+                "validation_message": f"Target name exceeds Databricks' {DATABRICKS_MAX_IDENTIFIER_LENGTH}-character limit.",
+                "suggested_target_name": _default_target_identifier(resolved_target, target_connector, entity_kind),
+            }
+        sanitized = databricks_sanitize_identifier(resolved_target)
+        if sanitized != resolved_target:
+            return {
+                "validation_status": "invalid",
+                "validation_code": "UNSUPPORTED_CHARACTERS",
+                "validation_message": "Target name has unsupported characters for Databricks.",
+                "suggested_target_name": _default_target_identifier(resolved_target, target_connector, entity_kind),
             }
 
     return {

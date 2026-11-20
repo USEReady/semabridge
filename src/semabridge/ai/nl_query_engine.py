@@ -95,6 +95,52 @@ class NLQueryEngine:
         return f'"{s}"' if re.search(r"[^A-Za-z0-9_]", s) else s
 
     @staticmethod
+    def _q_databricks_ident(ident: str) -> str:
+        s = str(ident or "").strip().strip("`").strip('"').replace("`", "``")
+        return f"`{s}`"
+
+    @classmethod
+    def _format_databricks_view_name(cls, view_name: str) -> str:
+        raw = str(view_name or "").strip()
+        if not raw:
+            return raw
+        parts: List[str] = []
+        buf: List[str] = []
+        in_quote: Optional[str] = None
+        for ch in raw:
+            if in_quote:
+                if ch == in_quote:
+                    in_quote = None
+                else:
+                    buf.append(ch)
+            elif ch in ('"', "`"):
+                in_quote = ch
+            elif ch == ".":
+                parts.append("".join(buf).strip())
+                buf = []
+            else:
+                buf.append(ch)
+        parts.append("".join(buf).strip())
+        clean_parts = [p for p in parts if p]
+        return ".".join(cls._q_databricks_ident(p) for p in clean_parts)
+
+    @classmethod
+    def _db_dim_ref(cls, concept: Any, attr: Any, lexicon: ProjectLexicon) -> str:
+        """Backtick-quoted dimension column inside a Databricks Unity Catalog Metric View."""
+        c_cf = str(getattr(concept, "name", "") or "").casefold()
+        a_cf = str(getattr(attr, "name", "") or "").casefold()
+        for de in lexicon.dimensions:
+            if de.sv_dim_alias and de.concept.name.casefold() == c_cf and de.attribute.name.casefold() == a_cf:
+                return cls._q_databricks_ident(de.sv_dim_alias[1])
+        from semabridge.utils.identifiers import is_legacy_auto_column_name
+
+        col = getattr(attr, "logical_name", None)
+        if col and is_legacy_auto_column_name(attr.name, col):
+            col = None
+        col = col or attr.name
+        return cls._q_databricks_ident(col)
+
+    @staticmethod
     def _to_logical_id(raw: str) -> str:
         from semabridge.utils.identifiers import IdentifierSanitizer
         return IdentifierSanitizer().to_alias(str(raw or "").strip() or "COL")
@@ -640,7 +686,7 @@ class NLQueryEngine:
         effective_deploy_error = deployment_error or (getattr(target_dom_obj, "deployment_error", None) if target_dom_obj else None)
 
         effective_semantic_view = semantic_view
-        if dialect.upper() == "SNOWFLAKE" and not effective_semantic_view:
+        if dialect.upper() in ("SNOWFLAKE", "DATABRICKS") and not effective_semantic_view:
             if detected_metrics:
                 effective_semantic_view = getattr(detected_metrics[0], "semantic_view_name", None)
             if not effective_semantic_view and target_dom_obj:
@@ -680,7 +726,7 @@ class NLQueryEngine:
         answerable_metrics: List[DomainMetric] = []
         for m in detected_metrics:
             m_sv = effective_semantic_view or (
-                getattr(m, "semantic_view_name", None) if dialect.upper() == "SNOWFLAKE" else None
+                getattr(m, "semantic_view_name", None) if dialect.upper() in ("SNOWFLAKE", "DATABRICKS") else None
             )
             bad_reason = self._metric_invalid_reason(
                 m,
@@ -822,7 +868,9 @@ class NLQueryEngine:
                 warnings.append(f"Filter column '{fp.column_hint}' not found in domain.")
                 continue
             escaped_val = fp.value_text.replace("'", "''")
-            if effective_semantic_view:
+            if effective_semantic_view and dialect.upper() == "DATABRICKS":
+                pred_sql = f"{self._db_dim_ref(f_de.concept, f_de.attribute, lexicon)} = '{escaped_val}'"
+            elif effective_semantic_view:
                 pred_sql = f"{self._sv_dim_ref(f_de.concept, f_de.attribute, lexicon)} = '{escaped_val}'"
             else:
                 pred_sql = f"{self._q_ident(f_de.attribute.name)} = '{escaped_val}'"
@@ -857,7 +905,9 @@ class NLQueryEngine:
                 prompt_lemmas=set(content_lemmas(clean_prompt)),
             )
             if date_c and date_a:
-                if effective_semantic_view:
+                if effective_semantic_view and dialect.upper() == "DATABRICKS":
+                    date_ref = self._db_dim_ref(date_c, date_a, lexicon)
+                elif effective_semantic_view:
                     date_ref = self._sv_dim_ref(date_c, date_a, lexicon)
                 else:
                     date_ref = self._q_ident(date_a.name)
@@ -967,7 +1017,27 @@ class NLQueryEngine:
         group_by_parts: List[str] = []
         first_metric_order_col: Optional[str] = None
 
-        if effective_semantic_view:
+        is_databricks_metric_view = bool(effective_semantic_view and dialect.upper() == "DATABRICKS")
+        use_sf_semantic_view = bool(effective_semantic_view and dialect.upper() != "DATABRICKS")
+
+        if is_databricks_metric_view:
+            for d in dim_names:
+                c_obj, a_obj = dim_to_pair[d]
+                dim_col = self._db_dim_ref(c_obj, a_obj, lexicon)
+                select_parts.append(f"    {dim_col}")
+                if detected_metrics:
+                    group_by_parts.append(dim_col)
+
+            for m in detected_metrics:
+                met_name = getattr(m, "logical_name", None) or m.name
+                q_met = self._q_databricks_ident(met_name)
+                select_parts.append(f"    MEASURE({q_met}) AS {q_met}")
+                if not first_metric_order_col:
+                    first_metric_order_col = q_met
+
+            from_target: Optional[str] = self._format_databricks_view_name(effective_semantic_view)
+            resolved_tables_list = [effective_semantic_view]
+        elif use_sf_semantic_view:
             sv_metrics: List[str] = []
             sv_dims: List[str] = []
             for m in detected_metrics:
@@ -995,7 +1065,7 @@ class NLQueryEngine:
                 sv_clauses.append(f"WHERE {' AND '.join(filters)}")
 
             select_parts = ["    *"]
-            from_target: Optional[str] = "SEMANTIC_VIEW(" + " ".join(sv_clauses) + ")"
+            from_target = "SEMANTIC_VIEW(" + " ".join(sv_clauses) + ")"
         else:
             if is_distinct_dim_query:
                 primary_dim = dim_names[0]
@@ -1053,9 +1123,9 @@ class NLQueryEngine:
             sql_lines.append(f"FROM {from_target}")
         for j in join_clauses:
             sql_lines.append(j)
-        if not effective_semantic_view and filters:
+        if not use_sf_semantic_view and filters:
             sql_lines.append(f"WHERE {' AND '.join(filters)}")
-        if not effective_semantic_view and group_by_parts:
+        if not use_sf_semantic_view and group_by_parts:
             sql_lines.append(f"GROUP BY {', '.join(group_by_parts)}")
         order_col = first_metric_order_col or "1"
         sql_lines.append(f"ORDER BY {order_col} DESC")
@@ -1067,6 +1137,10 @@ class NLQueryEngine:
 
         confidence = min(0.95, 0.55 + (0.35 if dim_names else 0.15) - (0.10 if warnings else 0.0))
         explanation_parts = []
+        if is_databricks_metric_view:
+            explanation_parts.append(f"[Databricks AI/BI Metric View] Queried {effective_semantic_view}")
+        elif dialect.upper() == "DATABRICKS":
+            explanation_parts.append("[Databricks AI/BI]")
         if detected_metrics:
             explanation_parts.append(f"Calculated metrics: {', '.join(m.name for m in detected_metrics)}")
         if derived_from_metrics:

@@ -11,7 +11,7 @@ from typing import Dict, Literal
 
 from fastapi import APIRouter, Query
 
-from semabridge.utils.identifiers import snowflake_target_name
+from semabridge.utils.identifiers import databricks_target_name, snowflake_target_name
 
 router = APIRouter(prefix="/api/naming", tags=["naming"])
 
@@ -20,8 +20,15 @@ router = APIRouter(prefix="/api/naming", tags=["naming"])
 def preview_name(
     name: str = Query(..., min_length=1, max_length=1024),
     kind: Literal["column", "metric"] = Query("column"),
-    target: Literal["snowflake"] = Query("snowflake"),
+    target: Literal["snowflake", "databricks"] = Query("snowflake"),
 ) -> Dict[str, str]:
-    """Deployed Snowflake name for *name*: columns (dimensions / facts) use the
-    semantic-alias rule ('Date' -> DATE), metrics use to_alias ('Date' -> COL_DATE)."""
+    """Deployed target name for *name* using the single shared naming rule.
+
+    - ``target="snowflake"``: columns (dimensions / facts) use the semantic-alias
+      rule ('Date' -> DATE), metrics use to_alias ('Date' -> COL_DATE).
+    - ``target="databricks"``: matches DatabricksPublisher's identifier rules
+      ('Sales %' -> 'Sales' for columns, 'Sales_Pct' for metrics).
+    """
+    if target == "databricks":
+        return {"name": databricks_target_name(name, entity_kind=kind)}
     return {"name": snowflake_target_name(name, entity_kind=kind)}

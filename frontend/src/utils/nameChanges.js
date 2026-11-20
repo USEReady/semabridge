@@ -19,32 +19,41 @@ export function plainSnowflakeName(source) {
   return String(source || '').trim().toUpperCase().replace(/\s+/g, '_');
 }
 
-function namingRuleDetail(source, target) {
+function targetDisplayLabel(targetPlatform = 'snowflake') {
+  return String(targetPlatform || 'snowflake').toLowerCase() === 'databricks' ? 'Databricks' : 'Snowflake';
+}
+
+function namingRuleDetail(source, target, targetPlatform = 'snowflake') {
+  const label = targetDisplayLabel(targetPlatform);
   const replaced = SYMBOL_WORDS
     .filter(([symbol, word]) => source.includes(symbol) && target.includes(word))
     .map(([symbol, word]) => `"${symbol}" became ${word}`);
   if (/^\d/.test(source.trim()) && /^_\d/.test(target)) replaced.push('a leading digit got a "_" prefix');
-  if (/^COL_/.test(target) && !/^COL_/i.test(plainSnowflakeName(source))) replaced.push(`${target.slice(4)} is a Snowflake reserved word, so it got the COL_ prefix`);
-  if (replaced.length) return `Snowflake naming rules: ${replaced.join(', ')}.`;
-  return 'Snowflake naming rules: characters Snowflake does not allow in names were replaced.';
+  if (/^COL_/.test(target) && !/^COL_/i.test(plainSnowflakeName(source))) replaced.push(`${target.slice(4)} is a ${label} reserved word, so it got the COL_ prefix`);
+  if (replaced.length) return `${label} naming rules: ${replaced.join(', ')}.`;
+  return `${label} naming rules: characters ${label} does not allow in names were replaced.`;
 }
 
 /**
- * changeReason(row) -> { kind, label, detail } or null when the name is not
+ * changeReason(row, targetPlatform) -> { kind, label, detail } or null when the name is not
  * changed (or the row is an open collision, which the table already shows).
  *   kind: 'renamed_in_snowflake' | 'renamed_by_you' | 'clash_resolved' | 'naming_rules'
  * 'renamed_in_snowflake': the backend found the column deployed under another
  * name last time (row.deployed_name_change, e.g. COL_DATE -> DATE).
  */
-export function changeReason(row) {
+export function changeReason(row, targetPlatform = 'snowflake') {
   if (!row || row.collision_detected || String(row.status || '').toLowerCase() === 'collision') return null;
+  const label = targetDisplayLabel(targetPlatform);
+  const isDatabricks = label === 'Databricks';
   const deployed = row.deployed_name_change;
   if (deployed && deployed.from && deployed.to && String(deployed.from).toUpperCase() !== String(deployed.to).toUpperCase()) {
     return {
       kind: 'renamed_in_snowflake',
-      label: 'Renamed in Snowflake',
+      label: `Renamed in ${label}`,
       detail: `Deployed as ${deployed.from} today; the next sync deploys it as ${deployed.to}. `
-        + `Queries, reports, dashboards or Cortex verified queries that use ${deployed.from} must be updated.`,
+        + (isDatabricks
+          ? `Queries, reports, dashboards or Genie spaces that use ${deployed.from} must be updated.`
+          : `Queries, reports, dashboards or Cortex verified queries that use ${deployed.from} must be updated.`),
     };
   }
   const source = String(row.source_field || row.source_name || '').trim();
@@ -58,23 +67,24 @@ export function changeReason(row) {
       return {
         kind: 'clash_resolved',
         label: 'Clash resolved',
-        detail: `"${row.renamed_from}" clashed with another column of the same table in Snowflake; you chose ${target}.`,
+        detail: `"${row.renamed_from}" clashed with another column of the same table in ${label}; you chose ${target}.`,
       };
     }
     return { kind: 'renamed_by_you', label: 'Renamed', detail: `You (or Resolve All) set this name to ${target}.` };
   }
-  return { kind: 'naming_rules', label: 'Naming rules', detail: namingRuleDetail(sourceName, target) };
+  return { kind: 'naming_rules', label: 'Naming rules', detail: namingRuleDetail(sourceName, target, targetPlatform) };
 }
 
 /**
  * Project-level note when the last deployed names are unknown (the backend
  * could not read the last deploy: deployedNamesKnown false): columns that
  * would have deployed as COL_X under the old rule ('Date' -> COL_DATE) now
- * deploy as X. Returns '' when there are none or the rows are already
- * marked individually.
+ * deploy as X. Returns '' when there are none, for non-Snowflake targets, or
+ * when the rows are already marked individually.
  */
-export function legacyNamingNote(rows, deployedNamesKnown = false) {
+export function legacyNamingNote(rows, deployedNamesKnown = false, targetPlatform = 'snowflake') {
   if (deployedNamesKnown) return '';
+  if (String(targetPlatform || 'snowflake').toLowerCase() === 'databricks') return '';
   const names = [];
   (Array.isArray(rows) ? rows : []).forEach((row) => {
     const kind = String(row?.field_type || row?.entity_kind || '').toLowerCase();
@@ -96,9 +106,9 @@ export function legacyNamingNote(rows, deployedNamesKnown = false) {
 }
 
 /** Rows whose deployed name differs from the source, with their reason. */
-export function collectNameChanges(rows) {
+export function collectNameChanges(rows, targetPlatform = 'snowflake') {
   return (Array.isArray(rows) ? rows : [])
-    .map((row) => ({ row, reason: changeReason(row) }))
+    .map((row) => ({ row, reason: changeReason(row, targetPlatform) }))
     .filter((entry) => entry.reason);
 }
 
@@ -106,14 +116,18 @@ export function collectNameChanges(rows) {
  * The note shown whenever a name is changed: what the rename does and does
  * not change, so nothing downstream breaks.
  */
-export function renameImpactNote(row, newName) {
+export function renameImpactNote(row, newName, targetPlatform = 'snowflake') {
   const oldName = String(row?.target_field || row?.target_name || '').trim();
   const next = String(newName || '').trim();
   if (!next || next.toUpperCase() === oldName.toUpperCase()) return '';
+  const isDatabricks = String(targetPlatform || 'snowflake').toLowerCase() === 'databricks';
   const isMeasure = ['measure', 'metric'].includes(String(row?.field_type || row?.entity_kind || '').toLowerCase());
   if (isMeasure) {
-    return `Renames the metric in the semantic view from ${oldName || 'its current name'} to ${next.toUpperCase()}. `
-      + 'Update any reports, dashboards, saved queries or Cortex verified queries that use the old name.';
+    return isDatabricks
+      ? `Renames the measure in the Databricks metric view from ${oldName || 'its current name'} to ${next}. `
+        + 'Update any reports, dashboards, saved queries or Genie spaces that use the old name.'
+      : `Renames the metric in the semantic view from ${oldName || 'its current name'} to ${next.toUpperCase()}. `
+        + 'Update any reports, dashboards, saved queries or Cortex verified queries that use the old name.';
   }
   const table = String(row?.source_table_name || row?.parent_table || '').trim();
   // The physical column SemaBridge reads (backend sanitize_column): 'Date' -> COL_DATE.

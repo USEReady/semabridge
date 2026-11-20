@@ -896,7 +896,7 @@ function ConnectionManager({ type, title, subtitle, icon: Icon, color, FormCompo
    ─────────────────────────────────────────────── */
 
 function DatabricksAccountForm({ initialTag, status, onSave, onCancel }) {
-    const [authType, setAuthType] = useState('interactive'); // 'interactive' | 'service_principal' | 'pat'
+    const [authType, setAuthType] = useState('pat'); // 'pat' | 'service_principal' | 'interactive'
     const [authStatus, setAuthStatus] = useState(null);
     const [loginPhase, setLoginPhase] = useState('idle'); // idle | requesting | polling | success | failed
     const [error, setError] = useState(null);
@@ -910,22 +910,41 @@ function DatabricksAccountForm({ initialTag, status, onSave, onCancel }) {
     const [catalog, setCatalog] = useState('');
     const [schemaName, setSchemaName] = useState('');
     const [configSaving, setConfigSaving] = useState(false);
+
+    // Structured test connection & warehouse start state
     const [testing, setTesting] = useState(false);
     const [testResult, setTestResult] = useState(null);
+    const [startingWarehouse, setStartingWarehouse] = useState(false);
+    const [warehouseStartMsg, setWarehouseStartMsg] = useState('');
 
-    // Dynamic Extra Configs
+    // Dropdown metadata populated by Test Connection
+    const [availableCatalogs, setAvailableCatalogs] = useState([]);
+    const [schemasByCatalog, setSchemasByCatalog] = useState({});
+    const [schemasLoading, setSchemasLoading] = useState(false);
+
+    // Permissions check state
+    const [checkingPerms, setCheckingPerms] = useState(false);
+    const [permResult, setPermResult] = useState(null);
+    const [permError, setPermError] = useState(null);
+    const [copiedGrants, setCopiedGrants] = useState(false);
+
+    // Auth-specific fields
     const [clientId, setClientId] = useState('');
     const [clientSecret, setClientSecret] = useState('');
     const [patToken, setPatToken] = useState('');
 
+    const isMaskedValue = (v) => {
+        const s = String(v || '').trim();
+        return !s || s === '••••••••' || s === '********';
+    };
+
     useEffect(() => {
-        // Populate fields from existing credentials
         if (status?.credentials) {
             setHostInput(status.credentials.host || '');
             setWarehouseId(status.credentials.warehouse_id || '');
             setCatalog(status.credentials.catalog || '');
             setSchemaName(status.credentials.schema_name || '');
-            
+
             if (status.credentials.auth_type) {
                 setAuthType(status.credentials.auth_type);
             }
@@ -938,8 +957,7 @@ function DatabricksAccountForm({ initialTag, status, onSave, onCancel }) {
             if (status.credentials.token) {
                 setPatToken(status.credentials.token);
             }
-            
-            // If already fully configured under a non-interactive mode, set dummy logged in status to render config pane
+
             if (status.configured && (status.credentials.auth_type === 'service_principal' || status.credentials.auth_type === 'pat')) {
                 setAuthStatus({
                     auth_method: status.credentials.auth_type,
@@ -950,6 +968,29 @@ function DatabricksAccountForm({ initialTag, status, onSave, onCancel }) {
         }
         return () => { if (pollTimer.current) clearTimeout(pollTimer.current); };
     }, [status]);
+
+    const buildDraftPayload = (overrides = {}) => {
+        const payload = {
+            host: hostInput.trim(),
+            warehouse_id: warehouseId.trim(),
+            catalog: (overrides.catalog !== undefined ? overrides.catalog : catalog).trim(),
+            schema_name: (overrides.schema_name !== undefined ? overrides.schema_name : schemaName).trim(),
+            auth_type: authType,
+        };
+        if (status?.account_id) {
+            payload.connection_id = status.account_id;
+        }
+        if (authType === 'interactive' || authType === 'service_principal') {
+            if (clientId.trim()) payload.client_id = clientId.trim();
+        }
+        if (authType === 'service_principal' && !isMaskedValue(clientSecret)) {
+            payload.client_secret = clientSecret.trim();
+        }
+        if (authType === 'pat' && !isMaskedValue(patToken)) {
+            payload.token = patToken.trim();
+        }
+        return payload;
+    };
 
     const handleLogin = async () => {
         setError(null);
@@ -964,9 +1005,9 @@ function DatabricksAccountForm({ initialTag, status, onSave, onCancel }) {
             const redirectUri = window.location.origin + "/api/connections/databricks/callback";
             const result = await api.databricksLogin(hostInput, clientId, redirectUri);
             flowIdRef.current = result.flow_id;
-            
+
             setLoginPhase('polling');
-            addLog('info', 'Databricks Auth', `Opening Databricks login page...`);
+            addLog('info', 'Databricks Auth', 'Opening Databricks login page...');
 
             window.open(result.verification_uri, '_blank', 'noopener,noreferrer');
             startPolling();
@@ -1017,36 +1058,136 @@ function DatabricksAccountForm({ initialTag, status, onSave, onCancel }) {
             setAuthStatus(null);
             setLoginPhase('idle');
             setTestResult(null);
+            setPermResult(null);
             addLog('info', 'Databricks Auth', 'Logged out');
         } catch (err) {
             addLog('error', 'Databricks Auth', err.message);
         }
     };
 
+    const handleTest = async () => {
+        setTesting(true);
+        setTestResult(null);
+        setWarehouseStartMsg('');
+        setError(null);
+        try {
+            const result = await api.testDatabricksConnection(buildDraftPayload());
+            setTestResult(result);
+
+            const nextCatalogs = Array.isArray(result?.catalogs) ? result.catalogs : [];
+            setAvailableCatalogs(nextCatalogs);
+            const nextSchemasByCat = result?.schemas_by_catalog && typeof result.schemas_by_catalog === 'object'
+                ? result.schemas_by_catalog
+                : {};
+            setSchemasByCatalog(nextSchemasByCat);
+
+            let chosenCatalog = catalog;
+            if ((!chosenCatalog || !nextCatalogs.includes(chosenCatalog)) && nextCatalogs.length > 0) {
+                chosenCatalog = nextCatalogs[0];
+                setCatalog(chosenCatalog);
+            }
+            const catSchemas = nextSchemasByCat[chosenCatalog] || result?.schemas || [];
+            if ((!schemaName || !catSchemas.includes(schemaName)) && catSchemas.length > 0) {
+                setSchemaName(catSchemas[0]);
+            }
+
+            addLog(result.status === 'failed' ? 'warning' : 'info', 'Connections', result.message || 'Databricks test complete');
+        } catch (err) {
+            setTestResult({ status: 'failed', message: err.message || 'Test failed', steps: [] });
+        } finally {
+            setTesting(false);
+        }
+    };
+
+    const handleStartWarehouse = async () => {
+        setStartingWarehouse(true);
+        setWarehouseStartMsg('');
+        try {
+            const res = await api.startDatabricksWarehouse(buildDraftPayload());
+            setWarehouseStartMsg(res?.message || 'Start request sent. Re-test in a moment.');
+            setTestResult((prev) => prev ? ({
+                ...prev,
+                warehouse: { ...(prev.warehouse || {}), state: 'STARTING', can_start: false },
+            }) : prev);
+            addLog('info', 'Connections', res?.message || 'Databricks SQL warehouse starting');
+        } catch (err) {
+            setWarehouseStartMsg(err?.message || 'Failed to start SQL warehouse');
+        } finally {
+            setStartingWarehouse(false);
+        }
+    };
+
+    const handleCatalogChange = async (nextCatalog) => {
+        setCatalog(nextCatalog);
+        setPermResult(null);
+        if (!nextCatalog) {
+            setSchemaName('');
+            return;
+        }
+        if (Array.isArray(schemasByCatalog[nextCatalog])) {
+            const list = schemasByCatalog[nextCatalog];
+            setSchemaName(list.includes(schemaName) ? schemaName : (list[0] || ''));
+            return;
+        }
+        setSchemasLoading(true);
+        try {
+            const res = await api.listDatabricksSchemas(buildDraftPayload({ catalog: nextCatalog }));
+            const list = Array.isArray(res?.schemas) ? res.schemas : [];
+            setSchemasByCatalog((prev) => ({ ...prev, [nextCatalog]: list }));
+            setSchemaName(list[0] || '');
+        } catch (err) {
+            addLog('warning', 'Connections', `Could not load schemas for ${nextCatalog}: ${err.message}`);
+            setSchemaName('');
+        } finally {
+            setSchemasLoading(false);
+        }
+    };
+
+    const handleCheckPermissions = async () => {
+        setCheckingPerms(true);
+        setPermResult(null);
+        setPermError(null);
+        setCopiedGrants(false);
+        try {
+            const result = await api.checkDatabricksPermissions(buildDraftPayload());
+            setPermResult(result);
+        } catch (err) {
+            setPermError(err?.message || 'Permission check failed');
+        } finally {
+            setCheckingPerms(false);
+        }
+    };
+
+    const handleCopyGrants = () => {
+        if (!permResult?.recommendation_text) return;
+        navigator.clipboard?.writeText(permResult.recommendation_text);
+        setCopiedGrants(true);
+        setTimeout(() => setCopiedGrants(false), 2000);
+    };
+
     const handleSaveConfig = async () => {
         setConfigSaving(true);
-        setTestResult(null);
         setError(null);
         try {
             const configData = {
-                host: hostInput,
-                warehouse_id: warehouseId,
-                catalog,
-                schema_name: schemaName,
+                host: hostInput.trim(),
+                warehouse_id: warehouseId.trim(),
+                catalog: catalog.trim(),
+                schema_name: schemaName.trim(),
                 auth_type: authType,
                 account_tag: initialTag,
             };
-            
+
             if (authType === 'interactive' || authType === 'service_principal') {
-                configData.client_id = clientId;
+                configData.client_id = clientId.trim();
             }
             if (authType === 'service_principal') {
-                if (clientSecret && clientSecret !== '********') {
-                    configData.client_secret = clientSecret;
+                if (!isMaskedValue(clientSecret)) {
+                    configData.client_secret = clientSecret.trim();
                 }
             } else if (authType === 'pat') {
-                if (patToken && patToken !== '********') {
-                    configData.token = patToken;
+                if (!isMaskedValue(patToken)) {
+                    configData.token = patToken.trim();
                 }
             }
 
@@ -1055,129 +1196,118 @@ function DatabricksAccountForm({ initialTag, status, onSave, onCancel }) {
             await api.createAccount({
                 connector_type: 'DATABRICKS',
                 tag: initialTag,
-                identity_email: authStatus?.username || (authType === 'service_principal' ? 'Service Principal' : hostInput) || 'N/A',
+                identity_email: testResult?.principal || authStatus?.username || (authType === 'service_principal' ? clientId || 'Service Principal' : hostInput) || 'N/A',
                 credentials: configData,
             }).catch(e => console.log('Vault sync skipped', e));
 
             addLog('info', 'Connections', `Databricks config saved for ${initialTag}`);
 
-            // For non-interactive flows, visually switch to "logged in" state to enable Test button
             if (authType !== 'interactive') {
-                 setAuthStatus({
-                     auth_method: authType,
-                     username: authType === 'service_principal' ? 'Service Principal' : 'Personal Access Token',
-                     logged_in: true,
-                     token_valid: true,
-                 });
+                setAuthStatus({
+                    auth_method: authType,
+                    username: testResult?.principal || (authType === 'service_principal' ? 'Service Principal' : 'Personal Access Token'),
+                    logged_in: true,
+                    token_valid: true,
+                });
             }
 
             if (onSave) onSave();
         } catch (err) {
             setError(err.message);
             addLog('error', 'Connections', err.message);
-        } finally { setConfigSaving(false); }
+        } finally {
+            setConfigSaving(false);
+        }
     };
-
-    const handleTest = async () => {
-        setTesting(true);
-        setTestResult(null);
-        try {
-            const result = await api.testConnection('databricks');
-            setTestResult(result);
-            addLog(result.status === 'success' ? 'info' : 'warning', 'Connections', result.message);
-        } catch (err) {
-            setTestResult({ status: 'failed', message: err.message });
-        } finally { setTesting(false); }
-    };
-
 
     const isLoggedIn = authStatus?.logged_in;
-    const handleDelete = async () => {
-        if (!confirm('Remove all stored Databricks credentials?')) return;
-        try {
-            await api.deleteConnection('databricks');
-            // Clear the form's own fields (this form has no formData state).
-            setHostInput(''); setWarehouseId(''); setCatalog(''); setSchemaName('');
-            setClientId(''); setClientSecret(''); setPatToken('');
-            setTestResult(null);
-        } catch (err) { addLog('error', 'Connections', err.message); }
-    };
+    const currentSchemas = schemasByCatalog[catalog] || [];
+    const catalogOptions = availableCatalogs.length > 0
+        ? availableCatalogs
+        : (catalog ? [catalog] : []);
+    const schemaOptions = currentSchemas.length > 0
+        ? currentSchemas
+        : (schemaName ? [schemaName] : []);
 
-    const isConfigured = status?.configured;
+    const stepTone = (st) => {
+        if (st === 'passed') return { bg: 'rgba(52,211,153,0.1)', color: '#34d399', border: 'rgba(52,211,153,0.25)' };
+        if (st === 'warning') return { bg: 'rgba(245,158,11,0.1)', color: '#f59e0b', border: 'rgba(245,158,11,0.25)' };
+        if (st === 'failed') return { bg: 'rgba(239,68,68,0.1)', color: '#ef4444', border: 'rgba(239,68,68,0.25)' };
+        return { bg: 'var(--bg-surface-raised)', color: 'var(--text-tertiary)', border: 'var(--border-main)' };
+    };
 
     return (
         <div className="rounded-xl border overflow-hidden p-4 mt-4"
             style={{ borderColor: 'var(--border-main)', background: 'var(--bg-surface)' }}>
             <div className="flex justify-between items-center mb-4">
-                <h4 className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>Authenticate New Account</h4>
-                <button onClick={onCancel} className="text-xs text-gray-400 hover:text-white"><X size={14}/></button>
+                <h4 className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>Configure Databricks Connection</h4>
+                <button onClick={onCancel} className="text-xs text-gray-400 hover:text-white"><X size={14} /></button>
             </div>
 
             <div className="space-y-4">
                 {/* Auth Mode Picker */}
-                {!isLoggedIn && (
-                    <div className="flex rounded-lg overflow-hidden border"
-                        style={{ borderColor: 'var(--border-main)' }}>
-                        <button
-                            onClick={() => { setAuthType('interactive'); setTestResult(null); }}
-                            className="flex-1 flex items-center justify-center gap-1.5 py-2 text-[11px] font-bold transition-all border-r"
-                            style={{
-                                background: authType === 'interactive' ? 'var(--color-accent)' : 'transparent',
-                                color: authType === 'interactive' ? '#fff' : 'var(--text-tertiary)',
-                                borderColor: 'var(--border-main)',
-                            }}>
-                            <LogIn size={11} /> OAuth (Browser)
-                        </button>
-                        <button
-                            onClick={() => { setAuthType('service_principal'); setTestResult(null); }}
-                            className="flex-1 flex items-center justify-center gap-1.5 py-2 text-[11px] font-bold transition-all border-r"
-                            style={{
-                                background: authType === 'service_principal' ? 'var(--color-accent)' : 'transparent',
-                                color: authType === 'service_principal' ? '#fff' : 'var(--text-tertiary)',
-                                borderColor: 'var(--border-main)',
-                            }}>
-                            <Database size={11} /> Service Principal
-                        </button>
-                        <button
-                            onClick={() => { setAuthType('pat'); setTestResult(null); }}
-                            className="flex-1 flex items-center justify-center gap-1.5 py-2 text-[11px] font-bold transition-all"
-                            style={{
-                                background: authType === 'pat' ? 'var(--color-accent)' : 'transparent',
-                                color: authType === 'pat' ? '#fff' : 'var(--text-tertiary)',
-                            }}>
-                            <Key size={11} /> PAT Token
-                        </button>
-                    </div>
-                )}
+                <div className="flex rounded-lg overflow-hidden border"
+                    style={{ borderColor: 'var(--border-main)' }}>
+                    <button
+                        type="button"
+                        onClick={() => { setAuthType('pat'); setTestResult(null); setPermResult(null); }}
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2 text-[11px] font-bold transition-all border-r"
+                        style={{
+                            background: authType === 'pat' ? 'var(--color-accent)' : 'transparent',
+                            color: authType === 'pat' ? '#fff' : 'var(--text-tertiary)',
+                            borderColor: 'var(--border-main)',
+                        }}>
+                        <Key size={11} /> PAT Token
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => { setAuthType('service_principal'); setTestResult(null); setPermResult(null); }}
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2 text-[11px] font-bold transition-all border-r"
+                        style={{
+                            background: authType === 'service_principal' ? 'var(--color-accent)' : 'transparent',
+                            color: authType === 'service_principal' ? '#fff' : 'var(--text-tertiary)',
+                            borderColor: 'var(--border-main)',
+                        }}>
+                        <Database size={11} /> Service Principal
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => { setAuthType('interactive'); setTestResult(null); setPermResult(null); }}
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2 text-[11px] font-bold transition-all"
+                        style={{
+                            background: authType === 'interactive' ? 'var(--color-accent)' : 'transparent',
+                            color: authType === 'interactive' ? '#fff' : 'var(--text-tertiary)',
+                        }}>
+                        <LogIn size={11} /> Browser Sign-In
+                    </button>
+                </div>
 
                 {/* Account Tag */}
                 <div>
-                   <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Account Tag</label>
-                   <input type="text" readOnly value={initialTag} className="w-full px-3 py-2 rounded-lg text-xs border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-tertiary)' }} />
+                    <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Account Tag</label>
+                    <input type="text" readOnly value={initialTag} className="w-full px-3 py-2 rounded-lg text-xs border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-tertiary)' }} />
                 </div>
 
-                {/* Configuration Fields - Always Visible */}
-                <div className="space-y-3 mt-4">
+                {/* Workspace Host, Auth Credentials, Warehouse */}
+                <div className="space-y-3">
                     <div>
-                        <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Server Hostname <span className="text-red-400">*</span></label>
+                        <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Workspace Host <span className="text-red-400">*</span></label>
                         <input type="text" value={hostInput} onChange={e => setHostInput(e.target.value)}
-                            placeholder="e.g. dbc-123456789.cloud.databricks.com"
-                            disabled={isLoggedIn}
+                            placeholder="e.g. adb-123456789.11.azuredatabricks.net"
                             className="w-full px-3 py-2 rounded-lg text-xs border outline-none"
-                            style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-primary)', opacity: isLoggedIn ? 0.6 : 1 }} />
+                            style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-primary)' }} />
                     </div>
 
                     {(authType === 'interactive' || authType === 'service_principal') && (
                         <div>
                             <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>OAuth Client ID <span className="text-red-400">*</span></label>
                             <input type="text" value={clientId} onChange={e => setClientId(e.target.value)}
-                                placeholder="e.g. from Custom OAuth App / Service Principal"
-                                disabled={isLoggedIn}
+                                placeholder="Service Principal or Custom OAuth App Client ID"
                                 className="w-full px-3 py-2 rounded-lg text-xs border outline-none"
-                                style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-primary)', fontFamily: 'monospace', opacity: isLoggedIn ? 0.6 : 1 }} />
+                                style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-primary)', fontFamily: 'monospace' }} />
                             {authType === 'interactive' && (
-                                <div className="text-[10px] mt-1" style={{color: 'var(--text-tertiary)'}}>
-                                    Requires a Custom OAuth Application configured in Databricks with Redirect URI: <code>{window.location.origin}/api/connections/databricks/callback</code>
+                                <div className="text-[10px] mt-1" style={{ color: 'var(--text-tertiary)' }}>
+                                    Redirect URI: <code>{window.location.origin}/api/connections/databricks/callback</code>
                                 </div>
                             )}
                         </div>
@@ -1187,10 +1317,9 @@ function DatabricksAccountForm({ initialTag, status, onSave, onCancel }) {
                         <div>
                             <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>OAuth Client Secret <span className="text-red-400">*</span></label>
                             <input type="password" value={clientSecret} onChange={e => setClientSecret(e.target.value)}
-                                placeholder="e.g. your service principal secret"
-                                disabled={isLoggedIn}
+                                placeholder="Service Principal secret (stored encrypted)"
                                 className="w-full px-3 py-2 rounded-lg text-xs border outline-none"
-                                style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-primary)', fontFamily: 'monospace', opacity: isLoggedIn ? 0.6 : 1 }} />
+                                style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-primary)', fontFamily: 'monospace' }} />
                         </div>
                     )}
 
@@ -1198,160 +1327,333 @@ function DatabricksAccountForm({ initialTag, status, onSave, onCancel }) {
                         <div>
                             <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Personal Access Token <span className="text-red-400">*</span></label>
                             <input type="password" value={patToken} onChange={e => setPatToken(e.target.value)}
-                                placeholder="dapi..."
-                                disabled={isLoggedIn}
+                                placeholder="dapi... (stored encrypted)"
                                 className="w-full px-3 py-2 rounded-lg text-xs border outline-none"
-                                style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-primary)', fontFamily: 'monospace', opacity: isLoggedIn ? 0.6 : 1 }} />
+                                style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-primary)', fontFamily: 'monospace' }} />
                         </div>
                     )}
 
                     <div>
-                        <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>SQL Warehouse ID</label>
+                        <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                            SQL Warehouse ID <span style={{ color: 'var(--text-tertiary)', fontWeight: 400 }}>(Optional)</span>
+                        </label>
                         <input type="text" value={warehouseId} onChange={e => setWarehouseId(e.target.value)}
-                            placeholder="e.g. abc12345def67890"
+                            placeholder="e.g. abc12345def67890 (optional default; Catalog & Schema are selected per project)"
                             className="w-full px-3 py-2 rounded-lg text-xs border outline-none"
-                            style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-primary)' }} />
+                            style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-primary)', fontFamily: 'monospace' }} />
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
-                        <div>
-                            <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Catalog</label>
-                            <input type="text" value={catalog} onChange={e => setCatalog(e.target.value)}
-                                placeholder="main"
-                                className="w-full px-3 py-2 rounded-lg text-xs border outline-none"
-                                style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-primary)' }} />
-                        </div>
-                        <div>
-                            <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Schema</label>
-                            <input type="text" value={schemaName} onChange={e => setSchemaName(e.target.value)}
-                                placeholder="semabridge"
-                                className="w-full px-3 py-2 rounded-lg text-xs border outline-none"
-                                style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-primary)' }} />
-                        </div>
-                    </div>
-                </div>
 
-                {/* ── Logged In State ── */}
-                {isLoggedIn && (
-                    <div className="space-y-4">
-                        <div className="flex items-center gap-3 p-3 rounded-lg"
-                            style={{ background: 'rgba(52,211,153,0.05)', border: '1px solid rgba(52,211,153,0.15)' }}>
-                            <div className="w-9 h-9 rounded-full flex items-center justify-center"
-                                style={{ background: 'rgba(255,54,33,0.15)' }}>
-                                <User size={16} style={{ color: '#ff3621' }} />
-                            </div>
-                            <div className="flex-1">
-                                <div className="text-xs font-bold" style={{ color: 'var(--text-primary)' }}>
+                    {/* Interactive Sign-In CTA when needed */}
+                    {authType === 'interactive' && !isLoggedIn && loginPhase === 'idle' && (
+                        <button type="button" onClick={handleLogin} disabled={!hostInput || !clientId}
+                            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-xs font-bold transition-all"
+                            style={{ background: 'var(--color-accent)', color: '#fff', opacity: (!hostInput || !clientId) ? 0.5 : 1 }}>
+                            <LogIn size={14} /> Sign in with Databricks
+                        </button>
+                    )}
+
+                    {authType === 'interactive' && loginPhase === 'polling' && (
+                        <div className="flex items-center justify-center gap-2 py-3 px-4 rounded-lg text-xs"
+                            style={{ background: 'rgba(255,54,33,0.06)', border: '1px solid rgba(255,54,33,0.2)', color: 'var(--text-secondary)' }}>
+                            <Loader2 size={14} className="animate-spin" style={{ color: '#ff3621' }} />
+                            Waiting for browser sign-in to complete…
+                        </div>
+                    )}
+
+                    {isLoggedIn && (
+                        <div className="flex items-center gap-3 p-2.5 rounded-lg"
+                            style={{ background: 'rgba(52,211,153,0.05)', border: '1px solid rgba(52,211,153,0.18)' }}>
+                            <User size={14} style={{ color: '#ff3621' }} />
+                            <div className="flex-1 min-w-0">
+                                <div className="text-xs font-bold truncate" style={{ color: 'var(--text-primary)' }}>
                                     {authStatus?.username}
                                 </div>
                                 <div className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
-                                    Databricks · OAuth Active
+                                    Databricks · {authType}
                                 </div>
                             </div>
-                            <button onClick={handleLogout}
-                                className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[10px] font-bold border"
+                            <button type="button" onClick={handleLogout}
+                                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold border"
                                 style={{ borderColor: 'rgba(239,68,68,0.3)', color: '#ef4444' }}>
                                 <LogOut size={10} /> Sign Out
                             </button>
                         </div>
+                    )}
 
-                        {testResult && (
-                            <div className="px-3 py-2 rounded-lg text-xs flex items-center gap-2"
-                                style={{
-                                    background: testResult.status === 'success' ? 'rgba(52,211,153,0.1)' : 'rgba(239,68,68,0.1)',
-                                    color: testResult.status === 'success' ? '#34d399' : '#ef4444',
-                                }}>
-                                {testResult.status === 'success' ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
-                                {testResult.message}
-                            </div>
-                        )}
-
-                        <div className="flex items-center gap-2 pt-2">
-                            <button onClick={handleSaveConfig} disabled={configSaving}
-                                className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold"
-                                style={{ background: 'var(--color-accent)', color: '#fff', opacity: configSaving ? 0.6 : 1 }}>
-                                {configSaving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />} Save Config
-                            </button>
-                            <button onClick={handleTest} disabled={testing || !hostInput || !warehouseId}
-                                className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium border"
-                                style={{ borderColor: 'var(--border-main)', color: 'var(--text-secondary)', opacity: (testing || !hostInput || !warehouseId) ? 0.4 : 1 }}>
-                                {testing ? <Loader2 size={12} className="animate-spin" /> : <Zap size={12} />} Test
-                            </button>
-                        </div>
-                    </div>
-                )}
-
-                {/* ── Sign In Button (idle) ── */}
-                {!isLoggedIn && loginPhase === 'idle' && (
-                    <>
-                        {authType === 'interactive' && (
-                            <button onClick={handleLogin} disabled={!hostInput || !clientId}
-                                className="w-full flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-bold transition-all hover:brightness-110 mt-2"
-                                style={{ background: 'var(--color-accent)', color: '#fff', opacity: (!hostInput || !clientId) ? 0.5 : 1 }}>
-                                <LogIn size={16} />
-                                Sign in with Databricks
-                            </button>
-                        )}
-                        
-                        {(authType === 'service_principal' || authType === 'pat') && (
-                            <button onClick={handleSaveConfig} disabled={configSaving || !hostInput || (authType === 'service_principal' ? !clientId : false)}
-                                className="w-full flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-bold transition-all mt-2 hover:brightness-110"
-                                style={{ background: 'var(--color-accent)', color: '#fff', opacity: configSaving ? 0.6 : 1 }}>
-                                {configSaving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} 
-                                Save & Verify Config
-                            </button>
-                        )}
-                    </>
-                )}
-
-                {loginPhase === 'requesting' && (
-                    <div className="flex items-center justify-center gap-2 py-6 text-xs"
-                        style={{ color: 'var(--text-secondary)' }}>
-                        <Loader2 size={16} className="animate-spin" />
-                        Requesting device code...
-                    </div>
-                )}
-
-                {/* ── Waiting for Browser ── */}
-                {loginPhase === 'polling' && (
-                    <div className="space-y-3">
-                        <div className="text-center py-6 px-4 rounded-xl"
-                            style={{ background: 'rgba(255,54,33,0.05)', border: '1px solid rgba(255,54,33,0.2)' }}>
-                            
-                            <div className="flex items-center justify-center gap-2 mb-3" style={{ color: '#ff3621' }}>
-                                <Loader2 size={24} className="animate-spin" />
-                            </div>
-                            
-                            <h4 className="text-sm font-bold mb-1" style={{ color: 'var(--text-primary)' }}>
-                                Check your browser...
-                            </h4>
-                            <p className="text-[11px] mb-4" style={{ color: 'var(--text-secondary)' }}>
-                                A new tab was safely opened to let you login via your company's provider.
-                            </p>
-                        </div>
-                    </div>
-                )}
-
-                {loginPhase === 'success' && !isLoggedIn && (
-                    <div className="flex items-center gap-2 p-3 rounded-lg text-xs"
-                        style={{ background: 'rgba(52,211,153,0.1)', color: '#34d399' }}>
-                        <CheckCircle2 size={14} />
-                        Successfully authenticated! Configure your connection below.
-                    </div>
-                )}
-
-                {loginPhase === 'failed' && error && (
-                    <div className="space-y-2">
-                        <div className="p-3 rounded-lg text-xs"
-                            style={{ background: 'rgba(239,68,68,0.1)', color: '#ef4444' }}>
-                            <AlertCircle size={12} className="inline mr-1" />
-                            {error}
-                        </div>
-                        <button onClick={() => { setLoginPhase('idle'); setError(null); }}
-                            className="text-xs underline" style={{ color: 'var(--text-secondary)' }}>
-                            Try again
+                    {/* Test Connection Button & Step-by-Step Results */}
+                    <div className="pt-1">
+                        <button
+                            type="button"
+                            onClick={handleTest}
+                            disabled={testing || !hostInput}
+                            className="w-full flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-bold border transition-all"
+                            style={{
+                                borderColor: 'var(--color-accent)',
+                                color: 'var(--color-accent)',
+                                background: 'transparent',
+                                opacity: (testing || !hostInput) ? 0.5 : 1,
+                            }}
+                        >
+                            {testing ? <Loader2 size={13} className="animate-spin" /> : <Zap size={13} />}
+                            {testing ? 'Testing connection…' : 'Test connection'}
                         </button>
                     </div>
+
+                    {testResult && (
+                        <div className="rounded-lg border p-3 space-y-2"
+                            style={{ borderColor: 'var(--border-main)', background: 'var(--bg-surface-raised)' }}>
+                            <div className="flex items-center justify-between gap-2">
+                                <span className="text-[11px] font-bold" style={{
+                                    color: testResult.status === 'success' ? '#34d399'
+                                        : testResult.status === 'warning' ? '#f59e0b' : '#ef4444',
+                                }}>
+                                    {testResult.status === 'success' ? 'Connection verified'
+                                        : testResult.status === 'warning' ? 'Connected with warnings' : 'Connection test failed'}
+                                </span>
+                                {testResult.warehouse?.state && testResult.warehouse.state !== 'UNKNOWN' && (
+                                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                                        style={{
+                                            background: testResult.warehouse.state === 'RUNNING' ? 'rgba(52,211,153,0.12)' : 'rgba(245,158,11,0.12)',
+                                            color: testResult.warehouse.state === 'RUNNING' ? '#34d399' : '#f59e0b',
+                                        }}>
+                                        Warehouse: {testResult.warehouse.state}
+                                    </span>
+                                )}
+                            </div>
+
+                            {Array.isArray(testResult.steps) && testResult.steps.length > 0 ? (
+                                <div className="space-y-1.5">
+                                    {testResult.steps.map((step) => {
+                                        const tone = stepTone(step.status);
+                                        return (
+                                            <div key={step.id} className="flex items-start gap-2 px-2.5 py-1.5 rounded-md border text-[11px]"
+                                                style={{ background: tone.bg, borderColor: tone.border, color: tone.color }}>
+                                                {step.status === 'passed'
+                                                    ? <CheckCircle2 size={12} className="mt-0.5 shrink-0" />
+                                                    : <AlertCircle size={12} className="mt-0.5 shrink-0" />}
+                                                <div className="flex-1 min-w-0">
+                                                    <span className="font-semibold">{step.label}: </span>
+                                                    <span>{step.message}</span>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            ) : (
+                                <div className="text-[11px]" style={{ color: '#ef4444' }}>{testResult.message}</div>
+                            )}
+
+                            {testResult.warehouse?.can_start && (
+                                <div className="pt-1 flex items-center gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={handleStartWarehouse}
+                                        disabled={startingWarehouse}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-bold"
+                                        style={{ background: '#f59e0b', color: '#111827', opacity: startingWarehouse ? 0.6 : 1 }}
+                                    >
+                                        {startingWarehouse ? <Loader2 size={11} className="animate-spin" /> : <Zap size={11} />}
+                                        {startingWarehouse ? 'Starting warehouse…' : 'Start warehouse'}
+                                    </button>
+                                    <span className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+                                        Only starts when you click.
+                                    </span>
+                                </div>
+                            )}
+                            {warehouseStartMsg && (
+                                <div className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>{warehouseStartMsg}</div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Optional: Catalog/Schema Permissions Check (Catalog & Schema are selected per project in the wizard) */}
+                    <details className="rounded-lg border p-3" style={{ borderColor: 'var(--border-main)', background: 'var(--bg-surface-raised)' }}>
+                        <summary className="cursor-pointer text-[11px] font-semibold flex items-center gap-1.5" style={{ color: 'var(--text-secondary)' }}>
+                            <ShieldCheck size={13} style={{ color: 'var(--color-accent)' }} />
+                            Optional: Check Unity Catalog permissions (Catalog &amp; Schema are chosen per project)
+                        </summary>
+                        <div className="space-y-3 mt-3">
+                    <div className="grid grid-cols-2 gap-3">
+                        <div>
+                            <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                                Target Catalog
+                            </label>
+                            <select
+                                value={catalog}
+                                onChange={(e) => handleCatalogChange(e.target.value)}
+                                disabled={catalogOptions.length === 0}
+                                className="w-full px-3 py-2 rounded-lg text-xs border outline-none"
+                                style={{
+                                    background: 'var(--bg-input)',
+                                    borderColor: 'var(--border-main)',
+                                    color: catalogOptions.length === 0 ? 'var(--text-tertiary)' : 'var(--text-primary)',
+                                }}
+                            >
+                                {catalogOptions.length === 0 ? (
+                                    <option value="">Run Test connection to load catalogs</option>
+                                ) : (
+                                    <>
+                                        <option value="">Select catalog…</option>
+                                        {catalogOptions.map((cat) => (
+                                            <option key={cat} value={cat}>{cat}</option>
+                                        ))}
+                                    </>
+                                )}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                                Target Schema {schemasLoading && <Loader2 size={10} className="inline animate-spin ml-1" />}
+                            </label>
+                            <select
+                                value={schemaName}
+                                onChange={(e) => { setSchemaName(e.target.value); setPermResult(null); }}
+                                disabled={schemaOptions.length === 0 || schemasLoading}
+                                className="w-full px-3 py-2 rounded-lg text-xs border outline-none"
+                                style={{
+                                    background: 'var(--bg-input)',
+                                    borderColor: 'var(--border-main)',
+                                    color: schemaOptions.length === 0 ? 'var(--text-tertiary)' : 'var(--text-primary)',
+                                }}
+                            >
+                                {schemaOptions.length === 0 ? (
+                                    <option value="">{catalog ? 'No schemas loaded' : 'Select catalog first'}</option>
+                                ) : (
+                                    <>
+                                        <option value="">Select schema…</option>
+                                        {schemaOptions.map((sch) => (
+                                            <option key={sch} value={sch}>{sch}</option>
+                                        ))}
+                                    </>
+                                )}
+                            </select>
+                        </div>
+                    </div>
+
+                    {/* Check Permissions Panel */}
+                    <div className="rounded-lg border p-3 space-y-2"
+                        style={{ borderColor: 'var(--border-main)', background: 'var(--bg-surface-raised)' }}>
+                        <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5 text-xs font-bold" style={{ color: 'var(--text-primary)' }}>
+                                <ShieldCheck size={13} style={{ color: 'var(--color-accent)' }} />
+                                Unity Catalog Permissions
+                            </div>
+                            <button
+                                type="button"
+                                onClick={handleCheckPermissions}
+                                disabled={checkingPerms || !hostInput || !catalog || !schemaName}
+                                className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold border"
+                                style={{
+                                    borderColor: 'var(--border-main)',
+                                    color: 'var(--text-primary)',
+                                    opacity: (checkingPerms || !hostInput || !catalog || !schemaName) ? 0.5 : 1,
+                                }}
+                            >
+                                {checkingPerms ? <Loader2 size={11} className="animate-spin" /> : <ShieldCheck size={11} />}
+                                {checkingPerms ? 'Checking…' : 'Check permissions'}
+                            </button>
+                        </div>
+
+                        {permError && (
+                            <div className="text-[11px] px-2.5 py-1.5 rounded-md" style={{ background: 'rgba(239,68,68,0.1)', color: '#ef4444' }}>
+                                {permError}
+                            </div>
+                        )}
+
+                        {permResult && (
+                            <div className="space-y-2 pt-1">
+                                <div className="text-[11px] font-semibold" style={{
+                                    color: permResult.status === 'ok' ? '#34d399'
+                                        : permResult.status === 'warning' ? '#f59e0b' : '#ef4444',
+                                }}>
+                                    {permResult.status === 'ok'
+                                        ? `Least-privilege access verified for ${permResult.principal || 'principal'}.`
+                                        : permResult.status === 'warning'
+                                            ? `Required privileges present, but excessive grants detected for ${permResult.principal || 'principal'}.`
+                                            : `Missing required Unity Catalog privileges for ${permResult.principal || 'principal'}.`}
+                                </div>
+
+                                {(permResult.checks || []).map((chk) => (
+                                    <div key={`${chk.securable_type}:${chk.full_name}`}
+                                        className="text-[11px] px-2.5 py-1.5 rounded border flex flex-col gap-0.5"
+                                        style={{ borderColor: 'var(--border-main)', background: 'var(--bg-surface)' }}>
+                                        <div className="flex items-center justify-between gap-2">
+                                            <span className="font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>
+                                                {chk.securable_type.toUpperCase()} {chk.full_name}
+                                            </span>
+                                            <span style={{ color: chk.passed ? '#34d399' : '#ef4444', fontWeight: 600 }}>
+                                                {chk.passed ? 'OK' : `Missing: ${(chk.missing || []).join(', ')}`}
+                                            </span>
+                                        </div>
+                                        {chk.excessive && chk.excessive.length > 0 && (
+                                            <div style={{ color: '#f59e0b' }}>
+                                                Excessive: {chk.excessive.join(', ')}
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+
+                                {(permResult.warnings || []).map((w, idx) => (
+                                    <div key={idx} className="text-[11px] px-2.5 py-1.5 rounded border"
+                                        style={{ background: 'rgba(245,158,11,0.1)', borderColor: 'rgba(245,158,11,0.28)', color: '#f59e0b' }}>
+                                        {w}
+                                    </div>
+                                ))}
+
+                                {permResult.recommendation_text && (
+                                    <div className="space-y-1">
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: 'var(--text-tertiary)' }}>
+                                                Recommended Least-Privilege SQL
+                                            </span>
+                                            <button
+                                                type="button"
+                                                onClick={handleCopyGrants}
+                                                className="flex items-center gap-1 text-[10px] font-semibold"
+                                                style={{ color: 'var(--color-accent)' }}
+                                            >
+                                                <Copy size={10} /> {copiedGrants ? 'Copied' : 'Copy SQL'}
+                                            </button>
+                                        </div>
+                                        <pre className="p-2.5 rounded-md text-[10.5px] overflow-x-auto border"
+                                            style={{
+                                                background: 'var(--bg-input)',
+                                                borderColor: 'var(--border-main)',
+                                                color: 'var(--text-primary)',
+                                                fontFamily: 'monospace',
+                                                margin: 0,
+                                            }}>
+                                            {permResult.recommendation_text}
+                                        </pre>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                        </div>
+                    </details>
+                </div>
+
+                {error && (
+                    <div className="p-2.5 rounded-lg text-xs flex items-center gap-1.5"
+                        style={{ background: 'rgba(239,68,68,0.1)', color: '#ef4444' }}>
+                        <AlertCircle size={12} />
+                        <span>{error}</span>
+                    </div>
                 )}
+
+                <div className="flex items-center gap-2 pt-2">
+                    <button
+                        type="button"
+                        onClick={handleSaveConfig}
+                        disabled={configSaving || !hostInput}
+                        className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold"
+                        style={{ background: 'var(--color-accent)', color: '#fff', opacity: (configSaving || !hostInput) ? 0.6 : 1 }}
+                    >
+                        {configSaving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+                        {configSaving ? 'Saving…' : 'Save Databricks Connection'}
+                    </button>
+                </div>
             </div>
         </div>
     );

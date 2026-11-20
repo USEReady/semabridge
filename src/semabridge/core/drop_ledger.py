@@ -153,7 +153,8 @@ class DropLedger:
     call site.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, target_type: str = "snowflake") -> None:
+        self.target_type = str(target_type or "snowflake").strip().lower()
         self.records: List[DropRecord] = []
 
     def record(
@@ -167,6 +168,11 @@ class DropLedger:
         detail: Optional[str] = None,
         by_design: bool = False,
     ) -> None:
+        from semabridge.core.target_rules import adapt_target_message
+
+        reason = adapt_target_message(reason, self.target_type)
+        detail = adapt_target_message(detail, self.target_type) if detail else detail
+
         # A pass that runs twice (e.g. re-anchoring before and during DDL
         # generation) records the same drop once.
         for existing in self.records:
@@ -203,5 +209,16 @@ class DropLedger:
         constructed against it."""
         self.records.clear()
 
-    def to_json(self) -> List[Dict[str, Any]]:
-        return [r.model_dump(mode="json") for r in self.records]
+    def to_json(self, target_type: Optional[str] = None) -> List[Dict[str, Any]]:
+        from semabridge.core.target_rules import adapt_target_message
+
+        eff_target = str(target_type or self.target_type or "snowflake").strip().lower()
+        out = []
+        for r in self.records:
+            d = r.model_dump(mode="json")
+            if eff_target == "databricks":
+                d["reason"] = adapt_target_message(d.get("reason"), "databricks")
+                if d.get("detail"):
+                    d["detail"] = adapt_target_message(d.get("detail"), "databricks")
+            out.append(d)
+        return out

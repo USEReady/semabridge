@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { ArrowUp, Sparkles } from 'lucide-react';
+import { AlertTriangle, ArrowUp, Check, Copy, ExternalLink, Loader2, Play, Rocket, Sparkles, Wand2, X } from 'lucide-react';
 import AnswerCard from '../components/ask/AnswerCard';
 import AskRail from '../components/ask/AskRail';
 import {
@@ -12,6 +12,7 @@ import {
   fetchVerifiedQueries,
 } from '../components/ask/askApi';
 import { BTN_PRIMARY } from '../components/ask/askStyles';
+import { api, authFetch } from '../utils/api';
 
 /**
  * AskAiPage (/ask) — ask a business question in plain language and get an
@@ -57,6 +58,26 @@ function useNarrow(query = '(max-width: 900px)') {
 
 let nextId = Date.now();
 
+function resolveProjectTarget(project) {
+  if (!project || typeof project !== 'object') return null;
+  const raw =
+    project.target_type ??
+    project.target?.type ??
+    (Array.isArray(project.targets) && project.targets[0]?.type) ??
+    null;
+  if (!raw) return null;
+  const norm = String(raw).trim().toLowerCase();
+  if (norm.includes('databricks')) return 'DATABRICKS';
+  if (norm.includes('snowflake')) return 'SNOWFLAKE';
+  return null;
+}
+
+function engineModeSubtitle(target) {
+  if (target === 'DATABRICKS') return 'Databricks Metric View / SQL Warehouse';
+  if (target === 'LOCAL') return 'Local offline draft engine';
+  return 'Snowflake Cortex Analyst';
+}
+
 export default function AskAiPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const urlQuestion = searchParams.get('q') || '';
@@ -78,14 +99,36 @@ export default function AskAiPage() {
   );
   const [certified, setCertified] = useState(() => readStore(window.sessionStorage, CERTIFIED_KEY, []));
 
+  // Databricks Genie Space preview / deploy / eval modal state
+  const [genieOpen, setGenieOpen] = useState(false);
+  const [genieLoading, setGenieLoading] = useState(false);
+  const [genieDeploying, setGenieDeploying] = useState(false);
+  const [genieData, setGenieData] = useState(null);
+  const [genieError, setGenieError] = useState('');
+  const [genieCopied, setGenieCopied] = useState(false);
+  const [genieEvaluating, setGenieEvaluating] = useState(false);
+  const [genieEval, setGenieEval] = useState(null);
+  const [genieEvalError, setGenieEvalError] = useState('');
+
   const threadEndRef = useRef(null);
   const autoAskedRef = useRef('');
   const narrow = useNarrow();
   const busy = thread.some((e) => e.status === 'loading');
+  const isDatabricks = target === 'DATABRICKS';
 
   useEffect(() => writeStore(window.sessionStorage, THREAD_KEY, thread), [thread]);
   useEffect(() => writeStore(window.sessionStorage, CERTIFIED_KEY, certified), [certified]);
   useEffect(() => writeStore(window.localStorage, TARGET_KEY, target), [target]);
+
+  // Automatically align Ask AI target/dialect with the selected project's target_type
+  useEffect(() => {
+    if (!projectId || !projects.length) return;
+    const selected = projects.find((p) => (p.id || p.name) === projectId);
+    const detected = resolveProjectTarget(selected);
+    if (detected) {
+      setTarget(detected);
+    }
+  }, [projectId, projects]);
 
   useEffect(() => {
     let alive = true;
@@ -203,6 +246,92 @@ export default function AskAiPage() {
     }
   };
 
+  const openGeniePreview = async () => {
+    if (!projectId) return;
+    setGenieOpen(true);
+    setGenieLoading(true);
+    setGenieError('');
+    setGenieCopied(false);
+    setGenieEval(null);
+    setGenieEvalError('');
+    try {
+      const res = await api.generateDatabricksGenieSpace(projectId, { deploy: false });
+      setGenieData(res);
+    } catch (err) {
+      setGenieError(err?.message || 'Failed to generate Genie Space preview.');
+      setGenieData(null);
+    } finally {
+      setGenieLoading(false);
+    }
+  };
+
+  const deployGenieSpace = async ({ forceOverwrite = false, spaceId = null } = {}) => {
+    if (!projectId) return;
+    setGenieDeploying(true);
+    setGenieError('');
+    setGenieEval(null);
+    setGenieEvalError('');
+    try {
+      const targetSpaceId = spaceId || genieData?.space_id || null;
+      let res;
+      if (targetSpaceId || forceOverwrite) {
+        const apiBase = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
+        const rawRes = await authFetch(`${apiBase}/ai/databricks/genie-space`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            project_id: projectId,
+            space_title: genieData?.spec?.title || undefined,
+            deploy: true,
+            space_id: targetSpaceId || undefined,
+            force_overwrite: Boolean(forceOverwrite),
+          }),
+        });
+        if (!rawRes.ok) {
+          const text = await rawRes.text();
+          throw new Error(text || `Failed to deploy Genie Space (HTTP ${rawRes.status})`);
+        }
+        res = await rawRes.json();
+      } else {
+        res = await api.generateDatabricksGenieSpace(projectId, {
+          spaceTitle: genieData?.spec?.title || null,
+          deploy: true,
+        });
+      }
+      setGenieData(res);
+    } catch (err) {
+      setGenieError(err?.message || 'Failed to deploy Genie Space to Databricks.');
+    } finally {
+      setGenieDeploying(false);
+    }
+  };
+
+  const runGenieEvaluation = async () => {
+    if (!projectId || !genieData?.space_id) return;
+    setGenieEvaluating(true);
+    setGenieEvalError('');
+    try {
+      const res = await api.evaluateDatabricksGenieSpace(projectId, genieData.space_id);
+      setGenieEval(res);
+    } catch (err) {
+      setGenieEvalError(err?.message || 'Failed to run Genie Space benchmark evaluation.');
+      setGenieEval(null);
+    } finally {
+      setGenieEvaluating(false);
+    }
+  };
+
+  const copyGenieJson = async () => {
+    if (!genieData?.spec) return;
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(genieData.spec, null, 2));
+      setGenieCopied(true);
+      setTimeout(() => setGenieCopied(false), 1800);
+    } catch {
+      /* clipboard unavailable */
+    }
+  };
+
   return (
     <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', background: 'var(--bg-app)', color: 'var(--text-primary)' }}>
       <style>{`
@@ -215,14 +344,22 @@ export default function AskAiPage() {
       {/* Header */}
       <div style={{ padding: '18px 24px 14px', borderBottom: '1px solid var(--border-main)', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px 14px' }}>
         <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>Ask AI</h1>
-        <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Answers use your governed metrics and access rules</span>
+        <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+          {engineModeSubtitle(target)} · Answers use your governed metrics and access rules
+        </span>
         <span style={{ flex: 1 }} />
         {projects.length > 0 && (
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-tertiary)' }}>
             Scope
             <select
               value={projectId}
-              onChange={(e) => setProjectId(e.target.value)}
+              onChange={(e) => {
+                const nextId = e.target.value;
+                setProjectId(nextId);
+                const selected = projects.find((p) => (p.id || p.name) === nextId);
+                const detected = resolveProjectTarget(selected);
+                if (detected) setTarget(detected);
+              }}
               style={{ padding: '5px 8px', borderRadius: 8, border: '1px solid var(--border-main)', background: 'var(--bg-input)', color: 'var(--text-primary)', fontSize: 12, maxWidth: 200 }}
             >
               <option value="">All projects</option>
@@ -236,6 +373,10 @@ export default function AskAiPage() {
         <div className="ask-seg" role="radiogroup" aria-label="Run on" style={{ display: 'inline-flex', padding: 2, borderRadius: 8, border: '1px solid var(--border-main)', background: 'var(--bg-surface)' }}>
           {ENGINES.map((e) => {
             const on = e.id === target;
+            const label =
+              e.id === 'DATABRICKS'
+                ? 'Databricks Metric View'
+                : e.label;
             return (
               <button
                 key={e.id}
@@ -243,6 +384,7 @@ export default function AskAiPage() {
                 role="radio"
                 aria-checked={on}
                 onClick={() => setTarget(e.id)}
+                title={engineModeSubtitle(e.id)}
                 style={{
                   padding: '4px 10px',
                   borderRadius: 6,
@@ -255,11 +397,36 @@ export default function AskAiPage() {
                   boxShadow: on ? '0 0 0 1px var(--border-main)' : 'none',
                 }}
               >
-                {e.label}
+                {label}
               </button>
             );
           })}
         </div>
+        {isDatabricks && (
+          <button
+            type="button"
+            onClick={openGeniePreview}
+            disabled={!projectId || genieLoading}
+            title={projectId ? 'Preview and optionally deploy a Databricks AI/BI Genie Space for this project' : 'Select a Databricks project in Scope first'}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '5px 10px',
+              borderRadius: 8,
+              border: '1px solid var(--border-focus)',
+              background: 'var(--color-accent-faint)',
+              color: 'var(--text-primary)',
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: !projectId || genieLoading ? 'not-allowed' : 'pointer',
+              opacity: !projectId || genieLoading ? 0.55 : 1,
+            }}
+          >
+            <Wand2 size={13} />
+            Generate Genie Space
+          </button>
+        )}
         {thread.length > 0 && (
           <button
             type="button"
@@ -365,6 +532,260 @@ export default function AskAiPage() {
 
         {!narrow && <AskRail suggestions={suggestedQuestions} certified={certified} onPick={ask} disabled={busy} />}
       </div>
+
+      {genieOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Databricks Genie Space Specification"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 1000,
+            background: 'rgba(0, 0, 0, 0.55)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 20,
+          }}
+        >
+          <div
+            style={{
+              width: 'min(760px, 100%)',
+              maxHeight: '86vh',
+              display: 'flex',
+              flexDirection: 'column',
+              borderRadius: 12,
+              border: '1px solid var(--border-main)',
+              background: 'var(--bg-surface)',
+              color: 'var(--text-primary)',
+              boxShadow: '0 20px 48px rgba(0, 0, 0, 0.35)',
+              overflow: 'hidden',
+            }}
+          >
+            <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-main)', display: 'flex', alignItems: 'center', gap: 10 }}>
+              <Wand2 size={16} color="var(--accent-blue)" />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 15, fontWeight: 700 }}>Databricks AI/BI Genie Space</div>
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                  Generated from Unity Catalog Metric Views, ontology metrics, and verified queries
+                </div>
+              </div>
+              <button
+                type="button"
+                aria-label="Close Genie Space preview"
+                onClick={() => setGenieOpen(false)}
+                style={{ border: 'none', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', padding: 4 }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{ padding: '16px 18px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {genieLoading && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-secondary)' }}>
+                  <Loader2 size={15} className="animate-spin" /> Generating Genie Space specification…
+                </div>
+              )}
+
+              {genieError && (
+                <div style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid var(--color-danger, #dc2626)', background: 'rgba(220, 38, 38, 0.08)', color: 'var(--color-danger, #dc2626)', fontSize: 12.5 }}>
+                  {genieError}
+                </div>
+              )}
+
+              {genieData?.status === 'conflict_manual_edit' && (
+                <div
+                  role="alert"
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: 8,
+                    border: '1px solid #d97706',
+                    background: 'rgba(217, 119, 6, 0.1)',
+                    fontSize: 12.5,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 10,
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: '#b45309', fontWeight: 500 }}>
+                    <AlertTriangle size={14} />
+                    {genieData.message || 'Genie space was edited manually in Databricks. Pass force_overwrite=true to overwrite.'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => deployGenieSpace({ forceOverwrite: true, spaceId: genieData.space_id })}
+                    disabled={genieDeploying}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 5,
+                      padding: '5px 10px',
+                      borderRadius: 6,
+                      border: '1px solid #d97706',
+                      background: '#d97706',
+                      color: '#fff',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: genieDeploying ? 'not-allowed' : 'pointer',
+                      opacity: genieDeploying ? 0.6 : 1,
+                    }}
+                  >
+                    {genieDeploying ? <Loader2 size={12} className="animate-spin" /> : <AlertTriangle size={12} />}
+                    Force Overwrite
+                  </button>
+                </div>
+              )}
+
+              {genieData?.status === 'deployed' && (
+                <div style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid var(--color-success, #16a34a)', background: 'rgba(22, 163, 74, 0.08)', fontSize: 12.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                  <span>
+                    Deployed to Databricks Genie Space <b>{genieData.space_id || 'created'}</b>
+                  </span>
+                  {genieData.space_url && (
+                    <a
+                      href={genieData.space_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--accent-blue)', fontWeight: 600, textDecoration: 'none' }}
+                    >
+                      Open in Databricks <ExternalLink size={12} />
+                    </a>
+                  )}
+                </div>
+              )}
+
+              {genieEvalError && (
+                <div style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid var(--color-danger, #dc2626)', background: 'rgba(220, 38, 38, 0.08)', color: 'var(--color-danger, #dc2626)', fontSize: 12.5 }}>
+                  {genieEvalError}
+                </div>
+              )}
+
+              {genieEval && (
+                <div style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border-focus)', background: 'var(--color-accent-faint)', fontSize: 12.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                  <span>
+                    Evaluation Score: <b>{genieEval.score_pct ?? 0}%</b> ({genieEval.passed ?? 0}/{genieEval.total_benchmarks ?? 0} benchmarks passed)
+                  </span>
+                  {genieEval.eval_run_id && (
+                    <span style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>
+                      Run ID: <code>{genieEval.eval_run_id}</code>
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {genieData?.spec && (
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
+                    <div style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border-main)', background: 'var(--bg-app)' }}>
+                      <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Metric Views</div>
+                      <div style={{ fontSize: 15, fontWeight: 700 }}>{(genieData.spec.table_identifiers || []).length}</div>
+                    </div>
+                    <div style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border-main)', background: 'var(--bg-app)' }}>
+                      <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Sample Questions</div>
+                      <div style={{ fontSize: 15, fontWeight: 700 }}>{(genieData.spec.sample_questions || []).length}</div>
+                    </div>
+                    <div style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border-main)', background: 'var(--bg-app)' }}>
+                      <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>SQL Snippets</div>
+                      <div style={{ fontSize: 15, fontWeight: 700 }}>{(genieData.spec.sql_snippets || []).length}</div>
+                    </div>
+                    <div style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border-main)', background: 'var(--bg-app)' }}>
+                      <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Benchmarks</div>
+                      <div style={{ fontSize: 15, fontWeight: 700 }}>{(genieData.spec.benchmarks || []).length}</div>
+                    </div>
+                  </div>
+
+                  <pre
+                    style={{
+                      margin: 0,
+                      padding: 12,
+                      borderRadius: 8,
+                      border: '1px solid var(--border-main)',
+                      background: 'var(--bg-app)',
+                      color: 'var(--text-primary)',
+                      fontSize: 12,
+                      lineHeight: 1.5,
+                      overflowX: 'auto',
+                      maxHeight: 320,
+                    }}
+                  >
+                    {JSON.stringify(genieData.spec, null, 2)}
+                  </pre>
+                </>
+              )}
+            </div>
+
+            <div style={{ padding: '12px 18px', borderTop: '1px solid var(--border-main)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={copyGenieJson}
+                disabled={!genieData?.spec}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '6px 12px',
+                  borderRadius: 8,
+                  border: '1px solid var(--border-main)',
+                  background: 'var(--bg-app)',
+                  color: 'var(--text-primary)',
+                  fontSize: 12.5,
+                  fontWeight: 500,
+                  cursor: !genieData?.spec ? 'not-allowed' : 'pointer',
+                  opacity: !genieData?.spec ? 0.5 : 1,
+                }}
+              >
+                {genieCopied ? <Check size={13} /> : <Copy size={13} />}
+                {genieCopied ? 'Copied JSON' : 'Copy JSON'}
+              </button>
+              {genieData?.space_id && genieData?.status === 'deployed' && (
+                <button
+                  type="button"
+                  onClick={runGenieEvaluation}
+                  disabled={genieEvaluating}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '6px 12px',
+                    borderRadius: 8,
+                    border: '1px solid var(--border-focus)',
+                    background: 'var(--color-accent-faint)',
+                    color: 'var(--text-primary)',
+                    fontSize: 12.5,
+                    fontWeight: 600,
+                    cursor: genieEvaluating ? 'not-allowed' : 'pointer',
+                    opacity: genieEvaluating ? 0.55 : 1,
+                  }}
+                >
+                  {genieEvaluating ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
+                  {genieEvaluating ? 'Evaluating…' : 'Run Evaluation'}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => deployGenieSpace()}
+                disabled={!genieData?.spec || genieDeploying}
+                style={{
+                  ...BTN_PRIMARY,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '6px 14px',
+                  fontSize: 12.5,
+                  opacity: !genieData?.spec || genieDeploying ? 0.55 : 1,
+                  cursor: !genieData?.spec || genieDeploying ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {genieDeploying ? <Loader2 size={13} className="animate-spin" /> : <Rocket size={13} />}
+                {genieDeploying ? 'Deploying…' : 'Deploy to Databricks Genie'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

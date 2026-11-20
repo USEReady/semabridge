@@ -54,7 +54,7 @@ semantic_model:
 # Databricks deployment behavior.
 # ---------------------------------------------------------------------------
 databricks:
-  create_metadata_table: true # OSI-first deploy: skip Semabridge metadata Delta table
+  create_metadata_table: false # OSI-first deploy: skip Semabridge metadata Delta table
   create_measure_views: true # Generate measure views for deployed measures
   model_artifact_mode: "per_model" # "per_dataset" (legacy) | "per_model" (single metadata + single model metric view)
   model_metadata_suffix: "metadata" # Per-model metadata table suffix in per_model mode
@@ -161,7 +161,7 @@ databricks:
   #     "YearPeriod": "yearperiod"
   source_catalog: "semabridge" # Default catalog for source data tables
   source_schema: "public" # Default schema for source data tables
-  on_missing_source: "skip" # "plan" | "skip" | "fail" ; continue sync by projecting NULL placeholders for missing source columns
+  on_missing_source: "stub" # "stub" | "plan" | "skip" | "fail" ; "stub" deploys Metric View with inline SQL schema stub (zero CREATE TABLE) when physical tables are absent
 
   # Governance: auto-grant SELECT on deployed metric views
   grant_select_to_groups: []

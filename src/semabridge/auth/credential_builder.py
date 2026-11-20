@@ -255,50 +255,97 @@ def build_fabric_config(
     return fabric_config, access_token
 
 
+def _decrypt_if_fernet(value: Optional[str]) -> Optional[str]:
+    """Decrypt a Fernet-encrypted credential value if needed, leaving plaintext untouched."""
+    if not value:
+        return value
+    if isinstance(value, str) and value.startswith("gAAAAA"):
+        from semabridge.auth.encryption import decrypt_token
+
+        decrypted = decrypt_token(value)
+        return decrypted or None
+    return value
+
+
 def build_databricks_config(
     account: Account,
     db: Session,
-    base_config: DatabricksConfig,
+    base_config: Optional[DatabricksConfig] = None,
+    project_target: Optional[dict] = None,
 ) -> DatabricksConfig:
     """Build a thread-safe DatabricksConfig from Account bundle.
 
     Args:
         account: Account row.
         db: Active session.
-        base_config: Global DatabricksConfig from semabridge.yaml/.env.
+        base_config: Optional global DatabricksConfig from semabridge.yaml/.env.
+        project_target: Optional project target overrides (catalog, schema/schema_name, warehouse_id).
 
     Returns:
         A new DatabricksConfig instance.
     """
     env_map = _load_credential_env_map(account, db)
 
-    # Resolve base_config token (SecretStr → str)
-    base_token: Optional[str] = None
-    if base_config.token:
-        base_token = base_config.token.get_secret_value()
+    # Resolve base_config secrets (SecretStr -> str), tolerating base_config=None
+    base_token: Optional[str] = base_config.token.get_secret_value() if (base_config and base_config.token) else None
+    base_client_secret: Optional[str] = (
+        base_config.client_secret.get_secret_value() if (base_config and base_config.client_secret) else None
+    )
+    base_access_token: Optional[str] = (
+        base_config.access_token.get_secret_value() if (base_config and base_config.access_token) else None
+    )
+    base_refresh_token: Optional[str] = (
+        base_config.refresh_token.get_secret_value() if (base_config and base_config.refresh_token) else None
+    )
 
-    # Resolve base_config client_secret (SecretStr → str)
-    base_client_secret: Optional[str] = None
-    if base_config.client_secret:
-        base_client_secret = base_config.client_secret.get_secret_value()
+    pt = project_target or {}
+    target_catalog = str(pt.get("catalog") or pt.get("database") or "").strip()
+    target_schema = str(pt.get("schema_name") or pt.get("schema") or "").strip()
+    target_warehouse = str(pt.get("warehouse_id") or pt.get("warehouse") or "").strip()
+
+    raw_token = _decrypt_if_fernet(env_map.get("DATABRICKS_TOKEN")) or base_token
+    raw_client_secret = _decrypt_if_fernet(env_map.get("DATABRICKS_CLIENT_SECRET")) or base_client_secret
+    raw_access_token = _decrypt_if_fernet(env_map.get("DATABRICKS_ACCESS_TOKEN")) or base_access_token
+    raw_refresh_token = _decrypt_if_fernet(env_map.get("DATABRICKS_REFRESH_TOKEN")) or base_refresh_token
+
+    # Guard: account_credential_resolver may return the decrypted JSON bundle
+    # as DATABRICKS_TOKEN when ensure_valid_token passes through encrypted_token.
+    if isinstance(raw_token, str) and raw_token.lstrip().startswith("{"):
+        import json
+
+        try:
+            parsed_bundle = json.loads(raw_token)
+            if isinstance(parsed_bundle, dict):
+                raw_token = _decrypt_if_fernet(parsed_bundle.get("token")) or base_token
+                if not raw_access_token and parsed_bundle.get("access_token"):
+                    raw_access_token = _decrypt_if_fernet(parsed_bundle.get("access_token"))
+                if not raw_refresh_token and parsed_bundle.get("refresh_token"):
+                    raw_refresh_token = _decrypt_if_fernet(parsed_bundle.get("refresh_token"))
+                if not raw_client_secret and parsed_bundle.get("client_secret"):
+                    raw_client_secret = _decrypt_if_fernet(parsed_bundle.get("client_secret"))
+        except json.JSONDecodeError:
+            logger.debug("DATABRICKS_TOKEN was not a JSON bundle; using as-is")
 
     config = DatabricksConfig(
-        host=env_map.get("DATABRICKS_HOST") or base_config.host,
-        token=env_map.get("DATABRICKS_TOKEN") or base_token,
-        auth_type=env_map.get("DATABRICKS_AUTH_TYPE") or base_config.auth_type,
-        client_id=env_map.get("DATABRICKS_CLIENT_ID") or base_config.client_id,
-        client_secret=env_map.get("DATABRICKS_CLIENT_SECRET") or base_client_secret,
-        warehouse_id=env_map.get("DATABRICKS_WAREHOUSE_ID") or base_config.warehouse_id,
-        # Structural — from base config
-        catalog=base_config.catalog,
-        schema_name=base_config.schema_name,
+        host=env_map.get("DATABRICKS_HOST") or (base_config.host if base_config else ""),
+        token=raw_token,
+        access_token=raw_access_token,
+        refresh_token=raw_refresh_token,
+        auth_type=env_map.get("DATABRICKS_AUTH_TYPE") or (base_config.auth_type if base_config else "pat"),
+        client_id=env_map.get("DATABRICKS_CLIENT_ID") or (base_config.client_id if base_config else None),
+        client_secret=raw_client_secret,
+        warehouse_id=target_warehouse or env_map.get("DATABRICKS_WAREHOUSE_ID") or (base_config.warehouse_id if base_config else ""),
+        catalog=target_catalog or env_map.get("DATABRICKS_CATALOG") or (base_config.catalog if base_config else "main"),
+        schema_name=target_schema or env_map.get("DATABRICKS_SCHEMA") or (base_config.schema_name if base_config else "semabridge"),
     )
 
     logger.info(
-        "Built scoped DatabricksConfig for account %s/%s (host=%s) — "
+        "Built scoped DatabricksConfig for account %s/%s (host=%s, catalog=%s, schema=%s) — "
         "no os.environ mutation.",
         account.connector_type,
         account.tag,
         config.host,
+        config.catalog,
+        config.schema_name,
     )
     return config

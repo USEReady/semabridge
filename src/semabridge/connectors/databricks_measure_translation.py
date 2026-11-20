@@ -5,7 +5,9 @@ import re
 from typing import Any, Callable, Optional
 
 from semabridge.core.behavior import DatabricksBehavior
+from semabridge.core.target_rules import DatabricksDialect
 from semabridge.sml.models import SMLMetric
+from semabridge.utils.identifiers import databricks_sanitize_identifier
 
 
 TIER_STANDARD_AGGREGATION = "TIER_1_STANDARD_AGGREGATION"
@@ -25,15 +27,98 @@ class DatabricksMeasureTranslator:
     def __init__(
         self,
         *,
-        behavior: DatabricksBehavior,
-        sanitize_identifier: Callable[[str], str],
-        build_aggregation_sql: Callable[[SMLMetric], Optional[str]],
-        distinct_count_expression: Callable[[str], str],
+        behavior: Optional[DatabricksBehavior] = None,
+        sanitize_identifier: Optional[Callable[[str], str]] = None,
+        build_aggregation_sql: Optional[Callable[[SMLMetric], Optional[str]]] = None,
+        distinct_count_expression: Optional[Callable[[str], str]] = None,
+        dialect: Optional[DatabricksDialect] = None,
     ) -> None:
-        self._behavior = behavior
-        self._sanitize_identifier = sanitize_identifier
-        self._build_aggregation_sql = build_aggregation_sql
-        self._distinct_count_expression = distinct_count_expression
+        self._behavior = behavior or DatabricksBehavior()
+        self._sanitize_identifier = sanitize_identifier or databricks_sanitize_identifier
+        self._build_aggregation_sql = build_aggregation_sql or (lambda _m: None)
+        self._distinct_count_expression = distinct_count_expression or (
+            lambda col: f"COUNT(DISTINCT {col})"
+        )
+        self._dialect = dialect or DatabricksDialect()
+
+    @property
+    def dialect(self) -> DatabricksDialect:
+        return self._dialect
+
+    def normalize_dialect_sql(self, sql_expr: str) -> str:
+        """Rewrite Snowflake-dialect casts (e.g. ``::FLOAT``) to Databricks ``CAST(... AS DOUBLE)``."""
+        text = str(sql_expr or "")
+        if "::" not in text:
+            return text
+
+        # 1. Parenthesized expression followed by ::FLOAT or ::DOUBLE -> CAST(inner AS DOUBLE)
+        # Walk balanced parens before ::FLOAT/::DOUBLE.
+        cast_re = re.compile(r"::\s*(?:FLOAT|DOUBLE)\b", re.IGNORECASE)
+        while True:
+            m = cast_re.search(text)
+            if not m:
+                break
+            cast_start = m.start()
+            cast_end = m.end()
+            # Skip whitespace before ::
+            idx = cast_start - 1
+            while idx >= 0 and text[idx].isspace():
+                idx -= 1
+            if idx < 0:
+                break
+            if text[idx] == ")":
+                depth = 1
+                open_idx = idx - 1
+                while open_idx >= 0 and depth > 0:
+                    if text[open_idx] == ")":
+                        depth += 1
+                    elif text[open_idx] == "(":
+                        depth -= 1
+                    open_idx -= 1
+                open_idx += 1
+                if depth == 0:
+                    # Check if preceded by a function name like SUM(...)
+                    fn_start = open_idx
+                    while fn_start > 0 and (text[fn_start - 1].isalnum() or text[fn_start - 1] == "_"):
+                        fn_start -= 1
+                    if fn_start < open_idx:
+                        expr_part = text[fn_start : idx + 1]
+                        replacement = self._dialect.cast_float(expr_part)
+                        text = text[:fn_start] + replacement + text[cast_end:]
+                    else:
+                        inner = text[open_idx + 1 : idx].strip()
+                        replacement = self._dialect.cast_float(inner)
+                        text = text[:open_idx] + replacement + text[cast_end:]
+                    continue
+            # Simple token/backtick-quoted identifier before ::FLOAT
+            tok_start = idx
+            if text[idx] == "`":
+                tok_start = text.rfind("`", 0, idx)
+                if tok_start < 0:
+                    tok_start = idx
+            else:
+                while tok_start > 0 and (text[tok_start - 1].isalnum() or text[tok_start - 1] in "_."):
+                    tok_start -= 1
+            token = text[tok_start : idx + 1].strip()
+            if not token:
+                break
+            replacement = self._dialect.cast_float(token)
+            text = text[:tok_start] + replacement + text[cast_end:]
+        return text
+
+    def render_measure_reference(
+        self,
+        measure_name: str,
+        *,
+        use_measure_fn: bool = True,
+        inline_sql: Optional[str] = None,
+    ) -> str:
+        """Render a same-view measure reference using Databricks ``MEASURE(`...`)`` or inline SQL."""
+        if use_measure_fn:
+            return self._dialect.measure_reference(measure_name)
+        if inline_sql:
+            return f"({inline_sql})"
+        return self._dialect.quote_identifier(measure_name)
 
     def measure_ref_key(self, value: str) -> str:
         """Build a stable lookup key for DAX [Measure Name] references."""
@@ -97,8 +182,10 @@ class DatabricksMeasureTranslator:
         expression: str,
         measure_sql_map: dict[str, str],
         max_passes: int = 6,
+        *,
+        use_measure_refs: bool = False,
     ) -> tuple[str, bool]:
-        """Iteratively replace [Measure] refs with resolved SQL snippets."""
+        """Iteratively replace [Measure] refs with resolved SQL snippets or ``MEASURE(`...`)``."""
         text = str(expression or "")
 
         def _replace_once(source: str) -> tuple[str, bool, bool]:
@@ -131,6 +218,9 @@ class DatabricksMeasureTranslator:
                 if not resolved:
                     output.append(source[index : end + 1])
                     unresolved = True
+                elif use_measure_refs:
+                    output.append(self.render_measure_reference(measure_name, use_measure_fn=True))
+                    changed = True
                 else:
                     output.append(f"({resolved})")
                     changed = True
@@ -313,6 +403,8 @@ class DatabricksMeasureTranslator:
         self,
         dax_expression: str,
         measure_sql_map: dict[str, str],
+        *,
+        use_measure_refs: bool = False,
     ) -> Optional[str]:
         """Translate selected context-heavy DAX patterns using known measure SQL refs."""
         expr = " ".join(str(dax_expression or "").split())
@@ -320,7 +412,21 @@ class DatabricksMeasureTranslator:
             return None
 
         def _ref(name: str) -> str:
-            return measure_sql_map.get(self.measure_ref_key(name), "")
+            resolved = measure_sql_map.get(self.measure_ref_key(name), "")
+            if not resolved:
+                return ""
+            if use_measure_refs:
+                return self.render_measure_reference(name, use_measure_fn=True)
+            return resolved
+
+        # Text measures using DAX FORMAT(...) or & concatenation
+        text_sql = self.try_text_dax_to_sql(
+            expr,
+            measure_sql_map=measure_sql_map,
+            use_measure_refs=use_measure_refs,
+        )
+        if text_sql:
+            return self.normalize_dialect_sql(text_sql)
 
         # TOTALYTD([Measure], 'Date'[Date])
         m_totalytd = re.match(
@@ -378,7 +484,7 @@ class DatabricksMeasureTranslator:
             left = _ref(m_sub.group(1))
             right = _ref(m_sub.group(2))
             if left and right:
-                return f"({left}) - ({right})"
+                return self.normalize_dialect_sql(f"({left}) - ({right})")
 
         # DIVIDE([Numerator], [Denominator], 0)
         m_divide = re.match(
@@ -389,11 +495,14 @@ class DatabricksMeasureTranslator:
             num = _ref(m_divide.group(1))
             den = _ref(m_divide.group(2))
             if num and den:
-                return f"COALESCE(({num}) / NULLIF(({den}), 0), 0)"
+                return self.normalize_dialect_sql(
+                    f"COALESCE(({num}) / NULLIF(({den}), 0), 0)"
+                )
 
         expanded_expr, unresolved_refs = self.replace_measure_refs_in_expression(
             expr,
             measure_sql_map,
+            use_measure_refs=use_measure_refs,
         )
         if unresolved_refs:
             return None
@@ -401,9 +510,385 @@ class DatabricksMeasureTranslator:
         expanded_expr = re.sub(r"(?i)\bBLANK\(\)", "NULL", expanded_expr)
         expanded_expr = self.rewrite_if_calls(expanded_expr)
         expanded_expr = self.rewrite_divide_calls(expanded_expr)
+        expanded_expr = self.normalize_dialect_sql(expanded_expr)
 
         if self.is_sql_arithmetic_expression(expanded_expr):
             return expanded_expr
+
+        return None
+
+    def _split_top_level_amp(self, expression: str) -> list[str]:
+        """Split a DAX expression on top-level string concatenation ``&`` (ignoring ``&&``)."""
+        text = str(expression or "")
+        parts: list[str] = []
+        current: list[str] = []
+        depth = 0
+        in_single = False
+        in_double = False
+        idx = 0
+        length = len(text)
+
+        while idx < length:
+            ch = text[idx]
+            if ch == "'" and not in_double:
+                in_single = not in_single
+                current.append(ch)
+                idx += 1
+                continue
+            if ch == '"' and not in_single:
+                # Handle escaped "" inside double-quoted DAX string literals
+                if in_double and idx + 1 < length and text[idx + 1] == '"':
+                    current.append('""')
+                    idx += 2
+                    continue
+                in_double = not in_double
+                current.append(ch)
+                idx += 1
+                continue
+
+            if not in_single and not in_double:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")" and depth > 0:
+                    depth -= 1
+                elif ch == "&" and depth == 0:
+                    # Skip logical AND (&&)
+                    if idx + 1 < length and text[idx + 1] == "&":
+                        current.append("&&")
+                        idx += 2
+                        continue
+                    parts.append("".join(current).strip())
+                    current = []
+                    idx += 1
+                    continue
+
+            current.append(ch)
+            idx += 1
+
+        if current:
+            parts.append("".join(current).strip())
+        return [p for p in parts if p]
+
+    def _translate_text_operand(
+        self,
+        operand: str,
+        *,
+        measure_sql_map: Optional[dict[str, str]] = None,
+        use_measure_refs: bool = False,
+    ) -> Optional[str]:
+        """Translate a single operand of a DAX ``&`` or ``FORMAT(...)`` text measure."""
+        token = str(operand or "").strip()
+        if not token:
+            return None
+
+        # Double-quoted DAX string literal -> single-quoted SQL string literal
+        if len(token) >= 2 and token.startswith('"') and token.endswith('"'):
+            inner = token[1:-1].replace('""', '"').replace("'", "''")
+            return f"'{inner}'"
+
+        # Single-quoted string literal (not a 'Table'[Col] ref)
+        if len(token) >= 2 and token.startswith("'") and token.endswith("'") and "[" not in token:
+            return token
+
+        # Nested FORMAT(expr, "fmt")
+        fmt_args = self._extract_func_call_args(token, "FORMAT")
+        if fmt_args is not None and len(fmt_args) == 2:
+            inner_sql = self._translate_text_operand(
+                fmt_args[0],
+                measure_sql_map=measure_sql_map,
+                use_measure_refs=use_measure_refs,
+            )
+            raw_fmt = fmt_args[1].strip()
+            if inner_sql and (
+                (len(raw_fmt) >= 2 and raw_fmt.startswith('"') and raw_fmt.endswith('"'))
+                or (len(raw_fmt) >= 2 and raw_fmt.startswith("'") and raw_fmt.endswith("'"))
+            ):
+                fmt_str = raw_fmt[1:-1].replace('""', '"')
+                return self._dialect.format_number(inner_sql, fmt_str)
+            return None
+
+        # Direct [Measure] reference
+        m_ref = re.fullmatch(r"\[([^\]]+)\]", token)
+        if m_ref:
+            ref_name = m_ref.group(1).strip()
+            if measure_sql_map:
+                resolved = str(measure_sql_map.get(self.measure_ref_key(ref_name), "")).strip()
+                if resolved:
+                    if use_measure_refs:
+                        return self.render_measure_reference(ref_name, use_measure_fn=True)
+                    return resolved
+            return None
+
+        # Qualified 'Table'[Column] or Table[Column] reference
+        m_col = re.fullmatch(
+            r"(?:'(?P<table_q>[^']+)'|(?P<table>[A-Za-z_][A-Za-z0-9_]*))\s*\[(?P<col>[^\]]+)\]",
+            token,
+        )
+        if m_col:
+            table = self._sanitize_identifier(
+                str(m_col.group("table_q") or m_col.group("table") or "")
+            ).lower()
+            col = self._sanitize_identifier(m_col.group("col") or "").lower()
+            if not col:
+                return None
+            if self._behavior.enable_cross_table_joins and table:
+                return f"`{table}`.`{col}`"
+            return f"`{col}`"
+
+        # Simple DAX aggregate or scalar function (SUM, MAX, MIN, TODAY, etc.)
+        simple_sql = self.try_simple_dax_to_sql(token)
+        if simple_sql:
+            return self.normalize_dialect_sql(simple_sql)
+
+        # Numeric literal
+        if re.fullmatch(r"-?\d+(?:\.\d+)?", token):
+            return token
+
+        return None
+
+    def try_text_dax_to_sql(
+        self,
+        dax_expression: str,
+        *,
+        measure_sql_map: Optional[dict[str, str]] = None,
+        use_measure_refs: bool = False,
+    ) -> Optional[str]:
+        """Translate basic DAX text measures using ``&`` and ``FORMAT(...)`` via ``DatabricksDialect``.
+
+        Examples:
+            - ``FORMAT(SUM('Sales'[Amount]), "#,##0.00")`` -> ``FORMAT_NUMBER(sum(`amount`), '#,##0.00')``
+            - ``"$" & FORMAT([Total Sales], "#,##0")`` -> ``CONCAT('$', FORMAT_NUMBER(MEASURE(`Total Sales`), '#,##0'))``
+            - ``'Customer'[FirstName] & " " & 'Customer'[LastName]`` -> ``CONCAT(`firstname`, ' ', `lastname`)``
+        """
+        expr = " ".join(str(dax_expression or "").split()).strip()
+        if not expr:
+            return None
+
+        # 1. Standalone FORMAT(expr, "fmt")
+        fmt_args = self._extract_func_call_args(expr, "FORMAT")
+        if fmt_args is not None and len(fmt_args) == 2:
+            return self._translate_text_operand(
+                expr,
+                measure_sql_map=measure_sql_map,
+                use_measure_refs=use_measure_refs,
+            )
+
+        # 2. Top-level string concatenation with `&`
+        if "&" in expr:
+            amp_parts = self._split_top_level_amp(expr)
+            if len(amp_parts) >= 2:
+                sql_parts: list[str] = []
+                for part in amp_parts:
+                    translated = self._translate_text_operand(
+                        part,
+                        measure_sql_map=measure_sql_map,
+                        use_measure_refs=use_measure_refs,
+                    )
+                    if not translated:
+                        return None
+                    sql_parts.append(translated)
+                return self._dialect.concat(*sql_parts)
+
+        return None
+
+    def _extract_func_call_args(self, expression: str, func_name: str) -> Optional[list[str]]:
+        """Return top-level arguments if `expression` is a single `<func_name>(...)` call."""
+        text = str(expression or "").strip()
+        m = re.match(rf"(?i)^{re.escape(func_name)}\s*\(", text)
+        if not m:
+            return None
+
+        open_idx = m.end() - 1
+        depth = 0
+        in_single = False
+        in_double = False
+        end_idx = -1
+        for idx in range(open_idx, len(text)):
+            ch = text[idx]
+            if ch == "'" and not in_double:
+                in_single = not in_single
+            elif ch == '"' and not in_single:
+                in_double = not in_double
+            elif not in_single and not in_double:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        end_idx = idx
+                        break
+
+        if end_idx != len(text) - 1:
+            return None
+
+        inner = text[open_idx + 1 : end_idx]
+        return self.split_top_level_csv(inner)
+
+    def _parse_dax_date_column_ref(self, arg: str) -> Optional[tuple[str, str]]:
+        """Parse `'Table'[Date]`, `Table[Date]`, or `[Date]` into `(table, sanitized_col)`."""
+        text = str(arg or "").strip()
+        m = re.fullmatch(
+            r"(?:(?:'(?P<table_q>[^']+)'|(?P<table>[A-Za-z_][A-Za-z0-9_]*))\s*)?\[(?P<col>[^\]]+)\]",
+            text,
+        )
+        if not m:
+            return None
+        table = str(m.group("table_q") or m.group("table") or "").strip()
+        col = self._sanitize_identifier(m.group("col") or "").lower()
+        if not col:
+            return None
+        return table, col
+
+    def _resolve_window_base_sql(
+        self,
+        base_arg: str,
+        measure_sql_map: dict[str, str],
+    ) -> Optional[str]:
+        """Resolve the base aggregate SQL expression for a DAX time-intelligence measure."""
+        arg = str(base_arg or "").strip()
+        if not arg:
+            return None
+
+        # Direct [Measure] reference
+        m_ref = re.fullmatch(r"\[([^\]]+)\]", arg)
+        if m_ref:
+            resolved = str(
+                measure_sql_map.get(self.measure_ref_key(m_ref.group(1)), "")
+            ).strip()
+            if resolved and not re.search(r"(?i)\bOVER\s*\(", resolved):
+                return resolved
+            return None
+
+        # Inline simple aggregate (e.g., SUM('Sales'[Amount]), COUNTROWS('Sales'))
+        simple_sql = self.try_simple_dax_to_sql(arg)
+        if simple_sql and not re.search(r"(?i)\bOVER\s*\(", simple_sql):
+            return simple_sql
+
+        # Contextual arithmetic / DIVIDE over known measures
+        if measure_sql_map:
+            contextual_sql = self.try_contextual_dax_to_sql(arg, measure_sql_map)
+            if contextual_sql and not re.search(r"(?i)\bOVER\s*\(", contextual_sql):
+                return contextual_sql
+
+        return None
+
+    def try_window_dax_to_metric_view(
+        self,
+        dax_expression: str,
+        measure_sql_map: Optional[dict[str, str]] = None,
+    ) -> Optional[dict[str, Any]]:
+        """Translate DAX time-intelligence patterns into native UC Metric View window measures.
+
+        Supported patterns:
+            - TOTALYTD / TOTALMTD / TOTALQTD
+            - CALCULATE(..., DATESYTD / DATESMTD / DATESQTD)
+            - CALCULATE(..., SAMEPERIODLASTYEAR)
+            - CALCULATE(..., PREVIOUSMONTH / PREVIOUSQUARTER / PREVIOUSYEAR)
+            - CALCULATE(..., DATEADD(date_col, offset, YEAR|QUARTER|MONTH|DAY))
+            - CALCULATE(..., DATESINPERIOD(date_col, start_date, offset, DAY|MONTH|QUARTER|YEAR))
+
+        Returns:
+            Dict with keys ``expr``, ``window``, ``pattern``, ``date_table``,
+            ``date_column``; or ``None`` if not a recognized time-intelligence pattern.
+        """
+        expr = " ".join(str(dax_expression or "").split()).strip()
+        if not expr:
+            return None
+
+        lookup = measure_sql_map or {}
+        valid_units = {"day", "month", "quarter", "year"}
+
+        def _build_result(
+            base_arg: str,
+            date_ref_arg: str,
+            window_range: str,
+            pattern: str,
+            semiadditive: str = "last",
+        ) -> Optional[dict[str, Any]]:
+            base_sql = self._resolve_window_base_sql(base_arg, lookup)
+            if not base_sql:
+                return None
+            parsed_date = self._parse_dax_date_column_ref(date_ref_arg)
+            if not parsed_date:
+                return None
+            date_table, date_col = parsed_date
+            window_entry: dict[str, Any] = {
+                "order": date_col,
+                "range": window_range,
+                "semiadditive": semiadditive,
+            }
+            return {
+                "expr": base_sql,
+                "window": [window_entry],
+                "pattern": pattern,
+                "date_table": date_table,
+                "date_column": date_col,
+            }
+
+        # 1. TOTALYTD / TOTALMTD / TOTALQTD(expr, date_col[, ...])
+        for fn in ("TOTALYTD", "TOTALMTD", "TOTALQTD"):
+            args = self._extract_func_call_args(expr, fn)
+            if args is not None and len(args) >= 2:
+                return _build_result(args[0], args[1], "cumulative", fn)
+
+        # 2. CALCULATE(expr, <time_intelligence_filter>)
+        calc_args = self._extract_func_call_args(expr, "CALCULATE")
+        if calc_args is not None and len(calc_args) == 2:
+            base_arg, filter_arg = calc_args[0], calc_args[1]
+
+            # DATESYTD / DATESMTD / DATESQTD
+            for fn in ("DATESYTD", "DATESMTD", "DATESQTD"):
+                fn_args = self._extract_func_call_args(filter_arg, fn)
+                if fn_args is not None and len(fn_args) >= 1:
+                    return _build_result(base_arg, fn_args[0], "cumulative", fn)
+
+            # SAMEPERIODLASTYEAR / PREVIOUSYEAR / PREVIOUSQUARTER / PREVIOUSMONTH
+            fixed_period_map = {
+                "SAMEPERIODLASTYEAR": "trailing 1 year",
+                "PREVIOUSYEAR": "trailing 1 year",
+                "PREVIOUSQUARTER": "trailing 1 quarter",
+                "PREVIOUSMONTH": "trailing 1 month",
+            }
+            for fn, period_range in fixed_period_map.items():
+                fn_args = self._extract_func_call_args(filter_arg, fn)
+                if fn_args is not None and len(fn_args) == 1:
+                    return _build_result(base_arg, fn_args[0], period_range, fn)
+
+            # DATEADD(date_col, number_of_intervals, interval)
+            da_args = self._extract_func_call_args(filter_arg, "DATEADD")
+            if da_args is not None and len(da_args) == 3:
+                unit = da_args[2].strip().lower()
+                if unit in valid_units:
+                    try:
+                        offset = int(da_args[1].strip())
+                    except ValueError:
+                        offset = None
+                    if offset is not None:
+                        if offset < 0:
+                            window_range = f"trailing {abs(offset)} {unit}"
+                        elif offset > 0:
+                            window_range = f"leading {offset} {unit}"
+                        else:
+                            window_range = "current"
+                        return _build_result(base_arg, da_args[0], window_range, "DATEADD")
+
+            # DATESINPERIOD(date_col, start_date, number_of_intervals, interval)
+            dip_args = self._extract_func_call_args(filter_arg, "DATESINPERIOD")
+            if dip_args is not None and len(dip_args) == 4:
+                unit = dip_args[3].strip().lower()
+                if unit in valid_units:
+                    try:
+                        offset = int(dip_args[2].strip())
+                    except ValueError:
+                        offset = None
+                    if offset is not None:
+                        if offset < 0:
+                            window_range = f"trailing {abs(offset)} {unit}"
+                        elif offset > 0:
+                            window_range = f"leading {offset} {unit}"
+                        else:
+                            window_range = "current"
+                        return _build_result(base_arg, dip_args[0], window_range, "DATESINPERIOD")
 
         return None
 
@@ -537,6 +1022,12 @@ class DatabricksMeasureTranslator:
                     "MAX": f"MAX(CASE WHEN {condition_sql} THEN {base_col_sql} ELSE NULL END)",
                 }
                 return case_expr_by_agg.get(agg_func)
+
+        # Basic text measures: FORMAT(...) and `&` string concatenation
+        if expr.upper().startswith("FORMAT(") or "&" in expr:
+            text_sql = self.try_text_dax_to_sql(expr)
+            if text_sql:
+                return text_sql
 
         # Simple [Column] reference (bare column ref without aggregation)
         m_bare = re.match(r"^\[([^\]]+)\]$", expr)

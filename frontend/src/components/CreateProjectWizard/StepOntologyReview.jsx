@@ -232,7 +232,23 @@ function GlossaryGaps({ gaps, descriptions, onChange, onFillAll, onClearAll }) {
   );
 }
 
-export function StepOntologyReview({ review, setReview, sourceConnector, buildRequest, projectName, projectId }) {
+export function StepOntologyReview({
+  review,
+  setReview,
+  sourceConnector,
+  targetConnectors = [],
+  targetCatalog = '',
+  targetSchema = '',
+  databricksAccountId = '',
+  buildRequest,
+  projectName,
+  projectId,
+}) {
+  const targetList = Array.from(targetConnectors || []).map(t => String(t).toLowerCase());
+  const isDatabricksTarget = targetList.includes('databricks');
+  const targetType = isDatabricksTarget ? 'databricks' : 'snowflake';
+  const targetLabel = isDatabricksTarget ? 'Databricks' : 'Snowflake';
+  const targetViewKind = isDatabricksTarget ? 'metric view(s)' : 'semantic view(s)';
   const [tab, setTab] = useState('duplicates');
   const [sfSim, setSfSim] = useState({ loading: false, data: null, error: '' });
   const request = useMemo(() => buildRequest(), [buildRequest]);
@@ -374,7 +390,7 @@ export function StepOntologyReview({ review, setReview, sourceConnector, buildRe
   };
   const clearAllDescriptions = () => patch({ descriptions: {}, saved: null });
 
-  const runSnowflakeCheck = async () => {
+  const runTargetCheck = async () => {
     setSfSim({ loading: true, data: null, error: '' });
     try {
       const candidateMap = new Map();
@@ -384,12 +400,16 @@ export function StepOntologyReview({ review, setReview, sourceConnector, buildRe
       }
       const res = await api.checkSnowflakeSimilarity({
         project_id: projectId || undefined,
+        target_type: targetType,
+        catalog: isDatabricksTarget ? (targetCatalog || undefined) : undefined,
+        schema_name: isDatabricksTarget ? (targetSchema || undefined) : undefined,
+        connection_id: isDatabricksTarget ? (databricksAccountId || undefined) : undefined,
         metrics: Array.from(candidateMap.values()).slice(0, 150),
       });
       setSfSim({ loading: false, data: res, error: '' });
-      setTab('snowflake');
+      setTab('target_match');
     } catch (err) {
-      setSfSim({ loading: false, data: null, error: err?.message || 'Snowflake similarity check failed.' });
+      setSfSim({ loading: false, data: null, error: err?.message || `${targetLabel} similarity check failed.` });
     }
   };
 
@@ -401,7 +421,7 @@ export function StepOntologyReview({ review, setReview, sourceConnector, buildRe
     ['conflicts', 'Conflicts', conflicts.length, 'var(--color-error)'],
     ['glossary', 'Glossary gaps', gaps.length, null],
     ['new', 'New metrics', unassigned.length, null],
-    ['snowflake', 'Snowflake match', sfSim.data ? sfHitCount : '?', sfHitCount ? 'var(--accent-blue)' : null],
+    ['target_match', `${targetLabel} match`, sfSim.data ? sfHitCount : '?', sfHitCount ? 'var(--accent-blue)' : null],
   ];
 
   return (
@@ -492,25 +512,27 @@ export function StepOntologyReview({ review, setReview, sourceConnector, buildRe
         </div>
       )}
 
-      {tab === 'snowflake' && (
+      {tab === 'target_match' && (
         <div style={{ ...card, gap: 10 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <span style={faint}>
-              Checks whether incoming metrics already exist or are similar in Snowflake Semantic Views / ontology.
+              Checks whether incoming metrics already exist or are similar in {isDatabricksTarget ? 'Databricks Unity Catalog Metric Views' : 'Snowflake Semantic Views'} / ontology.
             </span>
             <span style={{ flex: 1 }} />
-            <button type="button" style={btn('primary')} disabled={sfSim.loading} onClick={runSnowflakeCheck}>
+            <button type="button" style={btn('primary')} disabled={sfSim.loading} onClick={runTargetCheck}>
               {sfSim.loading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-              {sfSim.loading ? 'Checking Snowflake…' : 'Check Snowflake'}
+              {sfSim.loading ? `Checking ${targetLabel}…` : `Check ${targetLabel}`}
             </button>
           </div>
           {sfSim.error && <span style={{ fontSize: 12, color: 'var(--color-error)' }}>{sfSim.error}</span>}
           {sfSim.data && (
             <>
               <span style={faint}>
-                {sfSim.data.snowflake_connected
-                  ? `Connected to Snowflake · ${sfSim.data.views_scanned} semantic view(s) scanned · ${sfHitCount} existing/similar metric(s) found.`
-                  : `Snowflake offline (${sfSim.data.snowflake_error || 'no credentials'}) · matched against governed ontology (${sfHitCount} hit(s)).`}
+                {(sfSim.data.connected ?? sfSim.data.snowflake_connected)
+                  ? `Connected to ${targetLabel} · ${sfSim.data.views_scanned} ${targetViewKind} scanned · ${sfHitCount} existing/similar metric(s) found.`
+                  : isDatabricksTarget
+                    ? `Databricks offline (${sfSim.data.target_error || sfSim.data.snowflake_error || 'no credentials'}) · no Databricks metric views scanned.`
+                    : `${targetLabel} offline (${sfSim.data.target_error || sfSim.data.snowflake_error || 'no credentials'}) · matched against governed ontology (${sfHitCount} hit(s)).`}
               </span>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 280, overflowY: 'auto' }}>
                 {sfMatches.map((m, i) => (
@@ -521,7 +543,7 @@ export function StepOntologyReview({ review, setReview, sourceConnector, buildRe
                       background: m.status === 'EXACT_MATCH' ? 'var(--color-success-bg)' : m.status === 'SIMILAR_EXISTS' ? 'var(--color-warning-bg)' : 'var(--bg-surface)',
                       color: m.status === 'EXACT_MATCH' ? 'var(--color-success)' : m.status === 'SIMILAR_EXISTS' ? 'var(--color-warning)' : 'var(--text-tertiary)',
                     }}>
-                      {m.status === 'EXACT_MATCH' ? 'Already in Snowflake' : m.status === 'SIMILAR_EXISTS' ? `Similar (${m.similarity_pct}%)` : 'New'}
+                      {m.status === 'EXACT_MATCH' ? `Already in ${targetLabel}` : m.status === 'SIMILAR_EXISTS' ? `Similar (${m.similarity_pct}%)` : 'New'}
                     </span>
                     <span style={{ ...faint, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.matched_view || ''}>
                       {m.matched_metric ? `${m.matched_metric} · ${m.matched_view}` : '—'}

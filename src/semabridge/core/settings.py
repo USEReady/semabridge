@@ -219,21 +219,29 @@ class DatabricksConfig(BaseSettings):
     host: str = Field(..., description="Databricks workspace host, e.g. adb-12345.11.azuredatabricks.net")
     auth_type: str = Field(
         default="pat",
-        description="Auth method: 'pat' (Personal Access Token) or 'service_principal' (OAuth M2M)",
+        description="Auth method: 'pat' (Personal Access Token), 'service_principal' (OAuth M2M), or 'interactive' (OAuth U2M)",
     )
     token: Optional[SecretStr] = Field(
         default=None,
         description="Databricks personal access token (required when auth_type=pat)",
     )
+    access_token: Optional[SecretStr] = Field(
+        default=None,
+        description="Databricks OAuth access token (when auth_type=interactive or cached M2M token)",
+    )
+    refresh_token: Optional[SecretStr] = Field(
+        default=None,
+        description="Databricks OAuth refresh token (when auth_type=interactive)",
+    )
     client_id: Optional[str] = Field(
         default=None,
-        description="OAuth client ID for service principal auth",
+        description="OAuth client ID for service principal or interactive auth",
     )
     client_secret: Optional[SecretStr] = Field(
         default=None,
         description="OAuth client secret for service principal auth",
     )
-    warehouse_id: str = Field(..., description="Databricks SQL warehouse ID for statement execution")
+    warehouse_id: str = Field(default="", description="Optional Databricks SQL warehouse ID for statement execution")
     catalog: str = Field(default="main", description="Unity Catalog catalog name for semantic objects")
     schema_name: str = Field(default="semabridge", validation_alias="DATABRICKS_SCHEMA", description="Unity Catalog schema for semantic objects")
 

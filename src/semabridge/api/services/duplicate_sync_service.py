@@ -75,32 +75,55 @@ def _is_same_content(metric_overlap: Dict[str, int], column_overlap: Dict[str, i
     return smaller >= _MIN_FIELDS_FOR_CONTENT_MATCH and shared / smaller >= _CONTENT_OVERLAP_THRESHOLD
 
 
+_DATABRICKS_TYPES = frozenset({"databricks", "databricks_sql", "dbx", "databricks_metric_view"})
+
+
+def _is_databricks_target(value: Any) -> bool:
+    return str(value or "").strip().lower() in _DATABRICKS_TYPES
+
+
 def _target_location(config: Dict[str, Any]) -> Tuple[str, str]:
     target = config.get("target") if isinstance(config.get("target"), dict) else {}
     if not target:
         targets = config.get("targets")
         if isinstance(targets, list) and targets and isinstance(targets[0], dict):
             target = targets[0]
-    return _norm(target.get("database")), _norm(target.get("schema"))
+    if _is_databricks_target(target.get("type")) or (target.get("catalog") and not target.get("database")):
+        dbx = config.get("databricks") if isinstance(config.get("databricks"), dict) else {}
+        catalog = target.get("catalog") or dbx.get("catalog") or target.get("database")
+        schema = (
+            target.get("schema")
+            or target.get("schema_name")
+            or dbx.get("schema")
+            or dbx.get("schema_name")
+        )
+        return _norm(catalog), _norm(schema)
+    return _norm(target.get("database")), _norm(target.get("schema") or target.get("schema_name"))
 
 
 def _planned_models(config: Dict[str, Any]) -> List[Dict[str, Any]]:
     """The models this sync will deploy, with their target view names."""
     from semabridge.api.services.sync_execution_service import _build_sync_jobs
-    from semabridge.utils.identifiers import clean_pbix_model_name
+    from semabridge.utils.identifiers import clean_pbix_model_name, databricks_view_name
     from semabridge.utils.name_translator import get_target_deployment_name
 
     from semabridge.api.services.sync_execution_service import file_content_sha256
 
     jobs, _source_type, target_type, _source_cfg, _target_cfg = _build_sync_jobs(config)
+    is_dbx = _is_databricks_target(target_type)
     planned = []
     for job in jobs:
         label = str(job.get("model_label") or "")
         display = str(job.get("resolved_display_name") or label)
+        view_name = (
+            _norm(databricks_view_name(display))
+            if is_dbx
+            else _norm(get_target_deployment_name(display, target_type))
+        )
         planned.append({
             "model_label": label,
             "model_key": _norm(clean_pbix_model_name(str(job.get("source_ref") or label)) or label),
-            "view_name": _norm(get_target_deployment_name(display, target_type)),
+            "view_name": view_name,
             # sha256 of the file this sync reads (None for non-file sources).
             "content_hash": file_content_sha256(job.get("pbix_path") or job.get("source_ref")),
         })
@@ -358,7 +381,7 @@ def _same_file_elsewhere(project_id: str, hashes: Set[str]) -> List[Tuple[str, s
             target = {}
         if not isinstance(target, dict):
             target = {}
-        out.append((other, str(content_hash), (_norm(target.get("database")), _norm(target.get("schema")))))
+        out.append((other, str(content_hash), _target_location({"target": target})))
     return out
 
 

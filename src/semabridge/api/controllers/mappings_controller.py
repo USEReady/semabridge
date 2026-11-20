@@ -728,6 +728,7 @@ async def _run_dry_run_pipeline(
     ambiguous_report_aliases: List[Dict[str, Any]] = []
     upsert_delta: Optional[Dict[str, Any]] = None
     table_binding_plan: Optional[Dict[str, Any]] = None
+    databricks_plan: Optional[Dict[str, Any]] = None
     ontology_report: Optional[Dict[str, Any]] = None
     # Step 8 of the engine dry run built the target DDL against the live
     # schema; its drops/placeholders are what the sync would report.
@@ -779,6 +780,8 @@ async def _run_dry_run_pipeline(
         print(f"[DryRun] model={r.get('model')!r} sml_snapshot_id={summary.get('sml_snapshot_id')!r}")
         if table_binding_plan is None:
             table_binding_plan = summary.get("table_binding_plan")
+        if databricks_plan is None:
+            databricks_plan = summary.get("databricks_plan")
         if sync_mode == "upsert" and upsert_delta is None:
             upsert_delta = r.get("upsert_delta") or summary.get("upsert_delta")
             if upsert_delta is None and str(r.get("status") or "").lower() != "success":
@@ -861,8 +864,26 @@ async def _run_dry_run_pipeline(
     # Target DDL drops come from the engine dry run's live-schema Step 8 —
     # never from a schema-less build (it would drop live-only columns and
     # turn time-intelligence metrics into placeholders).
-    if sml_blob and target_connector == "snowflake":
+    if sml_blob and target_connector in ("snowflake", "databricks"):
         dropped_entities.extend(target_ddl_drops)
+
+    if target_connector == "databricks" and dropped_entities:
+        from semabridge.core.target_rules import adapt_target_message
+
+        adapted_drops: List[Dict[str, Any]] = []
+        for entry in dropped_entities:
+            if isinstance(entry, dict):
+                copy_entry = dict(entry)
+                if copy_entry.get("reason"):
+                    copy_entry["reason"] = adapt_target_message(copy_entry["reason"], "databricks")
+                if copy_entry.get("specific_reason"):
+                    copy_entry["specific_reason"] = adapt_target_message(copy_entry["specific_reason"], "databricks")
+                if copy_entry.get("detail"):
+                    copy_entry["detail"] = adapt_target_message(copy_entry["detail"], "databricks")
+                adapted_drops.append(copy_entry)
+            else:
+                adapted_drops.append(entry)
+        dropped_entities = adapted_drops
 
     # ── Reconcile: a field the trial DDL pass just dropped (e.g. a
     # live-schema-only column like MonthIndex when no live schema was
@@ -1071,6 +1092,7 @@ async def _run_dry_run_pipeline(
         },
         "blocking_conflicts": ontology_blockers,
         "table_binding_plan": table_binding_plan,
+        "databricks_plan": databricks_plan,
         "summary": {
             "total_fields": len(filtered_mappings),
             "auto_mapped": auto_count,

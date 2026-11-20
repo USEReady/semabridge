@@ -17,6 +17,7 @@ Strict Allowlist:
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import os
 import re
 from typing import Any, Callable, List, Optional, Set, Tuple
@@ -455,3 +456,336 @@ class GuardedConnection:
 def guard_connection(conn: Any, *, read_only: bool = True, check_ownership: bool = False) -> GuardedConnection:
     """Wrap a DB-API connection so all cursor executions pass sql_guard."""
     return GuardedConnection(conn, read_only=read_only, check_ownership=check_ownership)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Databricks Unity Catalog SQL Guard
+# ─────────────────────────────────────────────────────────────────────────────
+
+_DBX_IDENT_PART = r"(?:`[^`]+`|\"[^\"]+\"|[A-Za-z0-9_$]+)"
+_DBX_FQN_RE = re.compile(rf"^\s*({_DBX_IDENT_PART})\s*\.\s*({_DBX_IDENT_PART})\s*\.\s*({_DBX_IDENT_PART})\s*$")
+_DBX_SCHEMA_RE = re.compile(rf"^\s*({_DBX_IDENT_PART})\s*\.\s*({_DBX_IDENT_PART})\s*$")
+
+_DBX_CREATE_VIEW_RE = re.compile(
+    rf"^\s*CREATE\s+(?:OR\s+REPLACE\s+)?VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?({_DBX_IDENT_PART}(?:\s*\.\s*{_DBX_IDENT_PART}){{0,2}})(?=\s|\(|$)",
+    re.IGNORECASE,
+)
+_DBX_DROP_VIEW_RE = re.compile(
+    rf"^\s*DROP\s+VIEW\s+(?:IF\s+EXISTS\s+)?({_DBX_IDENT_PART}(?:\s*\.\s*{_DBX_IDENT_PART}){{0,2}})\s*$",
+    re.IGNORECASE,
+)
+_DBX_CREATE_SCHEMA_RE = re.compile(
+    rf"^\s*CREATE\s+SCHEMA\s+IF\s+NOT\s+EXISTS\s+({_DBX_IDENT_PART}\s*\.\s*{_DBX_IDENT_PART})\s*$",
+    re.IGNORECASE,
+)
+_DBX_GRANT_RE = re.compile(
+    rf"^\s*GRANT\s+([A-Za-z0-9_\s]+?)\s+ON\s+(?:VIEW\s+)?({_DBX_IDENT_PART}(?:\s*\.\s*{_DBX_IDENT_PART}){{0,2}})\s+TO\s+(.+?)\s*$",
+    re.IGNORECASE,
+)
+_DBX_META_CREATE_TABLE_RE = re.compile(
+    rf"^\s*CREATE\s+(?:OR\s+REPLACE\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?({_DBX_IDENT_PART}(?:\s*\.\s*{_DBX_IDENT_PART}){{0,2}})(?=\s|\(|$)",
+    re.IGNORECASE,
+)
+_DBX_META_DROP_TABLE_RE = re.compile(
+    rf"^\s*DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?({_DBX_IDENT_PART}(?:\s*\.\s*{_DBX_IDENT_PART}){{0,2}})\s*$",
+    re.IGNORECASE,
+)
+_DBX_META_INSERT_RE = re.compile(
+    rf"^\s*INSERT\s+INTO\s+({_DBX_IDENT_PART}(?:\s*\.\s*{_DBX_IDENT_PART}){{0,2}})(?=\s|\(|$)",
+    re.IGNORECASE,
+)
+_DBX_READ_ONLY_PATTERNS: List[Tuple[re.Pattern, str]] = [
+    (re.compile(r"^\s*SELECT\b", re.IGNORECASE), "SELECT"),
+    (re.compile(r"^\s*WITH\s+[A-Za-z0-9_\"`]+\s+AS\s*\(.*?\)\s*SELECT\b", re.IGNORECASE | re.DOTALL), "WITH_SELECT"),
+    (re.compile(r"^\s*SHOW\b", re.IGNORECASE), "SHOW"),
+    (re.compile(r"^\s*DESC(?:RIBE)?\b", re.IGNORECASE), "DESCRIBE"),
+]
+_DBX_FORBIDDEN_PATTERNS: List[Tuple[re.Pattern, str]] = [
+    (re.compile(r"^\s*DROP\s+TABLE\b", re.IGNORECASE), "DROP TABLE"),
+    (re.compile(r"^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMPORARY\s+|EXTERNAL\s+|STREAMING\s+)?TABLE\b", re.IGNORECASE), "CREATE TABLE"),
+    (re.compile(r"^\s*INSERT\b", re.IGNORECASE), "INSERT"),
+    (re.compile(r"^\s*UPDATE\b", re.IGNORECASE), "UPDATE"),
+    (re.compile(r"^\s*DELETE\b", re.IGNORECASE), "DELETE"),
+    (re.compile(r"^\s*MERGE\b", re.IGNORECASE), "MERGE"),
+    (re.compile(r"^\s*ALTER\s+TABLE\b", re.IGNORECASE), "ALTER TABLE"),
+    (re.compile(r"^\s*TRUNCATE\b", re.IGNORECASE), "TRUNCATE"),
+    (re.compile(r"^\s*COPY\s+INTO\b", re.IGNORECASE), "COPY INTO"),
+    (re.compile(r"^\s*CALL\b", re.IGNORECASE), "CALL"),
+    (re.compile(r"^\s*DROP\s+(?:CATALOG|DATABASE|SCHEMA)\b", re.IGNORECASE), "DROP CATALOG/DATABASE/SCHEMA"),
+    (re.compile(r"^\s*CREATE\s+CATALOG\b", re.IGNORECASE), "CREATE CATALOG"),
+    (re.compile(r"^\s*REVOKE\b", re.IGNORECASE), "REVOKE"),
+    (re.compile(r"^\s*OPTIMIZE\b", re.IGNORECASE), "OPTIMIZE"),
+    (re.compile(r"^\s*VACUUM\b", re.IGNORECASE), "VACUUM"),
+    (re.compile(r"^\s*RESTORE\s+TABLE\b", re.IGNORECASE), "RESTORE TABLE"),
+    (re.compile(r"\bEXECUTE\s+IMMEDIATE\b", re.IGNORECASE), "EXECUTE IMMEDIATE"),
+]
+
+
+def _unquote_dbx_part(part: str) -> str:
+    s = str(part or "").strip()
+    if len(s) >= 2 and ((s[0] == "`" and s[-1] == "`") or (s[0] == '"' and s[-1] == '"')):
+        s = s[1:-1]
+    return s.strip().lower()
+
+
+def normalize_databricks_fqn(raw: str) -> Optional[Tuple[str, str, str]]:
+    """Parse a 3-part Databricks identifier into lowercase ``(catalog, schema, name)``."""
+    match = _DBX_FQN_RE.match(str(raw or ""))
+    if not match:
+        return None
+    return (
+        _unquote_dbx_part(match.group(1)),
+        _unquote_dbx_part(match.group(2)),
+        _unquote_dbx_part(match.group(3)),
+    )
+
+
+def normalize_databricks_fqn_str(raw: str) -> Optional[str]:
+    """Return lowercase ``catalog.schema.name`` for a 3-part Databricks identifier."""
+    parsed = normalize_databricks_fqn(raw)
+    if not parsed:
+        return None
+    return f"{parsed[0]}.{parsed[1]}.{parsed[2]}"
+
+
+def normalize_databricks_principal(raw: str) -> str:
+    """Normalize a Databricks principal (user/group/service principal) for grant comparison."""
+    s = str(raw or "").strip()
+    if len(s) >= 2 and ((s[0] == "`" and s[-1] == "`") or (s[0] == '"' and s[-1] == '"') or (s[0] == "'" and s[-1] == "'")):
+        s = s[1:-1]
+    return s.strip().lower()
+
+
+@dataclass
+class DatabricksSQLGuardPolicy:
+    """Per-deploy allowlist policy for Databricks SQL statement execution."""
+
+    target_catalog: str
+    target_schema: str
+    allowed_views: Set[str] = field(default_factory=set)
+    allowed_drop_views: Set[str] = field(default_factory=set)
+    allowed_grants: Set[Tuple[str, str, str]] = field(default_factory=set)
+    allow_create_schema: bool = False
+    allow_metadata_table: bool = False
+    metadata_table_fqn: Optional[str] = None
+    read_only: bool = False
+
+    def _target_prefix(self) -> Tuple[str, str]:
+        return (
+            _unquote_dbx_part(self.target_catalog),
+            _unquote_dbx_part(self.target_schema),
+        )
+
+    def register_view(self, fqn: str) -> Optional[str]:
+        norm = normalize_databricks_fqn_str(fqn)
+        if norm:
+            self.allowed_views.add(norm)
+        return norm
+
+    def register_drop_view(self, fqn: str) -> Optional[str]:
+        norm = normalize_databricks_fqn_str(fqn)
+        if norm:
+            self.allowed_drop_views.add(norm)
+        return norm
+
+    def register_grant(self, privilege: str, fqn: str, principal: str) -> None:
+        norm = normalize_databricks_fqn_str(fqn)
+        priv = " ".join(str(privilege or "").strip().upper().split())
+        princ = normalize_databricks_principal(principal)
+        if norm and priv and princ:
+            self.allowed_grants.add((priv, norm, princ))
+
+
+def _is_allowed_metadata_table_target(
+    raw_target: str,
+    policy: DatabricksSQLGuardPolicy,
+) -> bool:
+    if not policy.allow_metadata_table or not policy.metadata_table_fqn:
+        return False
+    parsed = normalize_databricks_fqn(raw_target)
+    if not parsed:
+        return False
+    expected = normalize_databricks_fqn(policy.metadata_table_fqn)
+    if not expected:
+        return False
+    target_cat, target_sch = policy._target_prefix()
+    if parsed[0] != target_cat or parsed[1] != target_sch:
+        return False
+    if "_semabridge_metadata" not in parsed[2]:
+        return False
+    return parsed == expected
+
+
+def validate_databricks_sql(sql: str, policy: DatabricksSQLGuardPolicy) -> None:
+    """Validate SQL statements for Databricks Unity Catalog execution.
+
+    Enforces a strict default-deny allowlist:
+    - Read-only: ``SELECT`` / ``WITH ... SELECT`` / ``SHOW`` / ``DESCRIBE``
+    - ``CREATE [OR REPLACE] VIEW`` (incl. ``WITH METRICS``) only for objects in
+      ``policy.target_catalog.target_schema`` registered in ``policy.allowed_views``
+    - ``DROP VIEW [IF EXISTS]`` only for objects in ``policy.allowed_drop_views``
+      (staging views, probe view, or verified SemaBridge-owned views)
+    - ``GRANT`` only for exact ``(privilege, view_fqn, principal)`` tuples captured
+      from the same live object
+    - ``CREATE SCHEMA IF NOT EXISTS <target_catalog>.<target_schema>`` only when
+      ``policy.allow_create_schema`` is enabled
+    - Metadata table statements (``CREATE [OR REPLACE] TABLE``, ``DROP TABLE IF EXISTS``,
+      ``INSERT INTO``) only when ``policy.allow_metadata_table`` is enabled and targeting
+      exclusively ``policy.metadata_table_fqn`` (which must include ``_semabridge_metadata``).
+    - Everything else raises ``SQLSecurityGuardError`` / ``SQLOwnershipSecurityError``.
+    """
+    if not sql or not sql.strip():
+        return
+
+    target_cat, target_sch = policy._target_prefix()
+    statements = split_statements(sql)
+    for raw_stmt in statements:
+        clean = strip_sql_comments(raw_stmt).strip()
+        if not clean:
+            continue
+
+        # 1. Read-only statements (always allowed)
+        if any(pat.search(clean) for pat, _ in _DBX_READ_ONLY_PATTERNS):
+            continue
+
+        if policy.read_only:
+            preview = clean[:120].replace("\n", " ")
+            err = (
+                f"Databricks SQL guard (read-only mode) blocked statement: {preview!r}. "
+                "Only SELECT, WITH ... SELECT, SHOW, and DESCRIBE are permitted."
+            )
+            logger.error("🛑 DATABRICKS SQL GUARD: %s", err)
+            raise SQLSecurityGuardError(err)
+
+        # 2. CREATE [OR REPLACE] VIEW (including WITH METRICS)
+        m_create_view = _DBX_CREATE_VIEW_RE.match(clean)
+        if m_create_view:
+            raw_obj = m_create_view.group(1)
+            parsed = normalize_databricks_fqn(raw_obj)
+            if not parsed:
+                err = (
+                    f"Databricks SQL guard blocked CREATE VIEW with unqualified target '{raw_obj}'. "
+                    "A 3-part catalog.schema.view name is required."
+                )
+                logger.error("🛑 DATABRICKS SQL GUARD: %s", err)
+                raise SQLOwnershipSecurityError(err)
+            if parsed[0] != target_cat or parsed[1] != target_sch:
+                err = (
+                    f"Databricks SQL guard blocked CREATE VIEW '{raw_obj}': "
+                    f"outside target schema '{target_cat}.{target_sch}'."
+                )
+                logger.error("🛑 DATABRICKS SQL GUARD: %s", err)
+                raise SQLOwnershipSecurityError(err)
+            fq_str = f"{parsed[0]}.{parsed[1]}.{parsed[2]}"
+            if fq_str not in policy.allowed_views:
+                err = (
+                    f"Databricks SQL guard blocked CREATE VIEW '{fq_str}': "
+                    "view is not registered in this deploy's allowed view set."
+                )
+                logger.error("🛑 DATABRICKS SQL GUARD: %s", err)
+                raise SQLOwnershipSecurityError(err)
+            continue
+
+        # 3. DROP VIEW [IF EXISTS]
+        m_drop_view = _DBX_DROP_VIEW_RE.match(clean)
+        if m_drop_view:
+            raw_obj = m_drop_view.group(1)
+            parsed = normalize_databricks_fqn(raw_obj)
+            if not parsed or parsed[0] != target_cat or parsed[1] != target_sch:
+                err = (
+                    f"Databricks SQL guard blocked DROP VIEW '{raw_obj}': "
+                    f"outside target schema '{target_cat}.{target_sch}'."
+                )
+                logger.error("🛑 DATABRICKS SQL GUARD: %s", err)
+                raise SQLOwnershipSecurityError(err)
+            fq_str = f"{parsed[0]}.{parsed[1]}.{parsed[2]}"
+            if fq_str not in policy.allowed_drop_views:
+                err = (
+                    f"Databricks SQL guard blocked DROP VIEW '{fq_str}': "
+                    "only staging views or verified SemaBridge-owned views may be dropped."
+                )
+                logger.error("🛑 DATABRICKS SQL GUARD: %s", err)
+                raise SQLOwnershipSecurityError(err)
+            continue
+
+        # 4. GRANT re-apply (restricted to captured grants on the same object)
+        m_grant = _DBX_GRANT_RE.match(clean)
+        if m_grant:
+            priv = " ".join(m_grant.group(1).strip().upper().split())
+            raw_obj = m_grant.group(2)
+            raw_principal = m_grant.group(3)
+            parsed = normalize_databricks_fqn(raw_obj)
+            princ = normalize_databricks_principal(raw_principal)
+            if not parsed or parsed[0] != target_cat or parsed[1] != target_sch:
+                err = (
+                    f"Databricks SQL guard blocked GRANT on '{raw_obj}': "
+                    f"outside target schema '{target_cat}.{target_sch}'."
+                )
+                logger.error("🛑 DATABRICKS SQL GUARD: %s", err)
+                raise SQLSecurityGuardError(err)
+            fq_str = f"{parsed[0]}.{parsed[1]}.{parsed[2]}"
+            if (priv, fq_str, princ) not in policy.allowed_grants:
+                err = (
+                    f"Databricks SQL guard blocked GRANT {priv} ON {fq_str} TO {raw_principal}: "
+                    "only grants captured from the same live view before promotion may be re-applied."
+                )
+                logger.error("🛑 DATABRICKS SQL GUARD: %s", err)
+                raise SQLSecurityGuardError(err)
+            continue
+
+        # 5. CREATE SCHEMA IF NOT EXISTS (target schema only, when explicitly enabled)
+        m_schema = _DBX_CREATE_SCHEMA_RE.match(clean)
+        if m_schema:
+            raw_schema = m_schema.group(1)
+            sm = _DBX_SCHEMA_RE.match(raw_schema)
+            if not sm:
+                err = f"Databricks SQL guard blocked CREATE SCHEMA '{raw_schema}': invalid schema identifier."
+                logger.error("🛑 DATABRICKS SQL GUARD: %s", err)
+                raise SQLSecurityGuardError(err)
+            cat_part = _unquote_dbx_part(sm.group(1))
+            sch_part = _unquote_dbx_part(sm.group(2))
+            if not policy.allow_create_schema:
+                err = (
+                    f"Databricks SQL guard blocked CREATE SCHEMA '{cat_part}.{sch_part}': "
+                    "create_schema_if_not_exists is disabled."
+                )
+                logger.error("🛑 DATABRICKS SQL GUARD: %s", err)
+                raise SQLSecurityGuardError(err)
+            if cat_part != target_cat or sch_part != target_sch:
+                err = (
+                    f"Databricks SQL guard blocked CREATE SCHEMA '{cat_part}.{sch_part}': "
+                    f"only target schema '{target_cat}.{target_sch}' is permitted."
+                )
+                logger.error("🛑 DATABRICKS SQL GUARD: %s", err)
+                raise SQLSecurityGuardError(err)
+            continue
+
+        # 6. Metadata table exception (ONLY when create_metadata_table is enabled AND targeting _semabridge_metadata)
+        m_meta_create = _DBX_META_CREATE_TABLE_RE.match(clean)
+        if m_meta_create and _is_allowed_metadata_table_target(m_meta_create.group(1), policy):
+            continue
+        m_meta_drop = _DBX_META_DROP_TABLE_RE.match(clean)
+        if m_meta_drop and _is_allowed_metadata_table_target(m_meta_drop.group(1), policy):
+            continue
+        m_meta_insert = _DBX_META_INSERT_RE.match(clean)
+        if m_meta_insert and _is_allowed_metadata_table_target(m_meta_insert.group(1), policy):
+            continue
+
+        # 7. Explicit forbidden error messages
+        for pattern, op_name in _DBX_FORBIDDEN_PATTERNS:
+            if pattern.search(clean):
+                preview = clean[:120].replace("\n", " ")
+                err = (
+                    f"Databricks SQL guard blocked forbidden operation '{op_name}': {preview!r}. "
+                    "SemaBridge never creates, drops, alters, or mutates user tables."
+                )
+                logger.error("🛑 DATABRICKS SQL GUARD: %s", err)
+                raise SQLSecurityGuardError(err)
+
+        # 8. Default-deny catch-all
+        preview = clean[:120].replace("\n", " ")
+        err = (
+            f"Databricks SQL guard blocked statement (default-deny allowlist): {preview!r}."
+        )
+        logger.error("🛑 DATABRICKS SQL GUARD: %s", err)
+        raise SQLSecurityGuardError(err)

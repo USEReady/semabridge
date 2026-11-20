@@ -47,6 +47,62 @@ const INPUT = {
   outline: 'none',
 };
 
+function getProjectTargetType(project, fallback = 'snowflake') {
+  if (!project) return fallback;
+  const raw =
+    project.target_type ||
+    (typeof project.target === 'string' ? project.target : project.target?.type) ||
+    (Array.isArray(project.targets) && (typeof project.targets[0] === 'string' ? project.targets[0] : project.targets[0]?.type)) ||
+    fallback;
+  return String(raw || fallback).toLowerCase().includes('databricks') ? 'databricks' : 'snowflake';
+}
+
+function getTargetMeta(targetType) {
+  const isDatabricks = String(targetType || '').toLowerCase().includes('databricks');
+  if (isDatabricks) {
+    return {
+      isDatabricks: true,
+      label: 'Databricks',
+      warehouseLabel: 'Databricks Unity Catalog',
+      viewLabel: 'Databricks Metric View',
+      viewsLabel: 'Databricks Metric Views',
+      aiLabel: 'Databricks Genie / AI',
+      badgeStyle: {
+        fontSize: 10,
+        fontWeight: 700,
+        padding: '2px 7px',
+        borderRadius: 4,
+        background: 'rgba(255, 54, 33, 0.12)',
+        border: '1px solid rgba(255, 54, 33, 0.35)',
+        color: '#ff5c45',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+      },
+    };
+  }
+  return {
+    isDatabricks: false,
+    label: 'Snowflake',
+    warehouseLabel: 'Snowflake Warehouse',
+    viewLabel: 'Snowflake Semantic View',
+    viewsLabel: 'Snowflake Semantic Views',
+    aiLabel: 'Cortex AI',
+    badgeStyle: {
+      fontSize: 10,
+      fontWeight: 700,
+      padding: '2px 7px',
+      borderRadius: 4,
+      background: 'rgba(56, 189, 248, 0.12)',
+      border: '1px solid rgba(56, 189, 248, 0.35)',
+      color: '#38bdf8',
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 4,
+    },
+  };
+}
+
 function formatOccurred(isoStr) {
   if (!isoStr) return '—';
   try {
@@ -123,7 +179,7 @@ export default function DriftMonitoringPage() {
   };
 
   const handleOpenBlast = (initialTarget = '') => {
-    const candidate = initialTarget || events[0]?.metric_name || 'TOTAL_UNITS';
+    const candidate = initialTarget || projectEvents[0]?.metric_name || 'TOTAL_UNITS';
     setBlastTarget(candidate);
     setBlastType(candidate === 'SalesFact' ? 'TABLE' : 'METRIC');
     setBlastChangeType('MODIFY_EXPRESSION');
@@ -223,7 +279,11 @@ export default function DriftMonitoringPage() {
         body: JSON.stringify({ project_id: selectedProjectId || undefined }),
       });
       const data = await res.json();
-      setCheckMsg(`Checked ${data.checked_metrics} metric(s) · ${data.drift_detected} drift event(s) detected.`);
+      if (data.error) {
+        setCheckMsg(`Drift check (${data.target_type === 'databricks' ? 'Databricks' : 'Snowflake'}) offline: ${data.error}`);
+      } else {
+        setCheckMsg(`Checked ${data.checked_metrics} metric(s) · ${data.drift_detected} drift event(s) detected.`);
+      }
       await refreshEvents();
     } catch (err) {
       setCheckMsg(`Check failed: ${err}`);
@@ -270,6 +330,8 @@ export default function DriftMonitoringPage() {
     name: selectedProjectId,
     id: selectedProjectId,
   };
+  const selectedTargetType = getProjectTargetType(selectedProject);
+  const targetMeta = getTargetMeta(selectedTargetType);
 
   return (
     <div style={{ height: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--bg-app)' }}>
@@ -316,7 +378,7 @@ export default function DriftMonitoringPage() {
               borderColor: 'rgba(168, 85, 247, 0.35)',
               color: 'var(--accent-purple, #a855f7)',
             }}
-            onClick={() => handleOpenBlast(events[0]?.metric_name || 'TOTAL_UNITS')}
+            onClick={() => handleOpenBlast(projectEvents[0]?.metric_name || 'TOTAL_UNITS')}
             title="Check Blast Radius: see how metric changes affect downstream BI reports & AI agents"
           >
             <Zap size={13} style={{ color: 'var(--accent-purple, #a855f7)' }} /> Check Blast Radius
@@ -362,6 +424,7 @@ export default function DriftMonitoringPage() {
               const isSelected = selectedProjectId === pid || cleanPid(selectedProjectId) === cleanPid(pid);
               const pEvs = allEvents.filter((e) => cleanPid(e.project_id) === cleanPid(pid));
               const pPending = pEvs.filter((e) => e.status === 'pending').length;
+              const pTargetMeta = getTargetMeta(getProjectTargetType(p));
 
               return (
                 <button
@@ -393,8 +456,13 @@ export default function DriftMonitoringPage() {
                     }}>
                       {p.name || pid}
                     </div>
-                    <div style={{ fontSize: 11, color: 'var(--text-tertiary)', fontFamily: 'monospace' }}>
-                      {pid}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                      <span style={{ fontSize: 11, color: 'var(--text-tertiary)', fontFamily: 'monospace' }}>
+                        {pid}
+                      </span>
+                      <span style={{ ...pTargetMeta.badgeStyle, fontSize: 9.5, padding: '1px 5px' }}>
+                        {pTargetMeta.label}
+                      </span>
                     </div>
                   </div>
 
@@ -450,16 +518,19 @@ export default function DriftMonitoringPage() {
             gap: 12,
           }}>
             <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <h2 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: 'var(--text-primary)' }}>
                   {selectedProject.name || selectedProjectId}
                 </h2>
                 <code style={{ fontSize: 11.5, padding: '2px 6px', borderRadius: 4, background: 'var(--bg-app)', color: 'var(--text-secondary)' }}>
                   {selectedProjectId}
                 </code>
+                <span style={targetMeta.badgeStyle}>
+                  <Database size={10} /> {targetMeta.label}
+                </span>
               </div>
               <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <Database size={13} style={{ color: 'var(--accent-blue)' }} /> Target: Snowflake SEMABRIDGE_WORKSPACE · Auto-monitored on scheduled runs
+                <Database size={13} style={{ color: 'var(--accent-blue)' }} /> Target: {targetMeta.warehouseLabel} · {targetMeta.viewLabel} · Auto-monitored on scheduled runs
               </div>
             </div>
 
@@ -469,7 +540,7 @@ export default function DriftMonitoringPage() {
                 style={BTN_PRIMARY}
                 disabled={busy}
                 onClick={handleCheckNow}
-                title="Execute immediate drift inspection against Snowflake"
+                title={`Execute immediate drift inspection against ${targetMeta.warehouseLabel}`}
               >
                 <Play size={13} /> {busy ? 'Checking…' : 'Check Drift Now'}
               </button>
@@ -590,10 +661,10 @@ export default function DriftMonitoringPage() {
               }}>
                 <ShieldCheck size={32} style={{ color: 'var(--color-success)' }} />
                 <strong style={{ fontSize: 14, color: 'var(--text-primary)' }}>
-                  All metrics in sync with Snowflake
+                  All metrics in sync with {targetMeta.label}
                 </strong>
                 <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)', maxWidth: 460 }}>
-                  No drift detected between your BI semantic models and deployed Snowflake semantic views.
+                  No drift detected between your BI semantic models and deployed {targetMeta.viewsLabel}.
                   Scheduled parity checks will monitor and display any drift here automatically.
                 </p>
                 <button
@@ -610,6 +681,7 @@ export default function DriftMonitoringPage() {
                   const isPending = ev.status === 'pending';
                   const isApproved = ev.status === 'approved';
                   const isIgnored = ev.status === 'ignored';
+                  const evTargetMeta = getTargetMeta(ev.target_type || selectedTargetType);
 
                   return (
                     <div
@@ -635,6 +707,9 @@ export default function DriftMonitoringPage() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                           <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
                             {ev.metric_name}
+                          </span>
+                          <span style={evTargetMeta.badgeStyle}>
+                            {evTargetMeta.label}
                           </span>
                           <code style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, background: 'var(--bg-surface)', border: '1px solid var(--border-main)', color: 'var(--text-tertiary)', fontFamily: 'monospace' }}>
                             {ev.id}
@@ -734,7 +809,7 @@ export default function DriftMonitoringPage() {
                         </div>
                       )}
 
-                      {/* Side-by-side Formula Comparison (BI Modified vs Snowflake Current vs SemaBridge Logic) */}
+                      {/* Side-by-side Formula Comparison (BI Modified vs Warehouse Current vs SemaBridge Logic) */}
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, fontSize: 11.5 }}>
                         <div style={{ padding: '8px 12px', borderRadius: 6, background: 'var(--bg-surface)', border: '1px solid var(--border-main)' }}>
                           <div style={{ color: 'var(--accent-blue)', fontWeight: 600, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -747,10 +822,10 @@ export default function DriftMonitoringPage() {
 
                         <div style={{ padding: '8px 12px', borderRadius: 6, background: 'var(--bg-surface)', border: '1px solid var(--border-main)' }}>
                           <div style={{ color: 'var(--text-secondary)', fontWeight: 600, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
-                            <Database size={12} /> Snowflake Warehouse (Current):
+                            <Database size={12} /> {evTargetMeta.warehouseLabel} (Current):
                           </div>
                           <code style={{ color: 'var(--text-secondary)', wordBreak: 'break-all', fontFamily: 'monospace' }}>
-                            {ev.snowflake_definition || '—'}
+                            {ev.databricks_definition || ev.snowflake_definition || '—'}
                           </code>
                         </div>
 
@@ -762,14 +837,14 @@ export default function DriftMonitoringPage() {
                         }}>
                           <div style={{ color: 'var(--text-primary)', fontWeight: 600, marginBottom: 4, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
                             <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                              <Sparkles size={12} style={{ color: 'var(--accent-blue)' }} /> Snowflake Warehouse (Proposed / SemaBridge Logic):
+                              <Sparkles size={12} style={{ color: 'var(--accent-blue)' }} /> {evTargetMeta.warehouseLabel} (Proposed / SemaBridge Logic):
                             </span>
                             <span style={{ fontSize: 9.5, padding: '1px 5px', borderRadius: 3, background: 'var(--bg-surface-raised)', border: '1px solid var(--border-main)', color: 'var(--text-secondary)', fontWeight: 700 }}>
                               SEMABRIDGE
                             </span>
                           </div>
                           <code style={{ color: 'var(--text-primary)', wordBreak: 'break-all', fontFamily: 'monospace', fontWeight: 600 }}>
-                            {ev.proposed_snowflake_definition || ev.semabridge_definition || '—'}
+                            {ev.proposed_databricks_definition || ev.proposed_snowflake_definition || ev.semabridge_definition || '—'}
                           </code>
                         </div>
                       </div>
@@ -839,7 +914,7 @@ export default function DriftMonitoringPage() {
                               type="button"
                               style={{ ...BTN_PRIMARY, background: 'var(--color-success, #22c55e)', borderColor: 'var(--color-success, #22c55e)', color: '#fff', padding: '5px 12px' }}
                               onClick={() => handleResolve(ev.id, 'approve')}
-                              title="Approve changes and automatically sync to Snowflake warehouse"
+                              title={`Approve changes and automatically sync to ${evTargetMeta.warehouseLabel}`}
                             >
                               <Check size={13} /> Approve &amp; Sync
                             </button>
@@ -882,7 +957,7 @@ export default function DriftMonitoringPage() {
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
-            Check how approving this metric drift propagates downstream across BI dashboards, semantic layers, and Cortex AI agents.
+            Check how approving this metric drift propagates downstream across BI dashboards, semantic layers, and {targetMeta.aiLabel} agents.
           </div>
 
           {/* Target & Change Type Controls */}

@@ -7,8 +7,8 @@ from semabridge.api.controllers.fabric_connection_controller import router as fa
 router = APIRouter()
 
 for child_router in [
-    connections_router,
-    fabric_connection_router,
     databricks_connection_router,
+    fabric_connection_router,
+    connections_router,
 ]:
     router.include_router(child_router)

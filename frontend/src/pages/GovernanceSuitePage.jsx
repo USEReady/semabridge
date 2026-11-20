@@ -46,6 +46,59 @@ const BTN_PRIMARY = {
   color: '#fff',
 };
 
+function getProjectTargetType(project) {
+  if (!project) return 'snowflake';
+  const raw =
+    project.target_type ||
+    (typeof project.target === 'string' ? project.target : project.target?.type) ||
+    (Array.isArray(project.targets) && (typeof project.targets[0] === 'string' ? project.targets[0] : project.targets[0]?.type)) ||
+    'snowflake';
+  return String(raw || 'snowflake').toLowerCase().includes('databricks') ? 'databricks' : 'snowflake';
+}
+
+function getTargetLabels(targetType) {
+  const isDatabricks = String(targetType || '').toLowerCase().includes('databricks');
+  return isDatabricks
+    ? {
+        isDatabricks: true,
+        label: 'Databricks',
+        warehouseLabel: 'Databricks Unity Catalog',
+        viewLabel: 'Databricks Metric View',
+        aiLabel: 'Databricks Genie / AI',
+        badgeStyle: {
+          fontSize: 10,
+          fontWeight: 700,
+          padding: '2px 7px',
+          borderRadius: 4,
+          background: 'rgba(255, 54, 33, 0.12)',
+          border: '1px solid rgba(255, 54, 33, 0.35)',
+          color: '#ff5c45',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 4,
+        },
+      }
+    : {
+        isDatabricks: false,
+        label: 'Snowflake',
+        warehouseLabel: 'Snowflake Warehouse',
+        viewLabel: 'Snowflake Semantic View',
+        aiLabel: 'Cortex AI',
+        badgeStyle: {
+          fontSize: 10,
+          fontWeight: 700,
+          padding: '2px 7px',
+          borderRadius: 4,
+          background: 'rgba(56, 189, 248, 0.12)',
+          border: '1px solid rgba(56, 189, 248, 0.35)',
+          color: '#38bdf8',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 4,
+        },
+      };
+}
+
 function useProjects() {
   const [projects, setProjects] = useState([]);
   const [projectId, setProjectId] = useState('');
@@ -58,7 +111,8 @@ function useProjects() {
   return { projects, projectId, setProjectId };
 }
 
-export function DriftView({ projectId = '' }) {
+export function DriftView({ projectId = '', targetType = 'snowflake' }) {
+  const targetMeta = getTargetLabels(targetType);
   const [events, setEvents] = useState([]);
   const [schedules, setSchedules] = useState([]);
   const [intervalMins, setIntervalMins] = useState(60);
@@ -268,6 +322,7 @@ export function DriftView({ projectId = '' }) {
           const isPending = ev.status === 'pending';
           const isApproved = ev.status === 'approved';
           const isIgnored = ev.status === 'ignored';
+          const evMeta = getTargetLabels(ev.target_type || targetType);
 
           return (
             <div
@@ -291,6 +346,9 @@ export function DriftView({ projectId = '' }) {
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <span style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--text-primary)' }}>
                   {ev.metric_name}
+                </span>
+                <span style={evMeta.badgeStyle}>
+                  {evMeta.label}
                 </span>
                 {(ev.badges || [ev.drift_type])
                   .filter((b) => !['PENDING_APPROVAL', 'APPROVED', 'IGNORED', 'PENDING'].includes(String(b).toUpperCase()))
@@ -364,7 +422,7 @@ export function DriftView({ projectId = '' }) {
                         type="button"
                         style={{ ...BTN_PRIMARY, background: 'var(--color-success, #22c55e)', color: '#fff', padding: '4px 10px', fontSize: 11.5 }}
                         onClick={() => resolve(ev.id, 'approve')}
-                        title="Approve changes and automatically sync to Snowflake warehouse"
+                        title={`Approve changes and automatically sync to ${evMeta.warehouseLabel}`}
                       >
                         <Check size={12} /> Approve &amp; Sync
                       </button>
@@ -396,20 +454,20 @@ export function DriftView({ projectId = '' }) {
                 </div>
                 <div style={{ padding: '8px 10px', borderRadius: 6, background: 'var(--bg-surface)', border: '1px solid var(--border-main)' }}>
                   <div style={{ color: 'var(--text-secondary)', fontWeight: 600, marginBottom: 2, display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <Database size={12} /> Snowflake Warehouse (Current):
+                    <Database size={12} /> {evMeta.warehouseLabel} (Current):
                   </div>
-                  <code style={{ color: 'var(--text-secondary)', wordBreak: 'break-all' }}>{ev.snowflake_definition || '—'}</code>
+                  <code style={{ color: 'var(--text-secondary)', wordBreak: 'break-all' }}>{ev.databricks_definition || ev.snowflake_definition || '—'}</code>
                 </div>
                 <div style={{ padding: '8px 10px', borderRadius: 6, background: 'var(--bg-surface)', border: '1px solid var(--border-main)' }}>
                   <div style={{ color: 'var(--text-primary)', fontWeight: 600, marginBottom: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
                     <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <Sparkles size={12} style={{ color: 'var(--accent-blue)' }} /> Snowflake Warehouse (Proposed / SemaBridge Logic):
+                      <Sparkles size={12} style={{ color: 'var(--accent-blue)' }} /> {evMeta.warehouseLabel} (Proposed / SemaBridge Logic):
                     </span>
                     <span style={{ fontSize: 9.5, padding: '1px 5px', borderRadius: 3, background: 'var(--bg-surface-raised)', border: '1px solid var(--border-main)', color: 'var(--text-secondary)', fontWeight: 700 }}>
                       SEMABRIDGE
                     </span>
                   </div>
-                  <code style={{ color: 'var(--text-primary)', wordBreak: 'break-all', fontWeight: 600 }}>{ev.proposed_snowflake_definition || ev.semabridge_definition || '—'}</code>
+                  <code style={{ color: 'var(--text-primary)', wordBreak: 'break-all', fontWeight: 600 }}>{ev.proposed_databricks_definition || ev.proposed_snowflake_definition || ev.semabridge_definition || '—'}</code>
                 </div>
               </div>
 
@@ -492,7 +550,7 @@ export function DriftView({ projectId = '' }) {
                   Enterprise Impact &amp; Dependency Cascade
                 </strong>
                 <div style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>
-                  Check breaking &amp; safe drift changes cascading to Power BI, Tableau, and Cortex AI verified queries.
+                  Check breaking &amp; safe drift changes cascading to Power BI, Tableau, and {targetMeta.aiLabel} verified queries.
                 </div>
               </div>
             </div>
@@ -633,7 +691,9 @@ export function DriftView({ projectId = '' }) {
   );
 }
 
-export function ReverseSyncView({ projectId = '' }) {
+export function ReverseSyncView({ projectId = '', targetType = 'snowflake' }) {
+  const targetMeta = getTargetLabels(targetType);
+  const warehouseConnector = targetMeta.isDatabricks ? 'DATABRICKS' : 'SNOWFLAKE';
   const [sfAccounts, setSfAccounts] = useState([]);
   const [biAccounts, setBiAccounts] = useState([]);
   const [sfAccountId, setSfAccountId] = useState('');
@@ -657,13 +717,15 @@ export function ReverseSyncView({ projectId = '' }) {
       .then((r) => (r.ok ? r.json() : []))
       .then((list) => {
         const rows = Array.isArray(list) ? list : (list?.accounts || []);
-        const sf = rows.filter((a) => String(a.connector_type || '').toUpperCase() === 'SNOWFLAKE');
+        const wh = rows.filter((a) => String(a.connector_type || '').toUpperCase() === warehouseConnector);
         const bi = rows.filter((a) => ['FABRIC', 'POWERBI', 'POWER_BI'].includes(String(a.connector_type || '').toUpperCase()));
-        setSfAccounts(sf);
+        setSfAccounts(wh);
         setBiAccounts(bi);
-        if (sf.length && !sfAccountId) {
-          const def = sf.find((a) => a.is_default) || sf[0];
+        if (wh.length) {
+          const def = wh.find((a) => a.is_default) || wh[0];
           setSfAccountId(def.id);
+        } else {
+          setSfAccountId('');
         }
         if (bi.length && !biAccountId) {
           const defBi = bi.find((a) => a.is_default) || bi[0];
@@ -671,7 +733,7 @@ export function ReverseSyncView({ projectId = '' }) {
         }
       })
       .catch(() => {});
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [warehouseConnector]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadSemanticViews = useCallback(async (acctId) => {
     if (!acctId && !projectId) return;
@@ -689,14 +751,14 @@ export function ReverseSyncView({ projectId = '' }) {
         setSemanticView((prev) => (views.some((v) => v.fqn === prev) ? prev : views[0].fqn));
         setViewsStatus(`${views.length} semantic model(s) loaded`);
       } else {
-        setViewsStatus(data?.error || 'No semantic views found in this Snowflake account');
+        setViewsStatus(data?.error || `No ${targetMeta.isDatabricks ? 'metric views' : 'semantic views'} found in this ${targetMeta.label} account`);
       }
     } catch (err) {
       setViewsStatus(String(err));
     } finally {
       setLoadingViews(false);
     }
-  }, [projectId]);
+  }, [projectId, targetMeta.isDatabricks, targetMeta.label]);
 
   useEffect(() => {
     if (sfAccountId) loadSemanticViews(sfAccountId);
@@ -771,9 +833,9 @@ export function ReverseSyncView({ projectId = '' }) {
     <div style={CARD}>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11.5, color: 'var(--text-secondary)' }}>
-          Connected Snowflake Account
+          Connected {targetMeta.label} Account
           <select style={INPUT} value={sfAccountId} onChange={(e) => setSfAccountId(e.target.value)}>
-            <option value="">{sfAccounts.length ? 'Select Snowflake account…' : 'No Snowflake accounts connected'}</option>
+            <option value="">{sfAccounts.length ? `Select ${targetMeta.label} account…` : `No ${targetMeta.label} accounts connected`}</option>
             {sfAccounts.map((a) => (
               <option key={a.id} value={a.id}>{a.tag || a.identity_email || a.id}</option>
             ))}
@@ -781,15 +843,15 @@ export function ReverseSyncView({ projectId = '' }) {
         </label>
 
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11.5, color: 'var(--text-secondary)' }}>
-          Snowflake Semantic Model
+          {targetMeta.viewLabel}
           <div style={{ display: 'flex', gap: 6 }}>
             <select style={{ ...INPUT, flex: 1 }} value={semanticView} onChange={(e) => setSemanticView(e.target.value)}>
-              <option value="">{loadingViews ? 'Loading semantic views…' : 'All / auto-discover'}</option>
+              <option value="">{loadingViews ? `Loading ${targetMeta.isDatabricks ? 'metric views' : 'semantic views'}…` : 'All / auto-discover'}</option>
               {semanticViews.map((v) => (
                 <option key={v.fqn} value={v.fqn}>{v.fqn}</option>
               ))}
             </select>
-            <button type="button" style={BTN} disabled={loadingViews} onClick={() => loadSemanticViews(sfAccountId)} title="Refresh Semantic Views">
+            <button type="button" style={BTN} disabled={loadingViews} onClick={() => loadSemanticViews(sfAccountId)} title={`Refresh ${targetMeta.viewLabel}s`}>
               <RefreshCw size={12} />
             </button>
           </div>
@@ -834,7 +896,7 @@ export function ReverseSyncView({ projectId = '' }) {
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <input style={{ ...INPUT, flex: 1, minWidth: 240 }} placeholder="Power BI PBIP/TMDL folder path (optional, for direct file patch)" value={pbipPath} onChange={(e) => setPbipPath(e.target.value)} />
-        <button type="button" style={BTN_PRIMARY} onClick={runPreview}><ArrowLeftRight size={13} /> Preview Snowflake → BI Upgrades</button>
+        <button type="button" style={BTN_PRIMARY} onClick={runPreview}><ArrowLeftRight size={13} /> Preview {targetMeta.label} → BI Upgrades</button>
         {selectedUpgrades.length > 0 && pbipPath.trim() && (
           <button type="button" style={BTN} onClick={applyAll}><Check size={13} /> Insert Selected ({selectedUpgrades.length})</button>
         )}
@@ -846,7 +908,7 @@ export function ReverseSyncView({ projectId = '' }) {
       {preview && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-            {preview.snowflake_connected ? 'Connected to Snowflake' : `Using governed ontology (${preview.snowflake_error || 'Snowflake offline'})`} · {preview.upgrade_count} additive upgrade(s) found · {preview.existing_bi_measures} existing Power BI measure(s) preserved.
+            {(preview.databricks_connected || preview.snowflake_connected) ? `Connected to ${targetMeta.label}` : `Using governed ontology (${preview.databricks_error || preview.snowflake_error || `${targetMeta.label} offline`})`} · {preview.upgrade_count} additive upgrade(s) found · {preview.existing_bi_measures} existing Power BI measure(s) preserved.
           </span>
           {(preview.upgrades || []).map((u, i) => (
             <label key={i} style={{ padding: 10, borderRadius: 8, background: 'var(--bg-app)', border: '1px solid var(--border-main)', fontSize: 12, display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer' }}>
@@ -867,7 +929,8 @@ export function ReverseSyncView({ projectId = '' }) {
   );
 }
 
-function BiTruthView({ projectId }) {
+function BiTruthView({ projectId, targetType = 'snowflake' }) {
+  const targetMeta = getTargetLabels(targetType);
   const [cases, setCases] = useState([]);
   const [runs, setRuns] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -1252,7 +1315,7 @@ function BiTruthView({ projectId }) {
                   Truth Suite Accuracy: <span style={{ color: latest.accuracy_pct >= 90 ? 'var(--color-success)' : 'var(--color-warning)' }}>{latest.accuracy_pct}%</span>
                 </div>
                 <div style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>
-                  {latest.passed} out of {latest.total} approved questions verified accurately against Snowflake &amp; Cortex semantic layer.
+                  {latest.passed} out of {latest.total} approved questions verified accurately against {targetMeta.isDatabricks ? 'Databricks Unity Catalog & Genie' : 'Snowflake & Cortex'} semantic layer.
                 </div>
               </div>
             </div>
@@ -1773,6 +1836,9 @@ const TITLES = {
 export default function GovernanceSuitePage({ mode = 'drift' }) {
   const { projects, projectId, setProjectId } = useProjects();
   const [title, subtitle] = TITLES[mode] || TITLES.drift;
+  const selectedProject = projects.find((p) => (p.id || p.name) === projectId);
+  const targetType = getProjectTargetType(selectedProject);
+  const targetMeta = getTargetLabels(targetType);
   return (
     <div style={{ height: '100%', overflow: 'auto', padding: '24px 28px', background: 'var(--bg-app)' }}>
       <div style={{ maxWidth: 1200, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -1781,16 +1847,23 @@ export default function GovernanceSuitePage({ mode = 'drift' }) {
             <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: 'var(--text-primary)' }}>{title}</h1>
             <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 }}>{subtitle}</div>
           </div>
-          <select style={INPUT} value={projectId} onChange={(e) => setProjectId(e.target.value)} aria-label="Project scope">
-            <option value="">All projects</option>
-            {projects.map((p) => (
-              <option key={p.id || p.name} value={p.id || p.name}>{p.name || p.id}</option>
-            ))}
-          </select>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {projectId && (
+              <span style={targetMeta.badgeStyle}>
+                <Database size={10} /> {targetMeta.label}
+              </span>
+            )}
+            <select style={INPUT} value={projectId} onChange={(e) => setProjectId(e.target.value)} aria-label="Project scope">
+              <option value="">All projects</option>
+              {projects.map((p) => (
+                <option key={p.id || p.name} value={p.id || p.name}>{p.name || p.id}</option>
+              ))}
+            </select>
+          </div>
         </div>
-        {mode === 'drift' && <DriftView projectId={projectId} />}
-        {mode === 'reverse-sync' && <ReverseSyncView projectId={projectId} />}
-        {mode === 'bi-truth' && <BiTruthView projectId={projectId} />}
+        {mode === 'drift' && <DriftView projectId={projectId} targetType={targetType} />}
+        {mode === 'reverse-sync' && <ReverseSyncView projectId={projectId} targetType={targetType} />}
+        {mode === 'bi-truth' && <BiTruthView projectId={projectId} targetType={targetType} />}
         {mode === 'cross-platform' && <CrossPlatformView projectId={projectId} />}
       </div>
     </div>

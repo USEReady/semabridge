@@ -38,6 +38,20 @@ export function isBlockingRow(row) {
   return String(row?.status || '').toLowerCase() === 'collision';
 }
 
+function adaptTargetMessage(text, targetPlatform = 'snowflake') {
+  const raw = String(text || '');
+  if (!raw || String(targetPlatform || 'snowflake').toLowerCase() !== 'databricks') {
+    return raw;
+  }
+  return raw
+    .replaceAll('Snowflake semantic-view metrics', 'Databricks Unity Catalog metric-view measures')
+    .replaceAll('Snowflake semantic-view metric', 'Databricks Unity Catalog metric-view measure')
+    .replaceAll('Snowflake semantic views', 'Databricks Unity Catalog metric views')
+    .replaceAll('Snowflake semantic view', 'Databricks Unity Catalog metric view')
+    .replaceAll("Snowflake's", "Databricks'")
+    .replaceAll('Snowflake', 'Databricks');
+}
+
 // Shared between TableHeader and MappingRow so the two never drift apart.
 // The Status and Action columns are fixed pixel widths (not fr/minmax) on
 // purpose: Status needs to be wide enough to hold a stacked Status badge +
@@ -129,7 +143,7 @@ function TableHeader() {
 
 // ─── Single mapping row ───────────────────────────────────────────────────────
 // ─── Single mapping row ───────────────────────────────────────────────────────
-function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpandedCollision, allRows, pendingRenames, setPendingRenames, applyingRename, onApplyRename }) {
+function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpandedCollision, allRows, pendingRenames, setPendingRenames, applyingRename, onApplyRename, targetPlatform = 'snowflake' }) {
   const [expandedMeasure, setExpandedMeasure] = useState(false);
   // Clicking the "N detected" pill is the explicit, deliberate action that
   // reveals non-report-alias synonyms (see MeasureTranslationPanel) --
@@ -572,13 +586,14 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
           onRenameChange={val => setPendingRenames(prev => ({ ...prev, [row.id]: val }))}
           onApply={() => onApplyRename(row.id)}
           applying={applyingRename === row.id}
+          targetPlatform={targetPlatform}
         />
       </div>
     )}
     {/* ── Inline measure translation panel ── */}
     {hasDetails && expandedMeasure && (
       <div style={{ padding: '0 14px 10px' }}>
-        <MeasureTranslationPanel row={row} forceRevealSynonyms={revealSynonymsOnOpen} />
+        <MeasureTranslationPanel row={row} forceRevealSynonyms={revealSynonymsOnOpen} targetPlatform={targetPlatform} />
       </div>
     )}
     </div>
@@ -600,7 +615,9 @@ function synonymSourceLabel(source) {
   return word ? word.replace(/\b\w/g, (c) => c.toUpperCase()) : null;
 }
 
-function MeasureTranslationPanel({ row, forceRevealSynonyms = false }) {
+function MeasureTranslationPanel({ row, forceRevealSynonyms = false, targetPlatform = 'snowflake' }) {
+  const isDatabricks = String(targetPlatform || 'snowflake').toLowerCase() === 'databricks';
+  const targetLabel = isDatabricks ? 'Databricks' : 'Snowflake';
   const isMeasure = String(row.field_type || row.entity_kind || '').toLowerCase() === 'measure';
   const hasTargetExpr = Boolean(String(row.target_expression || '').trim());
   const isFailed = row.sync_enabled === false || !!row.sync_failure_reason || (isMeasure && !hasTargetExpr);
@@ -650,7 +667,7 @@ function MeasureTranslationPanel({ row, forceRevealSynonyms = false }) {
             fontWeight: 600,
           }}>
             <AlertTriangle size={13} style={{ flexShrink: 0 }} />
-            <span>Translation Warning: {row.sync_failure_reason || 'This measure is too complex to translate to SQL automatically.'}</span>
+            <span>Translation Warning: {adaptTargetMessage(row.sync_failure_reason, targetPlatform) || 'This measure is too complex to translate to SQL automatically.'}</span>
           </div>
         ) : (
           <div style={{
@@ -666,7 +683,7 @@ function MeasureTranslationPanel({ row, forceRevealSynonyms = false }) {
             fontWeight: 600,
           }}>
             <CheckCircle size={13} style={{ flexShrink: 0 }} />
-            <span>Translated successfully to Snowflake SQL</span>
+            <span>Translated successfully to {targetLabel} SQL</span>
           </div>
         )
       )}
@@ -804,7 +821,7 @@ function MeasureTranslationPanel({ row, forceRevealSynonyms = false }) {
 
           {/* Target SQL */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Snowflake Translation (SQL)</span>
+            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{targetLabel} Translation (SQL)</span>
             <div style={{
               fontFamily: 'monospace',
               fontSize: 11,
@@ -972,7 +989,8 @@ function RelationshipsSection({ relationships }) {
 }
 
 // ─── Collision resolution panel ───────────────────────────────────────────────
-function CollisionPanel({ row, allRows, pendingRename, onRenameChange, onApply, applying }) {
+function CollisionPanel({ row, allRows, pendingRename, onRenameChange, onApply, applying, targetPlatform = 'snowflake' }) {
+  const targetLabel = String(targetPlatform || 'snowflake').toLowerCase() === 'databricks' ? 'Databricks' : 'Snowflake';
   const { suggestions, peers } = suggestCollisionResolutions(row, allRows);
   const peerLabel = peers.length > 0
     ? peers.map(p => `${p.source_table_name ? p.source_table_name + '.' : ''}${p.source_field}`).join(', ')
@@ -1100,13 +1118,13 @@ function CollisionPanel({ row, allRows, pendingRename, onRenameChange, onApply, 
           Use only letters, numbers, and underscores. Must start with a letter or underscore.
         </div>
       )}
-      {pendingRename && inputValid && finalizeTypedName(pendingRename, 'snowflake', row.field_type || row.entity_kind) !== pendingRename.trim() && (
+      {pendingRename && inputValid && finalizeTypedName(pendingRename, targetPlatform, row.field_type || row.entity_kind) !== pendingRename.trim() && (
         <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-          Will be deployed as <code>{finalizeTypedName(pendingRename, 'snowflake', row.field_type || row.entity_kind)}</code> (Snowflake identifier rules).
+          Will be deployed as <code>{finalizeTypedName(pendingRename, targetPlatform, row.field_type || row.entity_kind)}</code> ({targetLabel} identifier rules).
         </div>
       )}
-      {pendingRename && inputValid && renameImpactNote(row, finalizeTypedName(pendingRename, 'snowflake', row.field_type || row.entity_kind)) && (
-        <RenameImpactNote text={renameImpactNote(row, finalizeTypedName(pendingRename, 'snowflake', row.field_type || row.entity_kind))} />
+      {pendingRename && inputValid && renameImpactNote(row, finalizeTypedName(pendingRename, targetPlatform, row.field_type || row.entity_kind), targetPlatform) && (
+        <RenameImpactNote text={renameImpactNote(row, finalizeTypedName(pendingRename, targetPlatform, row.field_type || row.entity_kind), targetPlatform)} />
       )}
     </div>
   );
@@ -1137,17 +1155,19 @@ const CHANGE_TONE = {
  * name differs from its source name (naming rules, resolved clashes, user
  * renames), why, and an Edit action that opens the normal field editor.
  */
-function NameChangesPanel({ rows, onEdit, deployedNamesKnown = false }) {
+function NameChangesPanel({ rows, onEdit, deployedNamesKnown = false, targetPlatform = 'snowflake' }) {
   const [open, setOpen] = useState(false);
-  const changes = useMemo(() => collectNameChanges(rows), [rows]);
+  const isDatabricks = String(targetPlatform || 'snowflake').toLowerCase() === 'databricks';
+  const targetLabel = isDatabricks ? 'Databricks' : 'Snowflake';
+  const changes = useMemo(() => collectNameChanges(rows, targetPlatform), [rows, targetPlatform]);
   // Columns renamed in Snowflake vs the last deploy (COL_DATE -> DATE): when
   // the last deployed names are unknown, one project-level note instead.
-  const legacyNote = useMemo(() => legacyNamingNote(rows, deployedNamesKnown), [rows, deployedNamesKnown]);
-  const renamedInSnowflake = changes.filter(({ reason }) => reason.kind === 'renamed_in_snowflake').length;
+  const legacyNote = useMemo(() => legacyNamingNote(rows, deployedNamesKnown, targetPlatform), [rows, deployedNamesKnown, targetPlatform]);
+  const renamedInTarget = changes.filter(({ reason }) => reason.kind === 'renamed_in_snowflake').length;
   if (changes.length === 0 && !legacyNote) return null;
   return (
     <div style={PANEL}>
-      {(legacyNote || renamedInSnowflake > 0) && (
+      {(legacyNote || renamedInTarget > 0) && (
         <div
           role="note"
           style={{
@@ -1157,10 +1177,10 @@ function NameChangesPanel({ rows, onEdit, deployedNamesKnown = false }) {
         >
           <Info size={14} style={{ flexShrink: 0, marginTop: 1, color: CHANGE_TONE.renamed_in_snowflake }} />
           <span>
-            {renamedInSnowflake > 0
-              ? `${renamedInSnowflake} column${renamedInSnowflake > 1 ? 's are' : ' is'} renamed in Snowflake by this sync `
-                + '(see "Renamed in Snowflake" below). Queries, reports, dashboards or Cortex verified queries that use '
-                + 'the old names must be updated.'
+            {renamedInTarget > 0
+              ? `${renamedInTarget} column${renamedInTarget > 1 ? 's are' : ' is'} renamed in ${targetLabel} by this sync `
+                + `(see "Renamed in ${targetLabel}" below). Queries, reports, dashboards or `
+                + `${isDatabricks ? 'Genie spaces' : 'Cortex verified queries'} that use the old names must be updated.`
               : legacyNote}
           </span>
         </div>
@@ -1169,7 +1189,7 @@ function NameChangesPanel({ rows, onEdit, deployedNamesKnown = false }) {
         <ChevronRight size={14} style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }} />
         Name changes ({changes.length})
         <span style={{ fontWeight: 400, color: 'var(--text-tertiary)', fontSize: 12 }}>
-          — fields that will appear under a different name in Snowflake. Any of them can be edited.
+          — fields that will appear under a different name in {targetLabel}. Any of them can be edited.
         </span>
       </button>
       {open && (
@@ -1251,8 +1271,11 @@ export default function DryRunMappingTable({
   onReSync,                   // () => void — trigger a re-sync after auto-add
   droppedEntities = [],       // DropRecord[] — entities excluded from deployed DDL (see DropLedger)
   deployedNamesKnown = false, // backend read the last deploy's names (rows carry deployed_name_change)
+  targetPlatform = 'snowflake',
   unresolvedReportFieldReferences = [], // [{field, field_type, table, occurrences}] — report queries a name absent from the current schema (see LocalPBIXConnector._detect_unresolved_field_references); table-scoped only, never auto-attached to a specific column
 }) {
+  const isDatabricks = String(targetPlatform || 'snowflake').toLowerCase() === 'databricks';
+  const targetLabel = isDatabricks ? 'Databricks' : 'Snowflake';
   // ── Dev-only guardrail: catch un-normalized rows reaching this component ────
   // A raw /dry-run API row has `source_name`/`target_name` keys; a normalized
   // row (utils/normalizeRows.js) renames them to source_field/target_field.
@@ -1435,7 +1458,7 @@ export default function DryRunMappingTable({
     // rules), so no later sanitization renames what the user picked.
     const renamedRow = mappings.find((r) => r.id === rowId);
     const newName = finalizeTypedName(
-      (pendingRenames[rowId] || '').trim(), 'snowflake', renamedRow?.field_type || renamedRow?.entity_kind,
+      (pendingRenames[rowId] || '').trim(), targetPlatform, renamedRow?.field_type || renamedRow?.entity_kind,
     );
     if (!newName) return;
     setApplyingRename(rowId);
@@ -1451,7 +1474,7 @@ export default function DryRunMappingTable({
     } finally {
       setApplyingRename(null);
     }
-  }, [pendingRenames, onEdit, mappings]);
+  }, [pendingRenames, onEdit, mappings, targetPlatform]);
 
   // ── Bulk resolve handler — uses table-prefix names, not hashes ──────────────
   const handleBulkResolve = useCallback(() => {
@@ -1766,12 +1789,22 @@ export default function DryRunMappingTable({
 
       {/* ── Dropped fields panel (placed under model/filters, above columns & metrics) ── */}
       {Array.isArray(droppedEntities) && droppedEntities.length > 0 && (
-        <DroppedFieldsPanel entries={droppedEntities} />
+        <DroppedFieldsPanel
+          entries={
+            isDatabricks
+              ? droppedEntities.map((e) => ({
+                  ...e,
+                  reason: adaptTargetMessage(e.reason, targetPlatform),
+                  specific_reason: adaptTargetMessage(e.specific_reason, targetPlatform),
+                }))
+              : droppedEntities
+          }
+        />
       )}
 
       {/* ── Every name that will deploy differently from the source (even
           when nothing needed fixing), with the reason and an Edit action. ── */}
-      <NameChangesPanel rows={mappings} onEdit={onEdit} deployedNamesKnown={deployedNamesKnown} />
+      <NameChangesPanel rows={mappings} onEdit={onEdit} deployedNamesKnown={deployedNamesKnown} targetPlatform={targetPlatform} />
 
       {/* ── Same column name in several tables (info only). ── */}
       <SharedNamesNote rows={mappings} />
@@ -1847,6 +1880,7 @@ export default function DryRunMappingTable({
                       setPendingRenames={setPendingRenames}
                       applyingRename={applyingRename}
                       onApplyRename={applyRename}
+                      targetPlatform={targetPlatform}
                     />
                   ))
                 )}
@@ -1923,7 +1957,7 @@ export default function DryRunMappingTable({
                           </span>
                         </div>
                         <p style={{ margin: 0, fontSize: 11, color: 'var(--text-tertiary)' }}>
-                          Exclude from Snowflake DIMENSIONS. Column absent from semantic queries.
+                          Exclude from {targetLabel} DIMENSIONS. Column absent from semantic queries.
                         </p>
                         <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
                           Default behaviour (no action needed)
@@ -1941,7 +1975,7 @@ export default function DryRunMappingTable({
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
                           <PlusCircle size={12} style={{ color: isDone ? '#4ade80' : '#7dd3fc' }} />
                           <span style={{ fontSize: 11, fontWeight: 700, color: isDone ? '#4ade80' : '#7dd3fc' }}>
-                            Option B — Auto-add to Snowflake
+                            Option B — Auto-add to {targetLabel}
                           </span>
                         </div>
                         <p style={{ margin: 0, fontSize: 11, color: 'var(--text-secondary)' }}>

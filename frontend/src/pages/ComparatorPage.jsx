@@ -89,6 +89,12 @@ function SectionHeader({ title, count, icon: Icon }) {
 }
 
 
+function displayFormatLabel(fmt) {
+  const key = String(fmt || '').toUpperCase();
+  if (key === 'DATABRICKS' || key === 'DATABRICKS_METRIC_VIEW') return 'Databricks Metric View';
+  return formatLabel(fmt);
+}
+
 function StatsPanel({ data, fileName }) {
   const [colSearch, setColSearch] = useState('');
   const [metSearch, setMetSearch] = useState('');
@@ -135,7 +141,7 @@ function StatsPanel({ data, fileName }) {
           <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
             {fileName}
           </span>
-          <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{formatLabel(data.format)}</span>
+          <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{displayFormatLabel(data.format)}</span>
         </div>
         <div style={{ padding: '16px 20px', display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           <StatCard icon={Layers}   label="Tables"        value={data.summary.total_tables}         accent="var(--accent-blue)" />
@@ -287,7 +293,7 @@ function StatsPanel({ data, fileName }) {
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
-const EXPECTED_FORMATS = ['OSI', 'SML', 'TSML', 'SNOWFLAKE', 'SNOWFLAKE_TSML', 'ATSCALE_SML', 'SEMABRIDGE_SML', 'DBT', 'CUBE', 'GENERIC'];
+const EXPECTED_FORMATS = ['OSI', 'SML', 'TSML', 'SNOWFLAKE', 'SNOWFLAKE_TSML', 'DATABRICKS', 'ATSCALE_SML', 'SEMABRIDGE_SML', 'DBT', 'CUBE', 'GENERIC'];
 const AI_OFF = -1;
 
 export default function ComparatorPage() {
@@ -418,7 +424,7 @@ export default function ComparatorPage() {
     <div style={{ padding: '28px 32px', minHeight: '100%', maxWidth: 1400, margin: '0 auto' }}>
       <PageHeader
         title="Compare"
-        description="Check two semantic model files side by side, or inspect one"
+        description="Check two semantic model files side by side (Power BI, Snowflake Semantic View, Databricks Metric View, SML, OSI), or inspect one"
       />
 
       {error && (
@@ -506,7 +512,7 @@ export default function ComparatorPage() {
             File format
             <select value={expectedFormat} onChange={(e) => setCompCache({ expectedFormat: e.target.value })} style={selectStyle}>
               <option value="auto">Auto-detect (recommended)</option>
-              {EXPECTED_FORMATS.map((f) => <option key={f} value={f}>{formatLabel(f)}</option>)}
+              {EXPECTED_FORMATS.map((f) => <option key={f} value={f}>{displayFormatLabel(f)}</option>)}
             </select>
             <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
               The format is always detected from the file. Pick one here to be warned if a file is detected as something else.

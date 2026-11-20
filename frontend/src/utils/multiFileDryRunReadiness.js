@@ -119,9 +119,21 @@ export function buildMultiModelSections(jobStatus, fileStates = {}) {
     const result = loaded ? (state.result || null) : null;
     const metricCount = rows.filter(isMetricRow).length;
     const compat = typeof result?.compatibility_score === 'number' ? result.compatibility_score : null;
-    // Ontology blocking conflicts block the sync exactly like blocking rows
-    // (the server-side gate counts both).
+    // Ontology blocking conflicts and target-plan blockers (Snowflake
+    // table_binding_plan.blocked, Databricks databricks_plan blocked /
+    // missing_tables / skipped views / error) block the sync exactly like
+    // blocking rows (the server-side gate counts them all).
     const ontologyBlockingCount = Array.isArray(result?.blocking_conflicts) ? result.blocking_conflicts.length : 0;
+    const tbpBlockedCount = Array.isArray(result?.table_binding_plan?.blocked)
+      ? result.table_binding_plan.blocked.filter(Boolean).length
+      : 0;
+    const dbxPlan = result?.databricks_plan && typeof result.databricks_plan === 'object' ? result.databricks_plan : null;
+    const dbxBlockingCount = dbxPlan
+      ? (dbxPlan.error ? 1 : 0)
+        + (Array.isArray(dbxPlan.blocked) ? dbxPlan.blocked.filter(Boolean).length : 0)
+        + (Array.isArray(dbxPlan.missing_tables) ? dbxPlan.missing_tables.filter(Boolean).length : 0)
+        + (Array.isArray(dbxPlan.views) ? dbxPlan.views.filter((v) => v && v.skipped).length : 0)
+      : 0;
     const plan = result?.model_plan && typeof result.model_plan === 'object' ? result.model_plan : null;
     return {
       fileId,
@@ -139,8 +151,9 @@ export function buildMultiModelSections(jobStatus, fileStates = {}) {
       result,
       columnCount: rows.length - metricCount,
       metricCount,
-      blockingCount: rows.filter(isReadinessBlockingRow).length + ontologyBlockingCount,
+      blockingCount: rows.filter(isReadinessBlockingRow).length + ontologyBlockingCount + tbpBlockedCount + dbxBlockingCount,
       ontologyBlockingCount,
+      databricksBlockingCount: dbxBlockingCount,
       // What the sync will deploy for this model (same plan the sync uses):
       // { view_name, physical_namespace, ... } or null.
       plan,

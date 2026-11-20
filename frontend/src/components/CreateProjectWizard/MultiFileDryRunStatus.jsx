@@ -22,6 +22,7 @@ import DryRunMappingTable from '../DryRunMappingTable';
 import UpsertChangesView from '../UpsertChangesView';
 import PanelBoundary from '../common/PanelBoundary';
 import TableBindingPlan from '../TableBindingPlan';
+import DatabricksPlan from '../DatabricksPlan';
 import { resolveCollisionsForRows } from '../../utils/projectHelpers';
 
 function pluralize(count, word) {
@@ -353,6 +354,9 @@ export default function MultiFileDryRunStatus({
                     <PanelBoundary name="Target tables">
                       <TableBindingPlan plan={section.result?.table_binding_plan} style={{ marginTop: 0, marginBottom: 12 }} />
                     </PanelBoundary>
+                    <PanelBoundary name="Databricks metric views">
+                      <DatabricksPlan plan={section.result?.databricks_plan} style={{ marginTop: 0, marginBottom: 12 }} />
+                    </PanelBoundary>
                     <UpsertChangesView delta={section.result?.upsert_delta} modelLabel={section.result?.model_name || section.label} isDryRun>
                       <DryRunMappingTable
                         // key: a re-run (new attempt) starts with fresh filter state.
@@ -362,6 +366,7 @@ export default function MultiFileDryRunStatus({
                         mappings={section.rows}
                         summary={section.result?.summary}
                         deployedNamesKnown={Boolean(section.result?.deployed_names_known)}
+                        targetPlatform={section.result?.databricks_plan ? 'databricks' : 'snowflake'}
                         relationships={relationships}
                         onEdit={(rowId, updates) => onEditRow?.(section.fileId, rowId, updates)}
                         onBulkResolved={(resolvedMap) => onBulkResolved?.(section.fileId, resolvedMap)}
