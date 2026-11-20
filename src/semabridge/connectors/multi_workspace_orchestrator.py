@@ -392,13 +392,6 @@ class MultiWorkspaceOrchestrator:
                     scopes=["https://api.fabric.microsoft.com/.default"],
                 )
                 if "access_token" in result:
-                    cm.save_msal_token(
-                        access_token=result["access_token"],
-                        refresh_token=result.get("refresh_token", token_data["refresh_token"]),
-                        account_username=token_data.get("account_username", "unknown"),
-                        tenant_id=tenant_id,
-                        expires_in=result.get("expires_in", 3600),
-                    )
                     self._access_token = result["access_token"]
                     self._token_expiry = time.time() + result.get("expires_in", 3600) - 300
                     logger.debug("MultiWorkspaceOrchestrator: device-code token refreshed silently")

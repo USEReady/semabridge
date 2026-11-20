@@ -212,9 +212,21 @@ class CredentialManager:
                     if not value and value != 0:
                         continue
                     is_secret = key in secret_keys
+                    stored_value = str(value)
+                    if is_secret and stored_value:
+                        from semabridge.auth.encryption import encrypt_token, _get_fernet
+                        already_encrypted = False
+                        if stored_value.startswith("gAAAAA"):
+                            try:
+                                _get_fernet().decrypt(stored_value.encode("utf-8"))
+                                already_encrypted = True
+                            except Exception:
+                                pass
+                        if not already_encrypted:
+                            stored_value = encrypt_token(stored_value)
                     existing = session.get(Credential, (user_id, service, key))
                     if existing:
-                        existing.value = str(value)
+                        existing.value = stored_value
                         existing.is_secret = is_secret
                     else:
                         session.add(
@@ -222,7 +234,7 @@ class CredentialManager:
                                 owner_id=user_id,
                                 service=service,
                                 key=key,
-                                value=str(value),
+                                value=stored_value,
                                 is_secret=is_secret,
                             )
                         )
@@ -301,6 +313,10 @@ class CredentialManager:
             for row in rows:
                 if mask_secrets and row.is_secret:
                     out[row.key] = "••••••••"
+                elif row.is_secret and row.value:
+                    from semabridge.auth.encryption import decrypt_token
+                    dec = decrypt_token(row.value)
+                    out[row.key] = dec if dec else row.value
                 else:
                     out[row.key] = row.value
             return out
@@ -629,9 +645,13 @@ class CredentialManager:
             with self._session() as session:
                 for key, value in token_data.items():
                     is_secret = key in ("access_token", "refresh_token")
+                    stored_value = str(value)
+                    if is_secret and stored_value:
+                        from semabridge.auth.encryption import encrypt_token
+                        stored_value = encrypt_token(stored_value)
                     existing = session.get(Credential, (user_id, "fabric_token", key))
                     if existing:
-                        existing.value = value
+                        existing.value = stored_value
                         existing.is_secret = is_secret
                     else:
                         session.add(
@@ -639,7 +659,7 @@ class CredentialManager:
                                 owner_id=user_id,
                                 service="fabric_token",
                                 key=key,
-                                value=value,
+                                value=stored_value,
                                 is_secret=is_secret,
                             )
                         )
@@ -677,7 +697,8 @@ class CredentialManager:
                     ).scalars().all()
                 if not rows:
                     return None
-                return {row.key: row.value for row in rows}
+                from semabridge.auth.encryption import decrypt_token
+                return {row.key: (decrypt_token(row.value) if (row.is_secret and row.value) else row.value) for row in rows}
         except Exception:
             return None
 

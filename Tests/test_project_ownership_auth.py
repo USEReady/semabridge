@@ -11,6 +11,25 @@ from semabridge.api.services import project_ownership_service as pos
 from semabridge.api.services import project_projects_impl as ppi
 
 
+import pytest
+
+
+@pytest.fixture
+def isolated_project_store(monkeypatch, tmp_path):
+    """Own config/projects folder and a clean compat-store state per test.
+
+    Parallel workers otherwise share the repo's Config/projects folder and the
+    module-level store error flags, so one test's failed save could fail these.
+    """
+    import semabridge.api.services.project_shared as project_shared
+
+    (tmp_path / "Config" / "projects").mkdir(parents=True)
+    monkeypatch.setattr(project_shared, "_compat_config_roots", lambda: [tmp_path / "Config"])
+    monkeypatch.setattr(project_shared, "_compat_store_dirty", False)
+    monkeypatch.setattr(project_shared, "_compat_store_last_error", None)
+    return tmp_path
+
+
 class _FakeResult:
     def __init__(self, rows):
         self._rows = rows
@@ -239,7 +258,7 @@ def test_mappings_list_requires_owned_project(monkeypatch):
     assert denied.status_code == 403
 
 
-def test_preview_deploy_creates_owned_project_and_runs_with_user_id(monkeypatch):
+def test_preview_deploy_creates_owned_project_and_runs_with_user_id(monkeypatch, isolated_project_store):
     captured = {}
 
     async def fake_create_project(payload):
@@ -299,7 +318,7 @@ def test_normalize_project_config_yaml_persists_owner_metadata():
     assert "project_metadata:" in normalized
 
 
-def test_create_project_compat_avoids_stale_yaml_id_collision(monkeypatch):
+def test_create_project_compat_avoids_stale_yaml_id_collision(monkeypatch, isolated_project_store):
     compat_projects = {}
     compat_configs = {}
 

@@ -29,6 +29,9 @@ else:
     os.environ["SEMABRIDGE_DISABLE_DOTENV"] = "1"
     # The API test clients run without a login; auth tests set it explicitly.
     os.environ.setdefault("AUTH_ENABLED", "false")
+    worker_id = os.environ.get("PYTEST_XDIST_WORKER", str(os.getpid()))
+    os.environ.setdefault("SEMABRIDGE_DATABASE_URL", f"sqlite:///file:mem_{worker_id}?mode=memory&cache=shared&uri=true")
+    os.environ.setdefault("SEMABRIDGE_DB_BACKEND", "orm")
 
 # Add src directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -90,6 +93,11 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         )
     except ValueError:
         pass  # already registered by another conftest
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Ensure pytest cache basetemp directory exists on clean checkouts."""
+    Path(".pytest_cache/temp").mkdir(parents=True, exist_ok=True)
 
 # -----------------------------------------------------------------------------
 # Database environment — force in-memory SQLite for all tests
@@ -453,3 +461,47 @@ def dax_expressions():
         "tier3_time_intel": "TOTALYTD(SUM([Revenue]), 'Date'[Date])",
         "tier3_iterator": "SUMX(Sales, Sales[Quantity] * Sales[Price])",
     }
+
+
+# -----------------------------------------------------------------------------
+# pbixray Detection & Skip Hook for Restricted Environments (e.g. Windows WDAC)
+# -----------------------------------------------------------------------------
+
+def _check_pbixray_support() -> tuple[bool, str]:
+    """Check once whether pbixray and its native extensions are loadable."""
+    try:
+        import pbixray
+        from pbixray import PBIXRay
+        import pbixray.core
+        return True, ""
+    except Exception as exc:
+        return False, f"pbixray native decoder is unavailable or blocked by Application Control ({exc})"
+
+
+PBIXRAY_AVAILABLE, PBIXRAY_SKIP_REASON = _check_pbixray_support()
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Skip pbixray-dependent tests when native extensions are blocked, except in CI."""
+    is_ci = (
+        os.getenv("CI") == "true"
+        or os.getenv("GITHUB_ACTIONS") == "true"
+        or os.getenv("SEMABRIDGE_REQUIRE_REAL_PBIX") == "1"
+    )
+    if not PBIXRAY_AVAILABLE and not is_ci:
+        skip_pbixray = pytest.mark.skip(reason=PBIXRAY_SKIP_REASON)
+        for item in items:
+            nodeid = item.nodeid.replace("\\", "/")
+            if "test_calculated_table_relationships.py" in nodeid:
+                if any(target in nodeid for target in (
+                    "test_a_keep_legitimate_calculated_table_relationship",
+                    "test_b_exclude_actual_auto_date_time_relationships",
+                    "test_c_inferred_column_name_fallback",
+                    "test_d_missing_endpoint_diagnostic",
+                )):
+                    item.add_marker(skip_pbixray)
+            elif "test_local_pbix_connector.py" in nodeid:
+                item.add_marker(skip_pbixray)
+            elif "pbixray" in item.keywords:
+                item.add_marker(skip_pbixray)
+

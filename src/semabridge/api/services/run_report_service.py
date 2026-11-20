@@ -625,12 +625,21 @@ def _describe_source(project_cfg: str, run: Dict[str, Any]) -> Tuple[str, List[s
         return "Local file(s)", labels or ["(file name unavailable)"]
 
     if source_type == "fabric":
-        dataset = source_cfg.get("dataset_id") or "(unknown dataset)"
+        # Every configured model (multi-model projects use source.models, not
+        # dataset_id); fall back to the models this run actually synced.
+        from semabridge.utils.project_models import model_entry_key
+
         workspace = source_cfg.get("workspace_id")
-        label = f"Fabric dataset {dataset}"
-        if workspace:
-            label += f" (workspace {workspace})"
-        return "Microsoft Fabric", [label]
+        refs = [str(source_cfg["dataset_id"])] if source_cfg.get("dataset_id") else []
+        refs += [model_entry_key(m) for m in (source_cfg.get("models") or []) if model_entry_key(m)]
+        if not refs:
+            refs = [
+                str(r.get("model")) for r in (run.get("results") or [])
+                if isinstance(r, dict) and r.get("model")
+            ]
+        suffix = f" (workspace {workspace})" if workspace else ""
+        labels = [f"Fabric dataset {ref}{suffix}" for ref in dict.fromkeys(refs)]
+        return "Microsoft Fabric", labels or ["(no Fabric model recorded for this run)"]
 
     if source_type == "snowflake":
         models = source_cfg.get("models") or []
@@ -654,6 +663,13 @@ def _describe_source_for_result(
     pbix_path = result.get("pbix_path")
     if pbix_path:
         return "Local file", [Path(str(pbix_path)).name]
+    parsed = _parse_project_cfg(project_cfg)
+    source_cfg = parsed.get("source") if isinstance(parsed.get("source"), dict) else {}
+    source_type = str(run.get("source_type") or source_cfg.get("type") or "").lower()
+    model_ref = result.get("dataset_id") or result.get("source_ref") or result.get("model")
+    if source_type == "fabric" and model_ref:
+        workspace = source_cfg.get("workspace_id")
+        return "Microsoft Fabric", [f"Fabric dataset {model_ref}" + (f" (workspace {workspace})" if workspace else "")]
     return _describe_source(project_cfg, run)
 
 

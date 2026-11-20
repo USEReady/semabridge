@@ -376,6 +376,17 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
             self._staged = None
             self.deploy_events = []
             self._load_saved_bindings()
+            from semabridge.connectors.table_binding_resolver import clean_ident
+            hints = {}
+            for ds in getattr(model, "datasets", []) or []:
+                hint = getattr(ds, "source_hint", None)
+                if hint:
+                    hints[clean_ident(ds.unique_name)] = hint
+                    hints[str(ds.unique_name).upper()] = hint
+            self._live_schema_metadata.dataset_hints = hints
+            self._live_schema_metadata.bind_from_m_source = bool(
+                getattr(getattr(self.behavior, "features", None), "bind_from_m_source", False)
+            )
             deploy_started_at = time.perf_counter()
             model_name = getattr(model, "unique_name", None) or getattr(model, "label", None) or "<unnamed_model>"
             path_type = "OSI" if is_osi else "SML"

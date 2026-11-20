@@ -56,8 +56,10 @@ from semabridge.api.main import app
 
 def test_concurrent_models_log_lines_never_mix(tmp_path, monkeypatch):
     """Run two jobs in concurrent threads with different model scopes, verify logs do not mix."""
+    logging.disable(logging.NOTSET)
     monkeypatch.setattr("semabridge.core.run_model_logs.RUN_LOGS_ROOT", tmp_path / "runs")
     logger = logging.getLogger("semabridge.test_logger")
+    logger.setLevel(logging.INFO)
 
     project_id = "test_project_concurrency"
     run_id = "run_123"

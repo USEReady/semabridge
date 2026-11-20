@@ -28,7 +28,12 @@ from semabridge.converter.time_intelligence_shapes import (
 )
 from semabridge.sml.models import DataType, SMLColumn, SMLDataset, SMLMetric, SMLRelationship
 
-logging.disable(logging.CRITICAL)
+
+@pytest.fixture(autouse=True, scope="module")
+def _suppress_noisy_logs_for_module():
+    logging.disable(logging.CRITICAL)
+    yield
+    logging.disable(logging.NOTSET)
 
 
 def rid(prefix: str) -> str:

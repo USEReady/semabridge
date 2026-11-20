@@ -75,6 +75,23 @@ def delete_drift_events(project_id: Optional[str] = None) -> Dict[str, Any]:
     return {"success": True, "cleared_count": cleared}
 
 
+@router.post("/events/refresh", response_model=Dict[str, Any])
+def refresh_drift_events(request: Request, project_id: str) -> Dict[str, Any]:
+    """"Refresh drift logs": runs real drift detection for the project and
+    returns its events. Never adds demo or seeded events (no env switch can
+    turn that on); a failed check is a 400 with the reason, not an empty list."""
+    pid = str(project_id or "").strip()
+    if not pid:
+        raise HTTPException(status_code=400, detail="project_id is required to refresh drift events.")
+    uid = getattr(request.state, "user_id", None)
+    try:
+        check = run_drift_check(project_id=pid, owner_id=str(uid) if uid else None)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Drift check failed for project '{pid}': {exc}") from exc
+    events = list_drift_events(project_id=pid)
+    return {"success": True, "count": len(events), "events": events, "check": check}
+
+
 @router.post("/events/seed-mock", response_model=Dict[str, Any])
 def seed_mock_events(request: Request, project_id: Optional[str] = "proj-comp") -> Dict[str, Any]:
     """"Refresh drift logs": always runs real drift detection for the

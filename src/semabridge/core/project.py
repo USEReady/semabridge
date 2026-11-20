@@ -83,6 +83,7 @@ class SourceConfig(BaseModel):
     type: SourceType
     workspace: Optional[str] = None
     workspace_id: Optional[str] = None
+    identity_id: Optional[str] = None  # Fabric account/identity (per-job credentials)
     dataset_id: Optional[str] = None
     model: str = Field(default="*", description="Model name pattern (glob syntax)")
     models: Optional[List[str]] = Field(default=None, description="Explicit list of model names")

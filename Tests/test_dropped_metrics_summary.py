@@ -21,9 +21,11 @@ def _fake_self(dropped_metrics):
 
 def test_zero_dropped_metrics_logs_nothing(caplog):
     fake_self = _fake_self([])
+    caplog.clear()
     with caplog.at_level(logging.WARNING):
         SnowflakeEmitter._log_dropped_metrics_summary(fake_self, "SML", "MyModel")
-    assert caplog.records == []
+    records = [r for r in caplog.records if r.name.startswith("semabridge.connectors.snowflake_emitter")]
+    assert records == []
 
 
 def test_one_dropped_metric_uses_singular_word(caplog):

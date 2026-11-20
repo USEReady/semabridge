@@ -8,7 +8,6 @@ import asyncio
 import os
 import sys
 import threading
-import time
 import types
 from datetime import timedelta
 
@@ -205,12 +204,28 @@ def test_sync_dry_run_rejects_multiple_fabric_models_with_jobs_hint(monkeypatch)
 
 
 def test_fast_file_result_is_visible_while_slow_file_still_running(monkeypatch):
+    # Deterministic: no polling deadline. "Slow" is held until the test releases
+    # it, and the test proceeds the moment "Fast"'s outcome is actually recorded
+    # (event set right after the real _record_file_outcome returns). The long
+    # waits below are only a hang guard; they never decide pass/fail ordering.
+    hang_guard_s = 300
     release_slow = threading.Event()
+    fast_recorded = threading.Event()
+    real_record = job_service._record_file_outcome
+
+    def _record_then_signal(job_id, file_id, **kw):
+        out = real_record(job_id, file_id, **kw)
+        mappings = (kw.get("result") or {}).get("entity_mappings") or []
+        if any(m.get("source_name") == "Fast_COL" for m in mappings):
+            fast_recorded.set()
+        return out
+
+    monkeypatch.setattr(job_service, "_record_file_outcome", _record_then_signal)
 
     async def _fake(*, project_id, request_user_id, source_config, target_config, selected_sources):
         name = selected_sources[0]
         if name == "Slow":
-            assert release_slow.wait(timeout=10)
+            assert release_slow.wait(timeout=hang_guard_s)
         return _result_for(name)
 
     _patch_pipeline(monkeypatch, _fake)
@@ -220,17 +235,10 @@ def test_fast_file_result_is_visible_while_slow_file_still_running(monkeypatch):
     runner = threading.Thread(target=job_service.run_dry_run_job, args=(job["job_id"],))
     runner.start()
     try:
-        deadline = time.time() + 10
-        observed = None
-        while time.time() < deadline:
-            status = job_service.get_dry_run_job_status(job["job_id"])
-            by_label = {f["label"]: f for f in status["files"]}
-            if by_label["Fast"]["status"] == "success":
-                observed = status
-                break
-            time.sleep(0.02)
-        assert observed is not None, "fast file's result was not written before the slow file finished"
+        assert fast_recorded.wait(timeout=hang_guard_s), "fast file's outcome was never recorded"
+        observed = job_service.get_dry_run_job_status(job["job_id"])
         by_label = {f["label"]: f for f in observed["files"]}
+        assert by_label["Fast"]["status"] == "success"
         assert by_label["Slow"]["status"] == "running"
         assert by_label["Fast"]["completed_at"] is not None
         assert observed["status"] == "running"
@@ -238,7 +246,8 @@ def test_fast_file_result_is_visible_while_slow_file_still_running(monkeypatch):
         assert fast_detail["result"]["entity_mappings"][0]["source_name"] == "Fast_COL"
     finally:
         release_slow.set()
-        runner.join(timeout=10)
+        runner.join(timeout=hang_guard_s)
+    assert not runner.is_alive(), "dry-run job did not finish after the slow file was released"
     final = job_service.get_dry_run_job_status(job["job_id"])
     assert final["status"] == "success"
 

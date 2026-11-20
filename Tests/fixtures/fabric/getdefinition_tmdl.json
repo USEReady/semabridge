@@ -1,0 +1,28 @@
+{
+ "_recorded": "Fabric POST /v1/workspaces/{ws}/semanticModels/{id}/getDefinition result returned as TMDL (no model.bim); ids scrubbed",
+ "definition": {
+  "format": "TMDL",
+  "parts": [
+   {
+    "path": "definition.pbism",
+    "payload": "eyJ2ZXJzaW9uIjoiNC4yIiwic2V0dGluZ3MiOnt9fQ==",
+    "payloadType": "InlineBase64"
+   },
+   {
+    "path": "definition/database.tmdl",
+    "payload": "ZGF0YWJhc2UKCWNvbXBhdGliaWxpdHlMZXZlbDogMTYwNAo=",
+    "payloadType": "InlineBase64"
+   },
+   {
+    "path": "definition/model.tmdl",
+    "payload": "bW9kZWwgTW9kZWwKCWN1bHR1cmU6IGVuLVVTCg==",
+    "payloadType": "InlineBase64"
+   },
+   {
+    "path": "definition/tables/Sales.tmdl",
+    "payload": "dGFibGUgU2FsZXMKCW1lYXN1cmUgJ1RvdGFsIFVuaXRzJyA9IFNVTShTYWxlc1tVbml0c10pCg==",
+    "payloadType": "InlineBase64"
+   }
+  ]
+ }
+}

@@ -79,6 +79,8 @@ class SyncWorkflowInput:
     warehouse_size: str = "SMALL"
     version_tag: str = ""
     force_full_sync: bool = False
+    # Fabric account/identity whose token the emit step uses (per job)
+    fabric_identity_id: str = ""
     # Correlation
     run_id: str = field(default_factory=lambda: str(uuid.uuid4())[:12])
 
@@ -238,6 +240,7 @@ class SyncModelWorkflow:
                 sml_json=extract_out.sml_json,
                 diff_json=diff_out.diff_json,
                 fabric_workspace_id=inp.fabric_workspace_id,
+                fabric_identity_id=inp.fabric_identity_id,
                 version_tag=inp.version_tag,
             ),
             start_to_close_timeout=_EMIT_TIMEOUT,

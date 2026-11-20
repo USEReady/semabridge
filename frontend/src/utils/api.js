@@ -734,6 +734,23 @@ export const api = {
         return handleResponse(res);
     },
 
+    async updateAccount(accountId, payload) {
+        invalidateApiCache('accounts:');
+        const res = await authFetch(`${API_BASE_URL}/accounts/${accountId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        return handleResponse(res);
+    },
+
+    async testAccount(accountId) {
+        const res = await authFetch(`${API_BASE_URL}/accounts/${accountId}/test`, {
+            method: 'POST',
+        });
+        return handleResponse(res);
+    },
+
     async linkProjectAccount(projectId, payload) {
         invalidateApiCache('accounts:');
         const res = await authFetch(`${API_BASE_URL}/accounts/project/${projectId}/link-account`, {
@@ -2317,7 +2334,9 @@ export const api = {
             `${API_BASE_URL}/discovery/fabric/workspaces/${encodeURIComponent(workspaceId)}/models${query}`
         );
         const data = await handleResponse(res);
-        return setCachedApiValue(cacheKey, data);
+        // Cache only a real model list: a `reauth_required` answer must not be
+        // replayed after the user signs in again.
+        return Array.isArray(data) ? setCachedApiValue(cacheKey, data) : data;
     },
 
     async discoverFabricReports(workspaceId, connectionId = '') {

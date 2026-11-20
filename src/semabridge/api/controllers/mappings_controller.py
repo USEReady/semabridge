@@ -191,6 +191,13 @@ def _dry_run_preview_project_id(
         f"{(source_config or {}).get('workspace_id','')}-"
         f"{'|'.join(sorted(selected_sources or []))}"
     )
+    if str((source_config or {}).get("type") or "").strip().lower() == "fabric":
+        # Fabric: the model is only identified together with the credentials
+        # that see it, so two accounts previewing the same workspace/model get
+        # separate preview projects. PBIX seeds are unchanged.
+        identity = str((source_config or {}).get("identity_id") or "").strip()
+        if identity:
+            seed += f"-identity:{identity}"
     return f"preview-{uuid.uuid5(uuid.NAMESPACE_DNS, seed).hex[:12]}"
 
 
@@ -735,6 +742,8 @@ async def _run_dry_run_pipeline(
     # The engine's own verdict: the dry run succeeds only when every model's
     # engine run did (a real sync of a FAILED/PARTIAL model fails too).
     engine_errors: List[str] = []
+    dry_run_warnings: List[str] = []
+    target_cred_origin: Optional[str] = None
     model_plan: Optional[Dict[str, Any]] = None
     from semabridge.core.engine.exceptions import is_no_source_tables_summary
 
@@ -743,6 +752,11 @@ async def _run_dry_run_pipeline(
     no_tables_reason: Optional[str] = None
     for r in results:
         summary = r.get("summary") or {}
+        if not target_cred_origin and summary.get("target_credential_origin"):
+            target_cred_origin = summary.get("target_credential_origin")
+        for w in (summary.get("source_warnings") or []) + (summary.get("target_warnings") or []):
+            if w and w not in dry_run_warnings:
+                dry_run_warnings.append(w)
         if model_plan is None and isinstance(r.get("model_plan"), dict):
             model_plan = r.get("model_plan")
         result_status = str(r.get("status") or "").strip().lower()
@@ -1020,6 +1034,14 @@ async def _run_dry_run_pipeline(
 
     ontology_blockers = list((ontology_report or {}).get("blocking_conflicts") or [])
 
+    if target_connector == "snowflake":
+        if not target_account_id:
+            ambient_warn = "Snowflake target credentials: ambient config (no linked account)"
+            if ambient_warn not in dry_run_warnings:
+                dry_run_warnings.append(ambient_warn)
+            if not target_cred_origin:
+                target_cred_origin = "ambient config (no linked account)"
+
     dry_run_ok = not engine_errors and not extraction_failed
     file_ref = selected_sources[0] if len(selected_sources or []) == 1 else None
     from semabridge.api.services.sync_execution_service import file_content_sha256
@@ -1031,6 +1053,8 @@ async def _run_dry_run_pipeline(
             else "Extraction failed — no semantic model could be built from this file."
         ),
         "errors": engine_errors,
+        "warnings": dry_run_warnings,
+        "target_credential_origin": target_cred_origin,
         # What the sync will deploy for this model (same function as the
         # sync: sync_execution_service._build_sync_jobs) and the fingerprints
         # the sync gate compares against.
@@ -1079,6 +1103,8 @@ async def _run_dry_run_pipeline(
             "predicted_failures": predicted_failure_count,
             "extraction_failed": extraction_failed,
             "ontology_blockers": len(ontology_blockers),
+            "warnings": dry_run_warnings,
+            "target_credential_origin": target_cred_origin,
         },
     }
 

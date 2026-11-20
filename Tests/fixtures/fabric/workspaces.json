@@ -1,0 +1,9 @@
+{
+ "_recorded": "Fabric GET /v1/workspaces (ids and names scrubbed)",
+ "value": [
+  {"id": "aaaaaaaa-0000-0000-0000-000000000001", "displayName": "Sales Analytics", "type": "Workspace"},
+  {"id": "aaaaaaaa-0000-0000-0000-000000000002", "displayName": "Finance", "type": "Workspace"},
+  {"id": "aaaaaaaa-0000-0000-0000-000000000003", "displayName": "Shared", "type": "Workspace"},
+  {"id": "aaaaaaaa-0000-0000-0000-000000000004", "displayName": "Shared", "type": "Workspace"}
+ ]
+}

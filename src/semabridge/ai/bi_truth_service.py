@@ -576,8 +576,16 @@ def run_truth_suite(
     project_id: Optional[str] = None,
     owner_id: Optional[str] = None,
     max_cases: int = 50,
+    live_parity: bool = False,
+    dax_executor: Optional[Any] = None,
+    sql_executor: Optional[Any] = None,
 ) -> Dict[str, Any]:
-    """Execute approved BI-truth questions against Cortex / NL engine and record accuracy."""
+    """Execute approved BI-truth questions against Cortex / NL engine and record accuracy.
+
+    When ``live_parity=True``, also executes DAX and SQL queries against backends
+    and requires returned values to match mathematically (never passes just because
+    SQL was generated).
+    """
     from concurrent.futures import ThreadPoolExecutor
     from semabridge.ai.nl_query_engine import NLQueryEngine
     from semabridge.ai.project_connection import resolve_project_scope, resolve_project_warehouse_config
@@ -649,11 +657,60 @@ def run_truth_suite(
             err = str(exc)
 
         ok = bool(generated_sql) and not err
+
+        if live_parity:
+            dax_query = (c.get("expected_dax") or "").strip()
+            sql_query = generated_sql or (c.get("expected_sql") or "").strip()
+            if not dax_query or not sql_query:
+                ok = False
+                err = err or "Missing DAX or SQL query for live parity check"
+            else:
+                try:
+                    if dax_executor:
+                        dax_rows = dax_executor(dax_query)
+                    else:
+                        from semabridge.reconciliation.dax_executor import execute_dax
+                        dax_res = execute_dax(dax_query, project_id=pid)
+                        dax_rows = dax_res.rows if hasattr(dax_res, "rows") else (dax_res.get("rows") if isinstance(dax_res, dict) else [])
+
+                    if sql_executor:
+                        sql_rows = sql_executor(sql_query)
+                    elif sf:
+                        import snowflake.connector
+                        from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
+                        conn_kwargs = get_snowflake_connect_kwargs(sf)
+                        with snowflake.connector.connect(**conn_kwargs) as conn:
+                            cur = conn.cursor()
+                            cur.execute(sql_query)
+                            cols = [d[0] for d in cur.description]
+                            sql_rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+                    else:
+                        sql_rows = []
+
+                    from semabridge.reconciliation.golden_verifier import GoldenQueryVerifier
+                    verifier = GoldenQueryVerifier()
+                    mname = c.get("metric_name") or "metric"
+                    v_res = verifier.reconcile_data(
+                        metric_name=mname,
+                        dax_rows=dax_rows,
+                        sql_rows=sql_rows,
+                        dimension_keys=[],
+                        dax_query=dax_query,
+                        sql_query=sql_query,
+                    )
+                    ok = (v_res.status == "CERTIFIED")
+                    if not ok:
+                        err = f"Parity mismatch: {v_res.certification_badge}"
+                except Exception as eval_exc:
+                    ok = False
+                    err = f"Live verification error: {eval_exc}"
+
         return {
             "case_id": c["id"],
             "question": c["question"],
             "metric_name": c.get("metric_name") or "",
             "expected_sql": c.get("expected_sql") or "",
+            "expected_dax": c.get("expected_dax") or "",
             "passed": ok,
             "mode": mode,
             "generated_sql": generated_sql,

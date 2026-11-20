@@ -214,14 +214,6 @@ class FabricPublisher:
                     expires_in, new_token[-8:],
                 )
 
-                # Persist refreshed tokens back to credential store.
-                cm.save_msal_token(
-                    access_token=new_token,
-                    refresh_token=new_refresh,
-                    account_username=token_data.get("account_username", "unknown"),
-                    tenant_id=tenant_id,
-                    expires_in=expires_in,
-                )
                 return new_token
             else:
                 # Refresh FAILED — extract the actual error from MSAL

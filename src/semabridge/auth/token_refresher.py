@@ -79,7 +79,7 @@ def _is_token_expired(account: Account) -> bool:
 
 
 def _refresh_fabric_token(account: Account, db: Session) -> str:
-    """Refresh a Fabric access token using MSAL's refresh_token grant.
+    """Refresh a Fabric access token using token_resolver as the single source.
 
     Args:
         account: The Fabric Account row.
@@ -89,127 +89,17 @@ def _refresh_fabric_token(account: Account, db: Session) -> str:
         Fresh access_token string.
 
     Raises:
-        TokenExpiredError: If the refresh token is also expired.
+        TokenExpiredError: If the refresh token is expired or invalid.
     """
-    stored_refresh = ""
-    if account.refresh_token:
-        stored_refresh = decrypt_token(account.refresh_token)
-    elif account.encrypted_token:
-        # Fallback to extracting from the JSON bundle
-        try:
-            import json
-            decrypted = decrypt_token(account.encrypted_token)
-            bundle = json.loads(decrypted)
-            if isinstance(bundle, dict):
-                stored_refresh = bundle.get("refresh_token", "")
-        except (json.JSONDecodeError, TypeError, ValueError):
-            pass
-
-    if not stored_refresh:
-        raise TokenExpiredError("FABRIC", account.identity_email or account.tag)
-
-    from msal import PublicClientApplication
-    import os
-
-    # The Fabric device-code (interactive) login always uses this Microsoft
-    # public client ID — same one used in connection_domain_service.py.
-    # FABRIC_CLIENT_ID env var is only set for service-principal auth.
-    _FABRIC_PUBLIC_CLIENT_ID = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
-
-    client_id = os.environ.get("FABRIC_CLIENT_ID", "")
-
-    if not client_id:
-        try:
-            from semabridge.repository.credential_manager import CredentialManager
-            cm = CredentialManager()
-            creds = cm.get_credentials("fabric")
-            client_id = creds.get("client_id", "")
-        except Exception:
-            pass
-
-    if not client_id:
-        # Fall back to the standard Microsoft public client ID used in the device-code flow.
-        # This is correct for interactive (non-service-principal) Fabric logins.
-        client_id = _FABRIC_PUBLIC_CLIENT_ID
-        logger.info("Fabric token refresh: falling back to Microsoft public client ID")
-
-    # Try to get the tenant from the credential bundle for proper authority
-    tenant = "organizations"
-    try:
-        import json
-        decrypted_bundle = decrypt_token(account.encrypted_token)
-        bundle_data = json.loads(decrypted_bundle)
-        tenant = bundle_data.get("tenant_id", "organizations") or "organizations"
-    except Exception:
-        pass
-
-    scopes = ["https://api.fabric.microsoft.com/.default"]
-    app = PublicClientApplication(
-        client_id, authority=f"https://login.microsoftonline.com/{tenant}"
-    )
+    from semabridge.auth.token_resolver import resolve_fabric_access_token
+    from semabridge.domain.exceptions import AuthenticationError
 
     try:
-        result = app.acquire_token_by_refresh_token(stored_refresh, scopes=scopes)
-        if "access_token" not in result:
-            error = result.get("error_description", result.get("error", "unknown"))
-            logger.warning("Fabric token refresh failed: %s", error)
-            raise TokenExpiredError("FABRIC", account.identity_email or account.tag)
-    except TokenExpiredError:
-        raise
-    except Exception as exc:
-        error_str = str(exc).lower()
-        if "getaddrinfo" in error_str or "connection" in error_str or "timeout" in error_str:
-            logger.warning("Fabric token refresh failed due to network: %s", exc)
-            # We don't raise TokenExpiredError here because the credentials
-            # might be fine, but the network is just down.
-            # Returning None or raising a generic error is safer.
-            raise ConnectionError(f"Network error during Fabric token refresh: {exc}")
-        
-        logger.warning("Fabric token refresh failed: %s", exc)
-        raise TokenExpiredError("FABRIC", account.identity_email or account.tag)
-
-    # Check if the existing token is a JSON bundle
-    try:
-        import json
-        orig_decrypted = decrypt_token(account.encrypted_token)
-        orig_bundle = json.loads(orig_decrypted)
-        if isinstance(orig_bundle, dict):
-            orig_bundle["access_token"] = result["access_token"]
-            if result.get("refresh_token"):
-                orig_bundle["refresh_token"] = result["refresh_token"]
-            orig_bundle["expires_in"] = result.get("expires_in", 3600)
-            account.encrypted_token = encrypt_token(json.dumps(orig_bundle))
-        else:
-            account.encrypted_token = encrypt_token(result["access_token"])
-    except (json.JSONDecodeError, TypeError):
-        account.encrypted_token = encrypt_token(result["access_token"])
-
-    if result.get("refresh_token"):
-        account.refresh_token = encrypt_token(result["refresh_token"])
-
-    import time as _time
-    expires_in = int(result.get("expires_in", 3600))
-    # Update expires_at inside the JSON bundle so _is_token_expired reads it correctly
-    try:
-        import json as _json
-        orig_decrypted2 = decrypt_token(account.encrypted_token)
-        bundle2 = _json.loads(orig_decrypted2)
-        if isinstance(bundle2, dict):
-            bundle2["expires_at"] = str(int(_time.time()) + expires_in)
-            account.encrypted_token = encrypt_token(_json.dumps(bundle2))
-    except Exception:
-        pass
-    account.token_expires_at = datetime.fromtimestamp(
-        _time.time() + expires_in, tz=timezone.utc
-    )
-    db.commit()
-
-    logger.info(
-        "Fabric token refreshed for %s, expires in %ds",
-        account.identity_email,
-        expires_in,
-    )
-    return result["access_token"]
+        token = resolve_fabric_access_token(None, identity_id=account.id)
+        db.expire(account)
+        return token
+    except AuthenticationError as exc:
+        raise TokenExpiredError("FABRIC", account.identity_email or account.tag) from exc
 
 
 def _refresh_databricks_token(account: Account, db: Session) -> str:
@@ -442,6 +332,9 @@ def ensure_valid_token(account: Account, db: Session) -> str:
         TokenExpiredError: If the token cannot be refreshed automatically.
     """
     connector = account.connector_type.upper()
+
+    if connector == "FABRIC":
+        return _refresh_fabric_token(account, db)
 
     # Check if token needs refresh
     if _is_token_expired(account):

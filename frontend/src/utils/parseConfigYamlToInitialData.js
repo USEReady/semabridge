@@ -42,6 +42,12 @@ export function parseConfigYamlToInitialData(yamlText, projectMeta) {
     const parsedSource = tree?.source && typeof tree.source === 'object' ? tree.source : {};
     const targets = Array.isArray(tree?.targets) ? tree.targets : (tree?.target ? [tree.target] : []);
     const firstTarget = targets[0] && typeof targets[0] === 'object' ? targets[0] : {};
+    // Fabric target identity/workspace: read from the Fabric target wherever it
+    // sits in `targets` (projects saved earlier may list it after a Snowflake
+    // target), so editing an existing project shows them filled in.
+    const fabricTarget = targets.find(
+      (t) => t && typeof t === 'object' && String(t.type || '').toLowerCase() === 'fabric',
+    ) || firstTarget;
     const ui = tree?.ui && typeof tree.ui === 'object' ? tree.ui : {};
     const options = tree?.options && typeof tree.options === 'object' ? tree.options : {};
     const syncMode = normalizeSyncMode(projectMeta?.sync_mode || projectMeta?.write_strategy || options.write_strategy);
@@ -81,8 +87,8 @@ export function parseConfigYamlToInitialData(yamlText, projectMeta) {
       target_schema: String(firstTarget.schema || ''),
       target_account: String(firstTarget.account || ''),
       target_warehouse: String(firstTarget.warehouse || ''),
-      target_identity_id: String(firstTarget.identity_id || ''),
-      target_workspace_id: String(firstTarget.workspace_id || ''),
+      target_identity_id: String(fabricTarget.identity_id || ''),
+      target_workspace_id: String(fabricTarget.workspace_id || ''),
       pbix_path: String(parsedSource.pbix_path || parsedSource.pbix_file_path || parsedSource.source_path || parsedSource.file_path || ''),
       pbix_folder: String(parsedSource.pbix_folder || ''),
       pbix_uploaded_path: String(projectMeta?.pbix_file_path || parsedSource.pbix_file_path || parsedSource.pbix_path || ''),

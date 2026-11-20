@@ -93,8 +93,8 @@ _MOCK_AI_TOOLS = [
         "name": 'Pricing & Margin Insights Bot: "Summarize revenue and discount variance by region"',
         "steward": "Finance AI Steward",
         "details": "Financial forecast pipeline bot querying net revenue and promo discount delta.",
-        "metrics": {"SALES_DOL", "MARGIN_PCT"},
-        "tables": {"SalesFact", "Geo"},
+        "metrics": {"MARGIN_PCT", "SALES_DOL", "NET_REVENUE"},
+        "tables": {"SalesFact", "Date"},
         "columns": {"Revenue", "Discount", "Region"},
     },
 ]
@@ -616,8 +616,11 @@ class BlastRadiusSimulator:
                         edges.append({"from": m_name, "to": vq_q, "relationship": "verified_query_uses"})
                     break
 
-        # 5. Downstream BI Reports & Mock Downstream Items
-        active_mock = self.mock_mode if mock_mode is None else mock_mode
+        # 5. Downstream BI Reports & Mock Downstream Items (Demo mode only)
+        from semabridge.core.demo_mode import demo_mode_globally_armed
+
+        # Blast Radius demo reports appear only in demo mode
+        active_mock = demo_mode_globally_armed() and (self.mock_mode if mock_mode is None else mock_mode)
         if active_mock:
             target_upper = target_clean.upper()
             affected_metric_names = {m.name.upper() for m in affected_metrics}
@@ -647,11 +650,11 @@ class BlastRadiusSimulator:
                             item_type="BI_REPORT",
                             impact_level="DIRECT",
                             steward=report_spec["steward"],
-                            details=f"{report_spec['platform']} report directly binds to {ttype_upper.lower()} '{target_clean}': {report_spec['details']}",
-                            source=report_spec["platform"],
+                            details=f"[DEMO] {report_spec['platform']} report directly binds to {ttype_upper.lower()} '{target_clean}': {report_spec['details']}",
+                            source="demo",
                         )
                     )
-                    edges.append({"from": target_clean, "to": r_name, "relationship": "visualized_in", "source": report_spec["platform"]})
+                    edges.append({"from": target_clean, "to": r_name, "relationship": "visualized_in", "source": "demo"})
                 elif shared_metrics:
                     hit_metric = sorted(shared_metrics)[0]
                     seen_bi_names.add(r_name.casefold())
@@ -661,11 +664,11 @@ class BlastRadiusSimulator:
                             item_type="BI_REPORT",
                             impact_level="TRANSITIVE",
                             steward=report_spec["steward"],
-                            details=f"{report_spec['platform']} report uses derived metric '{hit_metric}': {report_spec['details']}",
-                            source=report_spec["platform"],
+                            details=f"[DEMO] {report_spec['platform']} report uses derived metric '{hit_metric}': {report_spec['details']}",
+                            source="demo",
                         )
                     )
-                    edges.append({"from": hit_metric, "to": r_name, "relationship": "visualized_in", "source": report_spec["platform"]})
+                    edges.append({"from": hit_metric, "to": r_name, "relationship": "visualized_in", "source": "demo"})
 
             # Ensure primary BI dashboard is represented if impact exists
             if not affected_bi and (affected_metrics or ttype_upper in ("METRIC", "TABLE", "COLUMN")):
@@ -676,12 +679,12 @@ class BlastRadiusSimulator:
                         item_type="BI_REPORT",
                         impact_level="TRANSITIVE" if affected_metrics else "DIRECT",
                         steward=default_report["steward"],
-                        details=f"{default_report['platform']} dashboard queries commercial data models: {default_report['details']}",
-                        source=default_report["platform"],
+                        details=f"[DEMO] {default_report['platform']} dashboard queries commercial data models: {default_report['details']}",
+                        source="demo",
                     )
                 )
                 from_node = affected_metrics[0].name if affected_metrics else target_clean
-                edges.append({"from": from_node, "to": default_report["name"], "relationship": "visualized_in", "source": default_report["platform"]})
+                edges.append({"from": from_node, "to": default_report["name"], "relationship": "visualized_in", "source": "demo"})
 
             # Mock AI Tools when verified queries are not yet registered
             if not affected_ai:
@@ -709,11 +712,11 @@ class BlastRadiusSimulator:
                                     item_type="AI_TOOL",
                                     impact_level="DIRECT" if is_direct else "TRANSITIVE",
                                     steward=ai_spec["steward"],
-                                    details=ai_spec["details"],
-                                    source="verified_query",
+                                    details=f"[DEMO] {ai_spec['details']}",
+                                    source="demo",
                                 )
                             )
-                            edges.append({"from": from_node, "to": a_name, "relationship": "verified_query_uses", "source": "verified_query"})
+                            edges.append({"from": from_node, "to": a_name, "relationship": "ai_tool_uses", "source": "demo"})
 
         total_impact = len(affected_metrics) + len(affected_bi) + len(affected_ai)
 

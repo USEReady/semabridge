@@ -333,8 +333,37 @@ async def test_auto_map_skip_sync_flag_is_ignored_for_project_pipeline(monkeypat
 
 
 
+@pytest.fixture
+def auto_map_db(tmp_path, monkeypatch):
+    from semabridge.repository.orm.session_factory import db_manager, reset_engine
+    from semabridge.repository.orm.base import Base
+    from semabridge.repository.orm.models import Project
+
+    db_file = tmp_path / "test_auto_map.db"
+    monkeypatch.setenv("SEMABRIDGE_DATABASE_URL", f"sqlite:///{db_file}")
+    monkeypatch.setenv("SEMABRIDGE_DB_BACKEND", "orm")
+    reset_engine()
+    db_manager.reset()
+    engine = db_manager.get_engine()
+    Base.metadata.create_all(bind=engine)
+
+    with db_manager.get_session() as session:
+        proj = Project(
+            project_id="project-1",
+            name="p1",
+            workspace_id="ws-1",
+            adapter="fabric",
+        )
+        session.add(proj)
+        session.commit()
+
+    yield db_manager
+
+    db_manager.reset()
+
+
 @pytest.mark.asyncio
-async def test_auto_map_forwards_user_id_to_sync_models(monkeypatch):
+async def test_auto_map_forwards_user_id_to_sync_models(monkeypatch, auto_map_db):
     captured = {}
 
     async def fake_sync_models(payload):

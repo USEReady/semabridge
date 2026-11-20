@@ -42,6 +42,16 @@ def _restamp(dom: DomainOntology, name: str) -> DomainOntology:
     )
 
 
+def _with_fabric_report_synonyms(project_id: str, osi: Any, blob: Any) -> Any:
+    """Fabric + features.fabric_report_layer only: keep the report-caption synonyms
+    the SML snapshot holds (the SML->OSI step drops them). Unchanged otherwise."""
+    from semabridge.sources.fabric.synonyms import carry_sml_synonyms, project_uses_fabric_report_layer
+
+    if project_uses_fabric_report_layer(project_id):
+        return carry_sml_synonyms(osi, blob)
+    return osi
+
+
 def build_model_domain(
     project_id: str,
     pm: ProjectModel,
@@ -56,6 +66,8 @@ def build_model_domain(
     from semabridge.ontology.federated_loader import FederatedOntologyLoader
 
     osi = osi_model if osi_model is not None else osi_from_blob(pm.blob or {})
+    if osi_model is None:
+        osi = _with_fabric_report_synonyms(project_id, osi, pm.blob)
     name = (existing.domain if existing is not None else None) or domain_name or model_domain_name(project_id, pm.model_name)
     dom = FederatedOntologyLoader.from_osi_model(
         model=osi,
@@ -234,7 +246,7 @@ def split_merged_domain(
     from semabridge.ontology.federated_loader import FederatedOntologyLoader
 
     for pm in usable:
-        osi = osi_from_blob(pm.blob or {})
+        osi = _with_fabric_report_synonyms(project_id, osi_from_blob(pm.blob or {}), pm.blob)
         osi_by_model[pm.model_id] = osi
         fresh = FederatedOntologyLoader.from_osi_model(model=osi, domain_name=pm.model_name)
         fresh_index[pm.model_id] = {"concept": {}, "metric": {}}
