@@ -118,6 +118,14 @@ class RunSummary(BaseModel):
         default_factory=list,
         description="Cortex Analyst built-in safety validation results",
     )
+    ti_anchor_stats: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Time intelligence anchor statistics",
+    )
+    ti_failed_closed_metrics: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Time intelligence metrics failed closed",
+    )
     ontology_report: Optional[Dict[str, Any]] = Field(
         default=None,
         description="Ontology application result: applied counts, matched/unmatched/ambiguous entries, warnings",

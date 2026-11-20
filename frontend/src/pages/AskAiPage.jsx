@@ -226,9 +226,15 @@ export default function AskAiPage() {
               style={{ padding: '5px 8px', borderRadius: 8, border: '1px solid var(--border-main)', background: 'var(--bg-input)', color: 'var(--text-primary)', fontSize: 12, maxWidth: 200 }}
             >
               <option value="">All projects</option>
-              {projects.map((p) => (
-                <option key={p.id || p.name} value={p.id || p.name}>{p.name || p.id}</option>
-              ))}
+              {projects.map((p) => {
+                const pid = p.id || p.project_id || p.name;
+                const domStr = p.domain_names?.length ? ` · ${p.domain_names.join(', ')}` : '';
+                return (
+                  <option key={pid} value={pid}>
+                    {p.name || pid} ({pid}){domStr}
+                  </option>
+                );
+              })}
             </select>
           </label>
         )}

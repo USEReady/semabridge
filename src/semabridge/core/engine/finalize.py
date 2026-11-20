@@ -351,6 +351,10 @@ def _step10_finalize(
         self._summary.data_backfill_results = context.data_backfill_results
     if getattr(context, "cortex_validation_results", None):
         self._summary.cortex_validation_results = context.cortex_validation_results
+    if getattr(context, "ti_anchor_stats", None):
+        self._summary.ti_anchor_stats = context.ti_anchor_stats
+    if getattr(context, "ti_failed_closed_metrics", None):
+        self._summary.ti_failed_closed_metrics = context.ti_failed_closed_metrics
     if context.upsert_delta is not None:
         self._summary.upsert_delta = _annotated_upsert_delta(self._summary, context)
     if context.table_binding_plan is not None:

@@ -287,6 +287,8 @@ def _do_snowflake_deploy(self, context: RunContext, sf_cfg) -> None:
                 for entry in (getattr(emitter, "data_backfill_results", None) or [])
             ]
             context.cortex_validation_results = list(getattr(emitter, "cortex_validation_results", None) or [])
+            context.ti_anchor_stats = list(getattr(emitter, "ti_anchor_stats", None) or [])
+            context.ti_failed_closed_metrics = list(getattr(emitter, "ti_failed_closed_metrics", None) or [])
             context.deployed_ddl_text = getattr(emitter, "_last_deployed_ddl_text", None)
             # Journal of the warehouse objects this deploy staged, promoted,
             # dropped and cleaned up (connectors/staged_deploy.py).

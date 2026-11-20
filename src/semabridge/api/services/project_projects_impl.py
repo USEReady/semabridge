@@ -711,40 +711,109 @@ async def create_project_compat(request: dict):
     project_id = requested_id or default_id
     requested_semantic_name = _project_semantic_name({"semantic_name": payload_name, "name": payload_name}, payload_name)
 
-    existing_project_id = None
-    existing_project = None
-    for candidate_id, candidate in _compat_projects.items():
-        if _project_semantic_key(candidate, candidate_id) == requested_semantic_name.strip().casefold():
-            existing_project_id = candidate_id
-            existing_project = candidate
+    # Acquire workspace DB lease to prevent race conditions during parallel creation
+    import os
+    lease_key = f"project_create_lease:{ws_id or 'default'}"
+    from semabridge.core.run_coordination import acquire_lease, release_leases
+    from fastapi import HTTPException
+    from semabridge.repository.orm.session_factory import db_manager
+    from semabridge.repository.orm.models import Project
+    from sqlalchemy import func, or_
+
+    lease_holder_id = f"create_{os.getpid()}_{_time.time()}"
+    acquired = False
+    for _ in range(25):
+        lease_res = acquire_lease(lease_key, run_id=lease_holder_id, holder=lease_holder_id)
+        if lease_res and getattr(lease_res, "acquired", True):
+            acquired = True
             break
+        await asyncio.sleep(0.1)
 
-    # Only a genuinely brand-new project (no existing_project_id match) gets
-    # the new per-project Snowflake schema default -- reusing an existing
-    # project's identity here must behave like every other edit to that
-    # project, never silently move its already-deployed target schema.
-    is_brand_new_project = existing_project_id is None
-    normalize_config_yaml = _normalize_new_project_config_yaml if is_brand_new_project else _normalize_project_config_yaml
+    try:
+        # 1. Name and ID clash check against DB and cache (no silent milliseconds suffix!)
+        name_norm = payload_name.strip().casefold()
+        existing_match = None
 
-    if existing_project_id:
-        project_id = existing_project_id
-        project = dict(existing_project or {})
-        project.update(_compat_project_payload(project_id, payload))
-        project["semantic_name"] = requested_semantic_name
-        project["name"] = requested_semantic_name
-        project["display_name"] = requested_semantic_name
-    else:
-        if _project_id_exists_anywhere(project_id):
-            # Avoid reusing an existing project's mapping cache/state when the user
-            # creates another project with the same semantic model/name or a stale
-            # modular YAML file still exists for that id.
-            project_id = f"{project_id}-{int(_time.time() * 1000)}"
+        try:
+            with db_manager.get_session() as session:
+                row = session.query(Project).filter(
+                    or_(
+                        func.lower(Project.name) == name_norm,
+                        func.lower(Project.project_id) == project_id.casefold(),
+                        func.lower(Project.project_id) == default_id.casefold(),
+                    ),
+                    Project.deleted_at.is_(None),
+                ).first()
+                if row:
+                    existing_match = (row.project_id, row.name)
+        except Exception:
+            pass
+
+        if not existing_match:
+            entries = _compat_projects.items() if isinstance(_compat_projects, dict) else [(p.get("id"), p) for p in _compat_projects if isinstance(p, dict)]
+            for candidate_id, candidate in entries:
+                if not isinstance(candidate, dict) or candidate_id in _compat_deleted_project_ids:
+                    continue
+                c_name = str(candidate.get("name") or candidate.get("semantic_name") or "").strip()
+                if c_name.casefold() == name_norm or (candidate_id and candidate_id.casefold() in (project_id.casefold(), default_id.casefold())):
+                    existing_match = (candidate_id, c_name)
+                    break
+
+        if not existing_match and (_project_id_exists_anywhere(project_id) or _project_id_exists_anywhere(default_id)):
+            existing_match = (project_id, payload_name)
+
+        if existing_match:
+            ex_id, ex_name = existing_match
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "status": "name_exists",
+                    "project_id": ex_id,
+                    "name": ex_name or payload_name,
+                    "message": f"A project named '{ex_name or payload_name}' already exists ({ex_id}).",
+                },
+            )
+
+        # 2. Source content clash check (file hash / Fabric dataset ID)
+        create_anyway = bool(payload.get("create_anyway"))
+        source_hash = payload.get("source_content_hash") or payload.get("file_hash") or src.get("content_hash")
+        fabric_dataset_id = str(src.get("dataset_id") or src.get("artifact_id") or payload.get("dataset_id") or "").strip()
+
+        if not create_anyway and (source_hash or fabric_dataset_id):
+            same_source_match = None
+            entries = _compat_projects.items() if isinstance(_compat_projects, dict) else [(p.get("id"), p) for p in _compat_projects if isinstance(p, dict)]
+            for c_id, c_data in entries:
+                if not isinstance(c_data, dict) or c_id in _compat_deleted_project_ids:
+                    continue
+                c_src = c_data.get("source") if isinstance(c_data.get("source"), dict) else {}
+                c_hash = c_data.get("source_content_hash") or c_src.get("content_hash") or c_data.get("file_hash")
+                c_ds = str(c_src.get("dataset_id") or c_src.get("artifact_id") or "").strip()
+                if (source_hash and c_hash and source_hash == c_hash) or (fabric_dataset_id and c_ds and fabric_dataset_id == c_ds):
+                    same_source_match = (c_id, str(c_data.get("name") or c_id))
+                    break
+
+            if same_source_match:
+                ex_id, ex_name = same_source_match
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "status": "same_source",
+                        "project_id": ex_id,
+                        "name": ex_name,
+                        "message": f"This source data is already used in project '{ex_name}' ({ex_id}).",
+                    },
+                )
+
+        # 3. Create project record without suffix
+        is_brand_new_project = True
+        normalize_config_yaml = _normalize_new_project_config_yaml
         project = _compat_project_payload(project_id, payload)
-    # Database first (clears a delete tombstone of a re-used id); the cache
-    # entry only after the row is saved.
-    await asyncio.to_thread(_upsert_project_in_orm, project_id, project, payload)
-    _compat_deleted_project_ids.discard(project_id)
-    _compat_projects[project_id] = project
+        await asyncio.to_thread(_upsert_project_in_orm, project_id, project, payload)
+        _compat_deleted_project_ids.discard(project_id)
+        _compat_projects[project_id] = project
+    finally:
+        if acquired:
+            release_leases(key=lease_key, holder=lease_holder_id)
 
     config_yaml = payload.get("config_yaml")
     if isinstance(config_yaml, str) and config_yaml.strip():

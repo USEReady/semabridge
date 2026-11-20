@@ -92,8 +92,16 @@ def propose_snowflake_sql(metric_name: str, bi_definition: str, *, mock: bool = 
         return ""
 
 
-def get_default_mock_drift_events(project_id: str = "proj-comp") -> List[Dict[str, Any]]:
-    """Return high-fidelity mock drift events for project demonstration and monitoring."""
+def get_default_mock_drift_events(project_id: Optional[str] = None, force_demo: bool = False) -> List[Dict[str, Any]]:
+    """Return high-fidelity mock drift events for project demonstration and monitoring only when demo flag is enabled."""
+    from semabridge.reconciliation.mock_parity import is_mock_drift_enabled
+
+    if not force_demo and not is_mock_drift_enabled():
+        return []
+
+    if not project_id:
+        return []
+
     now = datetime.now(timezone.utc)
     t1 = (now - timedelta(minutes=18)).isoformat()
     t2 = (now - timedelta(minutes=42)).isoformat()
@@ -255,15 +263,17 @@ def get_default_mock_drift_events(project_id: str = "proj-comp") -> List[Dict[st
     ]
 
 
-def seed_mock_drift_events(project_id: str = "proj-comp") -> List[Dict[str, Any]]:
+def seed_mock_drift_events(project_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """Re-populate the demo drift events of ``project_id`` (flagged ``mock``).
 
     Only previously seeded demo events of that project are replaced: real
     drift events -- of this or any other project -- are never touched, and a
     real event for a metric always wins over a demo one."""
+    pid = (project_id or "").strip()
+    if not pid:
+        return []
     state = _load_state()
     events = list(state.get("events") or [])
-    pid = project_id or "proj-comp"
     kept = [e for e in events if not (e.get("mock") and e.get("project_id") == pid)]
     real_metrics = {
         str(e.get("metric_name") or "").lower()
@@ -271,7 +281,7 @@ def seed_mock_drift_events(project_id: str = "proj-comp") -> List[Dict[str, Any]
         if e.get("project_id") == pid and not e.get("mock")
     }
     seeded = []
-    for e in get_default_mock_drift_events(pid):
+    for e in get_default_mock_drift_events(pid, force_demo=True):
         if str(e.get("metric_name") or "").lower() in real_metrics:
             continue
         seeded.append({**e, "mock": True})
@@ -492,29 +502,182 @@ def _send_webhook(url: str, payload: Dict[str, Any]) -> None:
         logger.warning("Drift webhook notification failed: %s", exc)
 
 
+_NULL_PLACEHOLDER_RE = re.compile(
+    r"^\s*(NULL|CAST\s*\(\s*NULL\s+AS\s+[^)]+\)|NULL::[A-Za-z0-9_]+)\s*$",
+    re.I,
+)
+
+
+def _is_null_placeholder(expr: Optional[str]) -> bool:
+    if not expr:
+        return False
+    return bool(_NULL_PLACEHOLDER_RE.match(str(expr).strip()))
+
+
+_COMMENT_RE = re.compile(r'/\*.*?\*/|--[^\r\n]*', re.DOTALL)
+_TOKEN_SPEC = [
+    ('STRING',   r"'(?:''|[^'])*'"),
+    ('IDENT_Q',  r'"[^"]+"'),
+    ('CAST_OP',  r'::'),
+    ('OP',       r'!=|<>|<=|>=|==|\|\||[+\-*/%=<>]'),
+    ('PUNCT',    r'[(),:;]'),
+    ('DOT',      r'\.'),
+    ('NUM',      r'\b\d+(?:\.\d+)?\b'),
+    ('WORD',     r'\b[A-Za-z_][A-Za-z0-9_]*\b'),
+    ('WS',       r'\s+'),
+    ('MISC',     r'.'),
+]
+_TOKEN_RE = re.compile('|'.join(f'(?P<{name}>{pattern})' for name, pattern in _TOKEN_SPEC))
+
+
 def _normalize_metric_expr(expr: str) -> str:
-    """Normalize expressions to compare semantic intent across BI and Snowflake dialects."""
+    """Normalize expressions via tokenization to compare semantic intent across BI and Snowflake dialects.
+
+    Rules:
+    - Comments stripped.
+    - Whitespace normalized (including inside parentheses).
+    - Keywords / identifiers outside string literals uppercased.
+    - Quotes around plain identifiers stripped ('"T"."X"' -> 'T.X').
+    - String literals kept verbatim with exact case preserved.
+    - Never strips casts (::FLOAT vs ::INT detected).
+    - Never strips table qualifiers or prefixes.
+    - Never strips CAST target types or literal case.
+    """
     if not expr:
         return ""
-    s = expr.replace('"', '')
-    # Strip cast syntax e.g. ::FLOAT, ::DOUBLE
-    s = re.sub(r'::(FLOAT|DOUBLE|INT|INTEGER|NUMBER|VARCHAR|BOOLEAN)\b', '', s, flags=re.I)
-    # Strip CAST(X AS TYPE)
-    s = re.sub(r'CAST\s*\(\s*(.*?)\s+AS\s+[A-Za-z0-9_]+\s*\)', r'\1', s, flags=re.I)
-    # Strip table name qualifiers (e.g. SALESFACT.UNITS -> UNITS)
-    s = re.sub(r'\b[A-Za-z_][A-Za-z0-9_]*\.([A-Za-z_][A-Za-z0-9_]*)\b', r'\1', s)
-    # Strip table prefix denormalizations e.g. product_isvanarsdel -> isvanarsdel
-    s = re.sub(r'\b(product|salesfact|date|geo|sentiment)_([A-Za-z0-9_]+)\b', r'\2', s, flags=re.I)
-    # Strip SQL/DAX comment annotations
-    s = re.sub(r'/\*.*?\*/', '', s)
-    s = re.sub(r'--.*$', '', s, flags=re.M)
-    s = re.sub(r'\s+', ' ', s).strip().lower()
-    return s
+    cleaned = _COMMENT_RE.sub(" ", expr)
+    tokens = []
+    for m in _TOKEN_RE.finditer(cleaned):
+        kind = m.lastgroup
+        val = m.group()
+        if kind == "WS":
+            continue
+        if kind == "STRING":
+            tokens.append(("STRING", val))
+        elif kind == "IDENT_Q":
+            inner = val[1:-1]
+            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", inner):
+                tokens.append(("WORD", inner.upper()))
+            else:
+                tokens.append(("IDENT_Q", f'"{inner.upper()}"'))
+        elif kind == "WORD":
+            tokens.append(("WORD", val.upper()))
+        elif kind == "CAST_OP":
+            tokens.append(("CAST_OP", "::"))
+        elif kind == "DOT":
+            tokens.append(("DOT", "."))
+        elif kind == "OP":
+            tokens.append(("OP", val))
+        elif kind == "PUNCT":
+            tokens.append(("PUNCT", val))
+        elif kind == "NUM":
+            tokens.append(("NUM", val))
+        else:
+            tokens.append(("MISC", val))
+
+    out = []
+    for i, (k, v) in enumerate(tokens):
+        prev_k, prev_v = tokens[i - 1] if i > 0 else (None, None)
+        need_space = False
+        if prev_k is not None:
+            if k == "DOT" or prev_k == "DOT":
+                need_space = False
+            elif k == "CAST_OP" or prev_k == "CAST_OP":
+                need_space = False
+            elif k == "PUNCT" and v == "(":
+                need_space = (prev_k == "WORD" and prev_v in ("AND", "OR", "NOT", "CASE", "WHEN", "THEN", "ELSE", "IN")) or (prev_k in ("NUM", "STRING", "IDENT_Q"))
+            elif prev_k == "PUNCT" and prev_v == "(":
+                need_space = False
+            elif k == "PUNCT" and v == ")":
+                need_space = False
+            elif prev_k == "PUNCT" and prev_v == ",":
+                need_space = True
+            elif k == "PUNCT" and v in (",", ";"):
+                need_space = False
+            elif k == "OP" or prev_k == "OP":
+                need_space = True
+            else:
+                need_space = True
+        if need_space and out:
+            out.append(" ")
+        out.append(v)
+    return "".join(out).strip()
 
 
 def _view_key(view: Optional[str]) -> str:
     """Comparable key of a semantic view name (last identifier, case-folded)."""
     return str(view or "").strip().split(".")[-1].strip('"').casefold()
+
+
+def record_deploy_baseline(
+    project_id: Optional[str],
+    view_name: str,
+    metrics: Dict[str, str],
+    source_definitions: Optional[Dict[str, str]] = None,
+    deployed_at: Optional[str] = None,
+    snapshot_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Store the exact post-deploy Snowflake DESCRIBE metrics as the baseline."""
+    now_iso = deployed_at or datetime.now(timezone.utc).isoformat()
+    p_clean = str(project_id or "").lower().removeprefix("proj-").strip()
+    v_key = _view_key(view_name)
+
+    baseline_entry = {
+        "project_id": project_id,
+        "view_name": view_name,
+        "semantic_view": view_name,
+        "deployed_at": now_iso,
+        "snapshot_id": snapshot_id,
+        "metrics": {str(k).upper(): str(v).strip() for k, v in (metrics or {}).items()},
+        "source_definitions": {str(k).upper(): str(v).strip() for k, v in (source_definitions or {}).items()} if source_definitions else {},
+    }
+
+    state = _load_state()
+    baselines = state.setdefault("baselines", {})
+    if p_clean:
+        proj_bases = baselines.setdefault(p_clean, {})
+        proj_bases[v_key] = baseline_entry
+    else:
+        baselines[v_key] = baseline_entry
+    _save_state(state)
+    logger.info("Recorded deploy baseline for view %s (project=%s, %d metrics)", view_name, project_id, len(baseline_entry["metrics"]))
+    return baseline_entry
+
+
+def get_deploy_baseline(project_id: Optional[str], view_name: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Retrieve the deploy baseline for a view from state or snapshot history."""
+    if not view_name:
+        return None
+    v_key = _view_key(view_name)
+    p_clean = str(project_id or "").lower().removeprefix("proj-").strip()
+
+    state = _load_state()
+    baselines = state.get("baselines", {})
+    if p_clean and p_clean in baselines and isinstance(baselines[p_clean], dict):
+        if v_key in baselines[p_clean]:
+            return baselines[p_clean][v_key]
+
+    # Search across all project baselines for matching view
+    for proj_k, p_bases in baselines.items():
+        if isinstance(p_bases, dict) and v_key in p_bases:
+            return p_bases[v_key]
+        elif proj_k == v_key and isinstance(p_bases, dict) and "metrics" in p_bases:
+            return p_bases
+
+    return None
+
+
+def migrate_superseded_drift_events(events: List[Dict[str, Any]]) -> int:
+    """Mark legacy drift events created under the old pre-baseline comparison as superseded."""
+    superseded_count = 0
+    now_iso = datetime.now(timezone.utc).isoformat()
+    for ev in events:
+        if ev.get("status") == "pending" and not ev.get("baseline_compared") and not ev.get("mock"):
+            ev["status"] = "superseded"
+            ev["resolution_reason"] = "Superseded by deploy baseline drift comparison"
+            ev["superseded_at"] = now_iso
+            superseded_count += 1
+    return superseded_count
 
 
 def drift_event_key(ev: Dict[str, Any]) -> tuple:
@@ -535,19 +698,34 @@ def run_drift_check(
     from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
     from semabridge.governance.blast_radius import BlastRadiusSimulator
     from semabridge.ontology.store import ontology_store
+    from semabridge.reconciliation.mock_parity import is_mock_drift_enabled
 
     fed = ontology_store.get_federated_ontology()
 
-    # One resolver for "the project's domains" (no fallback to other projects'
-    # domains); without a project every domain is checked.
     candidates = ontology_store.domains_for(project_id) if project_id else list(fed.domains.values())
-    target_domains = [d for d in candidates if not domain or d.domain.lower() == domain.lower() or (d.id or "").lower() == domain.lower()]
+    target_domains = [
+        d for d in candidates
+        if not domain or d.domain.lower() == domain.lower() or (d.id or "").lower() == domain.lower()
+    ]
 
-    # Snowflake metrics per semantic view: {VIEW_TAIL: {METRIC: entry}} -- each
-    # domain is compared against ITS OWN view only (multi-model projects have
-    # one view per model, and same-named metrics differ between them).
+    now = datetime.now(timezone.utc).isoformat()
+
+    if project_id and not target_domains:
+        return {
+            "status": "NOT_CHECKED",
+            "not_checked_reason": "NO_ONTOLOGY",
+            "checked_metrics": 0,
+            "not_checked": [],
+            "skipped_placeholders": [],
+            "snowflake_connected": False,
+            "drift_detected": 0,
+            "events": [],
+            "checked_at": now,
+        }
+
     sf_metrics_by_view: Dict[str, Dict[str, Dict[str, str]]] = {}
     inspected_views: set = set()
+    failed_views: Dict[str, str] = {}
     sf_connected = False
     try:
         sf = resolve_project_warehouse_config(project_id, "SNOWFLAKE", owner_id=owner_id)
@@ -559,11 +737,15 @@ def run_drift_check(
                 conn = snowflake.connector.connect(**kw)
                 try:
                     cur = conn.cursor()
+                    sf_connected = True
                     for dom in target_domains:
                         sv = getattr(dom, "semantic_view_name", None)
-                        if not sv or _view_key(sv) in inspected_views:
+                        if not sv:
                             continue
-                        sf_metrics = sf_metrics_by_view.setdefault(_view_key(sv), {})
+                        v_key = _view_key(sv)
+                        if v_key in inspected_views or v_key in failed_views:
+                            continue
+                        sf_metrics = sf_metrics_by_view.setdefault(v_key, {})
                         try:
                             cur.execute(f"DESCRIBE SEMANTIC VIEW {sv}")
                             cols = [c[0].lower() for c in cur.description] if cur.description else []
@@ -575,52 +757,237 @@ def run_drift_check(
                                 val = str(rec.get("property_value") or "").strip()
                                 if kind in ("METRIC", "METRICS", "") and name:
                                     entry = sf_metrics.setdefault(name.upper(), {"name": name, "view": sv, "expression": ""})
-                                    if prop == "EXPRESSION":
+                                    if "expression" in rec and rec["expression"]:
+                                        entry["expression"] = str(rec["expression"]).strip()
+                                    elif prop == "EXPRESSION":
                                         entry["expression"] = val
-                            inspected_views.add(_view_key(sv))
+                            inspected_views.add(v_key)
                         except Exception as exc:
                             logger.info("Drift check could not describe %s: %s", sv, exc)
-                    sf_connected = True
+                            failed_views[v_key] = str(exc)
                 finally:
                     conn.close()
     except Exception as exc:
         logger.info("Drift check Snowflake inspection skipped: %s", exc)
+        sf_connected = False
+
+    state_curr = _load_state()
+    existing_event_map = {drift_event_key(e): e for e in state_curr.get("events") or []}
+
+    # If Snowflake connection failed and mock drift is enabled, generate demo mock events
+    if not sf_connected:
+        mock_events = []
+        if is_mock_drift_enabled() and target_domains:
+            has_pending = any(
+                e.get("status") == "pending" and (not project_id or e.get("project_id") == project_id)
+                for e in state_curr.get("events", [])
+            )
+            if not has_pending:
+                dom = target_domains[0]
+                m = dom.metrics[0] if getattr(dom, "metrics", None) else None
+                m_name = (m.name if m else None) or "TOTAL_UNITS"
+                bi_raw = (m.sql_expression or m.dax_expression if m else None) or "SUM(SALESFACT.UNITS)"
+                sv = getattr(dom, "semantic_view_name", "SEMANTIC_VIEWS.COMP_ANALYSIS") or "SEMANTIC_VIEWS.COMP_ANALYSIS"
+                ev = {
+                    "id": f"drift-{uuid.uuid4().hex[:10]}",
+                    "project_id": project_id or getattr(dom, "source_project_id", None) or "",
+                    "domain": dom.domain,
+                    "domain_id": getattr(dom, "id", None) or dom.domain,
+                    "model_id": getattr(dom, "source_model_id", None),
+                    "semantic_view": getattr(dom, "semantic_view_name", None),
+                    "metric_name": m_name,
+                    "drift_type": "EXPRESSION_MISMATCH",
+                    "bi_definition": bi_raw,
+                    "snowflake_definition": f"{bi_raw} * 2",
+                    "proposed_snowflake_definition": propose_snowflake_sql(m_name, bi_raw, mock=True) or bi_raw,
+                    "mock": True,
+                    "affected_objects": [sv, f"METRICS.{m_name}"],
+                    "status": "pending",
+                    "resolution_reason": "",
+                    "detected_at": now,
+                }
+                mock_events.append(ev)
+                state_curr["events"] = mock_events + state_curr.get("events", [])
+                _save_state(state_curr)
+        return {
+            "status": "NOT_CHECKED",
+            "not_checked_reason": "SNOWFLAKE_UNAVAILABLE",
+            "checked_metrics": 0,
+            "not_checked": [],
+            "skipped_placeholders": [],
+            "snowflake_connected": False,
+            "drift_detected": len(mock_events),
+            "events": mock_events,
+            "checked_at": now,
+        }
 
     sim = BlastRadiusSimulator()
     new_events: List[Dict[str, Any]] = []
     checked = 0
-    now = datetime.now(timezone.utc).isoformat()
+    not_checked: List[Dict[str, Any]] = []
+    skipped_placeholders: List[str] = []
 
-    from semabridge.reconciliation.mock_parity import is_mock_drift_enabled
+    has_any_comparable_metrics = any(bool(getattr(d, "metrics", None)) for d in target_domains)
+    if not has_any_comparable_metrics:
+        return {
+            "status": "NOT_CHECKED",
+            "not_checked_reason": "NO_COMPARABLE_METRICS",
+            "checked_metrics": 0,
+            "not_checked": [],
+            "skipped_placeholders": [],
+            "snowflake_connected": sf_connected,
+            "drift_detected": 0,
+            "events": [],
+            "checked_at": now,
+        }
+
+    matched_sf_keys_by_view: Dict[str, Set[str]] = {}
+    view_primary_domain: Dict[str, Any] = {}
+
+    # Migrate any legacy pre-baseline pending events to superseded
+    if migrate_superseded_drift_events(state_curr.get("events") or []) > 0:
+        _save_state(state_curr)
+
+    # Check for views that have no baseline yet (Requirement 5)
+    has_baseline_captured = False
+    views_newly_captured: Set[str] = set()
+    for dom in target_domains:
+        dom_view = getattr(dom, "semantic_view_name", None)
+        if not dom_view:
+            continue
+        v_key = _view_key(dom_view)
+        if v_key in inspected_views and v_key not in failed_views:
+            base = get_deploy_baseline(project_id or getattr(dom, "source_project_id", None), dom_view)
+            if not base and sf_metrics_by_view.get(v_key):
+                src_defs = {
+                    m.name.upper(): (getattr(m, "dax_expression", "") or getattr(m, "sql_expression", "") or "").strip()
+                    for m in (getattr(dom, "metrics", []) or [])
+                    if getattr(m, "name", None)
+                }
+                record_deploy_baseline(
+                    project_id=project_id or getattr(dom, "source_project_id", None),
+                    view_name=dom_view,
+                    metrics={k: v.get("expression", "") for k, v in sf_metrics_by_view[v_key].items()},
+                    source_definitions=src_defs,
+                    deployed_at=now,
+                )
+                has_baseline_captured = True
+                views_newly_captured.add(v_key)
+
+    if has_baseline_captured and not any(get_deploy_baseline(project_id, getattr(d, "semantic_view_name", None)) for d in target_domains if _view_key(getattr(d, "semantic_view_name", None)) not in views_newly_captured):
+        # First check stores the baseline and returns status BASELINE_CAPTURED with no drift events
+        total_captured = sum(len(sf_metrics_by_view.get(vk, {})) for vk in views_newly_captured)
+        return {
+            "status": "BASELINE_CAPTURED",
+            "not_checked_reason": None,
+            "checked_metrics": total_captured,
+            "not_checked": not_checked,
+            "skipped_placeholders": [],
+            "snowflake_connected": sf_connected,
+            "drift_detected": 0,
+            "events": [],
+            "checked_at": now,
+        }
 
     for dom in target_domains:
         dom_view = getattr(dom, "semantic_view_name", None)
-        view_inspected = bool(dom_view) and _view_key(dom_view) in inspected_views
-        view_metrics = sf_metrics_by_view.get(_view_key(dom_view), {}) if dom_view else {}
-        for m in dom.metrics:
+        dom_metrics = getattr(dom, "metrics", []) or []
+
+        if not dom_view:
+            not_checked.append({
+                "domain": dom.domain,
+                "view": None,
+                "reason": "NO_DEPLOYED_VIEW",
+            })
+            continue
+
+        v_key = _view_key(dom_view)
+        if v_key not in view_primary_domain:
+            view_primary_domain[v_key] = dom
+
+        if v_key in failed_views:
+            not_checked.append({
+                "domain": dom.domain,
+                "view": dom_view,
+                "reason": failed_views[v_key],
+            })
+            continue
+
+        if v_key not in inspected_views:
+            not_checked.append({
+                "domain": dom.domain,
+                "view": dom_view,
+                "reason": "VIEW_NOT_INSPECTED",
+            })
+            continue
+
+        view_metrics = sf_metrics_by_view.get(v_key, {})
+        view_matched = matched_sf_keys_by_view.setdefault(v_key, set())
+
+        base = get_deploy_baseline(project_id or getattr(dom, "source_project_id", None), dom_view)
+        base_metrics = dict(base.get("metrics", {})) if base else {}
+        base_src_defs = dict(base.get("source_definitions", {})) if base else {}
+
+        # Fallback to domain metrics if no baseline metrics were saved
+        if not base_metrics and dom_metrics:
+            base_metrics = {
+                m.name.upper(): (m.sql_expression or getattr(m, "dax_expression", "") or "").strip()
+                for m in dom_metrics
+                if (m.sql_expression or getattr(m, "dax_expression", ""))
+            }
+
+        for base_name, base_expr in base_metrics.items():
             checked += 1
-            m_key = m.name.upper()
-            sf_entry = view_metrics.get(m_key)
-            bi_expr = (m.sql_expression or m.dax_expression or "").strip()
+            m_names_to_try = [
+                base_name.upper(),
+                re.sub(r"\s+", "_", base_name).strip().upper(),
+                re.sub(r"[\s_]+", "_", base_name).strip("_").upper(),
+            ]
+
+            sf_key = None
+            sf_entry = None
+            for cand in m_names_to_try:
+                if cand in view_metrics:
+                    sf_key = cand
+                    sf_entry = view_metrics[cand]
+                    break
+
+            if sf_key:
+                view_matched.add(sf_key)
+
             drift_reason = None
-            sf_expr = ""
-            if sf_connected and view_inspected and sf_entry is None:
-                clean_sql = (m.sql_expression or "").strip().strip("'\"")
-                if clean_sql and not clean_sql.isspace():
+            sf_expr = (sf_entry.get("expression") or "").strip() if sf_entry else ""
+
+            if not sf_entry:
+                if base_expr:
                     drift_reason = "MISSING_IN_SNOWFLAKE"
-            elif sf_entry is not None:
-                sf_expr = (sf_entry.get("expression") or "").strip()
-                # Ignore expected null placeholder for measures without SQL
-                if not (m.sql_expression or "").strip() or not sf_expr or "null" in sf_expr.lower():
-                    pass
-                elif _normalize_metric_expr(sf_expr) != _normalize_metric_expr(bi_expr):
-                    drift_reason = "EXPRESSION_MISMATCH"
+            else:
+                if _is_null_placeholder(sf_expr):
+                    if _is_null_placeholder(base_expr) or not base_expr:
+                        skipped_placeholders.append(base_name)
+                    else:
+                        drift_reason = "NULL_IN_SNOWFLAKE"
+                else:
+                    if base_expr and _normalize_metric_expr(sf_expr) != _normalize_metric_expr(base_expr):
+                        drift_reason = "EXPRESSION_MISMATCH"
 
             if drift_reason:
-                affected = [getattr(dom, "semantic_view_name", "SEMANTIC_VIEW") or "SEMANTIC_VIEW", m.name]
+                m_proj = project_id or getattr(dom, "source_project_id", None)
+                m_model = getattr(dom, "source_model_id", None)
+                key = (
+                    str(m_proj or "").lower().removeprefix("proj-").strip(),
+                    str(m_model or "").strip().casefold() or _view_key(dom_view),
+                    base_name.lower().strip(),
+                )
+                prev = existing_event_map.get(key)
+                if prev and prev.get("bi_definition") == base_expr and prev.get("status") in ("approved", "ignored"):
+                    # Already accepted by reviewer
+                    continue
+
+                affected = [dom_view or "SEMANTIC_VIEW", base_name]
                 try:
                     impact = sim.simulate(
-                        target_object=m.name,
+                        target_object=base_name,
                         object_type="METRIC",
                         change_type="MODIFY_EXPRESSION",
                         project_id=project_id,
@@ -632,18 +999,20 @@ def run_drift_check(
                         ]
                 except Exception:
                     pass
+
                 ev = {
                     "id": f"drift-{uuid.uuid4().hex[:10]}",
-                    "project_id": project_id or getattr(dom, "source_project_id", None),
+                    "project_id": m_proj,
                     "domain": dom.domain,
-                    "domain_id": dom.id,
-                    "model_id": getattr(dom, "source_model_id", None),
+                    "domain_id": getattr(dom, "id", None) or dom.domain,
+                    "model_id": m_model,
                     "semantic_view": dom_view,
-                    "metric_name": m.name,
+                    "metric_name": base_name,
                     "drift_type": drift_reason,
-                    "bi_definition": bi_expr,
+                    "bi_definition": base_expr or "(not present in semantic view)",
                     "snowflake_definition": sf_expr or "(not present in semantic view)",
-                    "proposed_snowflake_definition": propose_snowflake_sql(m.name, bi_expr),
+                    "proposed_snowflake_definition": "redeploy from source",
+                    "baseline_compared": True,
                     "affected_objects": affected,
                     "status": "pending",
                     "resolution_reason": "",
@@ -651,52 +1020,89 @@ def run_drift_check(
                 }
                 new_events.append(ev)
 
-    # When mock drift is enabled and no real Snowflake inspection is active, generate a realistic drift event
-    if not sf_connected and is_mock_drift_enabled() and target_domains:
-        state_curr = _load_state()
-        has_pending = any(
-            e.get("status") == "pending" and (not project_id or e.get("project_id") == project_id)
-            for e in state_curr.get("events", [])
-        )
-        if not has_pending:
-            dom = target_domains[0]
-            m = dom.metrics[0] if getattr(dom, "metrics", None) else None
-            m_name = (m.name if m else None) or "TOTAL_UNITS"
-            bi_raw = (m.sql_expression or m.dax_expression if m else None) or "SUM(SALESFACT.UNITS)"
-            if "UNIT" in m_name.upper():
-                bi_updated = "SUM(CASE WHEN SALESFACT.STATUS NOT IN ('Cancelled', 'Returned') THEN SALESFACT.UNITS ELSE 0 END)"
-            elif "DOL" in m_name.upper() or "REVENUE" in m_name.upper() or "SALES" in m_name.upper():
-                bi_updated = "SUM(SALESFACT.REVENUE) - SUM(COALESCE(SALESFACT.DISCOUNT, 0))"
-            elif "PRODUCT" in m_name.upper():
-                bi_updated = "COUNT(DISTINCT CASE WHEN PRODUCT.IS_ACTIVE = TRUE THEN PRODUCT.PRODUCT_ID END)"
-            else:
-                bi_updated = f"SUM(CASE WHEN STATUS != 'Cancelled' THEN ({bi_raw}) ELSE 0 END)"
-            sf_expr = f"{bi_raw}"
-            sv = getattr(dom, "semantic_view_name", "SEMANTIC_VIEWS.COMP_ANALYSIS") or "SEMANTIC_VIEWS.COMP_ANALYSIS"
-            ev = {
-                "id": f"drift-{uuid.uuid4().hex[:10]}",
-                "project_id": project_id or getattr(dom, "source_project_id", None) or "proj-comp",
-                "domain": dom.domain,
-                "domain_id": dom.id,
-                "model_id": getattr(dom, "source_model_id", None),
-                "semantic_view": getattr(dom, "semantic_view_name", None),
-                "metric_name": m_name,
-                "drift_type": "EXPRESSION_MISMATCH",
-                "bi_definition": bi_updated,
-                "snowflake_definition": sf_expr,
-                "proposed_snowflake_definition": propose_snowflake_sql(m_name, bi_updated, mock=True),
-                "mock": True,
-                "affected_objects": [sv, f"METRICS.{m_name}"],
-                "status": "pending",
-                "resolution_reason": "",
-                "detected_at": now,
-            }
-            new_events.append(ev)
+        # Check for Power BI / source definition drift (Requirement 3)
+        for m in dom_metrics:
+            m_up = m.name.upper()
+            curr_src = (getattr(m, "dax_expression", "") or getattr(m, "sql_expression", "") or "").strip()
+            deploy_src = base_src_defs.get(m_up)
+            if curr_src and deploy_src and _normalize_metric_expr(curr_src) != _normalize_metric_expr(deploy_src):
+                m_proj = project_id or getattr(dom, "source_project_id", None)
+                m_model = getattr(dom, "source_model_id", None)
+                src_key = (
+                    str(m_proj or "").lower().removeprefix("proj-").strip(),
+                    str(m_model or "").strip().casefold() or _view_key(dom_view),
+                    f"{m.name.lower().strip()}__src",
+                )
+                prev_src = existing_event_map.get(src_key)
+                if prev_src and prev_src.get("bi_definition") == curr_src and prev_src.get("status") in ("approved", "ignored"):
+                    continue
+                ev = {
+                    "id": f"drift-{uuid.uuid4().hex[:10]}",
+                    "project_id": m_proj,
+                    "domain": dom.domain,
+                    "domain_id": getattr(dom, "id", None) or dom.domain,
+                    "model_id": m_model,
+                    "semantic_view": dom_view,
+                    "metric_name": m.name,
+                    "drift_type": "SOURCE_CHANGED",
+                    "bi_definition": curr_src,
+                    "snowflake_definition": deploy_src,
+                    "proposed_snowflake_definition": "redeploy from source",
+                    "baseline_compared": True,
+                    "affected_objects": [dom_view or "SEMANTIC_VIEW", m.name],
+                    "status": "pending",
+                    "resolution_reason": "",
+                    "detected_at": now,
+                }
+                new_events.append(ev)
+
+    # Check for unmanaged metrics in Snowflake views (only metrics not in baseline)
+    if has_any_comparable_metrics:
+        for v_key, view_metrics in sf_metrics_by_view.items():
+            if v_key in inspected_views and v_key in view_primary_domain:
+                dom = view_primary_domain[v_key]
+                dom_view = getattr(dom, "semantic_view_name", None)
+                base = get_deploy_baseline(project_id or getattr(dom, "source_project_id", None), dom_view)
+                base_metrics = base.get("metrics", {}) if base else {}
+                if not base_metrics and getattr(dom, "metrics", None):
+                    base_metrics = {m.name.upper(): (m.sql_expression or getattr(m, "dax_expression", "") or "").strip() for m in dom.metrics}
+                base_keys = {k.upper() for k in base_metrics}
+                view_matched = matched_sf_keys_by_view.get(v_key, set())
+                for sf_k, sf_e in view_metrics.items():
+                    if sf_k not in view_matched and sf_k.upper() not in base_keys:
+                        unmanaged_name = sf_e.get("name") or sf_k
+                        unmanaged_expr = (sf_e.get("expression") or "").strip()
+                        m_proj = project_id or getattr(dom, "source_project_id", None)
+                        m_model = getattr(dom, "source_model_id", None)
+                        u_key = (
+                            str(m_proj or "").lower().removeprefix("proj-").strip(),
+                            str(m_model or "").strip().casefold() or _view_key(dom_view),
+                            unmanaged_name.lower().strip(),
+                        )
+                        prev_u = existing_event_map.get(u_key)
+                        if prev_u and prev_u.get("status") in ("approved", "ignored"):
+                            continue
+                        ev = {
+                            "id": f"drift-{uuid.uuid4().hex[:10]}",
+                            "project_id": m_proj,
+                            "domain": dom.domain,
+                            "domain_id": getattr(dom, "id", None) or dom.domain,
+                            "model_id": m_model,
+                            "semantic_view": dom_view,
+                            "metric_name": unmanaged_name,
+                            "drift_type": "UNMANAGED_IN_SNOWFLAKE",
+                            "bi_definition": "(not present in deploy baseline)",
+                            "snowflake_definition": unmanaged_expr or "(unmanaged in Snowflake)",
+                            "proposed_snowflake_definition": "redeploy from source",
+                            "baseline_compared": True,
+                            "affected_objects": [dom_view, unmanaged_name],
+                            "status": "pending",
+                            "resolution_reason": "",
+                            "detected_at": now,
+                        }
+                        new_events.append(ev)
 
     state = _load_state()
-    # Deduplicate into state by (project, model/view, metric): same-named
-    # metrics of two models of one project are different drift items. Legacy
-    # events without model/view keep their (project, "", metric) key.
     event_map = {}
     for e in state.get("events") or []:
         event_map[drift_event_key(e)] = e
@@ -706,7 +1112,18 @@ def run_drift_check(
         if prev and prev.get("bi_definition") == ev.get("bi_definition") and prev.get("status") in ("approved", "ignored"):
             continue
         event_map[key] = ev
-    state["events"] = list(event_map.values())[:200]
+
+    # Per-project cap (keep up to 200 per project)
+    events_by_proj: Dict[str, List[Dict[str, Any]]] = {}
+    for ev in event_map.values():
+        p_key = str(ev.get("project_id") or "").lower().removeprefix("proj-").strip()
+        events_by_proj.setdefault(p_key, []).append(ev)
+
+    capped_events = []
+    for p_key, p_evs in events_by_proj.items():
+        capped_events.extend(p_evs[-200:])
+
+    state["events"] = capped_events
     _save_state(state)
 
     if new_events and webhook_url:
@@ -719,18 +1136,42 @@ def run_drift_check(
             },
         )
 
-    pending_detected = [
-        e for e in state.get("events") or []
-        if e.get("status") == "pending"
-        and (not project_id or str(e.get("project_id", "")).lower().removeprefix("proj-") == str(project_id).lower().removeprefix("proj-"))
-    ]
-    detected_count = len(new_events) if new_events else len(pending_detected)
+    detected_count = len(new_events)
+
+    if not target_domains:
+        status = "NOT_CHECKED"
+        not_checked_reason = "NO_ONTOLOGY"
+    elif not sf_connected:
+        status = "NOT_CHECKED"
+        not_checked_reason = "SNOWFLAKE_UNAVAILABLE"
+    elif not has_any_comparable_metrics:
+        status = "NOT_CHECKED"
+        not_checked_reason = "NO_COMPARABLE_METRICS"
+    elif all(not getattr(d, "semantic_view_name", None) for d in target_domains):
+        status = "NOT_CHECKED"
+        not_checked_reason = "NO_DEPLOYED_VIEW"
+    elif checked == 0:
+        status = "NOT_CHECKED"
+        not_checked_reason = "NO_COMPARABLE_METRICS"
+    elif not_checked:
+        status = "PARTIAL"
+        not_checked_reason = None
+    elif detected_count > 0:
+        status = "DRIFT_DETECTED"
+        not_checked_reason = None
+    else:
+        status = "IN_SYNC"
+        not_checked_reason = None
 
     return {
+        "status": status,
+        "not_checked_reason": not_checked_reason,
         "checked_metrics": checked,
+        "not_checked": not_checked,
+        "skipped_placeholders": skipped_placeholders,
         "snowflake_connected": sf_connected,
         "drift_detected": detected_count,
-        "events": new_events or pending_detected,
+        "events": new_events,
         "checked_at": now,
     }
 
@@ -897,7 +1338,9 @@ def resolve_drift_event(event_id: str, action: str, reason: str = "") -> Optiona
         if ev["id"] == event_id:
             if action == "approve":
                 ev["status"] = "approved"
-                ev["resolution_reason"] = reason or "Approved for implementation"
+                ev["proposed_action"] = "redeploy"
+                ev["proposed_snowflake_definition"] = "redeploy from source"
+                ev["resolution_reason"] = reason or "Approved for gated redeploy from source"
             elif action == "ignore":
                 ev["status"] = "ignored"
                 ev["resolution_reason"] = reason or "Ignored by reviewer"

@@ -219,7 +219,13 @@ export default function AnswerCard({ entry, onCertify, onRetry, onOfflineDraft, 
   }
 
   const usesCertified = (plan?.detected_metrics || []).length > 0;
-  const certified = certifyState === 'done';
+  const isCertifiedAnswer = Boolean(result?.certified ?? (plan?.certified && !(result?.warnings || []).length));
+  const queryPath = result?.query_path || (usesCertified ? 'semantic view' : 'free-form SQL');
+  const allWarnings = [
+    ...(plan?.warnings || []),
+    ...(result?.warnings || []),
+  ];
+  const certified = certifyState === 'done' || isCertifiedAnswer;
   // Only answers computed by a live warehouse can be certified, never preview rows.
   // (0 rows is a valid answer; the backend also requires a recorded real run.)
   const canCertify = Boolean(result && result.success !== false && !result.is_simulated);
@@ -228,12 +234,19 @@ export default function AnswerCard({ entry, onCertify, onRetry, onOfflineDraft, 
     <div style={CARD}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <b style={{ fontSize: 14, color: 'var(--text-primary)' }}>{answerTitle(plan, question)}</b>
-        {usesCertified ? (
-          <span style={pill('ok')}><ShieldCheck size={12} /> Uses certified metric</span>
+        {isCertifiedAnswer ? (
+          <span style={pill('ok')}><ShieldCheck size={12} /> Certified</span>
         ) : (
-          <span style={pill('warn')} title="No governed metric matched this question; check the SQL before relying on it.">
-            No governed metric matched
-          </span>
+          <>
+            <span style={pill(queryPath === 'free-form SQL' ? 'warn' : 'neutral')}>
+              {queryPath}
+            </span>
+            {allWarnings.map((w, idx) => (
+              <span key={idx} style={pill('warn')} title={w}>
+                {w}
+              </span>
+            ))}
+          </>
         )}
         <span style={{ flex: 1 }} />
         <button

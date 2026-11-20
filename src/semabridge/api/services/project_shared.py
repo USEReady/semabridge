@@ -87,8 +87,12 @@ install_websocket_alert_handler()
 
 logger = logging.getLogger("semabridge.api")
 
-db_manager = ModelRepository()
-engine = ExecutionEngine(db_manager=db_manager)
+try:
+    db_manager = ModelRepository()
+    engine = ExecutionEngine(db_manager=db_manager)
+except Exception:
+    db_manager = None
+    engine = None
 
 settings = get_settings()
 scheduler_service = SchedulerService()
@@ -1396,6 +1400,58 @@ def _compat_get_project(project_id: str, cache: Optional[Dict[str, Any]] = None)
             _compat_projects.setdefault(pid, entry)
         _compat_project_runs.setdefault(pid, [])
     return entry
+
+
+def resolve_canonical_project_id(project_id: Optional[str]) -> Optional[str]:
+    """Resolve a project name, slug, or id to its canonical project_id."""
+    if not project_id or not str(project_id).strip():
+        return None
+    raw = str(project_id).strip()
+    if _compat_get_project(raw):
+        return raw
+
+    # 1. DB search by project_id or name (case-insensitive)
+    try:
+        from semabridge.repository.orm.session_factory import db_manager
+        from semabridge.repository.orm.models import Project
+        from sqlalchemy import func
+
+        with db_manager.get_session() as s:
+            match = s.query(Project.project_id).filter(
+                func.lower(Project.project_id) == raw.lower(),
+                Project.deleted_at.is_(None),
+            ).first()
+            if match and match[0]:
+                return str(match[0])
+
+            match_name = s.query(Project.project_id).filter(
+                func.lower(Project.name) == raw.lower(),
+                Project.deleted_at.is_(None),
+            ).first()
+            if match_name and match_name[0]:
+                return str(match_name[0])
+    except Exception:
+        pass
+
+    # 2. Check _compat_projects cache by id or name
+    with _compat_store_lock:
+        for k, v in _compat_projects.items():
+            if not isinstance(v, dict):
+                continue
+            if k.lower() == raw.lower():
+                return k
+            name = str(v.get("name") or v.get("semantic_name") or "").strip()
+            if name.lower() == raw.lower():
+                return k
+
+    # 3. Check modular project YAMLs on disk
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", raw).strip("-").lower()
+    for candidate in [raw, f"proj-{slug}", slug, f"proj-{raw}"]:
+        if _compat_project_yaml_path(candidate).is_file():
+            return candidate
+
+    return raw
+
 
 
 def _compat_refresh_projects_from_db() -> Optional[List[str]]:

@@ -1208,11 +1208,13 @@ class FederatedOntologyLoader:
             elif re.match(r"^(?:CAST\s*\(\s*NULL\b|NULL\b)", rhs, re.I):
                 cm = re.search(r"\bCOMMENT\s*=\s*'((?:[^']|'')*)'", rhs, re.I)
                 null_reason = (cm.group(1).replace("''", "'") if cm else "Compiled as NULL placeholder during deployment")
-            meta["metrics"][_norm(logical_m)] = (t_alias, logical_m, null_reason)
+            from semabridge.ontology.models import strip_ddl_clauses
+            clean_rhs = strip_ddl_clauses(rhs)
+            meta["metrics"][_norm(logical_m)] = (t_alias, logical_m, null_reason, clean_rhs)
             syn_m = re.search(r"WITH\s+SYNONYMS\s*=\s*\(([^)]+)\)", line, re.I)
             if syn_m:
                 for s in re.findall(r"'((?:[^']|'')*)'", syn_m.group(1)):
-                    meta["metrics"].setdefault(_norm(s.replace("''", "'")), (t_alias, logical_m, null_reason))
+                    meta["metrics"].setdefault(_norm(s.replace("''", "'")), (t_alias, logical_m, null_reason, clean_rhs))
 
         return meta
 

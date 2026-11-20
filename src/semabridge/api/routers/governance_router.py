@@ -46,10 +46,12 @@ def _resolve_project_allowed_domains(project_id: Optional[str]) -> Optional[List
     pid = (project_id or "").strip()
     if not pid:
         return None
-    doms = ontology_store.domains_for(pid)
+    from semabridge.api.services.project_shared import resolve_canonical_project_id
+    c_pid = resolve_canonical_project_id(pid) or pid
+    doms = ontology_store.domains_for(c_pid) or ontology_store.domains_for(pid)
     if doms:
         return [d.domain for d in doms] + [d.id for d in doms if d.id]
-    return [pid]
+    return [c_pid, pid]
 
 
 @router.post("/blast-radius", response_model=BlastRadiusReport)
@@ -82,8 +84,8 @@ def simulate_blast_radius(req: BlastRadiusRequest) -> BlastRadiusReport:
     if is_mock is None:
         if is_mock_drift_enabled() or is_mock_parity_enabled():
             is_mock = True
-        elif req.project_id in ("proj-comp", "proj-sales"):
-            is_mock = True
+        else:
+            is_mock = False
 
     simulator = BlastRadiusSimulator(
         ontology=fed,

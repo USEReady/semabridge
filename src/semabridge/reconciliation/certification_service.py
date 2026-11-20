@@ -95,7 +95,7 @@ def save_certification_record(
                 domain=dom,
                 metric_name=m_clean,
                 view_metric=vm,
-                dimensions_json=json.dumps(list(dimensions or [])),
+                dimensions_json=json.dumps(list(dimensions or []), default=str),
                 status=str(status).upper(),
                 certification_badge=certification_badge or str(status).upper(),
                 dax_query=dax_query or "",

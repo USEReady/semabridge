@@ -262,11 +262,17 @@ export function WhatIfSimulator({ gov, metricOptions, onOpenParity }) {
               aria-label="Governance scope"
             >
               <option value="">All loaded domains</option>
-              {(projectsList || []).map((p) => (
-                <option key={p.id || p.name} value={p.id || p.name}>
-                  {p.name || p.id}
-                </option>
-              ))}
+              {(projectsList || [])
+                .filter((p) => (p.ontology_domain_count > 0) || (p.domain_names && p.domain_names.length > 0))
+                .map((p) => {
+                  const pid = p.id || p.project_id || p.name;
+                  const domStr = p.domain_names?.length ? ` · ${p.domain_names.join(', ')}` : '';
+                  return (
+                    <option key={pid} value={pid}>
+                      {p.name || pid} ({pid}){domStr}
+                    </option>
+                  );
+                })}
             </select>
           </label>
         )}
@@ -394,10 +400,10 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
     if (parityProjectMetrics?.length > 0) return parityProjectMetrics;
     if (allMetrics?.length > 0) {
       if (govProjectId) {
+        const want = String(govProjectId).toLowerCase().replace(/^proj-/, '');
         return allMetrics.filter((m) => {
-          const domStr = String(m.domain || m._domain || '').toLowerCase();
-          const projStr = String(govProjectId).toLowerCase();
-          return domStr.includes(projStr) || m.source_project_id === govProjectId;
+          const mPid = String(m.source_project_id || '').toLowerCase().replace(/^proj-/, '');
+          return mPid === want;
         });
       }
       return allMetrics;
@@ -606,12 +612,18 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
             onChange={(e) => setGovProjectId?.(e.target.value)}
             style={{ ...SELECT_STYLE, width: '100%', fontSize: 12.5 }}
           >
-            <option value="">All Projects / Global</option>
-            {projectsList.map((p) => (
-              <option key={p.id || p.name} value={p.id || p.name}>
-                {p.name || p.id}
-              </option>
-            ))}
+            <option value="">All loaded domains</option>
+            {(projectsList || [])
+              .filter((p) => (p.ontology_domain_count > 0) || (p.domain_names && p.domain_names.length > 0))
+              .map((p) => {
+                const pid = p.id || p.project_id || p.name;
+                const domStr = p.domain_names?.length ? ` · ${p.domain_names.join(', ')}` : '';
+                return (
+                  <option key={pid} value={pid}>
+                    {p.name || pid} ({pid}){domStr}
+                  </option>
+                );
+              })}
           </select>
         </div>
 
@@ -624,7 +636,11 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
             onChange={(e) => handleSelectMetric(e.target.value)}
             style={{ ...SELECT_STYLE, width: '100%', fontSize: 12.5, fontFamily: MONO }}
           >
-            <option value="">-- Choose DAX Measure from Project --</option>
+            <option value="">
+              {availableMetrics.length === 0
+                ? '-- No metrics found for this project --'
+                : '-- Choose DAX Measure from Project --'}
+            </option>
             {availableMetrics.map((m, idx) => {
               const val = m.name || m.logical_name;
               const formulaPreview = m.dax_expression ? ` = ${m.dax_expression.slice(0, 32)}…` : '';
@@ -635,6 +651,11 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
               );
             })}
           </select>
+          {availableMetrics.length === 0 && (
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
+              No metrics found for this project yet. Run sync or generate ontology first.
+            </div>
+          )}
         </div>
       </div>
 

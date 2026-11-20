@@ -839,6 +839,8 @@ def _run_single_job_impl(
                 "dropped_entities": summary_data.get("dropped_entities") or [],
                 "data_backfill_results": summary_data.get("data_backfill_results") or [],
                 "cortex_validation_results": summary_data.get("cortex_validation_results") or [],
+                "ti_anchor_stats": summary_data.get("ti_anchor_stats") or [],
+                "ti_failed_closed_metrics": summary_data.get("ti_failed_closed_metrics") or [],
                 "upsert_delta": summary_data.get("upsert_delta"),
                 "pbix_path": job.get("pbix_path"),
                 "view_name": _resolve_result_view_name(run_context, target_type),
@@ -1068,6 +1070,8 @@ def _failed_result(
         "dropped_entities": drops,
         "data_backfill_results": [],
         "cortex_validation_results": [],
+        "ti_anchor_stats": [],
+        "ti_failed_closed_metrics": [],
         "upsert_delta": None,
         "pbix_path": job.get("pbix_path"),
         "view_name": None,
@@ -1406,6 +1410,15 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
         overall_status = "conflict"
     else:
         overall_status = "failed"
+
+    if succeeded and requested_project_id:
+        try:
+            from semabridge.ontology.per_model import sync_project_model_domains
+            from semabridge.ontology.store import ontology_store
+            sync_project_model_domains(requested_project_id, ontology_store)
+            logger.info("Automatically refreshed ontology domain for project %s after successful sync", requested_project_id)
+        except Exception as ex:
+            logger.warning("Could not auto-refresh ontology domains for project %s: %s", requested_project_id, ex)
 
     last_summary = next(
         (result.get("summary") for result in reversed(per_model_results) if isinstance(result.get("summary"), dict)),

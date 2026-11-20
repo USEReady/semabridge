@@ -171,6 +171,8 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
   const [bootstrapModalOpen, setBootstrapModalOpen] = useState(false);
   const [bootstrapProject, setBootstrapProject] = useState('');
   const [bootstrapDomain, setBootstrapDomain] = useState('');
+  const [bootstrapProjectSearch, setBootstrapProjectSearch] = useState('');
+  const [scopeSearch, setScopeSearch] = useState('');
   const [bootstrapping, setBootstrapping] = useState(false);
 
   // Domains: every domain's detail (for overview counts and Run all checks), and the drawer
@@ -314,8 +316,23 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
       if (res.ok) {
         const data = await res.json();
         setDomainData(data);
-        if ((autoSelectFirst || !inspectingDomain) && data.domains?.length > 0) {
-          handleOpenDomainInspector(data.domains[0].domain, 'metrics');
+        const all = data.domains || [];
+        const projKey = (v) => String(v || '').trim().toLowerCase().replace(/^proj-/, '');
+        const want = selectedProjectSlug ? projKey(selectedProjectSlug) : null;
+        const scoped = want
+          ? all.filter(
+              (d) =>
+                projKey(d.source_project_id) === want ||
+                (attachedDomainIds && (attachedDomainIds.includes(d.id) || attachedDomainIds.includes(d.domain)))
+            )
+          : all;
+        if (scoped.length > 0) {
+          if (autoSelectFirst || !inspectingDomain || !scoped.some((d) => d.domain === inspectingDomain)) {
+            handleOpenDomainInspector(scoped[0].domain, 'metrics');
+          }
+        } else {
+          setInspectingDomain(null);
+          setInspectingDomainData(null);
         }
         return { data, details: await loadDomainDetails(data.domains || []) };
       }
@@ -345,13 +362,15 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
 
   const fetchProjects = async () => {
     try {
-      const res = await authFetch('/api/projects?limit=50');
+      const res = await authFetch('/api/ontology/projects');
       if (res.ok) {
-        const data = await res.json();
-        const list = Array.isArray(data) ? data : data.projects || [];
-        setProjectsList(list);
-        if (list.length > 0 && !bootstrapProject) {
-          setBootstrapProject(list[0].id || list[0].name);
+        const list = await res.json();
+        setProjectsList(Array.isArray(list) ? list : list?.projects || []);
+      } else {
+        const altRes = await authFetch('/api/projects?limit=500');
+        if (altRes.ok) {
+          const data = await altRes.json();
+          setProjectsList(Array.isArray(data) ? data : data?.projects || []);
         }
       }
     } catch (err) {
@@ -634,9 +653,13 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
   };
 
   const openBootstrap = () => {
-    if (projectsList.length > 0 && !bootstrapProject) {
-      setBootstrapProject(selectedProjectSlug || projectsList[0].id || projectsList[0].name);
-    }
+    const matched = selectedProjectSlug
+      ? projectsList.find((p) => (p.id || p.project_id) === selectedProjectSlug && p.has_successful_sync)
+      : null;
+    setBootstrapProject(matched ? (matched.id || matched.project_id) : '');
+    setBootstrapProjectSearch('');
+    setBootstrapDomain('');
+    setBootstrapDuplicateError(null);
     setBootstrapModalOpen(true);
   };
 
@@ -676,6 +699,17 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
       setImpactReports(Object.fromEntries(reports.filter(Boolean)));
       await lintPromise;
       setChecksRanAt(Date.now());
+      if (names.length === 0) {
+        setStatusMessage({
+          type: 'warning',
+          text: 'Checked 0 metrics. No metrics found in this project to check.',
+        });
+      } else {
+        setStatusMessage({
+          type: 'success',
+          text: `Checked ${names.length} metrics.`,
+        });
+      }
     } finally {
       setRunningChecks(false);
     }
@@ -1108,6 +1142,17 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
     );
   }, [domainData.domains, selectedProjectSlug, attachedDomainIds]);
 
+  useEffect(() => {
+    if (visibleDomains.length > 0) {
+      if (!inspectingDomain || !visibleDomains.some((d) => d.domain === inspectingDomain)) {
+        handleOpenDomainInspector(visibleDomains[0].domain, 'metrics');
+      }
+    } else {
+      setInspectingDomain(null);
+      setInspectingDomainData(null);
+    }
+  }, [visibleDomains]);
+
   const activeMetrics = useMemo(() => {
     const list = inspectingDomainData?.parsed?.metrics || [];
     if (!glossarySearchQuery.trim()) return list;
@@ -1233,11 +1278,20 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
   };
   attention.total = attention.collisions + attention.unresolved + attention.parityDrift;
 
+  const scopedMetricsChecked = selectedProjectSlug
+    ? visibleDomains.reduce((acc, d) => acc + (d.metrics_count || d.metrics?.length || 0), 0)
+    : (lintReport?.metrics_checked || 0);
+  const scopedConceptsChecked = selectedProjectSlug
+    ? visibleDomains.reduce((acc, d) => acc + (d.concepts_count || d.concepts?.length || 0), 0)
+    : (lintReport?.concepts_checked || 0);
+
   // Lint runs on the whole federation; keep only the visible domains' findings
   const scopedLint =
     lintReport && selectedProjectSlug
       ? {
           ...lintReport,
+          metrics_checked: scopedMetricsChecked,
+          concepts_checked: scopedConceptsChecked,
           issues: (lintReport.issues || []).filter((i) =>
             (i.domain || '').split(',').some((d) => visibleNames.includes(d.trim()))
           ),
@@ -1340,19 +1394,44 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
 
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
             {!propProjectId && (
-              <select
-                value={selectedProjectSlug}
-                onChange={(e) => setSelectedProjectSlug(e.target.value)}
-                style={SELECT_STYLE}
-                aria-label="Project scope"
-              >
-                <option value="">All projects</option>
-                {projectsList.map((p) => (
-                  <option key={p.id || p.name} value={p.id || p.name}>
-                    {p.name || p.id}
-                  </option>
-                ))}
-              </select>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                {projectsList.filter((p) => (p.ontology_domain_count > 0) || (p.domain_names && p.domain_names.length > 0)).length > 8 && (
+                  <input
+                    type="text"
+                    placeholder="Search projects…"
+                    value={scopeSearch}
+                    onChange={(e) => setScopeSearch(e.target.value)}
+                    style={{ ...INPUT_STYLE, padding: '4px 8px', fontSize: 11.5, width: 120 }}
+                  />
+                )}
+                <select
+                  value={selectedProjectSlug}
+                  onChange={(e) => setSelectedProjectSlug(e.target.value)}
+                  style={SELECT_STYLE}
+                  aria-label="Project scope"
+                >
+                  <option value="">All loaded domains</option>
+                  {projectsList
+                    .filter((p) => (p.ontology_domain_count > 0) || (p.domain_names && p.domain_names.length > 0))
+                    .filter((p) => {
+                      if (!scopeSearch.trim()) return true;
+                      const q = scopeSearch.toLowerCase();
+                      const name = String(p.name || '').toLowerCase();
+                      const id = String(p.id || p.project_id || '').toLowerCase();
+                      const doms = (p.domain_names || []).join(' ').toLowerCase();
+                      return name.includes(q) || id.includes(q) || doms.includes(q);
+                    })
+                    .map((p) => {
+                      const pid = p.id || p.project_id || p.name;
+                      const domStr = p.domain_names?.length ? ` · ${p.domain_names.join(', ')}` : '';
+                      return (
+                        <option key={pid} value={pid}>
+                          {p.name || pid} ({pid}){domStr}
+                        </option>
+                      );
+                    })}
+                </select>
+              </div>
             )}
 
             {activeTab === 'governance' && (
@@ -1505,6 +1584,8 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
             onShowMap={() => selectTab('graph')}
             onOpenItem={setSelectedGlossaryItem}
             onSync={() => handleSyncWithOsi(inspectingDomain)}
+            onGenerate={openBootstrap}
+            onRunSync={() => navigate(`/runs?project=${encodeURIComponent(selectedProjectSlug || '')}`)}
             yaml={{
               value: editorYaml,
               onChange: setEditorYaml,
@@ -1979,18 +2060,45 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
                 <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>
                   SOURCE PROJECT
                 </label>
+                {projectsList.filter((p) => p.has_successful_sync).length > 5 && (
+                  <input
+                    type="text"
+                    placeholder="Search synced projects…"
+                    value={bootstrapProjectSearch}
+                    onChange={(e) => setBootstrapProjectSearch(e.target.value)}
+                    style={{ ...INPUT_STYLE, width: '100%', marginBottom: 6, fontSize: 12 }}
+                  />
+                )}
                 <select
                   value={bootstrapProject}
                   onChange={(e) => setBootstrapProject(e.target.value)}
                   style={{ ...SELECT_STYLE, width: '100%' }}
                 >
-                  <option value="">Select a project...</option>
-                  {projectsList.map((p) => (
-                    <option key={p.id || p.name} value={p.id || p.name}>
-                      {p.name || p.id}
-                    </option>
-                  ))}
+                  <option value="">Select a project with successful sync...</option>
+                  {projectsList
+                    .filter((p) => p.has_successful_sync)
+                    .filter((p) => {
+                      if (!bootstrapProjectSearch.trim()) return true;
+                      const q = bootstrapProjectSearch.toLowerCase();
+                      const name = String(p.name || '').toLowerCase();
+                      const id = String(p.id || p.project_id || '').toLowerCase();
+                      return name.includes(q) || id.includes(q);
+                    })
+                    .map((p) => {
+                      const pid = p.id || p.project_id || p.name;
+                      const hasOntology = (p.ontology_domain_count > 0) || (p.domain_names && p.domain_names.length > 0);
+                      return (
+                        <option key={pid} value={pid}>
+                          {p.name || pid} ({pid}){hasOntology ? ' — has ontology (re-sync)' : ''}
+                        </option>
+                      );
+                    })}
                 </select>
+                {projectsList.filter((p) => p.has_successful_sync).length === 0 && (
+                  <div style={{ fontSize: 11.5, color: 'var(--color-warning)', marginTop: 4 }}>
+                    No projects with a successful sync found yet. Run a sync on a project first.
+                  </div>
+                )}
               </div>
               <div>
                 <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>

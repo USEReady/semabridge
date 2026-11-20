@@ -591,13 +591,18 @@ class MetricsClauseBuilder:
                             expr[:200],
                         )
                 else:
-                    reason = (
-                        self._detect_untranslated_dax_syntax(expr)
-                        or detect_date_numeric_type_mismatch(expr, dataset_aliases, dataset_col_types)
-                        or detect_nested_aggregate(expr)
-                    )
-                    if reason:
-                        failure = (reason, expr[:200])
+                    dax_upper = str(getattr(metric, "expression", "") or "").upper()
+                    has_today_now = bool(re.search(r"\b(TODAY|NOW)\s*\(", dax_upper))
+                    if not has_today_now and re.search(r"\bCURRENT_DATE\b", expr, re.IGNORECASE):
+                        failure = ("no data anchor; would be anchored to today's date", expr[:200])
+                    else:
+                        reason = (
+                            self._detect_untranslated_dax_syntax(expr)
+                            or detect_date_numeric_type_mismatch(expr, dataset_aliases, dataset_col_types)
+                            or detect_nested_aggregate(expr)
+                        )
+                        if reason:
+                            failure = (reason, expr[:200])
 
             metric_entity_alias = self._resolve_metric_emission_alias(
                 alias, expr, dataset_aliases, fact_aliases,

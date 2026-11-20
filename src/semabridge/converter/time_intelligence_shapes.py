@@ -74,6 +74,35 @@ LAG_FUNCS: Dict[str, str] = {
     "PREVIOUSQUARTER": "PREV_QUARTER",
 }
 
+
+def dax_has_lag_period_func(node_or_dax: Any) -> bool:
+    """Check whether a DAX expression or AST node contains a lag-period time-intelligence function."""
+    if isinstance(node_or_dax, str):
+        u = node_or_dax.upper()
+        if any(fn in u for fn in ("SAMEPERIODLASTYEAR", "PREVIOUSYEAR", "PREVIOUSMONTH", "PREVIOUSQUARTER", "PARALLELPERIOD")):
+            return True
+        if "DATEADD" in u and any(neg in u for neg in ("-1", "-2", "-3", "-4", "-5", "-6", "-7", "-8", "-9", "-10", "-11", "-12")):
+            return True
+        return False
+    if node_or_dax is None:
+        return False
+    found = False
+    def _visit(n):
+        nonlocal found
+        if found or n is None:
+            return
+        if getattr(n, "func", None):
+            fn = str(n.func).upper()
+            if fn in LAG_FUNCS or fn in ("PARALLELPERIOD", "DATEADD"):
+                found = True
+                return
+        for child in getattr(n, "args", []) or []:
+            _visit(child)
+        for child in getattr(n, "children", []) or []:
+            _visit(child)
+    _visit(node_or_dax)
+    return found
+
 # Calendar unit each component operates on — shared by the boolean-SQL
 # builder below.
 PERIOD_UNITS: Dict[str, str] = {"YTD": "YEAR", "MTD": "MONTH", "QTD": "QUARTER"}

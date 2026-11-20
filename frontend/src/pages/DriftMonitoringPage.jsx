@@ -8,7 +8,6 @@ import {
 import { authFetch } from '../utils/api';
 import Modal from '../components/common/Modal';
 import { ImpactReport } from '../components/ontology/GovernancePanels';
-
 const CARD = {
   background: 'var(--bg-surface)',
   border: '1px solid var(--border-main)',
@@ -83,12 +82,24 @@ export default function DriftMonitoringPage() {
 
   // Blast Radius Modal state & simulation in mock mode
   const [blastModalOpen, setBlastModalOpen] = useState(false);
-  const [blastTarget, setBlastTarget] = useState('TOTAL_UNITS');
+  const [blastTarget, setBlastTarget] = useState('');
   const [blastType, setBlastType] = useState('METRIC');
   const [blastChangeType, setBlastChangeType] = useState('MODIFY_EXPRESSION');
   const [blastLoading, setBlastLoading] = useState(false);
   const [blastReport, setBlastReport] = useState(null);
   const [blastError, setBlastError] = useState('');
+  const [projectMetrics, setProjectMetrics] = useState([]);
+
+  useEffect(() => {
+    if (!selectedProjectId) {
+      setProjectMetrics([]);
+      return;
+    }
+    authFetch(`/api/reconciliation/project-metrics?project_id=${encodeURIComponent(selectedProjectId)}`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => setProjectMetrics(d?.metrics || []))
+      .catch(() => setProjectMetrics([]));
+  }, [selectedProjectId, authFetch]);
 
   const runBlastSimulation = async (targetOverride, changeTypeOverride, typeOverride) => {
     const target = (targetOverride ?? blastTarget).trim();
@@ -123,14 +134,16 @@ export default function DriftMonitoringPage() {
   };
 
   const handleOpenBlast = (initialTarget = '') => {
-    const candidate = initialTarget || events[0]?.metric_name || 'TOTAL_UNITS';
+    const candidate = initialTarget || projectEvents[0]?.metric_name || quickTargets[0] || '';
     setBlastTarget(candidate);
-    setBlastType(candidate === 'SalesFact' ? 'TABLE' : 'METRIC');
+    setBlastType('METRIC');
     setBlastChangeType('MODIFY_EXPRESSION');
     setBlastReport(null);
     setBlastError('');
     setBlastModalOpen(true);
-    runBlastSimulation(candidate, 'MODIFY_EXPRESSION', candidate === 'SalesFact' ? 'TABLE' : 'METRIC');
+    if (candidate) {
+      runBlastSimulation(candidate, 'MODIFY_EXPRESSION', 'METRIC');
+    }
   };
 
   // 1. Load project list
@@ -144,9 +157,7 @@ export default function DriftMonitoringPage() {
         if (urlPid) {
           setSelectedProjectId(urlPid);
         } else if (list.length > 0) {
-          // Default to proj-comp if available, otherwise first project
-          const comp = list.find((p) => (p.id || '').includes('comp') || (p.name || '').toLowerCase().includes('comp'));
-          setSelectedProjectId(comp?.id || list[0].id || list[0].name);
+          setSelectedProjectId(list[0].id || list[0].name);
         }
       })
       .catch(() => setProjects([]))
@@ -185,6 +196,10 @@ export default function DriftMonitoringPage() {
     if (!selectedProjectId) return true;
     return cleanPid(e.project_id) === cleanPid(selectedProjectId);
   });
+
+  const driftMetrics = projectEvents.map((e) => e.metric_name).filter(Boolean);
+  const projectMetricNames = projectMetrics.map((m) => m.name || m.logical_name).filter(Boolean);
+  const quickTargets = Array.from(new Set([...driftMetrics, ...projectMetricNames]));
 
   const pendingEvents = projectEvents.filter((e) => e.status === 'pending');
   const approvedEvents = projectEvents.filter((e) => e.status === 'approved');
@@ -235,7 +250,8 @@ export default function DriftMonitoringPage() {
   // Refresh drift logs
   const handleSeedMock = async () => {
     try {
-      const pid = selectedProjectId || 'proj-comp';
+      const pid = selectedProjectId || (projects[0]?.id || projects[0]?.name || '');
+      if (!pid) return;
       const res = await authFetch(`/api/drift/events/seed-mock?project_id=${encodeURIComponent(pid)}`, { method: 'POST' });
       if (res.ok) {
         setCheckMsg('Drift logs refreshed for project.');
@@ -316,7 +332,7 @@ export default function DriftMonitoringPage() {
               borderColor: 'rgba(168, 85, 247, 0.35)',
               color: 'var(--accent-purple, #a855f7)',
             }}
-            onClick={() => handleOpenBlast(events[0]?.metric_name || 'TOTAL_UNITS')}
+            onClick={() => handleOpenBlast(projectEvents[0]?.metric_name || 'TOTAL_UNITS')}
             title="Check Blast Radius: see how metric changes affect downstream BI reports & AI agents"
           >
             <Zap size={13} style={{ color: 'var(--accent-purple, #a855f7)' }} /> Check Blast Radius
@@ -414,7 +430,7 @@ export default function DriftMonitoringPage() {
                       }}>
                         <AlertTriangle size={11} /> {pPending} Drift{pPending > 1 ? 's' : ''}
                       </span>
-                    ) : (
+                    ) : pEvs.length > 0 ? (
                       <span style={{
                         fontSize: 10.5,
                         fontWeight: 700,
@@ -427,6 +443,21 @@ export default function DriftMonitoringPage() {
                         gap: 4,
                       }}>
                         <CheckCircle2 size={11} /> In Sync
+                      </span>
+                    ) : (
+                      <span style={{
+                        fontSize: 10.5,
+                        fontWeight: 600,
+                        padding: '2px 7px',
+                        borderRadius: 12,
+                        background: 'var(--bg-surface-raised)',
+                        color: 'var(--text-tertiary)',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        border: '1px solid var(--border-main)',
+                      }}>
+                        <Clock size={11} /> Not checked
                       </span>
                     )}
                   </div>
@@ -496,15 +527,19 @@ export default function DriftMonitoringPage() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
             <div style={{ ...CARD, padding: 14 }}>
               <div style={{ fontSize: 11.5, color: 'var(--text-tertiary)', fontWeight: 600, textTransform: 'uppercase' }}>Drift Status</div>
-              <div style={{ fontSize: 18, fontWeight: 800, marginTop: 4, color: pendingEvents.length > 0 ? 'var(--color-warning)' : 'var(--color-success)', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ fontSize: 18, fontWeight: 800, marginTop: 4, color: pendingEvents.length > 0 ? 'var(--color-warning)' : projectEvents.length > 0 ? 'var(--color-success)' : 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 6 }}>
                 {pendingEvents.length > 0 ? (
                   <><AlertTriangle size={18} /> {pendingEvents.length} Action Needed</>
-                ) : (
+                ) : projectEvents.length > 0 ? (
                   <><ShieldCheck size={18} /> In Sync (Clean)</>
+                ) : (
+                  <><Clock size={18} /> Not Checked</>
                 )}
               </div>
               <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>
-                {pendingEvents.length > 0 ? 'Direct upsert paused on schedule' : 'Direct upsert permitted'}
+                {projectEvents.length === 0
+                  ? 'No drift comparison run yet for this project'
+                  : (pendingEvents.length > 0 ? 'Direct upsert paused on schedule' : 'Direct upsert permitted')}
               </div>
             </div>
 
@@ -618,13 +653,12 @@ export default function DriftMonitoringPage() {
                         padding: 14,
                         borderRadius: 8,
                         background: 'var(--bg-app)',
-                        border: `1px solid ${
-                          isPending
-                            ? 'rgba(234, 179, 8, 0.4)'
-                            : isApproved
+                        border: `1px solid ${isPending
+                          ? 'rgba(234, 179, 8, 0.4)'
+                          : isApproved
                             ? 'rgba(34, 197, 94, 0.3)'
                             : 'var(--border-main)'
-                        }`,
+                          }`,
                         display: 'flex',
                         flexDirection: 'column',
                         gap: 10,
@@ -642,41 +676,41 @@ export default function DriftMonitoringPage() {
                           {(ev.badges || [ev.drift_type])
                             .filter((b) => !['PENDING_APPROVAL', 'APPROVED', 'IGNORED', 'PENDING'].includes(String(b).toUpperCase()))
                             .map((badge, bIdx) => (
-                            <span
-                              key={bIdx}
-                              style={{
-                                fontSize: 10,
-                                fontWeight: 700,
-                                padding: '2px 6px',
-                                borderRadius: 4,
-                                textTransform: 'uppercase',
-                                background: badge.includes('MISMATCH')
-                                  ? 'rgba(234, 179, 8, 0.15)'
-                                  : badge.includes('FILTER')
-                                  ? 'rgba(59, 130, 246, 0.15)'
-                                  : badge.includes('DATE') || badge.includes('WINDOW')
-                                  ? 'rgba(168, 85, 247, 0.15)'
-                                  : badge.includes('APPROVED')
-                                  ? 'rgba(34, 197, 94, 0.15)'
-                                  : badge.includes('IGNORED')
-                                  ? 'rgba(239, 68, 68, 0.15)'
-                                  : 'rgba(107, 114, 128, 0.15)',
-                                color: badge.includes('MISMATCH')
-                                  ? 'var(--color-warning)'
-                                  : badge.includes('FILTER')
-                                  ? 'var(--accent-blue)'
-                                  : badge.includes('DATE') || badge.includes('WINDOW')
-                                  ? 'var(--accent-purple)'
-                                  : badge.includes('APPROVED')
-                                  ? 'var(--color-success)'
-                                  : badge.includes('IGNORED')
-                                  ? 'var(--color-error)'
-                                  : 'var(--text-secondary)',
-                              }}
-                            >
-                              {badge.replace(/_/g, ' ')}
-                            </span>
-                          ))}
+                              <span
+                                key={bIdx}
+                                style={{
+                                  fontSize: 10,
+                                  fontWeight: 700,
+                                  padding: '2px 6px',
+                                  borderRadius: 4,
+                                  textTransform: 'uppercase',
+                                  background: badge.includes('MISMATCH')
+                                    ? 'rgba(234, 179, 8, 0.15)'
+                                    : badge.includes('FILTER')
+                                      ? 'rgba(59, 130, 246, 0.15)'
+                                      : badge.includes('DATE') || badge.includes('WINDOW')
+                                        ? 'rgba(168, 85, 247, 0.15)'
+                                        : badge.includes('APPROVED')
+                                          ? 'rgba(34, 197, 94, 0.15)'
+                                          : badge.includes('IGNORED')
+                                            ? 'rgba(239, 68, 68, 0.15)'
+                                            : 'rgba(107, 114, 128, 0.15)',
+                                  color: badge.includes('MISMATCH')
+                                    ? 'var(--color-warning)'
+                                    : badge.includes('FILTER')
+                                      ? 'var(--accent-blue)'
+                                      : badge.includes('DATE') || badge.includes('WINDOW')
+                                        ? 'var(--accent-purple)'
+                                        : badge.includes('APPROVED')
+                                          ? 'var(--color-success)'
+                                          : badge.includes('IGNORED')
+                                            ? 'var(--color-error)'
+                                            : 'var(--text-secondary)',
+                                }}
+                              >
+                                {badge.replace(/_/g, ' ')}
+                              </span>
+                            ))}
                           <span style={{
                             fontSize: 10,
                             fontWeight: 700,
@@ -762,14 +796,14 @@ export default function DriftMonitoringPage() {
                         }}>
                           <div style={{ color: 'var(--text-primary)', fontWeight: 600, marginBottom: 4, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
                             <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                              <Sparkles size={12} style={{ color: 'var(--accent-blue)' }} /> Snowflake Warehouse (Proposed / SemaBridge Logic):
+                              <Sparkles size={12} style={{ color: 'var(--accent-blue)' }} /> Proposed Resolution:
                             </span>
                             <span style={{ fontSize: 9.5, padding: '1px 5px', borderRadius: 3, background: 'var(--bg-surface-raised)', border: '1px solid var(--border-main)', color: 'var(--text-secondary)', fontWeight: 700 }}>
-                              SEMABRIDGE
+                              REDEPLOY
                             </span>
                           </div>
                           <code style={{ color: 'var(--text-primary)', wordBreak: 'break-all', fontFamily: 'monospace', fontWeight: 600 }}>
-                            {ev.proposed_snowflake_definition || ev.semabridge_definition || '—'}
+                            {ev.proposed_snowflake_definition || 'redeploy from source'}
                           </code>
                         </div>
                       </div>
@@ -839,9 +873,9 @@ export default function DriftMonitoringPage() {
                               type="button"
                               style={{ ...BTN_PRIMARY, background: 'var(--color-success, #22c55e)', borderColor: 'var(--color-success, #22c55e)', color: '#fff', padding: '5px 12px' }}
                               onClick={() => handleResolve(ev.id, 'approve')}
-                              title="Approve changes and automatically sync to Snowflake warehouse"
+                              title="Approve changes and redeploy from source"
                             >
-                              <Check size={13} /> Approve &amp; Sync
+                              <Check size={13} /> Approve &amp; Redeploy
                             </button>
                             <button
                               type="button"
@@ -878,7 +912,8 @@ export default function DriftMonitoringPage() {
             <span>Drift Blast Radius &amp; Downstream Impact</span>
           </div>
         }
-        width={820}
+        width={960}
+        style={{ maxWidth: 960, width: '95vw' }}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
@@ -886,7 +921,7 @@ export default function DriftMonitoringPage() {
           </div>
 
           {/* Target & Change Type Controls */}
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1.2fr auto', gap: 8, alignItems: 'center' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 2fr) minmax(110px, 1fr) minmax(140px, 1.2fr) auto', gap: 8, alignItems: 'center' }}>
             <input
               type="text"
               list="drift-blast-metrics"
@@ -905,15 +940,7 @@ export default function DriftMonitoringPage() {
               }}
             />
             <datalist id="drift-blast-metrics">
-              {Array.from(new Set([
-                'TOTAL_UNITS',
-                'UNITS',
-                'SalesFact',
-                'COUNT_OF_PRODUCT',
-                'SALES_DOL',
-                'SENTIMENT_SCORE',
-                ...allEvents.map((e) => e.metric_name).filter(Boolean),
-              ])).map((m) => (
+              {quickTargets.map((m) => (
                 <option key={m} value={m} />
               ))}
             </datalist>
@@ -981,11 +1008,10 @@ export default function DriftMonitoringPage() {
           </div>
 
           {/* Quick Target Chips */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 11 }}>
-            <span style={{ color: 'var(--text-secondary)' }}>Quick Targets:</span>
-            {['TOTAL_UNITS', 'TOTAL_UNITS_YTD', 'TOTAL_VANARSDEL_UNITS', 'PCT_UNITS_MARKET_SHARE', 'TOTAL_CATEGORY_VOLUME', 'SalesFact', 'COUNT_OF_PRODUCT', 'MARGIN_PCT', 'SALES_DOL', 'SENTIMENT_SCORE']
-              .filter((v, i, arr) => arr.indexOf(v) === i)
-              .map((t) => (
+          {quickTargets.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 11 }}>
+              <span style={{ color: 'var(--text-secondary)' }}>Quick Targets:</span>
+              {quickTargets.slice(0, 12).map((t) => (
                 <button
                   key={t}
                   type="button"
@@ -1000,14 +1026,14 @@ export default function DriftMonitoringPage() {
                   }}
                   onClick={() => {
                     setBlastTarget(t);
-                    setBlastType(t === 'SalesFact' ? 'TABLE' : 'METRIC');
-                    runBlastSimulation(t, blastChangeType, t === 'SalesFact' ? 'TABLE' : 'METRIC');
+                    runBlastSimulation(t, blastChangeType, blastType);
                   }}
                 >
                   {t}
                 </button>
               ))}
-          </div>
+            </div>
+          )}
 
           {/* Error Message */}
           {blastError && (
@@ -1039,4 +1065,3 @@ export default function DriftMonitoringPage() {
     </div>
   );
 }
-

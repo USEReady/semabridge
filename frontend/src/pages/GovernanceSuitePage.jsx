@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { authFetch } from '../utils/api';
 import Modal from '../components/common/Modal';
 import { ImpactReport } from '../components/ontology/GovernancePanels';
@@ -50,10 +50,15 @@ function useProjects() {
   const [projects, setProjects] = useState([]);
   const [projectId, setProjectId] = useState('');
   useEffect(() => {
-    authFetch('/api/projects?limit=200&offset=0')
+    authFetch('/api/ontology/projects')
       .then((r) => (r.ok ? r.json() : []))
       .then((list) => setProjects(Array.isArray(list) ? list : (list?.projects || [])))
-      .catch(() => setProjects([]));
+      .catch(() => {
+        authFetch('/api/projects?limit=500&offset=0')
+          .then((r) => (r.ok ? r.json() : []))
+          .then((list) => setProjects(Array.isArray(list) ? list : (list?.projects || [])))
+          .catch(() => setProjects([]));
+      });
   }, []);
   return { projects, projectId, setProjectId };
 }
@@ -69,12 +74,30 @@ export function DriftView({ projectId = '' }) {
 
   // Blast Radius Modal state & simulation in mock mode for Drift Monitoring
   const [blastModalOpen, setBlastModalOpen] = useState(false);
-  const [blastTarget, setBlastTarget] = useState('TOTAL_UNITS');
+  const [blastTarget, setBlastTarget] = useState('');
   const [blastType, setBlastType] = useState('METRIC');
   const [blastChangeType, setBlastChangeType] = useState('MODIFY_EXPRESSION');
   const [blastLoading, setBlastLoading] = useState(false);
   const [blastReport, setBlastReport] = useState(null);
   const [blastError, setBlastError] = useState('');
+  const [projectMetrics, setProjectMetrics] = useState([]);
+
+  useEffect(() => {
+    if (!projectId) {
+      setProjectMetrics([]);
+      return;
+    }
+    authFetch(`/api/reconciliation/project-metrics?project_id=${encodeURIComponent(projectId)}`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => setProjectMetrics(d?.metrics || []))
+      .catch(() => setProjectMetrics([]));
+  }, [projectId, authFetch]);
+
+  const quickTargets = useMemo(() => {
+    const driftMetrics = events.map((e) => e.metric_name).filter(Boolean);
+    const pMetrics = projectMetrics.map((m) => m.name || m.logical_name).filter(Boolean);
+    return Array.from(new Set([...driftMetrics, ...pMetrics]));
+  }, [events, projectMetrics]);
 
   const runBlastSimulation = async (targetOverride, changeTypeOverride, typeOverride) => {
     const target = (targetOverride ?? blastTarget).trim();
@@ -109,14 +132,16 @@ export function DriftView({ projectId = '' }) {
   };
 
   const handleOpenBlast = (initialTarget = '') => {
-    const candidate = initialTarget || events[0]?.metric_name || 'TOTAL_UNITS';
+    const candidate = initialTarget || events[0]?.metric_name || quickTargets[0] || '';
     setBlastTarget(candidate);
-    setBlastType(candidate === 'SalesFact' ? 'TABLE' : 'METRIC');
+    setBlastType('METRIC');
     setBlastChangeType('MODIFY_EXPRESSION');
     setBlastReport(null);
     setBlastError('');
     setBlastModalOpen(true);
-    runBlastSimulation(candidate, 'MODIFY_EXPRESSION', candidate === 'SalesFact' ? 'TABLE' : 'METRIC');
+    if (candidate) {
+      runBlastSimulation(candidate, 'MODIFY_EXPRESSION', 'METRIC');
+    }
   };
 
   const refresh = useCallback(async () => {
@@ -276,13 +301,12 @@ export function DriftView({ projectId = '' }) {
                 padding: 14,
                 borderRadius: 8,
                 background: 'var(--bg-app)',
-                border: `1px solid ${
-                  isPending
+                border: `1px solid ${isPending
                     ? 'rgba(234, 179, 8, 0.4)'
                     : isApproved
-                    ? 'rgba(34, 197, 94, 0.3)'
-                    : 'var(--border-main)'
-                }`,
+                      ? 'rgba(34, 197, 94, 0.3)'
+                      : 'var(--border-main)'
+                  }`,
                 display: 'flex',
                 flexDirection: 'column',
                 gap: 8,
@@ -295,41 +319,41 @@ export function DriftView({ projectId = '' }) {
                 {(ev.badges || [ev.drift_type])
                   .filter((b) => !['PENDING_APPROVAL', 'APPROVED', 'IGNORED', 'PENDING'].includes(String(b).toUpperCase()))
                   .map((badge, bIdx) => (
-                  <span
-                    key={bIdx}
-                    style={{
-                      fontSize: 10,
-                      fontWeight: 700,
-                      padding: '2px 6px',
-                      borderRadius: 4,
-                      textTransform: 'uppercase',
-                      background: badge.includes('MISMATCH')
-                        ? 'rgba(234, 179, 8, 0.15)'
-                        : badge.includes('FILTER')
-                        ? 'rgba(59, 130, 246, 0.15)'
-                        : badge.includes('DATE') || badge.includes('WINDOW')
-                        ? 'rgba(168, 85, 247, 0.15)'
-                        : badge.includes('APPROVED')
-                        ? 'rgba(34, 197, 94, 0.15)'
-                        : badge.includes('IGNORED')
-                        ? 'rgba(239, 68, 68, 0.15)'
-                        : 'rgba(107, 114, 128, 0.15)',
-                      color: badge.includes('MISMATCH')
-                        ? 'var(--color-warning)'
-                        : badge.includes('FILTER')
-                        ? 'var(--accent-blue)'
-                        : badge.includes('DATE') || badge.includes('WINDOW')
-                        ? 'var(--accent-purple)'
-                        : badge.includes('APPROVED')
-                        ? 'var(--color-success)'
-                        : badge.includes('IGNORED')
-                        ? 'var(--color-error)'
-                        : 'var(--text-secondary)',
-                    }}
-                  >
-                    {badge.replace(/_/g, ' ')}
-                  </span>
-                ))}
+                    <span
+                      key={bIdx}
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        padding: '2px 6px',
+                        borderRadius: 4,
+                        textTransform: 'uppercase',
+                        background: badge.includes('MISMATCH')
+                          ? 'rgba(234, 179, 8, 0.15)'
+                          : badge.includes('FILTER')
+                            ? 'rgba(59, 130, 246, 0.15)'
+                            : badge.includes('DATE') || badge.includes('WINDOW')
+                              ? 'rgba(168, 85, 247, 0.15)'
+                              : badge.includes('APPROVED')
+                                ? 'rgba(34, 197, 94, 0.15)'
+                                : badge.includes('IGNORED')
+                                  ? 'rgba(239, 68, 68, 0.15)'
+                                  : 'rgba(107, 114, 128, 0.15)',
+                        color: badge.includes('MISMATCH')
+                          ? 'var(--color-warning)'
+                          : badge.includes('FILTER')
+                            ? 'var(--accent-blue)'
+                            : badge.includes('DATE') || badge.includes('WINDOW')
+                              ? 'var(--accent-purple)'
+                              : badge.includes('APPROVED')
+                                ? 'var(--color-success)'
+                                : badge.includes('IGNORED')
+                                  ? 'var(--color-error)'
+                                  : 'var(--text-secondary)',
+                      }}
+                    >
+                      {badge.replace(/_/g, ' ')}
+                    </span>
+                  ))}
                 <span style={{
                   fontSize: 10,
                   fontWeight: 700,
@@ -403,13 +427,13 @@ export function DriftView({ projectId = '' }) {
                 <div style={{ padding: '8px 10px', borderRadius: 6, background: 'var(--bg-surface)', border: '1px solid var(--border-main)' }}>
                   <div style={{ color: 'var(--text-primary)', fontWeight: 600, marginBottom: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
                     <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <Sparkles size={12} style={{ color: 'var(--accent-blue)' }} /> Snowflake Warehouse (Proposed / SemaBridge Logic):
+                      <Sparkles size={12} style={{ color: 'var(--accent-blue)' }} /> Proposed Resolution:
                     </span>
                     <span style={{ fontSize: 9.5, padding: '1px 5px', borderRadius: 3, background: 'var(--bg-surface-raised)', border: '1px solid var(--border-main)', color: 'var(--text-secondary)', fontWeight: 700 }}>
-                      SEMABRIDGE
+                      REDEPLOY
                     </span>
                   </div>
-                  <code style={{ color: 'var(--text-primary)', wordBreak: 'break-all', fontWeight: 600 }}>{ev.proposed_snowflake_definition || ev.semabridge_definition || '—'}</code>
+                  <code style={{ color: 'var(--text-primary)', wordBreak: 'break-all', fontWeight: 600 }}>{ev.proposed_snowflake_definition || 'redeploy from source'}</code>
                 </div>
               </div>
 
@@ -455,7 +479,9 @@ export function DriftView({ projectId = '' }) {
         open={blastModalOpen}
         onClose={() => setBlastModalOpen(false)}
         title="Blast Radius & Downstream BI Impact"
-        size="lg"
+        size="2xl"
+        width={960}
+        style={{ maxWidth: 960, width: '95vw' }}
         footer={(
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
             <span style={{ fontSize: 11, color: 'var(--text-tertiary)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
@@ -514,15 +540,7 @@ export function DriftView({ projectId = '' }) {
               style={{ ...INPUT, width: '100%', boxSizing: 'border-box' }}
             />
             <datalist id="drift-blast-metrics">
-              {Array.from(new Set([
-                'TOTAL_UNITS',
-                'UNITS',
-                'SalesFact',
-                'COUNT_OF_PRODUCT',
-                'SALES_DOL',
-                'SENTIMENT_SCORE',
-                ...events.map((e) => e.metric_name).filter(Boolean),
-              ])).map((m) => (
+              {quickTargets.map((m) => (
                 <option key={m} value={m} />
               ))}
             </datalist>
@@ -574,11 +592,10 @@ export function DriftView({ projectId = '' }) {
           </div>
 
           {/* Quick Target Chips */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 11 }}>
-            <span style={{ color: 'var(--text-secondary)' }}>Quick Targets:</span>
-            {['TOTAL_UNITS', 'TOTAL_UNITS_YTD', 'TOTAL_VANARSDEL_UNITS', 'PCT_UNITS_MARKET_SHARE', 'TOTAL_CATEGORY_VOLUME', 'SalesFact', 'COUNT_OF_PRODUCT', 'MARGIN_PCT', 'SALES_DOL', 'SENTIMENT_SCORE']
-              .filter((v, i, arr) => arr.indexOf(v) === i)
-              .map((t) => (
+          {quickTargets.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 11 }}>
+              <span style={{ color: 'var(--text-secondary)' }}>Quick Targets:</span>
+              {quickTargets.slice(0, 12).map((t) => (
                 <button
                   key={t}
                   type="button"
@@ -593,14 +610,15 @@ export function DriftView({ projectId = '' }) {
                   }}
                   onClick={() => {
                     setBlastTarget(t);
-                    setBlastType(t === 'SalesFact' ? 'TABLE' : 'METRIC');
-                    runBlastSimulation(t, blastChangeType, t === 'SalesFact' ? 'TABLE' : 'METRIC');
+                    setBlastType('METRIC');
+                    runBlastSimulation(t, blastChangeType, 'METRIC');
                   }}
                 >
                   {t}
                 </button>
               ))}
-          </div>
+            </div>
+          )}
 
           {/* Error Message */}
           {blastError && (
@@ -670,7 +688,7 @@ export function ReverseSyncView({ projectId = '' }) {
           setBiAccountId(defBi.id);
         }
       })
-      .catch(() => {});
+      .catch(() => { });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadSemanticViews = useCallback(async (acctId) => {
@@ -715,7 +733,7 @@ export function ReverseSyncView({ projectId = '' }) {
         setBiWorkspaces(ws);
         if (ws.length) setBiWorkspaceId(ws[0].id || ws[0].workspace_id || '');
       })
-      .catch(() => {});
+      .catch(() => { });
   }, [biAccountId]);
 
   useEffect(() => {
@@ -730,7 +748,7 @@ export function ReverseSyncView({ projectId = '' }) {
         setBiModels(models);
         if (models.length) setBiModelId(models[0].id || models[0].model_id || models[0].name || '');
       })
-      .catch(() => {});
+      .catch(() => { });
   }, [biWorkspaceId, biAccountId]);
 
   const runPreview = async () => {
@@ -874,6 +892,7 @@ function BiTruthView({ projectId }) {
   const [error, setError] = useState('');
   const [infoMsg, setInfoMsg] = useState('');
   const [limit, setLimit] = useState(15);
+  const [replaceDrafts, setReplaceDrafts] = useState(false);
   const [filter, setFilter] = useState('all'); // 'all' | 'draft' | 'approved' | 'rejected'
 
   // Forms for adding manual and importing documents
@@ -998,6 +1017,7 @@ function BiTruthView({ projectId }) {
         body: JSON.stringify({
           project_id: projectId || undefined,
           limit: Number(limit) || 15,
+          replace_drafts: replaceDrafts,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -1007,7 +1027,7 @@ function BiTruthView({ projectId }) {
         if (data.added_count > 0) {
           setInfoMsg(`Generated ${data.added_count} new test questions from project model.`);
         } else {
-          setInfoMsg('All model questions are already loaded below.');
+          setInfoMsg(`No new questions - all ${data.skipped_count || 'existing'} already exist.`);
         }
         setTimeout(() => setInfoMsg(''), 4000);
       }
@@ -1124,6 +1144,14 @@ function BiTruthView({ projectId }) {
                 <option value={50}>50 questions</option>
                 <option value={100}>All questions</option>
               </select>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer', marginLeft: 4 }}>
+                <input
+                  type="checkbox"
+                  checked={replaceDrafts}
+                  onChange={(e) => setReplaceDrafts(e.target.checked)}
+                />
+                Replace drafts
+              </label>
             </div>
             {draftCount > 0 && (
               <button type="button" style={BTN} onClick={approveAllDrafts}>
@@ -1412,7 +1440,7 @@ function BiTruthView({ projectId }) {
                 onClick={() => {
                   setUploadFileName('sample_questions.csv');
                   setUploadText(
-`question,expected_sql,metric_name
+                    `question,expected_sql,metric_name
 "What is total sales amount?","SELECT SUM(sales) FROM sales_fact;","Total Sales"
 "What is the total order count?","SELECT COUNT(order_id) FROM orders_fact;","Order Count"
 "Show sales by region","SELECT region, SUM(sales) FROM sales_fact GROUP BY region;","Regional Sales"`
@@ -1448,7 +1476,7 @@ function BiTruthView({ projectId }) {
                 onClick={() => {
                   setUploadFileName('sample_qa.txt');
                   setUploadText(
-`Q: What was total units sold this quarter?
+                    `Q: What was total units sold this quarter?
 A: SELECT SUM(units) FROM sales_fact WHERE quarter = 1;
 
 Q: What is total net margin percentage?
@@ -1513,8 +1541,19 @@ A: SELECT (SUM(margin) / NULLIF(SUM(revenue), 0)) * 100 FROM sales_fact;`
         </div>
 
         {filteredCases.length === 0 ? (
-          <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-secondary)', fontSize: 12.5 }}>
-            No test questions in this view. Click <strong>Generate from Project Model &amp; Metrics</strong> above to automatically create questions tailored to your project.
+          <div style={{ padding: 28, textAlign: 'center', color: 'var(--text-secondary)', fontSize: 12.5, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+            <div>No test questions in this view yet.</div>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={generate}
+              style={{ ...BTN_PRIMARY, background: 'var(--accent-blue)', color: '#fff', padding: '8px 16px', fontSize: 12.5 }}
+            >
+              <Sparkles size={14} /> {busy ? 'Generating…' : 'Generate from project model & metrics'}
+            </button>
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+              Automatically creates certified executive questions tailored to your project model and semantic view.
+            </div>
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -1530,11 +1569,10 @@ A: SELECT (SUM(margin) / NULLIF(SUM(revenue), 0)) * 100 FROM sales_fact;`
                     padding: 12,
                     borderRadius: 8,
                     background: 'var(--bg-app)',
-                    border: `1px solid ${
-                      runRes
+                    border: `1px solid ${runRes
                         ? runRes.passed ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'
                         : isApproved ? 'rgba(34,197,94,0.2)' : 'var(--border-main)'
-                    }`,
+                      }`,
                     display: 'flex',
                     flexDirection: 'column',
                     gap: 8,
@@ -1672,7 +1710,7 @@ function CrossPlatformView({ projectId }) {
         if (sf) setSfAccountId(sf.id);
         if (db) setDbAccountId(db.id);
       })
-      .catch(() => {});
+      .catch(() => { });
   }, []);
 
   const loadPreview = async () => {
@@ -1783,9 +1821,14 @@ export default function GovernanceSuitePage({ mode = 'drift' }) {
           </div>
           <select style={INPUT} value={projectId} onChange={(e) => setProjectId(e.target.value)} aria-label="Project scope">
             <option value="">All projects</option>
-            {projects.map((p) => (
-              <option key={p.id || p.name} value={p.id || p.name}>{p.name || p.id}</option>
-            ))}
+            {projects.map((p) => {
+              const pid = p.id || p.project_id || p.name;
+              return (
+                <option key={pid} value={pid}>
+                  {p.name || pid} ({pid})
+                </option>
+              );
+            })}
           </select>
         </div>
         {mode === 'drift' && <DriftView projectId={projectId} />}

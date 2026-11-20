@@ -102,6 +102,60 @@ class MetricCertification(Base):
     certified_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False)
 
 
+class BITruthCaseRow(Base):
+    """Certified, draft, or rejected Q&A accuracy benchmarking test case."""
+
+    __tablename__ = "ai_truth_cases"
+    __table_args__ = (
+        Index("ix_ai_truth_case_proj", "project_id"),
+        Index("ix_ai_truth_case_status", "status"),
+        Index("ix_ai_truth_case_metric", "metric_name"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    project_id: Mapped[Optional[str]] = mapped_column(String(PROJECT_ID_LENGTH), nullable=True)
+    domain: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    metric_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    expected_sql: Mapped[str] = mapped_column(Text, nullable=False)
+    expected_dax: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    expected_row_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    created_at: Mapped[str] = mapped_column(String(64), nullable=False)
+    expected_value_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    power_bi_reference_value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    certified_parity: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
+    expected_evaluated_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    evaluation_status: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    evaluation_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    dimensions_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    question_kind: Mapped[str] = mapped_column(String(32), nullable=False, default="total")
+
+    def __repr__(self) -> str:
+        return f"<BITruthCaseRow(id={self.id}, metric={self.metric_name}, status={self.status})>"
+
+
+class BITruthRunRow(Base):
+    """Historical execution run record for the BI-Truth test suite."""
+
+    __tablename__ = "ai_truth_runs"
+    __table_args__ = (
+        Index("ix_ai_truth_run_proj", "project_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    project_id: Mapped[Optional[str]] = mapped_column(String(PROJECT_ID_LENGTH), nullable=True)
+    run_at: Mapped[str] = mapped_column(String(64), nullable=False)
+    total_cases: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    passed_cases: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed_cases: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    accuracy_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    results_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+
+    def __repr__(self) -> str:
+        return f"<BITruthRunRow(id={self.id}, score={self.accuracy_score})>"
+
+
 # Backward-compatible aliases (names used by the ontology_validations branch).
 QueryExecutionHistory = AIQueryExecutionRow
 VerifiedQuery = AIVerifiedQueryRow

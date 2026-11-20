@@ -177,7 +177,25 @@ export function buildHealthResults({
           payload: list,
         });
       });
-      if (
+      const metricsChecked = lintReport.metrics_checked ?? (
+        lintReport.summary?.match(/across (\d+) metrics/)?.[1]
+          ? parseInt(lintReport.summary.match(/across (\d+) metrics/)[1], 10)
+          : 0
+      );
+      const conceptsChecked = lintReport.concepts_checked ?? 0;
+      const totalChecked = (metricsChecked || 0) + (conceptsChecked || 0);
+
+      if (totalChecked === 0) {
+        rows.push({
+          id: 'lint-empty',
+          severity: 'pending',
+          category: 'quality',
+          title: 'Not checked: no metrics in this project',
+          detail: 'No metrics found in this project to check. Deploy a semantic model or generate an ontology domain first.',
+          action: 'Check',
+          kind: 'lintRun',
+        });
+      } else if (
         !Object.keys(byRule).length &&
         !(loadErrors || []).length &&
         !(unresolved || []).length &&
@@ -194,6 +212,16 @@ export function buildHealthResults({
           payload: [],
         });
       }
+    } else {
+      rows.push({
+        id: 'lint-empty',
+        severity: 'pending',
+        category: 'quality',
+        title: 'Not checked: no metrics in this project',
+        detail: 'No metrics found in this project to check. Deploy a semantic model or generate an ontology domain first.',
+        action: 'Check',
+        kind: 'lintRun',
+      });
     }
   }
 

@@ -877,22 +877,215 @@ def update_metric_sql_expression(req: UpdateMetricSqlRequest) -> Dict[str, Any]:
     }
 
 
+def _build_metrics_from_project_snapshots_or_view(project_id: str, dep_info: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Build reconciliation metrics from the project's latest successful deployed model (snapshot) or semantic view."""
+    from semabridge.ontology.project_models import project_models, ProjectModel
+    from semabridge.ontology.per_model import build_model_domain
+    from semabridge.repository.model_repository import ModelRepository
+
+    view_name = dep_info.get("semantic_view") or dep_info.get("view_name") or ""
+    metrics_list: List[Dict[str, Any]] = []
+    seen: Set[Any] = set()
+
+    # 1. Try from project models and snapshots
+    try:
+        pms = project_models(project_id, repo=ModelRepository())
+    except Exception as exc:
+        logger.debug("project_models lookup failed for %s: %s", project_id, exc)
+        pms = []
+
+    models_with_blob = [pm for pm in pms if pm.blob]
+    if not models_with_blob:
+        try:
+            head = ModelRepository().get_head(project_id)
+            if head and head.sml_blob:
+                models_with_blob = [
+                    ProjectModel(
+                        model_id=project_id,
+                        model_name=dep_info.get("model_name") or project_id,
+                        snapshot_id=head.snapshot_id,
+                        blob=head.sml_blob,
+                        semantic_view=view_name,
+                    )
+                ]
+        except Exception as exc:
+            logger.debug("get_head lookup failed for %s: %s", project_id, exc)
+
+    for pm in models_with_blob:
+        try:
+            dom = build_model_domain(project_id, pm)
+            concept_map = {c.name: c for c in getattr(dom, "concepts", [])}
+            for c in getattr(dom, "concepts", []):
+                if getattr(c, "logical_name", None):
+                    concept_map[c.logical_name] = c
+
+            sv_dom = getattr(dom, "semantic_view_name", None) or view_name
+            for m in getattr(dom, "metrics", []):
+                seen_key = (sv_dom.split(".")[-1].casefold() if sv_dom else dom.domain, m.name)
+                if seen_key in seen:
+                    continue
+                seen.add(seen_key)
+                c = concept_map.get(m.concept)
+                dims = []
+                if c:
+                    for a in getattr(c, "attributes", []):
+                        if not a.is_hidden and not re.search(r"INT|DEC|FLOAT|NUM", a.data_type or "", re.I):
+                            dim_name = f"{c.logical_name or c.name}.{a.logical_name or a.name}"
+                            dims.append(dim_name)
+
+                target_view = getattr(m, "semantic_view_name", None) or sv_dom or (c.physical_table if c else m.concept) or ""
+                target_kind = "semantic_view" if (sv_dom or getattr(m, "semantic_view_name", None)) else "table"
+
+                metrics_list.append({
+                    "name": m.name,
+                    "logical_name": m.logical_name or m.name,
+                    "label": m.label or m.name,
+                    "domain": dom.domain,
+                    "domain_id": dom.id,
+                    "model_id": getattr(dom, "source_model_id", None),
+                    "dax_expression": m.dax_expression or "",
+                    "sql_expression": m.sql_expression or "",
+                    "target_table_or_view": target_view,
+                    "target_kind": target_kind,
+                    "concept": m.concept,
+                    "dimensions": dims,
+                })
+        except Exception as exc:
+            logger.debug("Failed building domain from model %s: %s", pm.model_name, exc)
+
+    if metrics_list:
+        return metrics_list
+
+    # 2. Try DDL parsing if available
+    ddl = dep_info.get("ddl")
+    target_view = view_name or "SEMANTIC_VIEW"
+    if ddl and isinstance(ddl, str):
+        try:
+            from semabridge.connectors.snowflake_emitter_parts.semantic_view_items import SemanticViewDDL
+            from semabridge.ontology.models import strip_ddl_clauses
+
+            sv = SemanticViewDDL(ddl)
+            sv_dims: List[str] = []
+            for d in sv.items("DIMENSIONS"):
+                d_id = f"{d.alias}.{d.name}" if d.alias and d.name and "." not in d.name else d.name
+                if d_id and d_id not in sv_dims:
+                    sv_dims.append(d_id)
+
+            for m in sv.items("METRICS"):
+                m_name = m.name
+                if m_name and m_name not in seen:
+                    seen.add(m_name)
+                    clean_sql = strip_ddl_clauses(m.expr)
+                    metrics_list.append({
+                        "name": m_name,
+                        "logical_name": m_name,
+                        "label": m_name,
+                        "domain": project_id,
+                        "domain_id": project_id,
+                        "model_id": None,
+                        "dax_expression": "",
+                        "sql_expression": clean_sql,
+                        "target_table_or_view": target_view,
+                        "target_kind": "semantic_view",
+                        "concept": m.alias or "",
+                        "dimensions": sv_dims,
+                        "is_private": bool(m.private),
+                    })
+        except Exception as exc:
+            logger.debug("Failed extracting metrics from SemanticViewDDL: %s", exc)
+
+    if metrics_list:
+        return metrics_list
+
+    # 3. Try DESCRIBE SEMANTIC VIEW in Snowflake
+    if view_name:
+        try:
+            from semabridge.api.routers.ai_router import execute_semantic_query, ExecuteQueryRequest
+            desc_resp = execute_semantic_query(
+                ExecuteQueryRequest(
+                    sql=f"DESCRIBE SEMANTIC VIEW {view_name}",
+                    target="SNOWFLAKE",
+                    project_id=project_id,
+                )
+            )
+            rows = desc_resp.rows or []
+            cols = [str(c).upper() for c in (desc_resp.columns or [])]
+            kind_idx = cols.index("KIND") if "KIND" in cols else -1
+            name_idx = cols.index("NAME") if "NAME" in cols else 0
+            expr_idx = cols.index("EXPRESSION") if "EXPRESSION" in cols else -1
+
+            dims = []
+            metrics_raw = []
+            for r in rows:
+                k = str(r[kind_idx]).upper() if kind_idx >= 0 and kind_idx < len(r) else ""
+                n = str(r[name_idx]).strip().replace('"', '') if name_idx < len(r) else ""
+                e = str(r[expr_idx]).strip() if expr_idx >= 0 and expr_idx < len(r) else n
+                if "DIMENSION" in k:
+                    dims.append(n)
+                elif "METRIC" in k or not k:
+                    metrics_raw.append((n, e))
+
+            for n, e in metrics_raw:
+                if n and n not in seen:
+                    seen.add(n)
+                    metrics_list.append({
+                        "name": n,
+                        "logical_name": n,
+                        "label": n,
+                        "domain": project_id,
+                        "domain_id": project_id,
+                        "model_id": None,
+                        "dax_expression": "",
+                        "sql_expression": e,
+                        "target_table_or_view": view_name,
+                        "target_kind": "semantic_view",
+                        "concept": "",
+                        "dimensions": dims,
+                    })
+        except Exception as exc:
+            logger.debug("DESCRIBE SEMANTIC VIEW failed for %s: %s", view_name, exc)
+
+    return metrics_list
+
+
 @router.get("/project-metrics", response_model=Dict[str, Any])
 def get_project_reconciliation_metrics(project_id: Optional[str] = None) -> Dict[str, Any]:
     """List metrics with DAX expressions, Snowflake SQL expressions, deployed view names, and dimensions."""
     from semabridge.ontology.store import ontology_store
     from semabridge.repository.model_repository import ModelRepository
 
-    dep_info: Dict[str, Any] = {}
-    if project_id:
+    raw_pid = (project_id or "").strip() or None
+    canonical_pid = raw_pid
+    if raw_pid:
         try:
-            dep_info = ModelRepository().get_project_deployment_info(project_id)
+            from semabridge.api.services.project_shared import resolve_canonical_project_id
+            c = resolve_canonical_project_id(raw_pid)
+            if c:
+                canonical_pid = c
+        except Exception:
+            pass
+
+    dep_info: Dict[str, Any] = {}
+    if canonical_pid:
+        try:
+            dep_info = ModelRepository().get_project_deployment_info(canonical_pid)
         except Exception:
             dep_info = {}
 
-    domains = _get_project_domains_for_validation(project_id) if project_id else list(
+    domains = _get_project_domains_for_validation(canonical_pid) if canonical_pid else list(
         ontology_store.get_federated_ontology().domains.values()
     )
+    if canonical_pid and not domains and raw_pid != canonical_pid:
+        domains = _get_project_domains_for_validation(raw_pid)
+
+    if canonical_pid and not domains:
+        try:
+            from semabridge.ontology.per_model import sync_project_model_domains
+            sync_project_model_domains(canonical_pid, ontology_store)
+            domains = _get_project_domains_for_validation(canonical_pid)
+        except Exception as ex:
+            logger.debug("Auto-refresh of ontology domains for project %s failed: %s", canonical_pid, ex)
+
     # A domain without its own view only inherits the project's deployed view
     # when the project has a single view (multi-model: one view per model).
     own_views = {str(getattr(d, "semantic_view_name", "") or "").split(".")[-1].casefold() for d in domains}
@@ -940,8 +1133,11 @@ def get_project_reconciliation_metrics(project_id: Optional[str] = None) -> Dict
                 "dimensions": dims,
             })
 
+    if not metrics_list and canonical_pid:
+        metrics_list = _build_metrics_from_project_snapshots_or_view(canonical_pid, dep_info)
+
     return {
-        "project_id": project_id,
+        "project_id": canonical_pid or project_id,
         "count": len(metrics_list),
         "metrics": metrics_list,
     }

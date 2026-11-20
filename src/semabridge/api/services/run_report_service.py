@@ -252,6 +252,10 @@ def _advisory_category_messages() -> Dict[str, str]:
             "— recreate the original switch in your reporting tool using "
             "those."
         ),
+        "time_intelligence_anchored_to_latest_data_date": (
+            "Time-intelligence window is anchored to the latest date in the data (enriched-view period flag), "
+            "as DAX does with no date filter."
+        ),
     }
 
 
@@ -796,6 +800,8 @@ def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
     excluded_by_design_by_stage: Dict[str, List[Dict[str, Any]]] = {}
     data_backfill_results: List[Dict[str, Any]] = []
     cortex_validation_results: List[Dict[str, Any]] = []
+    ti_anchor_stats: List[Dict[str, Any]] = []
+    ti_failed_closed_metrics: List[Dict[str, Any]] = []
     metric_outcome_parts: List[Dict[str, Any]] = []
     target_type = ""
 
@@ -813,6 +819,12 @@ def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
         for cortex_entry in (result.get("cortex_validation_results") or summary.get("cortex_validation_results") or []):
             if isinstance(cortex_entry, dict):
                 cortex_validation_results.append({**cortex_entry, "model": model_label})
+        for ti_entry in (result.get("ti_anchor_stats") or summary.get("ti_anchor_stats") or []):
+            if isinstance(ti_entry, dict):
+                ti_anchor_stats.append({**ti_entry, "model": model_label})
+        for ti_fail in (result.get("ti_failed_closed_metrics") or summary.get("ti_failed_closed_metrics") or []):
+            if isinstance(ti_fail, dict):
+                ti_failed_closed_metrics.append({**ti_fail, "model": model_label})
 
         snap_data = _load_snapshot_data(summary.get("sml_snapshot_id"))
         metric_outcome_parts.append(_metric_outcome_summary(
@@ -883,6 +895,8 @@ def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
         "excluded_by_design_by_stage": excluded_by_design_by_stage,
         "data_backfill_results": data_backfill_results,
         "cortex_validation_results": cortex_validation_results,
+        "ti_anchor_stats": ti_anchor_stats,
+        "ti_failed_closed_metrics": ti_failed_closed_metrics,
         "upsert_deltas": _collect_upsert_deltas(model_results),
         "metric_outcomes": _merge_metric_outcomes(metric_outcome_parts),
     }
@@ -999,6 +1013,8 @@ def build_run_report_data(
         # other run, matching that feature's off-by-default contract.
         "data_backfill": data_backfill_results,
         "cortex_validation": cortex_validation_results,
+        "ti_anchor_stats": data.get("ti_anchor_stats") or [],
+        "ti_failed_closed_metrics": data.get("ti_failed_closed_metrics") or [],
         # UPSERT runs only: per-model delta vs the last deployed snapshot.
         "upsert_deltas": data.get("upsert_deltas") or [],
     }
@@ -1111,6 +1127,12 @@ def generate_run_report_markdown(
         for cortex_entry in (result.get("cortex_validation_results") or summary.get("cortex_validation_results") or []):
             if isinstance(cortex_entry, dict):
                 cortex_validation_results.append({**cortex_entry, "model": model_label})
+        for ti_entry in (result.get("ti_anchor_stats") or summary.get("ti_anchor_stats") or []):
+            if isinstance(ti_entry, dict):
+                ti_anchor_stats.append({**ti_entry, "model": model_label})
+        for ti_fail in (result.get("ti_failed_closed_metrics") or summary.get("ti_failed_closed_metrics") or []):
+            if isinstance(ti_fail, dict):
+                ti_failed_closed_metrics.append({**ti_fail, "model": model_label})
 
         snap_data = _load_snapshot_data(summary.get("sml_snapshot_id"))
         if snap_data:
@@ -1389,6 +1411,32 @@ def generate_run_report_markdown(
             if remediated:
                 lines.append(f"**Remediated metrics for `{cv.get('view_name')}` (replaced with NULL placeholder):** " + ", ".join(f"`{m}`" for m in remediated))
                 lines.append("")
+
+    if ti_anchor_stats or ti_failed_closed_metrics:
+        lines.append("## Time Intelligence Anchors")
+        lines.append("")
+        if ti_anchor_stats:
+            lines.append("| Fact Table | Date Column | Actual Filter | Anchor Date | Row Count | Orphan Dates Excluded |")
+            lines.append("|---|---|---|---|---|---|")
+            for a in ti_anchor_stats:
+                ft = a.get("fact_table") or "—"
+                dc = a.get("date_column") or "—"
+                flt = str(a.get("actual_filter") or "None").replace("|", "\\|")
+                ad = str(a.get("anchor_date") or "—")
+                rc = a.get("row_count", "—")
+                od = a.get("orphan_dates_excluded", 0)
+                lines.append(f"| {ft} | {dc} | {flt} | {ad} | {rc} | {od} |")
+            lines.append("")
+        if ti_failed_closed_metrics:
+            lines.append("### Time Metrics Failed Closed")
+            lines.append("")
+            lines.append("| Metric | Reason |")
+            lines.append("|---|---|")
+            for f in ti_failed_closed_metrics:
+                m_name = f.get("metric") or "—"
+                rsn = str(f.get("reason") or "—").replace("|", "\\|")
+                lines.append(f"| {m_name} | {rsn} |")
+            lines.append("")
 
     return "\n".join(lines)
 

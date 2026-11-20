@@ -968,6 +968,15 @@ class ModelRepository:
         if not project_id:
             return info
 
+        pids = [project_id]
+        try:
+            from semabridge.api.services.project_shared import resolve_canonical_project_id
+            c_pid = resolve_canonical_project_id(project_id)
+            if c_pid and c_pid not in pids:
+                pids.append(c_pid)
+        except Exception:
+            pass
+
         def _q_part(part: str) -> str:
             p = str(part or "").strip().strip('"')
             return f'"{p}"' if re.search(r"[^A-Za-z0-9_]", p) else p
@@ -978,7 +987,7 @@ class ModelRepository:
                 .outerjoin(Project, Project.project_id == SnapshotRow.project_id)
                 .where(
                     and_(
-                        SnapshotRow.project_id == project_id,
+                        SnapshotRow.project_id.in_(pids),
                         SnapshotRow.deleted_at.is_(None),
                     )
                 )
@@ -1009,37 +1018,56 @@ class ModelRepository:
                     break
 
             try:
-                rmr = session.execute(
-                    text(
-                        "SELECT status, view_name, physical_namespace, error_message, model "
-                        "FROM run_model_results WHERE project_id = :pid "
-                        "ORDER BY created_at DESC LIMIT 1"
-                    ),
-                    {"pid": project_id},
-                ).fetchone()
-                if rmr:
-                    r_status, r_view, r_ns, r_err, r_model = rmr
-                    if not info["model_name"] and r_model:
-                        info["model_name"] = r_model
-                    if not info["deploy_error"] and str(r_status or "").lower() == "failed" and r_err:
-                        info["deploy_error"] = r_err
-                    if not info["semantic_view"] and str(r_status or "").lower() == "success" and r_view:
-                        ns_parts = [p.strip().strip('"') for p in str(r_ns or "").split(".") if p.strip()]
-                        parts = [_q_part(p) for p in (*ns_parts, r_view) if p]
-                        info["semantic_view"] = ".".join(parts) if parts else None
+                for candidate_pid in pids:
+                    rmr = session.execute(
+                        text(
+                            "SELECT status, view_name, physical_namespace, error_message, model "
+                            "FROM run_model_results WHERE project_id = :pid "
+                            "ORDER BY created_at DESC LIMIT 1"
+                        ),
+                        {"pid": candidate_pid},
+                    ).fetchone()
+                    if rmr:
+                        r_status, r_view, r_ns, r_err, r_model = rmr
+                        if not info["model_name"] and r_model:
+                            info["model_name"] = r_model
+                        if not info["deploy_error"] and str(r_status or "").lower() == "failed" and r_err:
+                            info["deploy_error"] = r_err
+                        if not info["semantic_view"] and str(r_status or "").lower() == "success" and r_view:
+                            ns_parts = [p.strip().strip('"') for p in str(r_ns or "").split(".") if p.strip()]
+                            parts = [_q_part(p) for p in (*ns_parts, r_view) if p]
+                            info["semantic_view"] = ".".join(parts) if parts else None
+                        if info["semantic_view"]:
+                            break
             except Exception:
                 pass
 
-        for candidate in (
-            Path("output") / "reverse" / project_id / "semantic_view.sql",
-            Path("output") / "reverse" / ".staging" / project_id / "semantic_view.sql",
-        ):
-            if candidate.is_file():
-                try:
-                    info["ddl"] = candidate.read_text(encoding="utf-8")
-                    break
-                except Exception:
-                    pass
+        for candidate_pid in pids:
+            for candidate in (
+                Path("output") / "reverse" / candidate_pid / "semantic_view.sql",
+                Path("output") / "reverse" / ".staging" / candidate_pid / "semantic_view.sql",
+            ):
+                if candidate.is_file():
+                    try:
+                        info["ddl"] = candidate.read_text(encoding="utf-8")
+                        break
+                    except Exception:
+                        pass
+            if info["ddl"]:
+                break
+
+        if not info["semantic_view"] and info["ddl"]:
+            m_view = re.search(r"(?i)\bCREATE\s+(?:OR\s+REPLACE\s+)?SEMANTIC\s+VIEW\s+([A-Za-z0-9_.\"\-]+)", info["ddl"])
+            if m_view:
+                full_view = m_view.group(1).strip()
+                info["semantic_view"] = full_view
+                parts = [p.strip().strip('"') for p in full_view.split(".") if p.strip()]
+                if len(parts) == 3:
+                    info["database"], info["schema"], info["view_name"] = parts
+                elif len(parts) == 2:
+                    info["schema"], info["view_name"] = parts
+                elif len(parts) == 1:
+                    info["view_name"] = parts[0]
 
         return info
 

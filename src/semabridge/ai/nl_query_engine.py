@@ -31,6 +31,7 @@ from semabridge.ai.nlp_lexicon import (
     wordnet_related_lemmas,
 )
 from semabridge.ai.semantic_search import SemanticSearchIndex
+from semabridge.utils.null_sentinel import is_null_cast_sql
 from semabridge.ontology.models import (
     DomainAttribute,
     DomainConcept,
@@ -75,6 +76,9 @@ class QueryResolutionPlan(BaseModel):
     answered_by_view: Optional[str] = None
     answered_by_domain: Optional[str] = None
     candidate_views: List[str] = Field(default_factory=list)
+    query_path: Optional[str] = None
+    is_certified: bool = False
+    plan_checks_passed: bool = True
 
 
 class NLQueryEngine:
@@ -279,6 +283,121 @@ class NLQueryEngine:
                             "which is only executable via a deployed SEMANTIC_VIEW"
                         )
         return None
+
+    @staticmethod
+    def _is_window_metric(
+        sql_expr: Optional[str],
+        desc: Optional[str] = None,
+        name: Optional[str] = None,
+    ) -> Tuple[bool, List[str]]:
+        """Detect if metric is a window metric and extract required dimensions from PARTITION BY EXCLUDING."""
+        expr = str(sql_expr or "")
+        pm = re.search(r"PARTITION\s+BY\s+EXCLUDING\s*\(([^)]+)\)", expr, re.I)
+        if pm:
+            dims = [d.strip().replace('"', '') for d in pm.group(1).split(",") if d.strip()]
+            return True, dims
+        pm_single = re.search(r"PARTITION\s+BY\s+EXCLUDING\s+([A-Za-z0-9_.\"]+)", expr, re.I)
+        if pm_single:
+            return True, [pm_single.group(1).strip().replace('"', '')]
+        if re.search(r"\bOVER\s*\(", expr, re.I) or re.search(r"\b(LAG|LEAD)\s*\(", expr, re.I):
+            return True, []
+        return False, []
+
+    @staticmethod
+    def _get_semi_additive_dimension(m: DomainMetric) -> Optional[str]:
+        """Extract non-additive dimension from NON ADDITIVE BY or metadata."""
+        expr = str(m.sql_expression or "")
+        pm = re.search(r"NON\s+ADDITIVE\s+BY\s*\(\s*(?:([A-Za-z0-9_]+)\.)?([A-Za-z0-9_]+)", expr, re.I)
+        if pm:
+            return pm.group(2)
+        if getattr(m, "non_additive_by", None):
+            return str(m.non_additive_by).split(".")[-1].strip()
+        agg = (getattr(m, "aggregation_type", "") or "").upper()
+        if agg in ("NON_ADDITIVE", "NONADDITIVE", "SNAPSHOT"):
+            return "date"
+        return None
+
+    @staticmethod
+    def _is_unanswerable_or_null(m: DomainMetric) -> Tuple[bool, Optional[str]]:
+        """Check if metric is deployed as a NULL placeholder or marked unanswerable/private."""
+        expr = (m.sql_expression or "").strip()
+        if not expr:
+            return True, "no compiled SQL expression in the ontology"
+        if is_null_cast_sql(expr) or re.match(r"^(?:CAST\s*\(\s*NULL\b|NULL\b)", expr, re.I):
+            return True, "compiled as a NULL placeholder during deployment"
+        if getattr(m, "is_unanswerable", False):
+            return True, "marked unanswerable"
+        dr = (getattr(m, "deploy_reason", None) or "").strip()
+        if dr and any(k in dr.lower() for k in ("unanswerable", "private", "not deployed", "unsupported", "cannot be")):
+            return True, dr
+        if getattr(m, "is_hidden", False) and "PRIVATE" in dr.upper():
+            return True, "marked PRIVATE in deployed semantic view"
+        return False, None
+
+    @staticmethod
+    def _detect_fan_out_path(
+        m_concept: str,
+        d_concept: str,
+        relationships: List[Any],
+    ) -> Tuple[bool, Optional[str]]:
+        """Check if join path from metric concept to dimension concept goes many->one->many (fan-out / chasm trap)."""
+        if not m_concept or not d_concept or m_concept.casefold() == d_concept.casefold():
+            return False, None
+
+        adj: Dict[str, List[Tuple[str, str]]] = {}
+        for r in relationships or []:
+            if getattr(r, "is_active", True) is False:
+                continue
+            c1 = (getattr(r, "from_concept", None) or "").strip()
+            c2 = (getattr(r, "to_concept", None) or "").strip()
+            if not c1 or not c2:
+                continue
+            c1_cf = c1.casefold()
+            c2_cf = c2.casefold()
+            raw_card = getattr(r, "cardinality", None)
+            val = getattr(raw_card, "value", str(raw_card or ""))
+            card = str(val or "N:1").upper().replace(" ", "").replace("CARDINALITYTYPE.", "")
+
+            if card in ("N:1", "MANY_TO_ONE", "MANYTOONE"):
+                c1_to_c2 = "MANY_TO_ONE"
+                c2_to_c1 = "ONE_TO_MANY"
+            elif card in ("1:N", "ONE_TO_MANY", "ONETOMANY"):
+                c1_to_c2 = "ONE_TO_MANY"
+                c2_to_c1 = "MANY_TO_ONE"
+            elif card in ("N:N", "MANY_TO_MANY", "MANYTOMANY"):
+                c1_to_c2 = "MANY_TO_MANY"
+                c2_to_c1 = "MANY_TO_MANY"
+            else:
+                c1_to_c2 = "ONE_TO_ONE"
+                c2_to_c1 = "ONE_TO_ONE"
+
+            adj.setdefault(c1_cf, []).append((c2_cf, c1_to_c2))
+            adj.setdefault(c2_cf, []).append((c1_cf, c2_to_c1))
+
+        start = m_concept.casefold()
+        target = d_concept.casefold()
+        queue = [(start, [])]
+        visited = {start}
+
+        while queue:
+            curr, path_steps = queue.pop(0)
+            if curr == target:
+                has_m2o = False
+                for step in path_steps:
+                    if step == "MANY_TO_MANY":
+                        return True, f"Join path from '{m_concept}' to '{d_concept}' contains a many-to-many relationship (fan-out)."
+                    if step == "MANY_TO_ONE":
+                        has_m2o = True
+                    elif step == "ONE_TO_MANY" and has_m2o:
+                        return True, f"Join path from '{m_concept}' to '{d_concept}' goes many-to-one-to-many (fan-out / chasm trap); metric would multiply."
+                return False, None
+
+            for nxt, step_type in adj.get(curr, []):
+                if nxt not in visited:
+                    visited.add(nxt)
+                    queue.append((nxt, path_steps + [step_type]))
+
+        return False, None
 
     # ------------------------------------------------------------------
     # Generic Phrase Scoring Helpers
@@ -678,6 +797,7 @@ class NLQueryEngine:
         # 4. Validate executable SQL for each detected metric
         matched_before_sql_check = list(detected_metrics)
         answerable_metrics: List[DomainMetric] = []
+        has_unanswerable_metric = False
         for m in detected_metrics:
             m_sv = effective_semantic_view or (
                 getattr(m, "semantic_view_name", None) if dialect.upper() == "SNOWFLAKE" else None
@@ -690,6 +810,7 @@ class NLQueryEngine:
                 physical_attr_keys=physical_attr_keys,
             )
             if bad_reason:
+                has_unanswerable_metric = True
                 warnings.append(f"Metric '{m.label or m.name}' is not answerable: {bad_reason}.")
             else:
                 answerable_metrics.append(m)
@@ -881,11 +1002,69 @@ class NLQueryEngine:
         if detected_metrics:
             warnings.extend(self._unapplied_time_intent_warnings(parsed, lexicon, detected_metrics, dim_to_pair))
 
+        # 7c. Plan checks before execution (Requirement 2)
+        plan_checks_failed = bool(has_unanswerable_metric)
+        failed_check_reasons: List[str] = [w for w in warnings if "is not answerable:" in w]
+
+        # 2e: Metrics deployed as NULL or marked unanswerable
+        for m in list(detected_metrics):
+            is_unans, unans_msg = self._is_unanswerable_or_null(m)
+            if is_unans:
+                plan_checks_failed = True
+                failed_check_reasons.append(f"Metric '{m.label or m.name}' cannot be used: {unans_msg}.")
+
+        # 2a: Join path from each metric's table may only go many->one (no many->one->many)
+        for m in detected_metrics:
+            m_c = m.concept or primary_table
+            if not m_c:
+                continue
+            for d_name in dim_names:
+                c_obj, _ = dim_to_pair.get(d_name, (None, None))
+                if c_obj and c_obj.name:
+                    is_fan_out, fan_out_msg = self._detect_fan_out_path(m_c, c_obj.name, self.ontology.relationships)
+                    if is_fan_out:
+                        plan_checks_failed = True
+                        failed_check_reasons.append(fan_out_msg or f"Fan-out join path detected from '{m_c}' to '{c_obj.name}'.")
+
+        # 2c (Part 1): Window metrics include their PARTITION BY EXCLUDING dimensions
+        for m in detected_metrics:
+            is_win, req_dims = self._is_window_metric(m.sql_expression, m.description, m.name)
+            if is_win and req_dims:
+                missing_dims = []
+                for rd in req_dims:
+                    rd_clean = rd.split(".")[-1].strip().casefold()
+                    if not any(d.split(".")[-1].strip().casefold() == rd_clean for d in dim_names):
+                        missing_dims.append(rd)
+                if missing_dims:
+                    plan_checks_failed = True
+                    failed_check_reasons.append(
+                        f"Window metric '{m.label or m.name}' requires excluded partition dimension(s) "
+                        f"({', '.join(missing_dims)}) from PARTITION BY EXCLUDING clause."
+                    )
+
+        # 2d: Semi-additive (NON ADDITIVE BY) metrics never summed over their non-additive dimension
+        for m in detected_metrics:
+            semi_dim = self._get_semi_additive_dimension(m)
+            if semi_dim:
+                semi_clean = semi_dim.split(".")[-1].strip().casefold()
+                grouped_by_semi = any(d.split(".")[-1].strip().casefold() == semi_clean for d in dim_names)
+                filtered_semi = any(semi_clean in f.casefold() for f in filters)
+                if not grouped_by_semi and not filtered_semi:
+                    plan_checks_failed = True
+                    failed_check_reasons.append(
+                        f"Semi-additive metric '{m.label or m.name}' has non-additive dimension '{semi_dim}' "
+                        f"(NON ADDITIVE BY) and cannot be summed over it without grouping or filtering by that dimension."
+                    )
+
+        if plan_checks_failed:
+            warnings.extend(failed_check_reasons)
+            answerable = False
+
         # 8. Refuse cleanly without fake 'FROM ANALYTICS' fallback when unanswerable
         is_distinct_dim_query = bool(
             parsed.aggregation_intent == "DISTINCT" and not detected_metrics and dim_names and not effective_semantic_view and primary_table
         )
-        answerable = bool(detected_metrics) or is_distinct_dim_query
+        answerable = (bool(detected_metrics) or is_distinct_dim_query) and not plan_checks_failed
 
         # Physical-table SQL (no deployed semantic view) is only ever an offline
         # draft: refuse it unless a draft was asked for (or not ruled out).
@@ -917,7 +1096,7 @@ class NLQueryEngine:
                 refusal_lines.append(f"-- Reason: {w}")
             return QueryResolutionPlan(
                 original_prompt=clean_prompt,
-                detected_metrics=[],
+                detected_metrics=[m.label or m.name for m in detected_metrics],
                 detected_dimensions=dim_names,
                 filters=filters,
                 applied_policies=applied_policies,
@@ -926,10 +1105,13 @@ class NLQueryEngine:
                 join_clauses=[],
                 generated_sql="\n".join(refusal_lines),
                 confidence_score=0.0,
-                explanation="; ".join(warnings) if warnings else "Query cannot be answered from this project's ontology.",
+                explanation="; ".join(failed_check_reasons if failed_check_reasons else warnings) if warnings else "Query cannot be answered from this project's ontology.",
                 warnings=warnings,
                 answerable=False,
                 parsed_phrases=parsed_phrases,
+                plan_checks_passed=not plan_checks_failed,
+                is_certified=False,
+                query_path="semantic_view" if effective_semantic_view else "governed_ontology",
             )
 
         # 9. Build relational joins & executable SQL
@@ -986,13 +1168,30 @@ class NLQueryEngine:
                 c_obj, a_obj = dim_to_pair[d]
                 sv_dims.append(self._sv_dim_ref(c_obj, a_obj, lexicon))
 
+            # 2c (Part 2): Period filters on LAG/window metrics are applied after the window (outer WHERE), not inside SEMANTIC_VIEW
+            has_window_or_lag = any(
+                self._is_window_metric(m.sql_expression, m.description, m.name)[0]
+                or bool(re.search(r"\b(LAG|LEAD|OVER)\b", m.sql_expression or "", re.I))
+                for m in detected_metrics
+            )
+            inner_filters: List[str] = []
+            outer_filters: List[str] = []
+            for f in filters:
+                is_period_filter = bool(re.search(r"\b(YEAR|QUARTER|MONTH|DATE|DAY)\s*\(", f, re.I)) or any(
+                    k in f.lower() for k in ("year", "quarter", "month", "date")
+                )
+                if has_window_or_lag and is_period_filter:
+                    outer_filters.append(f)
+                else:
+                    inner_filters.append(f)
+
             sv_clauses: List[str] = [effective_semantic_view]
             if sv_metrics:
                 sv_clauses.append(f"METRICS {', '.join(sv_metrics)}")
             if sv_dims:
                 sv_clauses.append(f"DIMENSIONS {', '.join(sv_dims)}")
-            if filters and (sv_metrics or sv_dims):
-                sv_clauses.append(f"WHERE {' AND '.join(filters)}")
+            if inner_filters and (sv_metrics or sv_dims):
+                sv_clauses.append(f"WHERE {' AND '.join(inner_filters)}")
 
             select_parts = ["    *"]
             from_target: Optional[str] = "SEMANTIC_VIEW(" + " ".join(sv_clauses) + ")"
@@ -1047,21 +1246,59 @@ class NLQueryEngine:
         for m in detected_metrics:
             agg = self._effective_aggregation(m)
             sql_lines.append(f"-- Metric: {m.label or m.name} (Aggregation: {agg})")
-        sql_lines.append("SELECT")
-        sql_lines.append(",\n".join(select_parts))
-        if from_target:
-            sql_lines.append(f"FROM {from_target}")
-        for j in join_clauses:
-            sql_lines.append(j)
-        if not effective_semantic_view and filters:
-            sql_lines.append(f"WHERE {' AND '.join(filters)}")
-        if not effective_semantic_view and group_by_parts:
-            sql_lines.append(f"GROUP BY {', '.join(group_by_parts)}")
-        order_col = first_metric_order_col or "1"
-        sql_lines.append(f"ORDER BY {order_col} DESC")
-        sql_lines.append(f"LIMIT {limit_val};")
+        distinct_fact_concepts = list(dict.fromkeys(m.concept for m in detected_metrics if m.concept))
+        is_multi_fact_physical = (not effective_semantic_view and len(distinct_fact_concepts) > 1)
 
-        generated_sql = "\n".join(sql_lines)
+        if is_multi_fact_physical:
+            # 2b. Metrics from different fact tables are aggregated separately then combined (never Cartesian multiplied)
+            cte_definitions = []
+            cte_names = []
+            for idx, f_concept in enumerate(distinct_fact_concepts, 1):
+                c_metrics = [m for m in detected_metrics if m.concept == f_concept]
+                cte_name = f"__agg_fact_{idx}"
+                cte_names.append(cte_name)
+                m_selects = []
+                for m in c_metrics:
+                    expr = self._expand_metric_expression(m, metrics_by_key)
+                    if expr:
+                        m_selects.append(f"{expr} AS {self._q_ident(m.name)}")
+                d_selects = [self._q_ident(d) for d in dim_names]
+                all_selects = d_selects + m_selects
+                cte_sql = f"{cte_name} AS (\n    SELECT {', '.join(all_selects)}\n    FROM {self._q_ident(f_concept)}"
+                if dim_names:
+                    cte_sql += f"\n    GROUP BY {', '.join(str(i) for i in range(1, len(dim_names) + 1))}"
+                cte_sql += "\n)"
+                cte_definitions.append(cte_sql)
+
+            with_clause = "WITH " + ",\n".join(cte_definitions)
+            if dim_names:
+                coalesce_dims = [f"COALESCE({', '.join(f'{cn}.{self._q_ident(d)}' for cn in cte_names)}) AS {self._q_ident(d)}" for d in dim_names]
+                all_m_cols = [f"{cn}.{self._q_ident(m.name)}" for cn, f_c in zip(cte_names, distinct_fact_concepts) for m in detected_metrics if m.concept == f_c]
+                join_cond = " AND ".join(f"{cte_names[0]}.{self._q_ident(d)} = {cte_names[1]}.{self._q_ident(d)}" for d in dim_names)
+                combine_sql = f"{with_clause}\nSELECT {', '.join(coalesce_dims + all_m_cols)}\nFROM {cte_names[0]} FULL OUTER JOIN {cte_names[1]} ON {join_cond}"
+            else:
+                all_m_cols = [f"{cn}.{self._q_ident(m.name)}" for cn, f_c in zip(cte_names, distinct_fact_concepts) for m in detected_metrics if m.concept == f_c]
+                combine_sql = f"{with_clause}\nSELECT {', '.join(all_m_cols)}\nFROM {cte_names[0]} CROSS JOIN {cte_names[1]}"
+            generated_sql = combine_sql + f"\nLIMIT {limit_val};"
+        else:
+            sql_lines.append("SELECT")
+            sql_lines.append(",\n".join(select_parts))
+            if from_target:
+                sql_lines.append(f"FROM {from_target}")
+            for j in join_clauses:
+                sql_lines.append(j)
+            if not effective_semantic_view and filters:
+                sql_lines.append(f"WHERE {' AND '.join(filters)}")
+            elif effective_semantic_view and outer_filters:
+                sql_lines.append(f"WHERE {' AND '.join(outer_filters)}")
+            if not effective_semantic_view and group_by_parts:
+                sql_lines.append(f"GROUP BY {', '.join(group_by_parts)}")
+            order_col = first_metric_order_col or "1"
+            sql_lines.append(f"ORDER BY {order_col} DESC")
+            sql_lines.append(f"LIMIT {limit_val};")
+
+            generated_sql = "\n".join(sql_lines)
+
         if dialect.upper() == "DATABRICKS":
             generated_sql = re.sub(r"\bIFF\(", "IF(", generated_sql, flags=re.IGNORECASE)
 
@@ -1096,6 +1333,9 @@ class NLQueryEngine:
             answerable=True,
             parsed_phrases=parsed_phrases,
             is_draft=is_draft,
+            query_path="semantic_view" if effective_semantic_view else "governed_ontology",
+            is_certified=bool(effective_semantic_view and not warnings),
+            plan_checks_passed=True,
         )
 
     @staticmethod

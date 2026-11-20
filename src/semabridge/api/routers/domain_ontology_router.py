@@ -339,7 +339,7 @@ class MetricMetadataUpdateRequest(BaseModel):
     business_rules: Optional[List[str]] = None
 
 
-@router.patch("/{domain_name}/metrics/{metric_name}/metadata", response_model=Dict[str, Any])
+@router.patch("/{domain_name}/metrics/{metric_name}/metadata", response_model=Dict[str, Any])  # hardcoding-ok: route path
 def update_metric_metadata(
     domain_name: str,
     metric_name: str,
@@ -522,7 +522,7 @@ async def bootstrap_from_osi(req: FromOsiRequest, request: Request) -> Dict[str,
         from semabridge.api.routers.export_router import _load_osi_model
         osi_obj = await _load_osi_model(project_id)
         if not osi_obj:
-            raise HTTPException(status_code=404, detail=f"No OSI model found for project '{project_id}'.")
+            raise HTTPException(status_code=404, detail="This project has no successful sync yet - run a sync first")
     else:
         raise HTTPException(status_code=400, detail="Must provide either 'osi_model' dictionary or 'project_id'.")
 
@@ -685,6 +685,28 @@ async def _sync_multi_model_project(req: FromOsiRequest, project_id: str, reques
 # ----------------------------------------------------------------------
 # Project attachments
 # ----------------------------------------------------------------------
+
+
+@project_router.get("", response_model=List[Dict[str, Any]])
+async def list_ontology_projects(request: Request) -> List[Dict[str, Any]]:
+    """Return all projects enriched with sync and ontology domain status without pagination truncation."""
+    from semabridge.api.controllers.projects_controller import (
+        list_projects_compat,
+        enrich_projects_with_ontology_and_sync_status,
+        is_project_owned_by_user,
+        auth_is_enabled,
+        require_request_user_id,
+    )
+    user_id = require_request_user_id(request)
+    projects = await list_projects_compat(limit=1000, offset=0)
+    if auth_is_enabled():
+        projects = [
+            project
+            for project in projects
+            if (project.get("id") or project.get("project_id"))
+            and is_project_owned_by_user(project.get("id") or project.get("project_id"), user_id, log_denied=False)
+        ]
+    return enrich_projects_with_ontology_and_sync_status(projects)
 
 
 @project_router.get("/{project_id}/domains", response_model=Dict[str, Any])
@@ -866,7 +888,7 @@ def _domains_for_project(project_id: str, fed: Any) -> List[Any]:
     return list(ontology_store.domains_for(project_id))
 
 
-@project_router.get("/health", response_model=Dict[str, Any])
+@project_router.get("/health", response_model=Dict[str, Any])  # hardcoding-ok: route path
 def get_projects_ontology_health(project_ids: str = "") -> Dict[str, Any]:
     """Ontology health for several projects at once: ``?project_ids=a,b,c``."""
     from semabridge.ontology.quality import project_ontology_health
@@ -878,7 +900,7 @@ def get_projects_ontology_health(project_ids: str = "") -> Dict[str, Any]:
     }
 
 
-@project_router.get("/{project_id}/health", response_model=Dict[str, Any])
+@project_router.get("/{project_id}/health", response_model=Dict[str, Any])  # hardcoding-ok: route path
 def get_project_ontology_health(project_id: str) -> Dict[str, Any]:
     from semabridge.ontology.quality import project_ontology_health
 
