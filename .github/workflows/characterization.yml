@@ -17,6 +17,12 @@ on:
   push:
     branches-ignore: [main, master]
   workflow_dispatch:
+    inputs:
+      force:
+        description: "Force regeneration even if BASE_COMMIT matches"
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -52,7 +58,11 @@ jobs:
           BASE_SHA=$(git merge-base HEAD "origin/$BASE_BRANCH")
           echo "sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
           RECORDED=$(cat "$SNAP_DIR/BASE_COMMIT" 2>/dev/null || true)
-          if [ "$RECORDED" = "$BASE_SHA" ]; then echo "regen=false" >> "$GITHUB_OUTPUT"; else echo "regen=true" >> "$GITHUB_OUTPUT"; fi
+          if [ "${{ github.event.inputs.force }}" = "false" ] && [ "$RECORDED" = "$BASE_SHA" ]; then
+            echo "regen=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "regen=true" >> "$GITHUB_OUTPUT"
+          fi
           echo "base=$BASE_SHA recorded=${RECORDED:-none}"
 
       - name: Install (branch package + base requirements)
@@ -70,10 +80,20 @@ jobs:
           PYTHONHASHSEED: "0"
           PYTHONPATH: /tmp/base/src
         run: |
+          rm -f Tests/characterization/snapshots/*.osi.json Tests/characterization/snapshots/*.sml.json Tests/characterization/snapshots/*.ddl.sql
           rm -f "$SNAP_DIR"/*.osi.json "$SNAP_DIR"/*.sml.json "$SNAP_DIR"/*.ddl.sql
+          python Tests/characterization/_build.py
           python Tests/characterization/_build_real_pbix.py | tee /tmp/build.log
           grep -q "semabridge loaded from: /tmp/base/src/semabridge" /tmp/build.log
           echo "${{ steps.base.outputs.sha }}" > "$SNAP_DIR/BASE_COMMIT"
+
+      - name: Upload characterization snapshots artifact
+        if: steps.base.outputs.regen == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: characterization-snapshots
+          path: Tests/characterization/snapshots
+          if-no-files-found: error
 
   check:
     name: "Golden gate (fixture + real PBIX vs base)"
