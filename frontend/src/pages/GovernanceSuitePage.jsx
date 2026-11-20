@@ -94,10 +94,8 @@ export function DriftView({ projectId = '' }) {
   }, [projectId, authFetch]);
 
   const quickTargets = useMemo(() => {
-    const driftMetrics = events.map((e) => e.metric_name).filter(Boolean);
-    const pMetrics = projectMetrics.map((m) => m.name || m.logical_name).filter(Boolean);
-    return Array.from(new Set([...driftMetrics, ...pMetrics]));
-  }, [events, projectMetrics]);
+    return Array.from(new Set(projectMetrics.map((m) => m.name || m.logical_name).filter(Boolean)));
+  }, [projectMetrics]);
 
   const runBlastSimulation = async (targetOverride, changeTypeOverride, typeOverride) => {
     const target = (targetOverride ?? blastTarget).trim();
@@ -115,7 +113,6 @@ export function DriftView({ projectId = '' }) {
           target_type: tType,
           change_type: cType,
           project_id: projectId || undefined,
-          mock_mode: true,
         }),
       });
       const data = await res.json();
@@ -232,7 +229,7 @@ export function DriftView({ projectId = '' }) {
               borderColor: 'rgba(168, 85, 247, 0.35)',
               color: 'var(--accent-purple, #a855f7)',
             }}
-            onClick={() => handleOpenBlast(events[0]?.metric_name || 'TOTAL_UNITS')}
+            onClick={() => handleOpenBlast(events[0]?.metric_name || quickTargets[0] || '')}
             title="Check Blast Radius: see how metric changes affect downstream BI reports & AI agents"
           >
             <Zap size={13} style={{ color: 'var(--accent-purple, #a855f7)' }} /> Check Blast Radius

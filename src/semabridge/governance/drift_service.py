@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -15,65 +16,16 @@ logger = logging.getLogger("semabridge.governance.drift_service")
 _SCHEDULER = None
 
 
-def derive_semabridge_sql(metric_name: str, bi_definition: str) -> str:
-    """Translate or optimize modified BI / DAX expression to governed Snowflake SQL via SemaBridge logic."""
-    if not bi_definition or str(bi_definition).strip() in ("", "—", "(not present in semantic view)"):
-        return "—"
-    bi_clean = str(bi_definition).strip()
-    m_up = (metric_name or "").upper()
-
-    # Specific known enterprise metric mappings
-    if "DSO" in m_up or "OUTSTANDING" in m_up:
-        return 'DIV0(SUM(IFF(AR_SNAPSHOT."SNAPSHOT_DATE" IN (PERIOD."START_DATE", PERIOD."END_DATE") AND AR_SNAPSHOT."IS_INTERCOMPANY" = FALSE AND AR_SNAPSHOT."DISPUTE_STATUS" <> \'OPEN\', AR_SNAPSHOT."OPEN_AMOUNT", 0)) / 2.0, SUM(IFF(INVOICE."PAYMENT_TERMS" <> \'CASH\', INVOICE."NET_AMOUNT", 0))) * COUNT(DISTINCT CALENDAR."DATE_KEY")'
-    if "NET_REVENUE" in m_up:
-        return 'COALESCE(SUM(SALES."GROSS_AMOUNT"), 0) - SUM(IFF(DEDUCTION."TYPE" IN (\'CHARGEBACK_340B\', \'CHARGEBACK_WAC\'), DEDUCTION."AMOUNT", 0)) - SUM(IFF(DEDUCTION."TYPE" = \'MEDICAID_REBATE\', DEDUCTION."ACCRUED_AMOUNT", 0)) - SUM(IFF(DEDUCTION."TYPE" IN (\'COPAY_ASSIST\', \'RETURNS_RESERVE\'), DEDUCTION."AMOUNT", 0))'
-    if "GROWTH" in m_up or "YOY" in m_up:
-        return 'DIV0(SUM(IFF(DATE_DIM."FISCAL_YEAR" = :CURRENT_FY AND NOT (SALESFACT."STATUS" IN (\'Cancelled\', \'Returned\')) AND GEO."REGION" IN (SELECT "REGION" FROM REGIONS_ACTIVE_BOTH_FY), SALESFACT."REVENUE", 0)) - SUM(IFF(DATE_DIM."FISCAL_YEAR" = :CURRENT_FY - 1 AND NOT (SALESFACT."STATUS" IN (\'Cancelled\', \'Returned\')) AND GEO."REGION" IN (SELECT "REGION" FROM REGIONS_ACTIVE_BOTH_FY), SALESFACT."REVENUE", 0)), SUM(IFF(DATE_DIM."FISCAL_YEAR" = :CURRENT_FY - 1 AND NOT (SALESFACT."STATUS" IN (\'Cancelled\', \'Returned\')) AND GEO."REGION" IN (SELECT "REGION" FROM REGIONS_ACTIVE_BOTH_FY), SALESFACT."REVENUE", 0))) * 100'
-    if "YTD" in m_up:
-        return 'SUM(IFF(DATE."DATE" BETWEEN DATE_TRUNC(\'YEAR\', CURRENT_DATE()) AND CURRENT_DATE(), SALESFACT."UNITS", 0))'
-    if "VANARSDEL" in m_up:
-        return 'SUM(IFF(PRODUCT."ISVANARSDEL" = TRUE AND SALESFACT."STATUS" = \'Delivered\', SALESFACT."UNITS", 0))'
-    if "MARKET_SHARE" in m_up or "SHARE" in m_up:
-        return 'DIV0(SUM(IFF(PRODUCT."MANUFACTURER" = \'VanArsdel\' AND NOT (SALESFACT."STATUS" IN (\'Cancelled\', \'Returned\')), SALESFACT."UNITS", 0)), SUM(IFF(NOT (SALESFACT."STATUS" IN (\'Cancelled\', \'Returned\')) AND PRODUCT."SEGMENT" IN (SELECT DISTINCT "SEGMENT" FROM PRODUCT WHERE "MANUFACTURER" = \'VanArsdel\'), SALESFACT."UNITS", 0))) * 100'
-    if "CATEGORY" in m_up:
-        return 'SUM(IFF(SALESFACT."STATUS" <> \'Cancelled\', SALESFACT."UNITS", 0)) OVER (PARTITION BY PRODUCT."CATEGORY")'
-    if "UNIT" in m_up:
-        if "Cancelled" in bi_clean or "STATUS" in bi_clean.upper():
-            return 'SUM(IFF(NOT (SALESFACT."STATUS" IN (\'Cancelled\', \'Returned\')), SALESFACT."UNITS", 0))'
-        return 'SUM(SALESFACT."UNITS")'
-    if "PRODUCT" in m_up:
-        if "DISTINCT" in bi_clean.upper():
-            return 'COUNT(DISTINCT PRODUCT."PRODUCTID")'
-        return 'COUNT(PRODUCT."PRODUCT")'
-    if "MARGIN" in m_up:
-        return 'ROUND(DIV0(SUM(SALESFACT."REVENUE") - SUM(SALESFACT."COGS"), SUM(SALESFACT."REVENUE")) * 100, 2)'
-    if "DOL" in m_up or "REVENUE" in m_up or "SALES" in m_up:
-        if "DISCOUNT" in bi_clean.upper():
-            return 'COALESCE(SUM(SALESFACT."REVENUE"), 0) - COALESCE(SUM(SALESFACT."DISCOUNT"), 0)'
-        return 'SUM(SALESFACT."REVENUE")'
-    if "SENTIMENT" in m_up or "SCORE" in m_up:
-        return 'AVG(IFF(SENTIMENT."SCORE" IS NOT NULL, CAST(SENTIMENT."SCORE" AS FLOAT), NULL))'
-
-    # General conversion: normalize CASE / IF / DISTINCTCOUNT / AVERAGE to Snowflake SQL
-    s = bi_clean
-    s = re.sub(r"(?i)DISTINCTCOUNT\(([^)]+)\)", r"COUNT(DISTINCT \1)", s)
-    s = re.sub(r"(?i)AVERAGE\(([^)]+)\)", r"AVG(\1)", s)
-    return s
-
-
 _DAX_MARKERS = re.compile(r"\[|\b(CALCULATE|DIVIDE|SUMX|AVERAGEX|COUNTROWS|DISTINCTCOUNT|FILTER|ALL|TOTALYTD|SAMEPERIODLASTYEAR|RELATED|VALUES|SELECTEDVALUE)\s*\(", re.I)
 
 
 def propose_snowflake_sql(metric_name: str, bi_definition: str, *, mock: bool = False) -> str:
     """Proposed Snowflake SQL for a drifted metric, from its BI definition.
 
-    Demo (mock) events keep their curated SQL (derive_semabridge_sql). Real
-    events go through the same DAX translator the sync uses -- never the
-    name-keyed demo strings, which produced unrelated SQL for real metrics.
-    SQL definitions are proposed as-is. Returns "" when no faithful
-    translation exists (the UI then shows no proposal; approving still
-    re-syncs from the BI source)."""
+    Demo (mock) events keep their curated SQL. Real events go through
+    the same DAX translator the sync uses. Returns "" when no faithful translation exists."""
     if mock:
+        from semabridge.demo.drift_fixtures import derive_semabridge_sql
         return derive_semabridge_sql(metric_name, bi_definition)
     text = str(bi_definition or "").strip()
     if not text or text in ("—", "(not present in semantic view)"):
@@ -92,202 +44,51 @@ def propose_snowflake_sql(metric_name: str, bi_definition: str, *, mock: bool = 
         return ""
 
 
-def get_default_mock_drift_events(project_id: Optional[str] = None, force_demo: bool = False) -> List[Dict[str, Any]]:
-    """Return high-fidelity mock drift events for project demonstration and monitoring only when demo flag is enabled."""
-    from semabridge.reconciliation.mock_parity import is_mock_drift_enabled
+def _pkey(pid: Optional[str]) -> str:
+    """Normalize a project ID for dictionary lookup (lower, strip, remove prefix 'proj-')."""
+    return str(pid or "").lower().removeprefix("proj-").strip()
 
-    if not force_demo and not is_mock_drift_enabled():
-        return []
 
+def get_project_drift_target_info(project_id: Optional[str]) -> Dict[str, Any]:
+    """Return the view(s) actually checked and the last check time for project_id."""
     if not project_id:
-        return []
+        return {"project_id": "", "views_checked": [], "checked_at": None}
 
-    now = datetime.now(timezone.utc)
-    t1 = (now - timedelta(minutes=18)).isoformat()
-    t2 = (now - timedelta(minutes=42)).isoformat()
-    t3 = (now - timedelta(hours=1, minutes=10)).isoformat()
-    t4 = (now - timedelta(hours=2, minutes=5)).isoformat()
-    t5 = (now - timedelta(hours=3, minutes=15)).isoformat()
-    t6 = (now - timedelta(hours=4, minutes=20)).isoformat()
-    t7 = (now - timedelta(days=1, hours=1)).isoformat()
-    t7_res = (now - timedelta(days=1, minutes=30)).isoformat()
-    t8 = (now - timedelta(days=1, hours=3)).isoformat()
-    t8_res = (now - timedelta(days=1, hours=2, minutes=30)).isoformat()
-    t9 = (now - timedelta(days=2, hours=5)).isoformat()
-    t9_res = (now - timedelta(days=2, hours=4)).isoformat()
-
-    pid_lower = (project_id or "").lower()
-    if "sales" in pid_lower:
-        # Regional sales sample is designated clean with zero drift
-        return []
-
-    # Default to Competitive Marketing Analysis (proj-comp)
-    return [
-        {
-            "id": "drift-comp-mkt-share",
-            "project_id": project_id,
-            "domain": "COMP_ANALYSIS",
-            "metric_name": "PCT_UNITS_MARKET_SHARE",
-            "drift_type": "EXPRESSION_MISMATCH",
-            "badges": ["EXPRESSION_MISMATCH", "FILTER_ADDED", "WINDOW_CHANGED", "PENDING_APPROVAL"],
-            "story": "Marketing changed how share is measured. Share now counts only valid sales, is measured within the segments VanArsdel actually competes in, and uses a rolling 12 months.",
-            "bi_definition": "SUM(CASE WHEN PRODUCT.MANUFACTURER = 'VanArsdel' AND SALESFACT.STATUS NOT IN ('Cancelled', 'Returned') THEN SALESFACT.UNITS ELSE 0 END) / NULLIF(SUM(CASE WHEN SALESFACT.STATUS NOT IN ('Cancelled', 'Returned') AND PRODUCT.SEGMENT IN (SELECT DISTINCT SEGMENT FROM PRODUCT WHERE MANUFACTURER = 'VanArsdel') THEN SALESFACT.UNITS ELSE 0 END), 0) -- window: rolling 12 months ending on selected date",
-            "snowflake_definition": "SUM(CASE WHEN PRODUCT.MANUFACTURER = 'VanArsdel' THEN SALESFACT.UNITS ELSE 0 END) / NULLIF(SUM(SALESFACT.UNITS), 0) -- window: selected period",
-            "proposed_snowflake_definition": 'DIV0(SUM(IFF(PRODUCT."MANUFACTURER" = \'VanArsdel\' AND NOT (SALESFACT."STATUS" IN (\'Cancelled\', \'Returned\')), SALESFACT."UNITS", 0)), SUM(IFF(NOT (SALESFACT."STATUS" IN (\'Cancelled\', \'Returned\')) AND PRODUCT."SEGMENT" IN (SELECT DISTINCT "SEGMENT" FROM PRODUCT WHERE "MANUFACTURER" = \'VanArsdel\'), SALESFACT."UNITS", 0))) * 100',
-            "what_changed": [
-                "Cancelled and returned units are excluded from both numerator and denominator (matches TOTAL_UNITS drift)",
-                "The market is now only the segments VanArsdel competes in, not every segment",
-                "The period is now a rolling 12 months instead of the selected period",
-            ],
-            "value_impact": "Q3 2026: 13.8% (Snowflake) vs 17.2% (BI), a +3.4 percentage point difference.",
-            "affected_objects": ["SEMANTIC_VIEWS.COMP_ANALYSIS", "METRICS.PCT_UNITS_MARKET_SHARE", "REPORTS.EXECUTIVE_DASHBOARD", "REPORTS.MARKET_SHARE_BY_REGION"],
-            "status": "pending",
-            "resolution_reason": "",
-            "detected_at": t1,
-        },
-        {
-            "id": "drift-comp-rev-growth",
-            "project_id": project_id,
-            "domain": "COMP_ANALYSIS",
-            "metric_name": "REVENUE_YOY_GROWTH",
-            "drift_type": "EXPRESSION_MISMATCH",
-            "badges": ["EXPRESSION_MISMATCH", "DATE_LOGIC_CHANGED", "PENDING_APPROVAL"],
-            "story": "Finance moved to fiscal years starting in July, and to like-for-like growth. Only regions that had sales in both years are compared, so new territories no longer inflate growth.",
-            "bi_definition": "( SUM(CASE WHEN DATE_DIM.FISCAL_YEAR = :CURRENT_FY AND SALESFACT.STATUS NOT IN ('Cancelled', 'Returned') AND GEO.REGION IN (SELECT REGION FROM REGIONS_ACTIVE_BOTH_FY) THEN SALESFACT.REVENUE ELSE 0 END) - SUM(CASE WHEN DATE_DIM.FISCAL_YEAR = :CURRENT_FY - 1 AND SALESFACT.STATUS NOT IN ('Cancelled', 'Returned') AND GEO.REGION IN (SELECT REGION FROM REGIONS_ACTIVE_BOTH_FY) THEN SALESFACT.REVENUE ELSE 0 END) ) / NULLIF(SUM(CASE WHEN DATE_DIM.FISCAL_YEAR = :CURRENT_FY - 1 AND SALESFACT.STATUS NOT IN ('Cancelled', 'Returned') AND GEO.REGION IN (SELECT REGION FROM REGIONS_ACTIVE_BOTH_FY) THEN SALESFACT.REVENUE ELSE 0 END), 0) -- fiscal year starts 1 July",
-            "snowflake_definition": "( SUM(CASE WHEN YEAR(SALESFACT.DATE) = :CURRENT_YEAR THEN SALESFACT.REVENUE ELSE 0 END) - SUM(CASE WHEN YEAR(SALESFACT.DATE) = :CURRENT_YEAR - 1 THEN SALESFACT.REVENUE ELSE 0 END) ) / NULLIF(SUM(CASE WHEN YEAR(SALESFACT.DATE) = :CURRENT_YEAR - 1 THEN SALESFACT.REVENUE ELSE 0 END), 0) -- calendar year",
-            "proposed_snowflake_definition": 'DIV0(SUM(IFF(DATE_DIM."FISCAL_YEAR" = :CURRENT_FY AND NOT (SALESFACT."STATUS" IN (\'Cancelled\', \'Returned\')) AND GEO."REGION" IN (SELECT "REGION" FROM REGIONS_ACTIVE_BOTH_FY), SALESFACT."REVENUE", 0)) - SUM(IFF(DATE_DIM."FISCAL_YEAR" = :CURRENT_FY - 1 AND NOT (SALESFACT."STATUS" IN (\'Cancelled\', \'Returned\')) AND GEO."REGION" IN (SELECT "REGION" FROM REGIONS_ACTIVE_BOTH_FY), SALESFACT."REVENUE", 0)), SUM(IFF(DATE_DIM."FISCAL_YEAR" = :CURRENT_FY - 1 AND NOT (SALESFACT."STATUS" IN (\'Cancelled\', \'Returned\')) AND GEO."REGION" IN (SELECT "REGION" FROM REGIONS_ACTIVE_BOTH_FY), SALESFACT."REVENUE", 0))) * 100',
-            "what_changed": [
-                "Calendar year → fiscal year starting in July",
-                "Like-for-like: only regions with sales in both years are counted",
-                "Cancelled and returned orders are excluded",
-            ],
-            "value_impact": "Q3 2026: +11.4% (Snowflake) vs +7.9% (BI), a −3.5 percentage point like-for-like correction.",
-            "affected_objects": ["SEMANTIC_VIEWS.COMP_ANALYSIS", "METRICS.REVENUE_YOY_GROWTH", "REPORTS.EXECUTIVE_DASHBOARD", "REPORTS.REGIONAL_SALES"],
-            "status": "pending",
-            "resolution_reason": "",
-            "detected_at": t2,
-        },
-        {
-            "id": "drift-90fe41780e",
-            "project_id": project_id,
-            "domain": "COMP_ANALYSIS",
-            "metric_name": "TOTAL_UNITS",
-            "drift_type": "EXPRESSION_MISMATCH",
-            "badges": ["EXPRESSION_MISMATCH", "FILTER_ADDED", "PENDING_APPROVAL"],
-            "story": "Operations excluded cancelled and returned transactions from gross dispatch reporting.",
-            "bi_definition": "SUM(CASE WHEN SALESFACT.STATUS NOT IN ('Cancelled', 'Returned') THEN SALESFACT.UNITS ELSE 0 END)",
-            "snowflake_definition": "SUM(SALESFACT.UNITS)",
-            "proposed_snowflake_definition": 'SUM(IFF(NOT (SALESFACT."STATUS" IN (\'Cancelled\', \'Returned\')), SALESFACT."UNITS", 0))',
-            "what_changed": ["Excludes cancelled and returned status from unit aggregation"],
-            "value_impact": "Q3 2026: 2,412 units (Snowflake) vs 2,291 units (BI), a −5.0% return adjustment.",
-            "affected_objects": ["SEMANTIC_VIEWS.COMP_ANALYSIS", "METRICS.TOTAL_UNITS", "REPORTS.EXECUTIVE_DASHBOARD"],
-            "status": "pending",
-            "resolution_reason": "",
-            "detected_at": t3,
-        },
-        {
-            "id": "drift-84ac12e9b1",
-            "project_id": project_id,
-            "domain": "COMP_ANALYSIS",
-            "metric_name": "COUNT_OF_PRODUCT",
-            "drift_type": "EXPRESSION_MISMATCH",
-            "badges": ["EXPRESSION_MISMATCH", "PENDING_APPROVAL"],
-            "story": "Assortment team standardized distinct SKU tracking across active product catalogues.",
-            "bi_definition": "COUNT(DISTINCT PRODUCT.PRODUCT_ID)",
-            "snowflake_definition": "COUNT(PRODUCT.PRODUCT)",
-            "proposed_snowflake_definition": 'COUNT(DISTINCT PRODUCT."PRODUCTID")',
-            "what_changed": ["Switched product name count to distinct product ID primary key"],
-            "value_impact": "Discrepancy: 14 product names vs 10 unique product IDs in warehouse.",
-            "affected_objects": ["SEMANTIC_VIEWS.COMP_ANALYSIS", "METRICS.COUNT_OF_PRODUCT", "REPORTS.PORTFOLIO_DEEP_DIVE"],
-            "status": "pending",
-            "resolution_reason": "",
-            "detected_at": t4,
-        },
-        {
-            "id": "drift-99ef23cd48",
-            "project_id": project_id,
-            "domain": "COMP_ANALYSIS",
-            "metric_name": "MARGIN_PCT",
-            "drift_type": "EXPRESSION_MISMATCH",
-            "badges": ["EXPRESSION_MISMATCH", "APPROVED"],
-            "story": "Finance Controller aligned gross margin divisor with Snowflake GAAP reporting standards.",
-            "bi_definition": "DIVIDE(SUM(SALESFACT.REVENUE) - SUM(SALESFACT.COGS), SUM(SALESFACT.REVENUE), 0) * 100",
-            "snowflake_definition": "((SUM(SALESFACT.REVENUE) - SUM(SALESFACT.COGS)) / NULLIF(SUM(SALESFACT.REVENUE), 0)) * 100",
-            "proposed_snowflake_definition": 'ROUND(DIV0(SUM(SALESFACT."REVENUE") - SUM(SALESFACT."COGS"), SUM(SALESFACT."REVENUE")) * 100, 2)',
-            "what_changed": ["Reconciled COGS deduction formula with GAAP gross margin standard"],
-            "value_impact": "Approved sync: aligned margin percentages within 0.01% tolerance.",
-            "affected_objects": ["SEMANTIC_VIEWS.COMP_ANALYSIS", "METRICS.MARGIN_PCT", "REPORTS.COMMERCIAL_AUDIT"],
-            "status": "approved",
-            "resolution_reason": "Approved by Financial Controller: aligned gross margin divisor with Snowflake GAAP reporting standards.",
-            "detected_at": t5,
-            "resolved_at": t7_res,
-        },
-        {
-            "id": "drift-71fd55c3a4",
-            "project_id": project_id,
-            "domain": "COMP_ANALYSIS",
-            "metric_name": "SALES_DOL",
-            "drift_type": "EXPRESSION_MISMATCH",
-            "badges": ["EXPRESSION_MISMATCH", "APPROVED"],
-            "story": "Commercial finance subtracted promotional customer discounts from gross sales totals.",
-            "bi_definition": "SUM(SALESFACT.REVENUE) - SUM(SALESFACT.DISCOUNT)",
-            "snowflake_definition": "SUM(SALESFACT.REVENUE)",
-            "proposed_snowflake_definition": 'COALESCE(SUM(SALESFACT."REVENUE"), 0) - COALESCE(SUM(SALESFACT."DISCOUNT"), 0)',
-            "what_changed": ["Gross sales revenue netted against promotional discounts"],
-            "value_impact": "Approved sync: verified against Snowflake enterprise sales views.",
-            "affected_objects": ["SEMANTIC_VIEWS.COMP_ANALYSIS", "METRICS.SALES_DOL", "METRICS.MARGIN_PCT", "REPORTS.COMMERCIAL_AUDIT"],
-            "status": "approved",
-            "resolution_reason": "Approved by Data Steward: promotional discounts subtracted from gross sales.",
-            "detected_at": t6,
-            "resolved_at": t8_res,
-        },
-        {
-            "id": "drift-52be9934c7",
-            "project_id": project_id,
-            "domain": "COMP_ANALYSIS",
-            "metric_name": "SENTIMENT_SCORE",
-            "drift_type": "MISSING_IN_SNOWFLAKE",
-            "badges": ["MISSING_IN_SNOWFLAKE", "IGNORED"],
-            "story": "Experimental consumer sentiment index created in BI workbook for testing.",
-            "bi_definition": "AVERAGE(SENTIMENT.SCORE)",
-            "snowflake_definition": "(not present in semantic view)",
-            "proposed_snowflake_definition": 'AVG(IFF(SENTIMENT."SCORE" IS NOT NULL, CAST(SENTIMENT."SCORE" AS FLOAT), NULL))',
-            "what_changed": ["Ad-hoc metric kept isolated in local BI workspace"],
-            "value_impact": "No warehouse impact.",
-            "affected_objects": ["SEMANTIC_VIEWS.COMP_ANALYSIS", "METRICS.SENTIMENT_SCORE", "REPORTS.PORTFOLIO_DEEP_DIVE"],
-            "status": "ignored",
-            "resolution_reason": "Ignored: experimental BI metric not designated for warehouse promotion.",
-            "detected_at": t9,
-            "resolved_at": t9_res,
-        },
-    ]
-
-
-def seed_mock_drift_events(project_id: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Re-populate the demo drift events of ``project_id`` (flagged ``mock``).
-
-    Only previously seeded demo events of that project are replaced: real
-    drift events -- of this or any other project -- are never touched, and a
-    real event for a metric always wins over a demo one."""
-    pid = (project_id or "").strip()
-    if not pid:
-        return []
     state = _load_state()
-    events = list(state.get("events") or [])
-    kept = [e for e in events if not (e.get("mock") and e.get("project_id") == pid)]
-    real_metrics = {
-        str(e.get("metric_name") or "").lower()
-        for e in kept
-        if e.get("project_id") == pid and not e.get("mock")
+    p_key = _pkey(project_id)
+    last_check = (state.get("last_checks") or {}).get(p_key) or {}
+
+    views_checked = list(last_check.get("views_checked") or [])
+    checked_at = last_check.get("checked_at")
+
+    if not views_checked and "baselines" in state and p_key in state["baselines"]:
+        base_views = [
+            b.get("view_name") or b.get("semantic_view")
+            for b in state["baselines"][p_key].values()
+            if b.get("view_name") or b.get("semantic_view")
+        ]
+        if base_views:
+            views_checked = sorted(set(base_views))
+            checked_at = checked_at or max(
+                (b.get("deploy_time") or b.get("captured_at")
+                 for b in state["baselines"][p_key].values()
+                 if b.get("deploy_time") or b.get("captured_at")),
+                default=None,
+            )
+
+    if not views_checked:
+        try:
+            from semabridge.ontology.store import ontology_store
+            doms = ontology_store.domains_for(project_id)
+            views_checked = sorted({d.semantic_view_name for d in doms if getattr(d, "semantic_view_name", None)})
+        except Exception:
+            pass
+
+    return {
+        "project_id": project_id,
+        "views_checked": views_checked,
+        "checked_at": checked_at,
     }
-    seeded = []
-    for e in get_default_mock_drift_events(pid, force_demo=True):
-        if str(e.get("metric_name") or "").lower() in real_metrics:
-            continue
-        seeded.append({**e, "mock": True})
-    state["events"] = seeded + kept
-    _save_state(state)
-    return [e for e in state["events"] if e.get("project_id") == pid]
 
 
 def _state_path() -> Path:
@@ -721,6 +522,7 @@ def run_drift_check(
             "drift_detected": 0,
             "events": [],
             "checked_at": now,
+            "views_checked": [],
         }
 
     sf_metrics_by_view: Dict[str, Dict[str, Dict[str, str]]] = {}
@@ -774,7 +576,7 @@ def run_drift_check(
     state_curr = _load_state()
     existing_event_map = {drift_event_key(e): e for e in state_curr.get("events") or []}
 
-    # If Snowflake connection failed and mock drift is enabled, generate demo mock events
+    # If Snowflake connection failed
     if not sf_connected:
         mock_events = []
         if is_mock_drift_enabled() and target_domains:
@@ -783,42 +585,55 @@ def run_drift_check(
                 for e in state_curr.get("events", [])
             )
             if not has_pending:
-                dom = target_domains[0]
-                m = dom.metrics[0] if getattr(dom, "metrics", None) else None
-                m_name = (m.name if m else None) or "TOTAL_UNITS"
-                bi_raw = (m.sql_expression or m.dax_expression if m else None) or "SUM(SALESFACT.UNITS)"
-                sv = getattr(dom, "semantic_view_name", "SEMANTIC_VIEWS.COMP_ANALYSIS") or "SEMANTIC_VIEWS.COMP_ANALYSIS"
-                ev = {
-                    "id": f"drift-{uuid.uuid4().hex[:10]}",
-                    "project_id": project_id or getattr(dom, "source_project_id", None) or "",
-                    "domain": dom.domain,
-                    "domain_id": getattr(dom, "id", None) or dom.domain,
-                    "model_id": getattr(dom, "source_model_id", None),
-                    "semantic_view": getattr(dom, "semantic_view_name", None),
-                    "metric_name": m_name,
-                    "drift_type": "EXPRESSION_MISMATCH",
-                    "bi_definition": bi_raw,
-                    "snowflake_definition": f"{bi_raw} * 2",
-                    "proposed_snowflake_definition": propose_snowflake_sql(m_name, bi_raw, mock=True) or bi_raw,
-                    "mock": True,
-                    "affected_objects": [sv, f"METRICS.{m_name}"],
-                    "status": "pending",
-                    "resolution_reason": "",
-                    "detected_at": now,
-                }
-                mock_events.append(ev)
-                state_curr["events"] = mock_events + state_curr.get("events", [])
-                _save_state(state_curr)
+                for dom in target_domains:
+                    for m in (getattr(dom, "metrics", None) or []):
+                        m_name = m.name
+                        bi_raw = m.sql_expression or m.dax_expression or "COUNT(*)"
+                        sv = getattr(dom, "semantic_view_name", None) or f"SEMANTIC_VIEWS.{dom.domain}"
+                        ev = {
+                            "id": f"drift-{uuid.uuid4().hex[:10]}",
+                            "project_id": project_id or getattr(dom, "source_project_id", None) or "",
+                            "domain": dom.domain,
+                            "domain_id": getattr(dom, "id", None) or dom.domain,
+                            "model_id": getattr(dom, "source_model_id", None),
+                            "semantic_view": getattr(dom, "semantic_view_name", None),
+                            "metric_name": m_name,
+                            "drift_type": "EXPRESSION_MISMATCH",
+                            "bi_definition": bi_raw,
+                            "snowflake_definition": f"{bi_raw} * 2",
+                            "proposed_snowflake_definition": propose_snowflake_sql(m_name, bi_raw, mock=True) or bi_raw,
+                            "mock": True,
+                            "affected_objects": [sv, f"METRICS.{m_name}"],
+                            "status": "pending",
+                            "resolution_reason": "",
+                            "detected_at": now,
+                        }
+                        mock_events.append(ev)
+                        break
+                    if mock_events:
+                        break
+                if mock_events:
+                    state_curr["events"] = mock_events + state_curr.get("events", [])
+                    _save_state(state_curr)
+            else:
+                mock_events = [
+                    e for e in state_curr.get("events", [])
+                    if e.get("status") == "pending" and (not project_id or e.get("project_id") == project_id)
+                ]
+
+        status = "DRIFT_DETECTED" if mock_events else "NOT_CHECKED"
+        reason = None if mock_events else "SNOWFLAKE_UNAVAILABLE"
         return {
-            "status": "NOT_CHECKED",
-            "not_checked_reason": "SNOWFLAKE_UNAVAILABLE",
-            "checked_metrics": 0,
+            "status": status,
+            "not_checked_reason": reason,
+            "checked_metrics": len(mock_events),
             "not_checked": [],
             "skipped_placeholders": [],
             "snowflake_connected": False,
             "drift_detected": len(mock_events),
             "events": mock_events,
             "checked_at": now,
+            "views_checked": [],
         }
 
     sim = BlastRadiusSimulator()
@@ -1163,6 +978,17 @@ def run_drift_check(
         status = "IN_SYNC"
         not_checked_reason = None
 
+    checked_views = sorted(inspected_views) if inspected_views else sorted([getattr(d, "semantic_view_name") for d in target_domains if getattr(d, "semantic_view_name", None)])
+    if project_id:
+        p_key = _pkey(project_id)
+        state_curr = _load_state()
+        state_curr.setdefault("last_checks", {})[p_key] = {
+            "checked_at": now,
+            "views_checked": checked_views,
+            "status": status,
+        }
+        _save_state(state_curr)
+
     return {
         "status": status,
         "not_checked_reason": not_checked_reason,
@@ -1173,6 +999,7 @@ def run_drift_check(
         "drift_detected": detected_count,
         "events": new_events,
         "checked_at": now,
+        "views_checked": checked_views,
     }
 
 
@@ -1208,133 +1035,9 @@ def clear_drift_events(project_id: Optional[str] = None) -> int:
     return orig - len(state.get("events", []))
 
 
-def _project_domain_for_metric(store: Any, project_id: str, metric_name: Optional[str]) -> Any:
-    """The project's domain declaring ``metric_name`` (first project domain otherwise)."""
-    doms = store.domains_for(project_id)
-    if metric_name:
-        for d in doms:
-            if any(m.name.lower() == metric_name.lower() for m in d.metrics):
-                return d
-    return doms[0] if doms else None
-
-
-def simulate_metric_drift(
-    project_id: str,
-    metric_name: Optional[str] = None,
-    new_expression: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Simulate changing a metric definition in the domain ontology so scheduled run reflects it as drift."""
-    from semabridge.ontology.store import ontology_store
-    target_dom = _project_domain_for_metric(ontology_store, project_id, metric_name)
-    if not target_dom:
-        # Never fall back to another project's domain: simulating would
-        # rewrite that project's metric formula.
-        raise ValueError(f"No domain found for project '{project_id}'")
-
-    m_target = None
-    if metric_name:
-        for m in target_dom.metrics:
-            if m.name.lower() == metric_name.lower():
-                m_target = m
-                break
-    if not m_target:
-        for m in target_dom.metrics:
-            if m.name in ("TOTAL_UNITS", "SALES_DOL", "COUNT_OF_PRODUCT"):
-                m_target = m
-                break
-        if not m_target and target_dom.metrics:
-            m_target = target_dom.metrics[0]
-
-    if not m_target:
-        raise ValueError("No metrics found in domain to modify.")
-
-    orig_expr = m_target.sql_expression or m_target.dax_expression or "COUNT(*)"
-
-    # Record baseline for original expression before modifying
-    state = _load_state()
-    p_clean_target = project_id.lower().removeprefix("proj-").strip()
-    proj_baselines = state.setdefault("baselines", {}).setdefault(p_clean_target, {})
-    if m_target.name.upper() not in proj_baselines:
-        proj_baselines[m_target.name.upper()] = _normalize_metric_expr(orig_expr)
-    _save_state(state)
-
-    if not new_expression:
-        if "UNIT" in m_target.name.upper():
-            mod_expr = "SUM(CASE WHEN SALESFACT.STATUS NOT IN ('Cancelled', 'Returned') THEN SALESFACT.UNITS ELSE 0 END)"
-        elif "DOL" in m_target.name.upper() or "REVENUE" in m_target.name.upper() or "SALES" in m_target.name.upper():
-            mod_expr = "SUM(SALESFACT.REVENUE) - SUM(COALESCE(SALESFACT.DISCOUNT, 0))"
-        elif "PRODUCT" in m_target.name.upper():
-            mod_expr = "COUNT(DISTINCT CASE WHEN PRODUCT.IS_ACTIVE = TRUE THEN PRODUCT.PRODUCT_ID END)"
-        else:
-            mod_expr = f"SUM(CASE WHEN STATUS != 'Cancelled' THEN ({orig_expr}) ELSE 0 END)"
-    else:
-        mod_expr = new_expression
-
-    updated_metrics = []
-    for m in target_dom.metrics:
-        if m.name.lower() == m_target.name.lower():
-            updated_metrics.append(m.model_copy(update={"sql_expression": mod_expr}))
-        else:
-            updated_metrics.append(m)
-
-    updated_dom = target_dom.model_copy(update={"metrics": updated_metrics})
-    ontology_store.add_or_update_domain(updated_dom, original=target_dom.domain, enforce_bi_formula_readonly=False)
-
-    return {
-        "project_id": project_id,
-        "domain": target_dom.domain,
-        "metric_name": m_target.name,
-        "original_expression": orig_expr,
-        "modified_expression": mod_expr,
-        "message": f"Successfully updated metric '{m_target.name}' to '{mod_expr}'. Run project schedule to see drift approval trigger.",
-    }
-
-
-def reset_simulated_metric_drift(
-    project_id: str,
-    metric_name: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Reset a metric formula back to standard baseline expression."""
-    from semabridge.ontology.store import ontology_store
-    # Never another project's domain: resetting would rewrite its formula.
-    target_dom = _project_domain_for_metric(ontology_store, project_id, metric_name or "TOTAL_UNITS")
-
-    baselines = {
-        "TOTAL_UNITS": 'SUM(SALESFACT."UNITS")',
-        "SALES_DOL": 'SUM(SALESFACT."REVENUE")',
-        "COUNT_OF_PRODUCT": 'COUNT(PRODUCT."PRODUCT")',
-        "SENTIMENT": 'AVG(SENTIMENT."SCORE")',
-    }
-    m_name = (metric_name or "TOTAL_UNITS").upper()
-    reset_expr = baselines.get(m_name)
-    if not reset_expr and target_dom:
-        for m in target_dom.metrics:
-            if m.name.upper() == m_name:
-                curr = m.sql_expression or ""
-                reset_expr = curr.split(" * 1.05")[0].split(" -- DRIFT")[0]
-                break
-
-    if target_dom and reset_expr:
-        updated_metrics = []
-        for m in target_dom.metrics:
-            if m.name.upper() == m_name:
-                updated_metrics.append(m.model_copy(update={"sql_expression": reset_expr}))
-            else:
-                updated_metrics.append(m)
-        updated_dom = target_dom.model_copy(update={"metrics": updated_metrics})
-        ontology_store.add_or_update_domain(updated_dom, original=target_dom.domain, enforce_bi_formula_readonly=False)
-
-    return {
-        "project_id": project_id,
-        "metric_name": m_name,
-        "reset_expression": reset_expr or "",
-        "message": f"Reset metric '{m_name}' back to baseline.",
-    }
-
-
 def resolve_drift_event(event_id: str, action: str, reason: str = "") -> Optional[Dict[str, Any]]:
     state = _load_state()
-    for ev in state["events"]:
+    for ev in state.get("events") or []:
         if ev["id"] == event_id:
             if action == "approve":
                 ev["status"] = "approved"
@@ -1422,4 +1125,22 @@ def delete_schedule(schedule_id: str) -> bool:
     except Exception:
         pass
     return len(state["schedules"]) < before
+
+
+def __getattr__(name: str) -> Any:
+    """Backward compatibility forwarder for test helpers moved to semabridge.demo.drift_fixtures."""
+    if name in (
+        "get_default_mock_drift_events",
+        "seed_mock_drift_events",
+        "cleanup_mock_drift_events",
+        "get_configured_demo_project_id",
+        "set_configured_demo_project_id",
+        "derive_semabridge_sql",
+        "simulate_metric_drift",
+        "reset_simulated_metric_drift",
+    ):
+        import semabridge.demo.drift_fixtures as _fixtures
+        return getattr(_fixtures, name)
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
+
 

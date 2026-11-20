@@ -78,14 +78,9 @@ def simulate_blast_radius(req: BlastRadiusRequest) -> BlastRadiusReport:
         except Exception:
             certified_names = set()
 
-    from semabridge.reconciliation.mock_parity import is_mock_drift_enabled, is_mock_parity_enabled
+    from semabridge.reconciliation.mock_parity import is_mock_drift_enabled
 
-    is_mock = req.mock_mode
-    if is_mock is None:
-        if is_mock_drift_enabled() or is_mock_parity_enabled():
-            is_mock = True
-        else:
-            is_mock = False
+    is_mock = is_mock_drift_enabled()
 
     simulator = BlastRadiusSimulator(
         ontology=fed,

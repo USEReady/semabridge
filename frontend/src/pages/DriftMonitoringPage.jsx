@@ -79,8 +79,9 @@ export default function DriftMonitoringPage() {
   const [busy, setBusy] = useState(false);
   const [statusFilter, setStatusFilter] = useState('all');
   const [checkMsg, setCheckMsg] = useState('');
+  const [targetInfo, setTargetInfo] = useState({});
 
-  // Blast Radius Modal state & simulation in mock mode
+  // Blast Radius Modal state
   const [blastModalOpen, setBlastModalOpen] = useState(false);
   const [blastTarget, setBlastTarget] = useState('');
   const [blastType, setBlastType] = useState('METRIC');
@@ -117,7 +118,6 @@ export default function DriftMonitoringPage() {
           target_type: tType,
           change_type: cType,
           project_id: selectedProjectId || undefined,
-          mock_mode: true,
         }),
       });
       const data = await res.json();
@@ -172,10 +172,23 @@ export default function DriftMonitoringPage() {
         const data = await res.json();
         setAllEvents(data.events || []);
       }
+      if (selectedProjectId) {
+        const pRes = await authFetch(`/api/drift/events?project_id=${encodeURIComponent(selectedProjectId)}`);
+        if (pRes.ok) {
+          const pData = await pRes.json();
+          setTargetInfo((prev) => ({
+            ...prev,
+            [cleanPid(selectedProjectId)]: {
+              views_checked: pData.views_checked || [],
+              checked_at: pData.checked_at || null,
+            },
+          }));
+        }
+      }
     } catch (err) {
       console.error('Failed to load drift events:', err);
     }
-  }, []);
+  }, [selectedProjectId, authFetch]);
 
   useEffect(() => {
     refreshEvents();
@@ -197,9 +210,7 @@ export default function DriftMonitoringPage() {
     return cleanPid(e.project_id) === cleanPid(selectedProjectId);
   });
 
-  const driftMetrics = projectEvents.map((e) => e.metric_name).filter(Boolean);
-  const projectMetricNames = projectMetrics.map((m) => m.name || m.logical_name).filter(Boolean);
-  const quickTargets = Array.from(new Set([...driftMetrics, ...projectMetricNames]));
+  const quickTargets = Array.from(new Set(projectMetrics.map((m) => m.name || m.logical_name).filter(Boolean)));
 
   const pendingEvents = projectEvents.filter((e) => e.status === 'pending');
   const approvedEvents = projectEvents.filter((e) => e.status === 'approved');
@@ -239,6 +250,15 @@ export default function DriftMonitoringPage() {
       });
       const data = await res.json();
       setCheckMsg(`Checked ${data.checked_metrics} metric(s) · ${data.drift_detected} drift event(s) detected.`);
+      if (selectedProjectId) {
+        setTargetInfo((prev) => ({
+          ...prev,
+          [cleanPid(selectedProjectId)]: {
+            views_checked: data.views_checked || [],
+            checked_at: data.checked_at || null,
+          },
+        }));
+      }
       await refreshEvents();
     } catch (err) {
       setCheckMsg(`Check failed: ${err}`);
@@ -248,18 +268,9 @@ export default function DriftMonitoringPage() {
   };
 
   // Refresh drift logs
-  const handleSeedMock = async () => {
-    try {
-      const pid = selectedProjectId || (projects[0]?.id || projects[0]?.name || '');
-      if (!pid) return;
-      const res = await authFetch(`/api/drift/events/seed-mock?project_id=${encodeURIComponent(pid)}`, { method: 'POST' });
-      if (res.ok) {
-        setCheckMsg('Drift logs refreshed for project.');
-        await refreshEvents();
-      }
-    } catch (err) {
-      alert(`Failed to refresh drift logs: ${err}`);
-    }
+  const handleRefreshLogs = async () => {
+    await refreshEvents();
+    setCheckMsg('Drift events refreshed.');
   };
 
   // Clear drift history
@@ -332,7 +343,7 @@ export default function DriftMonitoringPage() {
               borderColor: 'rgba(168, 85, 247, 0.35)',
               color: 'var(--accent-purple, #a855f7)',
             }}
-            onClick={() => handleOpenBlast(projectEvents[0]?.metric_name || 'TOTAL_UNITS')}
+            onClick={() => handleOpenBlast(projectEvents[0]?.metric_name || quickTargets[0] || '')}
             title="Check Blast Radius: see how metric changes affect downstream BI reports & AI agents"
           >
             <Zap size={13} style={{ color: 'var(--accent-purple, #a855f7)' }} /> Check Blast Radius
@@ -430,7 +441,7 @@ export default function DriftMonitoringPage() {
                       }}>
                         <AlertTriangle size={11} /> {pPending} Drift{pPending > 1 ? 's' : ''}
                       </span>
-                    ) : pEvs.length > 0 ? (
+                    ) : pRealEvs.length > 0 ? (
                       <span style={{
                         fontSize: 10.5,
                         fontWeight: 700,
@@ -490,7 +501,20 @@ export default function DriftMonitoringPage() {
                 </code>
               </div>
               <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <Database size={13} style={{ color: 'var(--accent-blue)' }} /> Target: Snowflake SEMABRIDGE_WORKSPACE · Auto-monitored on scheduled runs
+                <Database size={13} style={{ color: 'var(--accent-blue)' }} /> {
+                  (() => {
+                    const info = targetInfo[cleanPid(selectedProjectId)] || {};
+                    const views = info.views_checked || [];
+                    const time = info.checked_at;
+                    if (views.length > 0) {
+                      return `Target View${views.length > 1 ? 's' : ''}: ${views.join(', ')}${time ? ` · Checked: ${formatOccurred(time)}` : ''}`;
+                    }
+                    if (time) {
+                      return `Target: Checked ${formatOccurred(time)}`;
+                    }
+                    return 'Target: Semantic views (not checked yet)';
+                  })()
+                }
               </div>
             </div>
 
@@ -507,7 +531,7 @@ export default function DriftMonitoringPage() {
               <button
                 type="button"
                 style={BTN}
-                onClick={handleSeedMock}
+                onClick={handleRefreshLogs}
                 title="Refresh drift logs from warehouse and semantic models"
               >
                 <RefreshCw size={13} /> Refresh
@@ -634,7 +658,7 @@ export default function DriftMonitoringPage() {
                 <button
                   type="button"
                   style={{ ...BTN, marginTop: 8 }}
-                  onClick={handleSeedMock}
+                  onClick={handleRefreshLogs}
                 >
                   <RefreshCw size={13} /> Refresh Logs
                 </button>
