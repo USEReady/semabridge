@@ -37,6 +37,12 @@ def clean_drift_state(tmp_path, monkeypatch):
     monkeypatch.setattr("semabridge.governance.drift_service._state_path", lambda: state_file)
     monkeypatch.setattr("semabridge.governance.drift_service._db_load_events", lambda: None)
     monkeypatch.setattr("semabridge.governance.drift_service._db_save_events", lambda *a, **k: False)
+    try:
+        from semabridge.repository.orm.session_factory import db_manager
+        from semabridge.repository.orm.models import Base
+        Base.metadata.create_all(bind=db_manager.get_engine())
+    except Exception:
+        pass
     yield
 
 

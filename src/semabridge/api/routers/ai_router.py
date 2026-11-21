@@ -795,6 +795,7 @@ def execute_semantic_query(
         all_metrics=all_metrics,
         all_concepts=all_concepts,
         semantic_view_name=req.view_name,
+        known_query_path=req.query_path,
     )
     if not guard_decision.allowed:
         raise HTTPException(status_code=400, detail=guard_decision.refusal_reason or "SQL rejected by governance guard.")

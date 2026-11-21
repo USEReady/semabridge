@@ -100,6 +100,7 @@ def inspect_and_guard_generated_sql(
     all_metrics: Optional[List[Any]] = None,
     all_concepts: Optional[List[Any]] = None,
     semantic_view_name: Optional[str] = None,
+    known_query_path: Optional[str] = None,
 ) -> SQLGuardDecision:
     """Run all governance guard checks on generated SQL before execution.
 
@@ -123,7 +124,12 @@ def inspect_and_guard_generated_sql(
     metrics_list = all_metrics or []
     concepts_list = all_concepts or []
     sql_u = sql.upper()
-    is_sv_query = "SEMANTIC_VIEW(" in sql_u
+    if known_query_path and "free" in known_query_path.lower():
+        is_sv_query = False
+    elif known_query_path and "semantic" in known_query_path.lower():
+        is_sv_query = True
+    else:
+        is_sv_query = "SEMANTIC_VIEW(" in sql_u
 
     # -----------------------------------------------------------------------
     # 1. Governed Path Check (Class C)
