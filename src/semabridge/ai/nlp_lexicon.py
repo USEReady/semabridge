@@ -24,6 +24,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 import yaml
 
 from semabridge.ontology.models import infer_aggregation_from_sql
+from semabridge.utils.synonyms import is_filtered_metric
 
 try:
     import sqlglot
@@ -780,8 +781,23 @@ class ProjectLexicon:
             is_pct = bool(
                 re.search(r"(%|_pct|\bpct\b|pctof|percent|ratio|share|\brate\b|\bmom|\byoy|\bqoq)", m_text, re.I)
             )
-            is_cnt = bool(is_count_fn(m)) if is_count_fn else False
-            has_filter = bool(filter_lits) or bool(getattr(m, "filter_expression", None))
+            is_cnt = False
+            if not is_pct:
+                if is_count_fn:
+                    is_cnt = bool(is_count_fn(m))
+                else:
+                    m_sql_str = str(getattr(m, "sql_expression", "") or "").strip()
+                    agg_inferred = infer_aggregation_from_sql(m_sql_str)
+                    is_cnt = bool(
+                        agg_inferred in ("COUNT", "COUNT_DISTINCT")
+                        or str(getattr(m, "aggregation_type", "") or "").upper() in ("COUNT", "COUNT_DISTINCT")
+                        or (bool(re.match(r"^\s*COUNT\s*\(", m_sql_str, re.I)) and not re.search(r"[/*+-]", m_sql_str))
+                    )
+            has_filter = (
+                bool(filter_lits)
+                or bool(getattr(m, "filter_expression", None))
+                or is_filtered_metric(m)
+            )
 
             all_l = name_label_lemmas | c_lemmas | filter_val_lemmas
             m_sql = getattr(m, "sql_expression", None)

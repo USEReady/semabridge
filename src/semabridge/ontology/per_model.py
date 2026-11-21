@@ -105,6 +105,7 @@ def sync_project_model_domains(
     """Re-sync each model's domain from that model's latest snapshot (no cross-model merging)."""
     results: List[Dict[str, Any]] = []
     wanted = model_key(only_model) if only_model else None
+    eff_save = save_to_disk and not str(project_id).startswith("preview-") and not str(project_id).startswith("preview_")
     for pm in models if models is not None else project_models(project_id, repo=repo):
         if wanted and pm.model_id != wanted and wanted not in pm.aliases:
             continue
@@ -114,8 +115,8 @@ def sync_project_model_domains(
         existing = existing_model_domain(store, project_id, pm.model_id)
         rep: Dict[str, List[str]] = {}
         dom = build_model_domain(project_id, pm, existing=existing, owner=owner, report=rep)
-        store.add_or_update_domain(dom, save_to_disk=save_to_disk, original=existing.domain if existing else None)
-        if save_to_disk:
+        store.add_or_update_domain(dom, save_to_disk=eff_save, original=existing.domain if existing else None)
+        if eff_save:
             store.attach_model_domain(project_id, pm.model_id, dom.id)
         results.append(
             {

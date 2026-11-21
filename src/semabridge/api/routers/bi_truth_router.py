@@ -28,6 +28,7 @@ class GenerateTruthRequest(BaseModel):
     project_id: Optional[str] = None
     domain: Optional[str] = None
     pbix_dir: Optional[str] = None
+    view: Optional[str] = None
     limit: int = 50
     replace_drafts: bool = False
 
@@ -63,6 +64,7 @@ class ImportDocTextRequest(BaseModel):
 
 class RunTruthSuiteRequest(BaseModel):
     project_id: Optional[str] = None
+    view: Optional[str] = None
 
 
 @router.post("/generate", response_model=Dict[str, Any])
@@ -81,6 +83,7 @@ def generate_cases(req: GenerateTruthRequest) -> Dict[str, Any]:
                 domain=req.domain,
                 limit=req.limit,
                 replace_drafts=req.replace_drafts,
+                view=req.view,
             )
             skipped = getattr(added, "skipped", [])
         return _sanitize_cell_value({
@@ -88,6 +91,8 @@ def generate_cases(req: GenerateTruthRequest) -> Dict[str, Any]:
             "skipped_count": getattr(added, "skipped_count", len(skipped)),
             "cases": list(added),
             "skipped": skipped,
+            "view": getattr(added, "view", None),
+            "semantic_view": getattr(added, "semantic_view", None),
         })
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
@@ -180,7 +185,16 @@ def delete_cases(project_id: Optional[str] = None) -> Dict[str, Any]:
 @router.post("/run", response_model=Dict[str, Any])
 def execute_truth_suite(req: RunTruthSuiteRequest, request: Request) -> Dict[str, Any]:
     uid = getattr(request.state, "user_id", None)
-    return _sanitize_cell_value(run_truth_suite(project_id=req.project_id, owner_id=str(uid) if uid else None))
+    try:
+        return _sanitize_cell_value(
+            run_truth_suite(
+                project_id=req.project_id,
+                owner_id=str(uid) if uid else None,
+                view=req.view,
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.get("/runs", response_model=Dict[str, Any])

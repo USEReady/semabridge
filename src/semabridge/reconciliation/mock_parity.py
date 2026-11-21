@@ -21,6 +21,31 @@ def is_mock_drift_enabled() -> bool:
     return val in ("1", "true", "yes", "on")
 
 
+def is_demo_flag_active(project_id: Optional[str] = None) -> bool:
+    """Return True if demo mode is globally active or explicitly enabled for this project."""
+    val = os.getenv("SEMABRIDGE_DEMO_MODE", "").strip().lower()
+    if val in ("1", "true", "yes", "on"):
+        return True
+    if project_id:
+        try:
+            from semabridge.demo.drift_fixtures import get_configured_demo_project_id
+            if project_id == get_configured_demo_project_id():
+                return True
+        except Exception:
+            pass
+        try:
+            from semabridge.ai.project_connection import _project_meta
+            meta = _project_meta(project_id)
+            if meta.get("demo_mode"):
+                return True
+            behav = meta.get("behavior")
+            if isinstance(behav, dict) and behav.get("features", {}).get("demo_mode"):
+                return True
+        except Exception:
+            pass
+    return False
+
+
 def generate_mock_comparative_data(
     metric_name: str,
     dimensions: Optional[List[str]] = None,
@@ -28,6 +53,9 @@ def generate_mock_comparative_data(
     project_id: Optional[str] = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Generate high-fidelity, matching SQL and DAX result sets showing good match values."""
+    if os.getenv("SEMABRIDGE_MOCK_PARITY", "").strip().lower() in ("0", "false", "off", "no"):
+        return [], []
+
     dims = [d.strip() for d in (dimensions or []) if d and d.strip()]
     dim_key = dims[0] if dims else None
 
@@ -47,8 +75,12 @@ def generate_mock_comparative_data(
             slice_vals = ["Youth", "Modern", "Regular", "Urban", "Enterprise"]
             base_numbers = [210000.0, 430000.0, 650000.0, 380000.0, 820000.0]
         else:
-            slice_vals = ["Segment Alpha", "Segment Beta", "Segment Gamma", "Segment Delta", "Segment Epsilon"]
-            base_numbers = [15000.0, 28000.0, 34000.0, 49000.0, 62000.0]
+            if is_demo_flag_active(project_id):
+                slice_vals = ["Segment Alpha", "Segment Beta", "Segment Gamma", "Segment Delta", "Segment Epsilon"]
+                base_numbers = [15000.0, 28000.0, 34000.0, 49000.0, 62000.0]
+            else:
+                # The generic "Segment ..." fallback must not be used for real projects (demo flag only)
+                return [], []
     else:
         slice_vals = []
         base_numbers = [245000.0]

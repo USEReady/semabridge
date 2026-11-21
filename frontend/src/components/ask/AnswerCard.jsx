@@ -29,6 +29,10 @@ function HowAnswered({ plan, result, target }) {
   const policies = plan?.applied_policies || [];
   const filters = (plan?.filters || []).filter((f) => !policies.includes(f));
   const warnings = plan?.warnings || [];
+  const path = plan?.query_path || result?.query_path || (plan?.is_draft ? 'free-form (not governed)' : 'semantic_view');
+  const assumptions = plan?.assumptions || [];
+  const guardChecks = plan?.guard_checks || [];
+  const suggestedMetrics = plan?.suggested_metrics || [];
 
   const copy = async () => {
     try {
@@ -41,6 +45,9 @@ function HowAnswered({ plan, result, target }) {
   };
 
   const summary = [
+    path,
+    metrics.length ? `metric: ${metrics[0]}` : null,
+    assumptions.length ? `${assumptions.length} assumption${assumptions.length === 1 ? '' : 's'}` : null,
     metrics.length ? `matched ${metrics.length + dims.length} term${metrics.length + dims.length === 1 ? '' : 's'}` : 'no governed metric matched',
     policies.length ? `${policies.length} polic${policies.length === 1 ? 'y' : 'ies'} applied` : null,
     lineCount ? `${lineCount} lines of SQL` : null,
@@ -62,6 +69,21 @@ function HowAnswered({ plan, result, target }) {
 
       {open && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingLeft: 20 }}>
+          <Step label="Path">
+            <span
+              style={{
+                ...CHIP,
+                color: path.includes('free-form') || path.includes('not governed') ? 'var(--color-warning)' : 'var(--text-primary)',
+              }}
+            >
+              {path}
+            </span>
+            {plan?.is_certified && (
+              <span style={{ ...CHIP, color: 'var(--color-success, #10b981)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <ShieldCheck size={12} /> Certified
+              </span>
+            )}
+          </Step>
           <Step label="Matched">
             {metrics.length + dims.length === 0 && <span>No metrics or concepts matched.</span>}
             {metrics.map((m) => (
@@ -82,6 +104,40 @@ function HowAnswered({ plan, result, target }) {
               </span>
             )}
           </Step>
+          {suggestedMetrics.length > 0 && (
+            <Step label="Suggested">
+              {suggestedMetrics.map((sm, i) => (
+                <span key={`sug-${i}`} style={{ ...CHIP, border: '1px dashed var(--border-focus)' }}>
+                  {sm}
+                </span>
+              ))}
+            </Step>
+          )}
+          {assumptions.length > 0 && (
+            <Step label="Assumptions">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, width: '100%' }}>
+                {assumptions.map((a, i) => (
+                  <span key={`asm-${i}`} style={{ color: 'var(--color-warning, #f59e0b)' }}>⚠️ {a}</span>
+                ))}
+              </div>
+            </Step>
+          )}
+          {guardChecks.length > 0 && (
+            <Step label="Checks">
+              {guardChecks.map((chk, i) => (
+                <span
+                  key={`chk-${i}`}
+                  style={{
+                    ...CHIP,
+                    color: chk.passed ? 'var(--color-success, #10b981)' : 'var(--color-warning, #f59e0b)',
+                  }}
+                  title={chk.message}
+                >
+                  {chk.passed ? '✓ ' : '✗ '}{chk.check}
+                </span>
+              ))}
+            </Step>
+          )}
           <Step label="Policies">
             {policies.length === 0 ? (
               <span>None applied</span>

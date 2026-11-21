@@ -9,6 +9,7 @@ import { authFetch } from '../utils/api';
 import { useProjects, normalizeProjectId, matchesProjectId } from '../hooks/useProjects';
 import Modal from '../components/common/Modal';
 import { ImpactReport } from '../components/ontology/GovernancePanels';
+import DeployedViewSelector from '../components/common/DeployedViewSelector';
 const CARD = {
   background: 'var(--bg-surface)',
   border: '1px solid var(--border-main)',
@@ -71,6 +72,9 @@ function formatOccurred(isoStr) {
 }
 
 export default function DriftMonitoringPage() {
+  const [searchParams] = useSearchParams();
+  const selectedView = searchParams.get('view') || '';
+
   const {
     projects,
     selectedProjectId,
@@ -138,12 +142,18 @@ export default function DriftMonitoringPage() {
     ...(lastCheckResult && matchesProject(lastCheckResult.project_id, selectedProject, selectedProjectId) ? lastCheckResult : {}),
   };
 
+  const isLiveCapture = curTarget.baseline_source === 'live_capture' || curTarget.status === 'IN_SYNC_SINCE_CAPTURE';
   const displayStatus = (() => {
     if (pendingEvents.length > 0) return 'DRIFT_DETECTED';
-    if (curTarget.status) return curTarget.status;
-    if (projectEvents.length > 0) return 'IN_SYNC';
+    if (curTarget.status) {
+      if (curTarget.status === 'IN_SYNC' && isLiveCapture) return 'IN_SYNC_SINCE_CAPTURE';
+      return curTarget.status;
+    }
+    if (projectEvents.length > 0) return isLiveCapture ? 'IN_SYNC_SINCE_CAPTURE' : 'IN_SYNC';
     return 'NOT_CHECKED';
   })();
+
+  const isLiveCaptureSync = displayStatus === 'IN_SYNC_SINCE_CAPTURE' || (displayStatus === 'IN_SYNC' && isLiveCapture);
 
   const filteredEvents = projectEvents.filter((ev) => {
     if (statusFilter === 'all') return ev.status !== 'superseded';
@@ -169,11 +179,12 @@ export default function DriftMonitoringPage() {
       setProjectMetrics([]);
       return;
     }
-    authFetch(`/api/reconciliation/project-metrics?project_id=${encodeURIComponent(selectedProjectId)}`)
+    const viewParam = selectedView ? `&view=${encodeURIComponent(selectedView)}` : '';
+    authFetch(`/api/reconciliation/project-metrics?project_id=${encodeURIComponent(selectedProjectId)}${viewParam}`)
       .then((r) => r.ok ? r.json() : null)
       .then((d) => setProjectMetrics(d?.metrics || []))
       .catch(() => setProjectMetrics([]));
-  }, [selectedProjectId, authFetch]);
+  }, [selectedProjectId, selectedView, authFetch]);
 
   const runBlastSimulation = async (targetOverride, changeTypeOverride, typeOverride) => {
     const target = (targetOverride ?? blastTarget).trim();
@@ -241,7 +252,8 @@ export default function DriftMonitoringPage() {
         }
       }
       if (selectedProjectId) {
-        const pRes = await authFetch(`/api/drift/events?project_id=${encodeURIComponent(selectedProjectId)}`);
+        const viewParam = selectedView ? `&view=${encodeURIComponent(selectedView)}` : '';
+        const pRes = await authFetch(`/api/drift/events?project_id=${encodeURIComponent(selectedProjectId)}${viewParam}`);
         if (pRes.ok) {
           const pData = await pRes.json();
           const normPid = cleanPid(selectedProjectId);
@@ -299,7 +311,10 @@ export default function DriftMonitoringPage() {
       const res = await authFetch('/api/drift/check', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project_id: selectedProjectId || undefined }),
+        body: JSON.stringify({
+          project_id: selectedProjectId || undefined,
+          view: selectedView || undefined,
+        }),
       });
       const data = await res.json();
       setLastCheckResult(data);
@@ -536,6 +551,23 @@ export default function DriftMonitoringPage() {
                           </span>
                         );
                       }
+                      if (pStatus === 'IN_SYNC_SINCE_CAPTURE' || (pStatus === 'IN_SYNC' && pTarget.baseline_source === 'live_capture')) {
+                        return (
+                          <span style={{
+                            fontSize: 10.5,
+                            fontWeight: 700,
+                            padding: '2px 7px',
+                            borderRadius: 12,
+                            background: 'rgba(59, 130, 246, 0.15)',
+                            color: 'var(--accent-blue)',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 4,
+                          }}>
+                            <Clock size={11} /> In sync (live capture)
+                          </span>
+                        );
+                      }
                       if (pStatus === 'IN_SYNC') {
                         return (
                           <span style={{
@@ -614,7 +646,7 @@ export default function DriftMonitoringPage() {
                 gap: 12,
               }}>
                 <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                     <h2 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: 'var(--text-primary)' }}>
                       {selectedProject?.name || selectedProjectId || 'Select a project'}
                     </h2>
@@ -622,6 +654,12 @@ export default function DriftMonitoringPage() {
                       <code style={{ fontSize: 11.5, padding: '2px 6px', borderRadius: 4, background: 'var(--bg-app)', color: 'var(--text-secondary)' }}>
                         {selectedProjectId}
                       </code>
+                    )}
+                    {selectedProjectId && (
+                      <DeployedViewSelector
+                        projectId={selectedProjectId}
+                        projectSchema={selectedProject?.schema}
+                      />
                     )}
                   </div>
               <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -684,6 +722,26 @@ export default function DriftMonitoringPage() {
             </div>
           </div>
 
+          {/* Warning banner for live-capture baseline */}
+          {(isLiveCapture || isLiveCaptureSync || curTarget.status === 'BASELINE_CAPTURED') && (
+            <div style={{
+              padding: '12px 16px',
+              borderRadius: 8,
+              background: 'rgba(234, 179, 8, 0.12)',
+              border: '1px solid rgba(234, 179, 8, 0.35)',
+              color: 'var(--color-warning, #eab308)',
+              fontSize: 12.5,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+            }}>
+              <AlertTriangle size={18} style={{ flexShrink: 0 }} />
+              <div>
+                <strong>Warning:</strong> No deploy baseline found - changes made before {curTarget.baseline_at ? formatOccurred(curTarget.baseline_at) : (curTarget.checked_at ? formatOccurred(curTarget.checked_at) : 'capture')} cannot be detected. Re-run the sync to record one.
+              </div>
+            </div>
+          )}
+
           {/* Quick Metrics KPI Bar */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
             <div style={{ ...CARD, padding: 14 }}>
@@ -694,6 +752,8 @@ export default function DriftMonitoringPage() {
                 marginTop: 4,
                 color: displayStatus === 'DRIFT_DETECTED'
                   ? 'var(--color-warning)'
+                  : isLiveCaptureSync
+                  ? 'var(--accent-blue)'
                   : displayStatus === 'IN_SYNC'
                   ? 'var(--color-success)'
                   : displayStatus === 'BASELINE_CAPTURED'
@@ -707,6 +767,8 @@ export default function DriftMonitoringPage() {
                   <><AlertTriangle size={18} /> {pendingEvents.length > 0 ? `${pendingEvents.length} Action Needed` : 'Drift Detected'}</>
                 ) : displayStatus === 'BASELINE_CAPTURED' ? (
                   <><Clock size={18} /> Baseline Captured</>
+                ) : isLiveCaptureSync ? (
+                  <><Clock size={18} /> In sync since {curTarget.baseline_at ? formatOccurred(curTarget.baseline_at) : (curTarget.checked_at ? formatOccurred(curTarget.checked_at) : 'capture')} (live capture)</>
                 ) : displayStatus === 'IN_SYNC' ? (
                   <><ShieldCheck size={18} /> In Sync (Clean)</>
                 ) : (
@@ -718,6 +780,8 @@ export default function DriftMonitoringPage() {
                   ? 'Direct upsert paused on schedule'
                   : displayStatus === 'BASELINE_CAPTURED'
                   ? `Baseline captured (${curTarget.metrics_compared || curTarget.baseline_metrics || 'all'} metrics) — next check compares`
+                  : isLiveCaptureSync
+                  ? `${curTarget.metrics_compared ? curTarget.metrics_compared + ' metrics compared against live capture' : 'No drift detected since live capture'}`
                   : displayStatus === 'IN_SYNC'
                   ? `Direct upsert permitted · ${curTarget.metrics_compared ? curTarget.metrics_compared + ' metrics verified' : 'No drift detected'}`
                   : (curTarget.not_checked_reason || curTarget.reason ? `Reason: ${curTarget.not_checked_reason || curTarget.reason}` : 'No drift comparison run yet for this project')}
@@ -813,6 +877,16 @@ export default function DriftMonitoringPage() {
                     </strong>
                     <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)', maxWidth: 460 }}>
                       Initial metric definitions recorded. Subsequent scheduled checks will compare and report drift against this baseline.
+                    </p>
+                  </>
+                ) : isLiveCaptureSync ? (
+                  <>
+                    <Clock size={32} style={{ color: 'var(--accent-blue)' }} />
+                    <strong style={{ fontSize: 14, color: 'var(--text-primary)' }}>
+                      In sync since {curTarget.baseline_at ? formatOccurred(curTarget.baseline_at) : (curTarget.checked_at ? formatOccurred(curTarget.checked_at) : 'capture')} (live capture)
+                    </strong>
+                    <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)', maxWidth: 460 }}>
+                      No drift detected between live Snowflake view and the captured baseline. No deploy baseline was found; re-run the sync to record one.
                     </p>
                   </>
                 ) : displayStatus === 'NOT_CHECKED' ? (

@@ -32,6 +32,7 @@ class DriftCheckRequest(BaseModel):
     project_id: Optional[str] = None
     domain: Optional[str] = None
     webhook_url: Optional[str] = None
+    view: Optional[str] = None
 
 
 class DriftResolutionRequest(BaseModel):
@@ -60,20 +61,50 @@ class CreateScheduleRequest(BaseModel):
 @router.post("/check", response_model=Dict[str, Any])
 def trigger_drift_check(req: DriftCheckRequest, request: Request) -> Dict[str, Any]:
     uid = getattr(request.state, "user_id", None)
-    return run_drift_check(
-        project_id=req.project_id,
-        domain=req.domain,
-        webhook_url=req.webhook_url,
-        owner_id=str(uid) if uid else None,
-    )
+    try:
+        return run_drift_check(
+            project_id=req.project_id,
+            domain=req.domain,
+            webhook_url=req.webhook_url,
+            owner_id=str(uid) if uid else None,
+            view=req.view,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.get("/events", response_model=Dict[str, Any])
-def get_drift_events(project_id: Optional[str] = None, status: Optional[str] = None) -> Dict[str, Any]:
+def get_drift_events(
+    project_id: Optional[str] = None,
+    status: Optional[str] = None,
+    view: Optional[str] = None,
+) -> Dict[str, Any]:
+    resolved_view = None
+    if project_id:
+        from semabridge.repository.model_repository import ModelRepository
+        repo = ModelRepository()
+        try:
+            if view:
+                resolved_view = repo.validate_project_view(project_id, view)
+            else:
+                deployments = repo.list_project_deployments(project_id, include_unmanaged=True)
+                latest = next((d for d in deployments if d.get("is_latest")), None)
+                resolved_view = latest["semantic_view"] if latest else None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
     events = list_drift_events(project_id=project_id, status=status)
     if not is_mock_drift_enabled():
         events = [e for e in events if not e.get("mock")]
-    target_info = get_project_drift_target_info(project_id) if project_id else {}
+
+    if resolved_view:
+        v_tail = resolved_view.strip().split(".")[-1].strip('"').lower()
+        events = [
+            e for e in events
+            if not e.get("semantic_view") or str(e["semantic_view"]).strip().split(".")[-1].strip('"').lower() == v_tail
+        ]
+
+    target_info = get_project_drift_target_info(project_id, view=resolved_view) if project_id else {}
     from semabridge.governance.drift_service import _load_state
     state = _load_state()
     last_checks = dict(state.get("last_checks") or {})
@@ -89,6 +120,8 @@ def get_drift_events(project_id: Optional[str] = None, status: Optional[str] = N
         "baseline_at": target_info.get("baseline_at"),
         "metrics_compared": target_info.get("metrics_compared", 0),
         "last_checks": last_checks,
+        "view": resolved_view,
+        "semantic_view": resolved_view,
     }
 
 

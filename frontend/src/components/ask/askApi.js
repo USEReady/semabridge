@@ -41,6 +41,7 @@ export async function askQuestion({ question, target, projectId, allowOfflineDra
       project_id: projectId || undefined,
       // Multi-model projects: the view the user picked after an ambiguous question.
       semantic_view: semanticView || undefined,
+      view: semanticView || undefined,
       allow_offline_draft: Boolean(allowOfflineDraft),
     });
     if (!res.ok) throw new Error(await readError(res, 'Could not interpret the question'));

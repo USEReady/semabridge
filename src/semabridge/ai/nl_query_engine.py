@@ -75,10 +75,15 @@ class QueryResolutionPlan(BaseModel):
     # several views -- the views to choose from instead of a guess.
     answered_by_view: Optional[str] = None
     answered_by_domain: Optional[str] = None
+    view: Optional[str] = None
+    semantic_view: Optional[str] = None
     candidate_views: List[str] = Field(default_factory=list)
     query_path: Optional[str] = None
     is_certified: bool = False
     plan_checks_passed: bool = True
+    assumptions: List[str] = Field(default_factory=list)
+    guard_checks: List[Dict[str, Any]] = Field(default_factory=list)
+    suggested_metrics: List[str] = Field(default_factory=list)
 
 
 class NLQueryEngine:
@@ -493,8 +498,14 @@ class NLQueryEngine:
                     if tok in non_concept_toks:
                         matched_non_concept = True
                 elif tok in me.concept_lemmas:
-                    matched_w += w * 0.85
-                    matched_tokens.add(tok)
+                    if parsed.aggregation_intent == "COUNT" and me.is_count and not me.has_filter_clause:
+                        matched_w += w * 2.2
+                        matched_tokens.add(tok)
+                        matched_name_or_filter = True
+                        matched_non_concept = True
+                    else:
+                        matched_w += w * 0.85
+                        matched_tokens.add(tok)
                 elif agg_ok and (tok in me.measure_lemmas or tok in me.description_lemmas):
                     matched_w += w * (1.5 if tok in me.measure_lemmas else 1.0)
                     matched_tokens.add(tok)
@@ -511,6 +522,15 @@ class NLQueryEngine:
                             matched_non_concept = True
                     elif tok_fam & me.name_label_lemmas:
                         matched_w += w * 1.3
+                        matched_tokens.add(tok)
+                        matched_name_or_filter = True
+                        if tok in non_concept_toks:
+                            matched_non_concept = True
+                    elif any(
+                        (len(tok) >= 3 and len(nl) >= 3 and (tok.startswith(nl) or nl.startswith(tok)))
+                        for nl in me.name_label_lemmas
+                    ):
+                        matched_w += w * 1.5
                         matched_tokens.add(tok)
                         matched_name_or_filter = True
                         if tok in non_concept_toks:
@@ -557,7 +577,7 @@ class NLQueryEngine:
                         score *= 0.35
 
                 if me.is_pct_or_ratio and not parsed.asks_pct_ratio and not (m_shifts & q_shifts):
-                    score *= 0.30
+                    score *= (0.15 if parsed.aggregation_intent == "COUNT" else 0.30)
                 elif me.is_pct_or_ratio and parsed.asks_pct_ratio and not (m_shifts and not parsed.asks_time_intel):
                     score += 0.45
 
@@ -574,7 +594,17 @@ class NLQueryEngine:
                 extra_quals = me.qualifier_lemmas - phrase_set - q_shifts - by_lemmas
                 if extra_quals:
                     score *= max(0.35, 1.0 - 0.12 * min(len(extra_quals), 4))
-                if me.has_filter_clause and not matched_filter_literal and not (non_concept_toks and (set(non_concept_toks) & me.qualifier_lemmas)):
+                matched_qual = bool(
+                    non_concept_toks
+                    and any(
+                        (
+                            nct in me.qualifier_lemmas
+                            or any((len(ql) >= 3 and len(nct) >= 3 and (nct.startswith(ql) or ql.startswith(nct))) for ql in me.qualifier_lemmas)
+                        )
+                        for nct in non_concept_toks
+                    )
+                )
+                if me.has_filter_clause and not matched_filter_literal and not matched_qual:
                     score *= 0.45
 
             if matched_filter_literal:
@@ -734,6 +764,17 @@ class NLQueryEngine:
                     warnings.append(f"Measure '{m_phrase.raw_text}' not found in domain.")
                 continue
 
+            if len(candidates) > 1:
+                # If top candidate is a filtered metric but an unfiltered base metric is also present,
+                # prefer the unfiltered base metric unless the user explicitly requested the filter qualifier
+                top_cand = candidates[0]
+                unfiltered = [c for c in candidates if not getattr(c[2], "has_filter_clause", False)]
+                if getattr(top_cand[2], "has_filter_clause", False) and unfiltered:
+                    score_diff = top_cand[0] - unfiltered[0][0]
+                    if score_diff <= 0.35:
+                        candidates.remove(unfiltered[0])
+                        candidates.insert(0, unfiltered[0])
+
             if outcome == "ambiguous":
                 opt_names = [item[2].display_name for item in candidates[:4] if (candidates[0][0] - item[0]) <= 0.15]
                 measure_trace.append(
@@ -748,6 +789,15 @@ class NLQueryEngine:
                 )
 
             chosen_m = candidates[0][2].metric
+            other_names = [
+                c[2].display_name
+                for c in candidates[1:4]
+                if (candidates[0][0] - c[0]) <= 0.25 and c[2].display_name != candidates[0][2].display_name
+            ]
+            if other_names:
+                warnings.append(
+                    f"Interpreted as '{candidates[0][2].display_name}'; also available: {', '.join(other_names)}"
+                )
             if chosen_m.name not in seen_metric_names:
                 seen_metric_names.add(chosen_m.name)
                 detected_metrics.append(chosen_m)
@@ -1124,6 +1174,8 @@ class NLQueryEngine:
                 parsed_phrases=parsed_phrases,
                 plan_checks_passed=not plan_checks_failed,
                 is_certified=False,
+                view=effective_semantic_view,
+                semantic_view=effective_semantic_view,
                 query_path="semantic_view" if effective_semantic_view else "governed_ontology",
             )
 
@@ -1330,6 +1382,31 @@ class NLQueryEngine:
         for w in warnings:
             explanation_parts.append(f"Warning: {w}")
 
+        guard_assumptions: List[str] = []
+        guard_checks: List[Dict[str, Any]] = []
+        suggested_metrics: List[str] = []
+        try:
+            from semabridge.ai.sql_guard_engine import inspect_and_guard_generated_sql
+            all_metrics_list = [me.metric for me in lexicon.metrics]
+            all_concepts_list = list(self.ontology.concepts.values()) if (self.ontology and hasattr(self.ontology, "concepts")) else []
+            guard_dec = inspect_and_guard_generated_sql(
+                sql=generated_sql,
+                prompt=clean_prompt,
+                all_metrics=all_metrics_list,
+                all_concepts=all_concepts_list,
+                semantic_view_name=effective_semantic_view,
+            )
+            guard_assumptions = guard_dec.assumptions
+            guard_checks = guard_dec.checks
+            suggested_metrics = guard_dec.suggested_metrics
+            if guard_dec.rewritten_sql:
+                generated_sql = guard_dec.rewritten_sql
+            for gw in guard_dec.warnings:
+                if gw not in warnings:
+                    warnings.append(gw)
+        except Exception as guard_err:
+            logger.debug("NLQueryEngine guard check skipped/failed: %s", guard_err)
+
         return QueryResolutionPlan(
             original_prompt=clean_prompt,
             detected_metrics=[m.label or m.name for m in detected_metrics],
@@ -1346,9 +1423,14 @@ class NLQueryEngine:
             answerable=True,
             parsed_phrases=parsed_phrases,
             is_draft=is_draft,
+            view=effective_semantic_view,
+            semantic_view=effective_semantic_view,
             query_path="semantic_view" if effective_semantic_view else "governed_ontology",
             is_certified=bool(effective_semantic_view and not warnings),
             plan_checks_passed=True,
+            assumptions=guard_assumptions,
+            guard_checks=guard_checks,
+            suggested_metrics=suggested_metrics,
         )
 
     @staticmethod

@@ -623,6 +623,24 @@ async def delete_snapshots(project_id: str, snapshot_ids: List[str], request: Re
     return await delete_project_snapshots_compat(project_id, snapshot_ids)
 
 
+@router.get("/api/projects/{project_id}/deployed-views")
+async def get_project_deployed_views(
+    project_id: str,
+    request: Request,
+    include_unmanaged: bool = Query(True),
+):
+    user_id = require_request_user_id(request)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
+    from semabridge.repository.model_repository import ModelRepository
+
+    repo = ModelRepository()
+    return await asyncio.to_thread(
+        repo.list_project_deployments,
+        project_id,
+        include_unmanaged=include_unmanaged,
+    )
+
+
 @router.get("/api/projects/{project_id}/snapshot-groups")
 async def list_snapshot_groups(
     project_id: str,

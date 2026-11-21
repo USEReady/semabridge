@@ -12,6 +12,7 @@ import {
 } from '../components/ask/askApi';
 import { useProjects } from '../hooks/useProjects';
 import { BTN_PRIMARY } from '../components/ask/askStyles';
+import DeployedViewSelector from '../components/common/DeployedViewSelector';
 
 /**
  * AskAiPage (/ask) — ask a business question in plain language and get an
@@ -60,6 +61,7 @@ let nextId = Date.now();
 export default function AskAiPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const urlQuestion = searchParams.get('q') || '';
+  const selectedView = searchParams.get('view') || '';
 
   const {
     projects,
@@ -165,11 +167,11 @@ export default function AskAiPage() {
       const question = String(text ?? '').trim();
       if (!question) return;
       const id = `q${nextId++}`;
-      setThread((t) => [...t, { id, question, target, projectId, status: 'loading' }]);
+      setThread((t) => [...t, { id, question, target, projectId, status: 'loading', semanticView: selectedView || null }]);
       setDraft('');
-      runEntry(id, question, target, projectId);
+      runEntry(id, question, target, projectId, false, selectedView || null);
     },
-    [target, projectId, runEntry],
+    [target, projectId, selectedView, runEntry],
   );
 
   // /ask?q=… → prefill and ask once, then drop q so a reload does not re-ask.
@@ -245,6 +247,12 @@ export default function AskAiPage() {
               })}
             </select>
           </label>
+        )}
+        {projectId && (
+          <DeployedViewSelector
+            projectId={projectId}
+            projectSchema={selectedProject?.schema}
+          />
         )}
         <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Run on</span>
         <div className="ask-seg" role="radiogroup" aria-label="Run on" style={{ display: 'inline-flex', padding: 2, borderRadius: 8, border: '1px solid var(--border-main)', background: 'var(--bg-surface)' }}>

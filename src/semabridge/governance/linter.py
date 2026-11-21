@@ -107,8 +107,10 @@ class SemanticLinter:
         # 1. Rule: Existing Metric Collisions + Separator-Normalized Collisions (E7, E8)
         reported_collision_keys: Set[str] = set()
         for col in ontology.collisions:
-            if allowed_cf and not any(d.casefold() in allowed_cf for d in (col.conflicting_domains or [])):
-                continue
+            if allowed_cf:
+                matching_count = sum(1 for d in (col.conflicting_domains or []) if d.casefold() in allowed_cf)
+                if matching_count < 2:
+                    continue
             reported_collision_keys.add(_norm_metric_name(col.item_name))
             issues.append(
                 LintIssue(

@@ -457,12 +457,6 @@ class MetricsClauseBuilder:
         except Exception as exc:
             logger.warning("OpenAI metric prefetch skipped: %s", exc)
 
-        non_additive_metric_names = {
-            self.identifier_sanitizer.sanitize_column(m.unique_name).upper()
-            for m in valid_metrics
-            if getattr(m, "non_additive_dimension", None)
-        }
-
         for metric in valid_metrics:
             raw_name = metric.unique_name
             sanitized_name = self.identifier_sanitizer.to_alias(raw_name)
@@ -473,6 +467,12 @@ class MetricsClauseBuilder:
             for m in valid_metrics
             if getattr(m, "non_additive_dimension", None)
         }
+
+        from semabridge.utils.synonyms import disambiguate_metric_synonyms
+        view_label = getattr(self, "semantic_view_name", None) or getattr(model, "unique_name", None)
+        valid_metrics, syn_colls = disambiguate_metric_synonyms(valid_metrics, view_name=view_label)
+        if syn_colls:
+            self._synonym_collisions = getattr(self, "_synonym_collisions", []) + syn_colls
 
         for metric in valid_metrics:
             if metric.unique_name in skipped_metric_names:

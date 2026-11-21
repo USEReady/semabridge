@@ -401,6 +401,24 @@ def generate_reconciliation_queries(req: GenerateQueriesRequest) -> Dict[str, st
 @router.post("/verify", response_model=VerificationResult)
 def verify_metric_results(req: ReconcileDataRequest) -> VerificationResult:
     """Compare DAX vs SQL result sets, compute parity metrics, and persist project certifications."""
+    if not req.dax_results:
+        return VerificationResult(
+            metric_name=req.metric_name,
+            dimension_keys=req.dimension_keys,
+            total_rows_compared=0,
+            total_rows=len(req.sql_results or []),
+            matched_rows=0,
+            mismatched_rows=0,
+            max_absolute_delta=0.0,
+            max_percentage_delta=0.0,
+            status="PBI_VALUES_NEEDED",
+            dax_query_executed=req.dax_query,
+            sql_query_executed=req.sql_query,
+            certification_badge="Power BI values needed",
+            sample_mismatches=[],
+            comparison_rows=[],
+            message="Power BI values needed: upload a Power BI CSV or connect Power BI Desktop / Fabric to compare slices.",
+        )
     verifier = GoldenQueryVerifier(default_tolerance=req.tolerance)
     result = verifier.reconcile_data(
         metric_name=req.metric_name,
@@ -411,7 +429,7 @@ def verify_metric_results(req: ReconcileDataRequest) -> VerificationResult:
         sql_query=req.sql_query,
         custom_tolerance=req.tolerance,
     )
-    if req.persist_certification and (req.project_id or req.domain or req.view_metric):
+    if req.persist_certification and (req.project_id or req.domain or req.view_metric) and result.status == "CERTIFIED":
         tol = req.tolerance or verifier.tolerance
         save_certification_record(
             metric_name=req.metric_name,
@@ -593,7 +611,7 @@ def certify_metric_end_to_end(req: CertifyMetricRequest, request: Request) -> Di
             sql_rows.append(mapped)
 
         # 2. Obtain DAX rows via supplied export or automated run_dax backend
-        if req.dax_results is not None:
+        if req.dax_results is not None and len(req.dax_results) > 0:
             dax_rows = req.dax_results
             dax_backend_used = "manual_rows"
         else:
@@ -606,10 +624,40 @@ def certify_metric_end_to_end(req: CertifyMetricRequest, request: Request) -> Di
                     workspace=req.dax_workspace,
                     workspace_id=req.dax_workspace_id,
                 )
-                dax_rows = dax_exec.rows
-                dax_backend_used = dax_exec.backend
-            except DaxExecutionError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
+                if dax_exec and dax_exec.success and dax_exec.rows:
+                    dax_rows = dax_exec.rows
+                    dax_backend_used = dax_exec.backend
+            except Exception as exc:
+                logger.info("Automated DAX backend not available: %s", exc)
+                dax_rows = []
+
+        if not dax_rows:
+            needed_result = VerificationResult(
+                metric_name=req.metric_name,
+                dimension_keys=pbi_dims,
+                total_rows_compared=0,
+                total_rows=len(sql_rows),
+                matched_rows=0,
+                mismatched_rows=0,
+                max_absolute_delta=0.0,
+                max_percentage_delta=0.0,
+                status="PBI_VALUES_NEEDED",
+                dax_query_executed=dax_query,
+                sql_query_executed=sql_query,
+                certification_badge="Power BI values needed",
+                sample_mismatches=[],
+                comparison_rows=[],
+                message="Power BI values needed: upload a Power BI CSV or connect Power BI Desktop / Fabric to compare slices.",
+            )
+            return {
+                "verification": needed_result.model_dump(),
+                "certification": None,
+                "dax_backend": None,
+                "verified_query_registered": False,
+                "verified_query": None,
+                "status": "PBI_VALUES_NEEDED",
+                "message": "Power BI values needed: upload a Power BI CSV or connect Power BI Desktop / Fabric to compare slices.",
+            }
 
     # 3. Verify mathematical parity and persist certification record
     result = verifier.reconcile_data(
@@ -624,30 +672,31 @@ def certify_metric_end_to_end(req: CertifyMetricRequest, request: Request) -> Di
     tol = req.tolerance or verifier.tolerance
     cert_status = "SIMULATED" if mock_active else result.status
     cert_badge = "SIMULATED" if mock_active else result.certification_badge
+    cert_record = None
     if mock_active:
         result = result.model_copy(update={"status": "SIMULATED", "certification_badge": "SIMULATED"})
-
-    cert_record = save_certification_record(
-        metric_name=req.metric_name,
-        status=cert_status,
-        certification_badge=cert_badge,
-        project_id=req.project_id,
-        domain=req.domain,
-        view_metric=view_metric,
-        dimensions=pbi_dims,
-        dax_query=dax_query,
-        sql_query=sql_query,
-        dax_row_count=len(dax_rows),
-        sql_row_count=len(sql_rows),
-        matched_rows=result.matched_rows,
-        mismatched_rows=result.mismatched_rows,
-        max_absolute_delta=result.max_absolute_delta,
-        max_percentage_delta=result.max_percentage_delta,
-        absolute_tolerance=tol.absolute_tolerance,
-        relative_tolerance=tol.relative_tolerance,
-        max_mismatch_percentage=tol.max_mismatch_percentage,
-        certified_by=req.certified_by,
-    )
+    elif result.status == "CERTIFIED":
+        cert_record = save_certification_record(
+            metric_name=req.metric_name,
+            status=cert_status,
+            certification_badge=cert_badge,
+            project_id=req.project_id,
+            domain=req.domain,
+            view_metric=view_metric,
+            dimensions=pbi_dims,
+            dax_query=dax_query,
+            sql_query=sql_query,
+            dax_row_count=len(dax_rows),
+            sql_row_count=len(sql_rows),
+            matched_rows=result.matched_rows,
+            mismatched_rows=result.mismatched_rows,
+            max_absolute_delta=result.max_absolute_delta,
+            max_percentage_delta=result.max_percentage_delta,
+            absolute_tolerance=tol.absolute_tolerance,
+            relative_tolerance=tol.relative_tolerance,
+            max_mismatch_percentage=tol.max_mismatch_percentage,
+            certified_by=req.certified_by,
+        )
 
     verified_entry = None
     if req.register_verified_query and (not mock_active) and result.status == "CERTIFIED":
@@ -831,6 +880,18 @@ def update_metric_sql_expression(req: UpdateMetricSqlRequest) -> Dict[str, Any]:
     if not new_sql:
         raise HTTPException(status_code=400, detail="sql_expression must not be empty.")
 
+    # Check for self-referencing expression that only references the metric itself
+    clean_sql = new_sql.strip().replace('"', '').replace("'", "").replace("`", "").casefold()
+    m_bare = m_name_clean.replace('"', '').replace("'", "").replace("`", "").casefold()
+    m_leaf = m_bare.split(".")[-1]
+    has_sql_calc = bool(re.search(r"[()+\-*/=<>]|\b(?:CASE|WHEN|THEN|ELSE|END|AND|OR|NOT|SUM|COUNT|AVG|MIN|MAX|DIV0|COALESCE|IFF)\s*\(", new_sql, re.I))
+    parts = [p.strip() for p in clean_sql.split(".") if p.strip()]
+    if not has_sql_calc and (clean_sql == m_bare or clean_sql == m_leaf or (len(parts) <= 2 and parts[-1] == m_leaf)):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Self-referencing SQL expression is not allowed: '{new_sql}' only references metric '{m_name_clean}'. Provide a real SQL expression (e.g. COUNT(BU.BU)).",
+        )
+
     target_dom = None
     target_metric: Optional[DomainMetric] = None
     m_cf = m_name_clean.casefold()
@@ -868,6 +929,21 @@ def update_metric_sql_expression(req: UpdateMetricSqlRequest) -> Dict[str, Any]:
         raise HTTPException(
             status_code=404,
             detail=f"Metric '{m_name_clean}' not found in ontology.",
+        )
+
+    tm_bare = target_metric.name.strip().replace('"', '').replace("'", "").replace("`", "").casefold()
+    tm_leaf = tm_bare.split(".")[-1]
+    c_name = getattr(target_metric, "concept", "") or ""
+    c_clean = c_name.strip().replace('"', '').replace("'", "").casefold()
+    self_refs = {tm_bare, tm_leaf, m_bare, m_leaf}
+    if c_clean:
+        self_refs.add(f"{c_clean}.{tm_leaf}")
+        self_refs.add(f"{c_clean}.{m_leaf}")
+        self_refs.add(f"{c_clean}.{tm_bare}")
+    if not has_sql_calc and clean_sql in self_refs:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Self-referencing SQL expression is not allowed: '{new_sql}' only references metric '{target_metric.name}'. Provide a real SQL expression (e.g. COUNT(BU.BU)).",
         )
 
     updated_metrics = []
@@ -1068,7 +1144,10 @@ def _build_metrics_from_project_snapshots_or_view(project_id: str, dep_info: Dic
 
 
 @router.get("/project-metrics", response_model=Dict[str, Any])
-def get_project_reconciliation_metrics(project_id: Optional[str] = None) -> Dict[str, Any]:
+def get_project_reconciliation_metrics(
+    project_id: Optional[str] = None,
+    view: Optional[str] = None,
+) -> Dict[str, Any]:
     """List metrics with DAX expressions, Snowflake SQL expressions, deployed view names, and dimensions."""
     from semabridge.ontology.store import ontology_store
     from semabridge.repository.model_repository import ModelRepository
@@ -1084,12 +1163,28 @@ def get_project_reconciliation_metrics(project_id: Optional[str] = None) -> Dict
         except Exception:
             pass
 
+    resolved_view = None
     dep_info: Dict[str, Any] = {}
     if canonical_pid:
+        repo = ModelRepository()
         try:
-            dep_info = ModelRepository().get_project_deployment_info(canonical_pid)
+            if view:
+                resolved_view = repo.validate_project_view(canonical_pid, view)
+            else:
+                deployments = repo.list_project_deployments(canonical_pid, include_unmanaged=True)
+                latest = next((d for d in deployments if d.get("is_latest")), None)
+                resolved_view = latest["semantic_view"] if latest else None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+        try:
+            dep_info = repo.get_project_deployment_info(canonical_pid)
         except Exception:
             dep_info = {}
+
+    if resolved_view:
+        dep_info["semantic_view"] = resolved_view
+        dep_info["view_name"] = resolved_view.strip().split(".")[-1].strip('"')
 
     domains = _get_project_domains_for_validation(canonical_pid) if canonical_pid else list(
         ontology_store.get_federated_ontology().domains.values()
@@ -1109,7 +1204,7 @@ def get_project_reconciliation_metrics(project_id: Optional[str] = None) -> Dict
     # when the project has a single view (multi-model: one view per model).
     own_views = {str(getattr(d, "semantic_view_name", "") or "").split(".")[-1].casefold() for d in domains}
     own_views.discard("")
-    view_name = "" if len(own_views) > 1 else (dep_info.get("semantic_view") or dep_info.get("view_name") or "")
+    view_name = resolved_view or ("" if len(own_views) > 1 else (dep_info.get("semantic_view") or dep_info.get("view_name") or ""))
 
     metrics_list = []
     seen = set()
@@ -1157,6 +1252,8 @@ def get_project_reconciliation_metrics(project_id: Optional[str] = None) -> Dict
 
     return {
         "project_id": canonical_pid or project_id,
+        "view": resolved_view,
+        "semantic_view": resolved_view,
         "count": len(metrics_list),
         "metrics": metrics_list,
     }

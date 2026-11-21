@@ -287,3 +287,150 @@ def test_drift_router_get_events_returns_metadata_and_last_checks():
     assert resp["metrics_compared"] == 15
     assert "last_checks" in resp
     assert "hr" in resp["last_checks"]
+
+
+def test_project_with_snapshots_builds_snapshot_baseline_not_live_capture():
+    """Project with snapshots but no pre-recorded baseline builds baseline from snapshot, not live_capture."""
+    mock_domain = MagicMock()
+    mock_domain.domain = "hr"
+    mock_domain.id = "hr"
+    mock_domain.semantic_view_name = "SEMABRIDGE.HR.EMPLOYEE_SEMANTIC"
+    mock_domain.source_project_id = "proj-hr"
+    mock_domain.source_model_id = "model-hr"
+    mock_metric = MagicMock()
+    mock_metric.name = "HEADCOUNT"
+    mock_metric.sql_expression = "COUNT(*)"
+    mock_metric.dax_expression = "COUNTROWS('Employees')"
+    mock_domain.metrics = [mock_metric]
+
+    mock_snap = MagicMock()
+    mock_snap.snapshot_id = "snap-123"
+    mock_snap.timestamp = "2026-11-20T10:00:00Z"
+    mock_snap.sml_blob = json.dumps({
+        "metrics": [{
+            "name": "HEADCOUNT",
+            "dax_expression": "COUNTROWS('Employees')",
+            "sql_expression": "COUNT(*)",
+        }]
+    })
+
+    with patch("semabridge.ai.project_connection.resolve_project_warehouse_config", return_value={"type": "snowflake"}), \
+         patch("semabridge.connectors.snowflake_connection.get_snowflake_connect_kwargs", return_value={"account": "test", "user": "test"}), \
+         patch("snowflake.connector.connect") as mock_conn, \
+         patch("semabridge.ontology.store.ontology_store.domains_for", return_value=[mock_domain]), \
+         patch("semabridge.repository.model_repository.ModelRepository.get_last_deployed_snapshot", return_value=mock_snap), \
+         patch("semabridge.repository.model_repository.ModelRepository.get_head", return_value=mock_snap):
+
+        mock_cur = MagicMock()
+        mock_cur.description = [("object_kind",), ("object_name",), ("property",), ("property_value",)]
+        mock_cur.fetchall.return_value = [("METRIC", "HEADCOUNT", "EXPRESSION", "COUNT(*)")]
+        mock_conn.return_value.cursor.return_value = mock_cur
+
+        result = run_drift_check(project_id="proj-hr")
+        assert result["baseline_source"] == "snapshot"
+        assert result["baseline_source"] != "live_capture"
+        assert result["status"] == "IN_SYNC"
+        assert result["drift_detected"] == 0
+
+        # State records baseline_source="snapshot"
+        stored = get_deploy_baseline("proj-hr", "SEMABRIDGE.HR.EMPLOYEE_SEMANTIC")
+        assert stored is not None
+        assert stored["baseline_source"] == "snapshot"
+
+
+def test_metric_edited_in_live_view_after_snapshot_triggers_expression_mismatch_on_first_check():
+    """Metric edited in live Snowflake view after snapshot triggers EXPRESSION_MISMATCH on the first check."""
+    mock_domain = MagicMock()
+    mock_domain.domain = "hr"
+    mock_domain.id = "hr"
+    mock_domain.semantic_view_name = "SEMABRIDGE.HR.EMPLOYEE_SEMANTIC"
+    mock_domain.source_project_id = "proj-hr"
+    mock_domain.source_model_id = "model-hr"
+    mock_metric = MagicMock()
+    mock_metric.name = "HEADCOUNT"
+    mock_metric.sql_expression = "COUNT(*)"
+    mock_metric.dax_expression = "COUNTROWS('Employees')"
+    mock_domain.metrics = [mock_metric]
+
+    # Snapshot records COUNT(*)
+    mock_snap = MagicMock()
+    mock_snap.snapshot_id = "snap-123"
+    mock_snap.timestamp = "2026-11-20T10:00:00Z"
+    mock_snap.sml_blob = json.dumps({
+        "metrics": [{
+            "name": "HEADCOUNT",
+            "dax_expression": "COUNTROWS('Employees')",
+            "sql_expression": "COUNT(*)",
+        }]
+    })
+
+    # But live Snowflake view has been altered to COUNT(DISTINCT ID)
+    with patch("semabridge.ai.project_connection.resolve_project_warehouse_config", return_value={"type": "snowflake"}), \
+         patch("semabridge.connectors.snowflake_connection.get_snowflake_connect_kwargs", return_value={"account": "test", "user": "test"}), \
+         patch("snowflake.connector.connect") as mock_conn, \
+         patch("semabridge.ontology.store.ontology_store.domains_for", return_value=[mock_domain]), \
+         patch("semabridge.repository.model_repository.ModelRepository.get_last_deployed_snapshot", return_value=mock_snap), \
+         patch("semabridge.repository.model_repository.ModelRepository.get_head", return_value=mock_snap):
+
+        mock_cur = MagicMock()
+        mock_cur.description = [("object_kind",), ("object_name",), ("property",), ("property_value",)]
+        mock_cur.fetchall.return_value = [("METRIC", "HEADCOUNT", "EXPRESSION", "COUNT(DISTINCT EMPLOYEES.ID)")]
+        mock_conn.return_value.cursor.return_value = mock_cur
+
+        result = run_drift_check(project_id="proj-hr")
+        # Flags EXPRESSION_MISMATCH against snapshot baseline on first check instead of capturing the altered live view
+        assert result["baseline_source"] == "snapshot"
+        assert result["status"] == "DRIFT_DETECTED"
+        assert result["drift_detected"] >= 1
+        ev = next(e for e in result["events"] if e["metric_name"] == "HEADCOUNT")
+        assert ev["drift_type"] == "EXPRESSION_MISMATCH"
+
+
+def test_live_capture_status_is_in_sync_since_capture_never_in_sync_clean():
+    """Live-capture baseline check returns IN_SYNC_SINCE_CAPTURE with baseline_at, never plain IN_SYNC."""
+    mock_domain = MagicMock()
+    mock_domain.domain = "legacy_sales"
+    mock_domain.id = "legacy_sales"
+    mock_domain.semantic_view_name = "SEMABRIDGE.SALES.LEGACY_VIEW"
+    mock_domain.source_project_id = "proj-legacy"
+    mock_domain.source_model_id = "model-legacy"
+    mock_metric = MagicMock()
+    mock_metric.name = "SALES_AMT"
+    mock_metric.sql_expression = "SUM(SALES.AMOUNT)"
+    mock_metric.dax_expression = "SUM(Sales[Amount])"
+    mock_domain.metrics = [mock_metric]
+
+    # Pre-seed existing live_capture baseline in state
+    record_deploy_baseline(
+        project_id="proj-legacy",
+        view_name="SEMABRIDGE.SALES.LEGACY_VIEW",
+        metrics={"SALES_AMT": "SUM(SALES.AMOUNT)"},
+        source_definitions={"SALES_AMT": "SUM(Sales[Amount])"},
+        deployed_at="2026-11-20T10:00:00Z",
+        baseline_source="live_capture",
+    )
+
+    with patch("semabridge.ai.project_connection.resolve_project_warehouse_config", return_value={"type": "snowflake"}), \
+         patch("semabridge.connectors.snowflake_connection.get_snowflake_connect_kwargs", return_value={"account": "test", "user": "test"}), \
+         patch("snowflake.connector.connect") as mock_conn, \
+         patch("semabridge.ontology.store.ontology_store.domains_for", return_value=[mock_domain]), \
+         patch("semabridge.governance.drift_service._build_baseline_from_deployment", return_value=None):
+
+        mock_cur = MagicMock()
+        mock_cur.description = [("object_kind",), ("object_name",), ("property",), ("property_value",)]
+        mock_cur.fetchall.return_value = [("METRIC", "SALES_AMT", "EXPRESSION", "SUM(SALES.AMOUNT)")]
+        mock_conn.return_value.cursor.return_value = mock_cur
+
+        result = run_drift_check(project_id="proj-legacy")
+        # Returns IN_SYNC_SINCE_CAPTURE, never plain IN_SYNC
+        assert result["status"] == "IN_SYNC_SINCE_CAPTURE"
+        assert result["status"] != "IN_SYNC"
+        assert result["baseline_source"] == "live_capture"
+        assert result["baseline_at"] == "2026-11-20T10:00:00Z"
+
+        # get_project_drift_target_info also returns IN_SYNC_SINCE_CAPTURE
+        info = get_project_drift_target_info("proj-legacy")
+        assert info["status"] == "IN_SYNC_SINCE_CAPTURE"
+        assert info["status"] != "IN_SYNC"
+        assert info["baseline_source"] == "live_capture"
+

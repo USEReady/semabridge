@@ -636,6 +636,7 @@ class FederatedOntologyLoader:
                             conflicting_domains=[d_name],
                             expressions={m.name: m.sql_expression for m in dom_mets},
                             severity="ERROR" if is_conflict else "WARNING",
+                            identical=not is_conflict,
                             message=(
                                 f"Intra-domain duplicate metric in '{d_name}': {names_str} "
                                 f"({ 'conflicting formulas' if is_conflict else 'same normalized name' })."
@@ -670,6 +671,7 @@ class FederatedOntologyLoader:
                         descriptions=descs,
                         expressions=exprs,
                         severity="ERROR",
+                        identical=False,
                         message=(
                             f"Metric collision: '{metrics[0].name}' defined with conflicting "
                             f"formulas across domains ({'; '.join(diff_parts)})."
@@ -685,6 +687,7 @@ class FederatedOntologyLoader:
                         descriptions=descs,
                         expressions=exprs,
                         severity="WARNING",
+                        identical=False,
                         message=(
                             f"Metric partial definition: '{metrics[0].name}' has a formula in some "
                             f"domains ({', '.join(domains)}) and binding-only in others."
@@ -699,7 +702,8 @@ class FederatedOntologyLoader:
                         conflicting_domains=domains,
                         descriptions=descs,
                         expressions=exprs,
-                        severity="WARNING",
+                        severity="INFO",
+                        identical=True,
                         message=(
                             f"Metric '{metrics[0].name}' is shared across domains "
                             f"({', '.join(domains)}) with identical formula."
@@ -1585,6 +1589,11 @@ class FederatedOntologyLoader:
                 rep["kept_user"].append(f"metric {exist_m.name}")
                 metrics.append(exist_m)
         metrics.extend(new_metrics.values())
+
+        from semabridge.utils.synonyms import disambiguate_metric_synonyms
+        metrics, syn_colls = disambiguate_metric_synonyms(metrics, view_name=domain)
+        if syn_colls:
+            rep.setdefault("synonym_collisions", []).extend(syn_colls)
 
         # A metric concept must stay resolvable inside the domain (validation rule).
         concept_names = {c.name.casefold() for c in concepts}

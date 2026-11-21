@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { authFetch } from '../utils/api';
 import { useProjects } from '../hooks/useProjects';
 import Modal from '../components/common/Modal';
 import { ImpactReport } from '../components/ontology/GovernancePanels';
+import DeployedViewSelector from '../components/common/DeployedViewSelector';
 import {
   Play, Check, X, RefreshCw, Clock, Layers, ShieldCheck, ArrowLeftRight,
   Trash2, CheckCircle2, AlertTriangle, Code, Sparkles, HelpCircle,
@@ -867,6 +869,8 @@ export function ReverseSyncView({ projectId = '' }) {
 }
 
 function BiTruthView({ projectId }) {
+  const [searchParams] = useSearchParams();
+  const selectedView = searchParams.get('view') || '';
   const [cases, setCases] = useState([]);
   const [runs, setRuns] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -997,6 +1001,7 @@ function BiTruthView({ projectId }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           project_id: projectId || undefined,
+          view: selectedView || undefined,
           limit: Number(limit) || 15,
           replace_drafts: replaceDrafts,
         }),
@@ -1064,7 +1069,10 @@ function BiTruthView({ projectId }) {
         method: 'POST',
         timeoutMs: 180000,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project_id: projectId || undefined }),
+        body: JSON.stringify({
+          project_id: projectId || undefined,
+          view: selectedView || undefined,
+        }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -1133,6 +1141,7 @@ function BiTruthView({ projectId }) {
                 />
                 Replace drafts
               </label>
+              {projectId && <DeployedViewSelector projectId={projectId} />}
             </div>
             {draftCount > 0 && (
               <button type="button" style={BTN} onClick={approveAllDrafts}>

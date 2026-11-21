@@ -49,7 +49,7 @@ def _pkey(pid: Optional[str]) -> str:
     return str(pid or "").lower().removeprefix("proj-").strip()
 
 
-def get_project_drift_target_info(project_id: Optional[str]) -> Dict[str, Any]:
+def get_project_drift_target_info(project_id: Optional[str], view: Optional[str] = None) -> Dict[str, Any]:
     """Return the view(s) actually checked, status, reason, baseline_source, baseline_at, and last check time."""
     if not project_id:
         return {
@@ -62,7 +62,22 @@ def get_project_drift_target_info(project_id: Optional[str]) -> Dict[str, Any]:
             "baseline_source": None,
             "baseline_at": None,
             "metrics_compared": 0,
+            "view": None,
+            "semantic_view": None,
         }
+
+    resolved_view = None
+    try:
+        from semabridge.repository.model_repository import ModelRepository
+        repo = ModelRepository()
+        if view:
+            resolved_view = repo.validate_project_view(project_id, view)
+        else:
+            deployments = repo.list_project_deployments(project_id, include_unmanaged=True)
+            latest = next((d for d in deployments if d.get("is_latest")), None)
+            resolved_view = latest["semantic_view"] if latest else None
+    except Exception:
+        resolved_view = view
 
     state = _load_state()
     p_key = _pkey(project_id)
@@ -88,6 +103,9 @@ def get_project_drift_target_info(project_id: Optional[str]) -> Dict[str, Any]:
                 if not baseline_at and (b.get("deployed_at") or b.get("captured_at")):
                     baseline_at = b.get("deployed_at") or b.get("captured_at")
 
+    if status == "IN_SYNC" and baseline_source == "live_capture":
+        status = "IN_SYNC_SINCE_CAPTURE"
+
     if not views_checked:
         try:
             from semabridge.ontology.store import ontology_store
@@ -95,6 +113,9 @@ def get_project_drift_target_info(project_id: Optional[str]) -> Dict[str, Any]:
             views_checked = sorted({d.semantic_view_name for d in doms if getattr(d, "semantic_view_name", None)})
         except Exception:
             pass
+
+    if resolved_view and resolved_view not in views_checked:
+        views_checked = [resolved_view]
 
     return {
         "project_id": project_id,
@@ -106,6 +127,8 @@ def get_project_drift_target_info(project_id: Optional[str]) -> Dict[str, Any]:
         "baseline_source": baseline_source,
         "baseline_at": baseline_at,
         "metrics_compared": metrics_compared,
+        "view": resolved_view,
+        "semantic_view": resolved_view,
     }
 
 
@@ -473,7 +496,8 @@ def record_deploy_baseline(
     proj_bases = baselines.setdefault(p_clean, {})
     proj_bases[full_v_key] = baseline_entry
     if v_key and v_key != full_v_key:
-        proj_bases.setdefault(v_key, baseline_entry)
+        if v_key not in proj_bases or proj_bases[v_key].get("baseline_source") == "live_capture" or baseline_source != "live_capture":
+            proj_bases[v_key] = baseline_entry
     _save_state(state)
     logger.info("Recorded deploy baseline for view %s (project=%s, source=%s, %d metrics)", view_name, project_id, baseline_source, len(baseline_entry["metrics"]))
     return baseline_entry
@@ -499,24 +523,77 @@ def get_deploy_baseline(project_id: Optional[str], view_name: Optional[str]) -> 
     return None
 
 
+def _iso_str(val: Any) -> Optional[str]:
+    if not val:
+        return None
+    if hasattr(val, "isoformat"):
+        try:
+            return val.isoformat()
+        except Exception:
+            pass
+    return str(val)
+
+
 def _build_baseline_from_deployment(project_id: str, view_name: str, domain: Any = None) -> Optional[Dict[str, Any]]:
     """Build a baseline from the last successful deployment's DDL/snapshot."""
     try:
         from semabridge.repository.model_repository import ModelRepository, _deserialize_sml_blob
         repo = ModelRepository()
-        dep_info = repo.get_project_deployment_info(project_id)
+
+        # Check deployment info under project_id and normalized variants
+        p_candidates = [project_id, _pkey(project_id), f"proj-{_pkey(project_id)}"]
+        seen_pids = set()
+        dep_info = None
+        for pid in p_candidates:
+            if pid and pid not in seen_pids:
+                seen_pids.add(pid)
+                d = repo.get_project_deployment_info(pid)
+                if isinstance(d, dict) and d.get("ddl"):
+                    dep_info = d
+                    break
+
         ddl = dep_info.get("ddl") if isinstance(dep_info, dict) else None
 
         snap = None
-        try:
-            snap = repo.get_last_deployed_snapshot(project_id=project_id, view_name=view_name)
-        except Exception:
-            pass
-        if not snap:
+        # 1. Try get_last_deployed_snapshot
+        for pid in seen_pids:
             try:
-                snap = repo.get_head(project_id)
+                snap = repo.get_last_deployed_snapshot(project_id=pid, view_name=view_name)
+                if snap:
+                    break
             except Exception:
                 pass
+            if not snap and view_name:
+                try:
+                    base_v = view_name.split(".")[-1].strip('"')
+                    snap = repo.get_last_deployed_snapshot(project_id=pid, view_name=base_v)
+                    if snap:
+                        break
+                except Exception:
+                    pass
+
+        # 2. Try get_head
+        if not snap:
+            for pid in seen_pids:
+                try:
+                    h = repo.get_head(pid)
+                    if h and getattr(h, "sml_blob", None):
+                        snap = h
+                        break
+                except Exception:
+                    pass
+
+        # 3. Try list_snapshots for any successful snapshot
+        if not snap:
+            for pid in seen_pids:
+                try:
+                    snaps = repo.list_snapshots(pid)
+                    succ = [s for s in snaps if getattr(s, "status", None) == "success" and getattr(s, "sml_blob", None)]
+                    if succ:
+                        snap = succ[0]
+                        break
+                except Exception:
+                    pass
 
         base_metrics: Dict[str, str] = {}
         src_defs: Dict[str, str] = {}
@@ -558,7 +635,11 @@ def _build_baseline_from_deployment(project_id: str, view_name: str, domain: Any
                         base_metrics[mn] = m.sql_expression.strip()
 
         if base_metrics:
-            deployed_at_iso = snap.timestamp.isoformat() if (snap and getattr(snap, "timestamp", None)) else None
+            deployed_at_iso = (
+                _iso_str(getattr(snap, "timestamp", None))
+                or _iso_str(getattr(snap, "deployed_at", None))
+                or (dep_info.get("deployed_at") if isinstance(dep_info, dict) else None)
+            )
             snapshot_id_val = snap.snapshot_id if (snap and getattr(snap, "snapshot_id", None)) else None
             return record_deploy_baseline(
                 project_id=project_id,
@@ -569,8 +650,24 @@ def _build_baseline_from_deployment(project_id: str, view_name: str, domain: Any
                 snapshot_id=snapshot_id_val,
                 baseline_source="snapshot",
             )
+        else:
+            reason = []
+            if not ddl:
+                reason.append("no deployed DDL found")
+            if not snap:
+                reason.append("no snapshot found")
+            elif not getattr(snap, "sml_blob", None):
+                reason.append("snapshot has no SML blob")
+            else:
+                reason.append("no metrics could be extracted from DDL or snapshot")
+            logger.warning(
+                "Could not build baseline from deployment for project %s (view %s): %s",
+                project_id,
+                view_name,
+                "; ".join(reason),
+            )
     except Exception as exc:
-        logger.info("Could not build baseline from deployment for %s: %s", project_id, exc)
+        logger.warning("Could not build baseline from deployment for %s: %s", project_id, exc, exc_info=True)
     return None
 
 
@@ -599,6 +696,7 @@ def run_drift_check(
     domain: Optional[str] = None,
     webhook_url: Optional[str] = None,
     owner_id: Optional[str] = None,
+    view: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Compare BI/ontology metric definitions against Snowflake & record pending drift events."""
     from semabridge.ai.project_connection import _project_meta, resolve_project_warehouse_config
@@ -606,6 +704,17 @@ def run_drift_check(
     from semabridge.governance.blast_radius import BlastRadiusSimulator
     from semabridge.ontology.store import ontology_store
     from semabridge.reconciliation.mock_parity import is_mock_drift_enabled
+    from semabridge.repository.model_repository import ModelRepository
+
+    target_view_name = None
+    if project_id:
+        repo = ModelRepository()
+        if view:
+            target_view_name = repo.validate_project_view(project_id, view)
+        else:
+            deployments = repo.list_project_deployments(project_id, include_unmanaged=True)
+            latest = next((d for d in deployments if d.get("is_latest")), None)
+            target_view_name = latest["semantic_view"] if latest else None
 
     fed = ontology_store.get_federated_ontology()
 
@@ -614,6 +723,16 @@ def run_drift_check(
         d for d in candidates
         if not domain or d.domain.lower() == domain.lower() or (d.id or "").lower() == domain.lower()
     ]
+
+    if target_view_name and target_domains:
+        tail = str(target_view_name).strip().split(".")[-1].strip('"').lower()
+        matching = [
+            d for d in target_domains
+            if getattr(d, "semantic_view_name", None)
+            and str(d.semantic_view_name).strip().split(".")[-1].strip('"').lower() == tail
+        ]
+        if matching:
+            target_domains = matching
 
     now = datetime.now(timezone.utc).isoformat()
 
@@ -628,7 +747,9 @@ def run_drift_check(
             "drift_detected": 0,
             "events": [],
             "checked_at": now,
-            "views_checked": [],
+            "views_checked": [target_view_name] if target_view_name else [],
+            "view": target_view_name,
+            "semantic_view": target_view_name,
         }
 
     meta = _project_meta(project_id) if project_id else {}
@@ -649,7 +770,9 @@ def run_drift_check(
             "drift_detected": 0,
             "events": [],
             "checked_at": now,
-            "views_checked": [],
+            "views_checked": [target_view_name] if target_view_name else [],
+            "view": target_view_name,
+            "semantic_view": target_view_name,
         }
 
     sf_metrics_by_view: Dict[str, Dict[str, Dict[str, str]]] = {}
@@ -717,7 +840,9 @@ def run_drift_check(
             "drift_detected": 0,
             "events": [],
             "checked_at": now,
-            "views_checked": [],
+            "views_checked": [target_view_name] if target_view_name else [],
+            "view": target_view_name,
+            "semantic_view": target_view_name,
         }
 
     sim = BlastRadiusSimulator()
@@ -738,6 +863,9 @@ def run_drift_check(
             "drift_detected": 0,
             "events": [],
             "checked_at": now,
+            "views_checked": [target_view_name] if target_view_name else [],
+            "view": target_view_name,
+            "semantic_view": target_view_name,
         }
 
     matched_sf_keys_by_view: Dict[str, Set[str]] = {}
@@ -760,9 +888,11 @@ def run_drift_check(
         v_key = _view_key(dom_view)
         dom_pid = project_id or getattr(dom, "source_project_id", None)
         base = get_deploy_baseline(dom_pid, dom_view)
-        if not base and dom_pid:
+        if (not base or base.get("baseline_source") == "live_capture") and dom_pid:
             # 1. Try building from the last successful deployment's DDL/snapshot
-            base = _build_baseline_from_deployment(dom_pid, dom_view, dom)
+            snap_base = _build_baseline_from_deployment(dom_pid, dom_view, dom)
+            if snap_base:
+                base = snap_base
 
         # 2. Only if none, capture from live Snowflake view
         if not base and v_key in inspected_views and v_key not in failed_views and sf_metrics_by_view.get(v_key):
@@ -783,8 +913,11 @@ def run_drift_check(
             views_newly_captured.add(v_key)
 
         if base:
-            if not run_baseline_source:
-                run_baseline_source = base.get("baseline_source") or "deploy"
+            b_src = base.get("baseline_source") or "deploy"
+            if not run_baseline_source or run_baseline_source == "deploy":
+                run_baseline_source = b_src
+            elif b_src == "live_capture":
+                run_baseline_source = "live_capture"
             if not run_baseline_at:
                 run_baseline_at = base.get("deployed_at") or base.get("captured_at")
 
@@ -803,6 +936,8 @@ def run_drift_check(
                 "baseline_source": "live_capture",
                 "baseline_at": now,
                 "metrics_compared": total_captured,
+                "view": target_view_name,
+                "semantic_view": target_view_name,
             }
             _save_state(state_curr)
 
@@ -820,6 +955,8 @@ def run_drift_check(
             "drift_detected": 0,
             "events": [],
             "checked_at": now,
+            "view": target_view_name,
+            "semantic_view": target_view_name,
         }
 
     for dom in target_domains:
@@ -859,8 +996,10 @@ def run_drift_check(
 
         dom_pid = project_id or getattr(dom, "source_project_id", None)
         base = get_deploy_baseline(dom_pid, dom_view)
-        if not base and dom_pid:
-            base = _build_baseline_from_deployment(dom_pid, dom_view, dom)
+        if (not base or base.get("baseline_source") == "live_capture") and dom_pid:
+            snap_base = _build_baseline_from_deployment(dom_pid, dom_view, dom)
+            if snap_base:
+                base = snap_base
         base_metrics = dict(base.get("metrics", {})) if base else {}
         base_src_defs = dict(base.get("source_definitions", {})) if base else {}
 
@@ -1121,7 +1260,10 @@ def run_drift_check(
         status = "DRIFT_DETECTED"
         not_checked_reason = None
     else:
-        status = "IN_SYNC"
+        if run_baseline_source == "live_capture":
+            status = "IN_SYNC_SINCE_CAPTURE"
+        else:
+            status = "IN_SYNC"
         not_checked_reason = None
 
     checked_views = sorted(inspected_full_views) if inspected_full_views else sorted([getattr(d, "semantic_view_name") for d in target_domains if getattr(d, "semantic_view_name", None)])
@@ -1136,6 +1278,8 @@ def run_drift_check(
             "baseline_source": run_baseline_source or "deploy",
             "baseline_at": run_baseline_at or now,
             "metrics_compared": checked,
+            "view": target_view_name,
+            "semantic_view": target_view_name,
         }
         _save_state(state_curr)
 
@@ -1153,6 +1297,8 @@ def run_drift_check(
         "drift_detected": detected_count,
         "events": new_events,
         "checked_at": now,
+        "view": target_view_name,
+        "semantic_view": target_view_name,
     }
 
 

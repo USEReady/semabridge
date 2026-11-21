@@ -802,6 +802,8 @@ def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
     cortex_validation_results: List[Dict[str, Any]] = []
     ti_anchor_stats: List[Dict[str, Any]] = []
     ti_failed_closed_metrics: List[Dict[str, Any]] = []
+    synonym_collisions: List[Dict[str, Any]] = []
+    model_gaps: List[Dict[str, Any]] = []
     metric_outcome_parts: List[Dict[str, Any]] = []
     target_type = ""
 
@@ -825,8 +827,27 @@ def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
         for ti_fail in (result.get("ti_failed_closed_metrics") or summary.get("ti_failed_closed_metrics") or []):
             if isinstance(ti_fail, dict):
                 ti_failed_closed_metrics.append({**ti_fail, "model": model_label})
+        for coll in (result.get("synonym_collisions") or summary.get("synonym_collisions") or []):
+            if isinstance(coll, dict):
+                synonym_collisions.append({**coll, "model": model_label})
 
         snap_data = _load_snapshot_data(summary.get("sml_snapshot_id"))
+        if snap_data:
+            prefix_gap = f"{model_label}: " if multi_model and model_label else ""
+            for m in snap_data.get("metrics") or []:
+                m_name = m.get("unique_name") or m.get("name") or m.get("label") or ""
+                expr = str(m.get("sql_expression") or m.get("expression") or m.get("dax_expression") or "")
+                derives = list(m.get("derives_from") or [])
+                helper_deps = [str(d) for d in derives if re.match(r"^(SUM|AVG|MIN|MAX)_OF_", str(d), re.I)]
+                expr_helpers = re.findall(r"\b((?:SUM|AVG|MIN|MAX)_OF_[A-Za-z0-9_]+)\b", expr, re.I)
+                all_helpers = list(dict.fromkeys(helper_deps + expr_helpers))
+                if all_helpers:
+                    model_gaps.append({
+                        "metric": f"{prefix_gap}{m_name}",
+                        "depends_on_helpers": all_helpers,
+                        "description": f"Derived measure depends on auto-generated helper measure(s): {', '.join(all_helpers)}. Business measure should be defined.",
+                        "model": model_label,
+                    })
         metric_outcome_parts.append(_metric_outcome_summary(
             model_dropped,
             _extract_ddl_for_result(result, summary),
@@ -899,6 +920,8 @@ def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
         "ti_failed_closed_metrics": ti_failed_closed_metrics,
         "upsert_deltas": _collect_upsert_deltas(model_results),
         "metric_outcomes": _merge_metric_outcomes(metric_outcome_parts),
+        "synonym_collisions": synonym_collisions,
+        "model_gaps": model_gaps,
     }
 
 
@@ -1017,6 +1040,8 @@ def build_run_report_data(
         "ti_failed_closed_metrics": data.get("ti_failed_closed_metrics") or [],
         # UPSERT runs only: per-model delta vs the last deployed snapshot.
         "upsert_deltas": data.get("upsert_deltas") or [],
+        "synonym_collisions": data.get("synonym_collisions") or [],
+        "model_gaps": data.get("model_gaps") or [],
     }
 
 
@@ -1115,6 +1140,8 @@ def generate_run_report_markdown(
     cortex_validation_results: List[Dict[str, Any]] = []
     ti_anchor_stats: List[Dict[str, Any]] = []
     ti_failed_closed_metrics: List[Dict[str, Any]] = []
+    synonym_collisions: List[Dict[str, Any]] = []
+    model_gaps: List[Dict[str, Any]] = []
     target_type = ""
 
     for result in model_results:
@@ -1137,8 +1164,27 @@ def generate_run_report_markdown(
         for ti_fail in (result.get("ti_failed_closed_metrics") or summary.get("ti_failed_closed_metrics") or []):
             if isinstance(ti_fail, dict):
                 ti_failed_closed_metrics.append({**ti_fail, "model": model_label})
+        for coll in (result.get("synonym_collisions") or summary.get("synonym_collisions") or []):
+            if isinstance(coll, dict):
+                synonym_collisions.append({**coll, "model": model_label})
 
         snap_data = _load_snapshot_data(summary.get("sml_snapshot_id"))
+        if snap_data:
+            prefix_gap = f"{model_label}: " if multi_model and model_label else ""
+            for m in snap_data.get("metrics") or []:
+                m_name = m.get("unique_name") or m.get("name") or m.get("label") or ""
+                expr = str(m.get("sql_expression") or m.get("expression") or m.get("dax_expression") or "")
+                derives = list(m.get("derives_from") or [])
+                helper_deps = [str(d) for d in derives if re.match(r"^(SUM|AVG|MIN|MAX)_OF_", str(d), re.I)]
+                expr_helpers = re.findall(r"\b((?:SUM|AVG|MIN|MAX)_OF_[A-Za-z0-9_]+)\b", expr, re.I)
+                all_helpers = list(dict.fromkeys(helper_deps + expr_helpers))
+                if all_helpers:
+                    model_gaps.append({
+                        "metric": f"{prefix_gap}{m_name}",
+                        "depends_on_helpers": all_helpers,
+                        "description": f"Derived measure depends on auto-generated helper measure(s): {', '.join(all_helpers)}. Business measure should be defined.",
+                        "model": model_label,
+                    })
         if snap_data:
             # "Found in source" adds back by-design/schema-validation drops
             # so this reflects what was actually in the source file, not
@@ -1441,6 +1487,36 @@ def generate_run_report_markdown(
                 rsn = str(f.get("reason") or "—").replace("|", "\\|")
                 lines.append(f"| {m_name} | {rsn} |")
             lines.append("")
+
+    if synonym_collisions:
+        lines.append("## Synonym Disambiguation")
+        lines.append("")
+        lines.append("Colliding synonyms disambiguated across metrics in deployed views:")
+        lines.append("")
+        lines.append("| View | Term | Competing Metrics | Resolved To |")
+        lines.append("|---|---|---|---|")
+        for sc in synonym_collisions:
+            v = sc.get("view") or sc.get("model") or "—"
+            t = sc.get("term") or "—"
+            mets = ", ".join(sc.get("metrics") or [])
+            res = sc.get("resolved_to") or "—"
+            lines.append(f"| `{v}` | `{t}` | {mets} | `{res}` |")
+        lines.append("")
+
+    if model_gaps:
+        lines.append("## Model Gaps")
+        lines.append("")
+        lines.append("Derived measures that depend on auto-generated helper measures (`SUM_OF_*`, `AVG_OF_*`):")
+        lines.append("")
+        lines.append("| Model | Derived Metric | Helper Dependencies | Description |")
+        lines.append("|---|---|---|---|")
+        for mg in model_gaps:
+            m = mg.get("model") or "—"
+            met = mg.get("metric") or "—"
+            helpers = ", ".join(f"`{h}`" for h in mg.get("depends_on_helpers") or [])
+            desc = mg.get("description") or "—"
+            lines.append(f"| {m} | `{met}` | {helpers} | {desc} |")
+        lines.append("")
 
     return "\n".join(lines)
 

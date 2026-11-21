@@ -335,6 +335,7 @@ class DomainMetric(_StrictModel):
     # Optional explicit binding to the concept (dataset) this metric is computed over.
     concept: Optional[str] = None
     semantic_view_name: Optional[str] = None
+    non_additive_dimension: Optional[str] = None
     tags: CleanList = Field(default_factory=list)
     # Explicit binding to model measure names ("Measure" or "Table.Measure").
     maps_to: CleanList = Field(default_factory=list)
@@ -462,7 +463,8 @@ class OntologyCollision(BaseModel):
     conflicting_domains: List[str]
     descriptions: Dict[str, Optional[str]] = Field(default_factory=dict)
     expressions: Dict[str, Optional[str]] = Field(default_factory=dict)
-    severity: str = "WARNING"  # 'WARNING' or 'ERROR'
+    severity: str = "WARNING"  # 'WARNING' or 'ERROR' or 'INFO'
+    identical: bool = False
     message: str
 
 

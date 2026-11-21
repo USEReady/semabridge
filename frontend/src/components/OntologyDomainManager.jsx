@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import DeployedViewSelector from './common/DeployedViewSelector';
 import {
   Layers, Upload, FileCode, Sparkles, CheckCircle2,
   AlertTriangle, RefreshCw, Check, Plus,
@@ -96,6 +97,8 @@ const INPUT_STYLE = {
 export default function OntologyDomainManager({ projectId: propProjectId = null, mode = 'explorer' }) {
   const location = useLocation();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const selectedView = searchParams.get('view') || '';
 
   // Main tabs: 'overview' | 'mesh' | 'graph' | 'governance' | 'blast-radius'.
   // On /ontology the tab lives in ?tab=; embedded on a project page it is local state.
@@ -607,6 +610,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
         change_type: changeType,
         table_context: tableCtx || undefined,
         project_id: effectiveGovProjectId || undefined,
+        view: selectedView || undefined,
       }),
     });
     const data = await res.json();
@@ -747,11 +751,9 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
     const svMetricIdent = (concept?.name || m.concept) && m.name
       ? `${concept?.name || m.concept}.${m.name}`
       : logicalMetric;
-    const sqlEx = isSv && svMetricIdent && svMetricIdent.includes('.')
-      ? svMetricIdent
-      : (m.sql_expression || logicalMetric);
-    setReconExpr(sqlEx);
-    setReconCustomSql(sqlEx);
+    const realSql = (m.sql_expression && m.sql_expression.trim()) || '';
+    setReconExpr(realSql);
+    setReconCustomSql(realSql);
     setReconDaxExpr(m.dax_expression || '');
     let chosenDim = '';
     if (m.dimensions?.length) {
@@ -773,7 +775,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           metric_name: mName.trim(),
-          metric_sql_expression: sqlEx.trim(),
+          metric_sql_expression: (realSql || svMetricIdent || mName).trim(),
           target_table_or_view: svName.trim(),
           target_kind: isSv ? 'semantic_view' : 'table',
           dimensions: chosenDim ? [chosenDim.trim()] : [],
@@ -1013,6 +1015,14 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
   const handleUpdateMetricSql = async (newSql, reRun = false) => {
     const targetM = reconMetric.trim();
     if (!targetM || !newSql?.trim()) return;
+    const cleanSql = newSql.trim().replace(/["'`]/g, '').toLowerCase();
+    const cleanTarget = targetM.replace(/["'`]/g, '').toLowerCase();
+    const leafTarget = cleanTarget.split('.').pop();
+    const hasOperators = /[().+\-*/=<>[\]]|\b(case|when|then|else|end|sum|count|avg|min|max)\b/i.test(newSql);
+    if (!hasOperators && (cleanSql === cleanTarget || cleanSql === leafTarget || cleanSql.endsWith(`.${leafTarget}`))) {
+      setReconError(`Self-referencing SQL expression is not allowed: '${newSql.trim()}' only references metric '${targetM}'. Provide a real SQL expression (e.g. COUNT(BU.BU)).`);
+      return;
+    }
     setRunningRecon(true);
     setReconError(null);
     try {
@@ -1200,9 +1210,16 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
   }, [selectedProjectSlug, projectsList]);
 
   // ── Derived data for Overview, Domains and Health ──────────────────────────
+  const visibleDomainIdentifiers = visibleDomains.flatMap((d) => [d.domain, d.id].filter(Boolean));
   const visibleNames = visibleDomains.map((d) => d.domain);
-  const scopedCollisions = scopeCollisions(domainData.collisions, visibleNames);
-  const collisionNames = new Set(scopedCollisions.map((c) => c.item_name));
+  const scopedCollisions = scopeCollisions(
+    domainData.collisions,
+    visibleDomainIdentifiers.length ? visibleDomainIdentifiers : visibleNames,
+    Boolean(selectedProjectSlug)
+  );
+  const collisionNames = new Set(
+    scopedCollisions.filter((c) => !c._isCrossProjectSummary).map((c) => c.item_name)
+  );
   const reconDriftRows = reconSliceRows.filter((r) => !r.matched);
   const driftMetric = reconDriftRows.length ? reconMetric : null;
   const reconDimension = reconDims.split(',').map((d) => d.trim()).filter(Boolean)[0] || '';
@@ -1282,10 +1299,10 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
   attention.total = attention.collisions + attention.unresolved + attention.parityDrift;
 
   const scopedMetricsChecked = selectedProjectSlug
-    ? visibleDomains.reduce((acc, d) => acc + (d.metrics_count || d.metrics?.length || 0), 0)
+    ? visibleDomains.reduce((acc, d) => acc + (d.metric_count || d.metrics_count || d.metrics?.length || 0), 0)
     : (lintReport?.metrics_checked || 0);
   const scopedConceptsChecked = selectedProjectSlug
-    ? visibleDomains.reduce((acc, d) => acc + (d.concepts_count || d.concepts?.length || 0), 0)
+    ? visibleDomains.reduce((acc, d) => acc + (d.concept_count || d.concepts_count || d.concepts?.length || 0), 0)
     : (lintReport?.concepts_checked || 0);
 
   // Lint runs on the whole federation; keep only the visible domains' findings
@@ -1435,6 +1452,12 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
                     })}
                 </select>
               </div>
+            )}
+
+            {(propProjectId || selectedProjectSlug) && (
+              <DeployedViewSelector
+                projectId={propProjectId || selectedProjectSlug}
+              />
             )}
 
             {activeTab === 'governance' && (

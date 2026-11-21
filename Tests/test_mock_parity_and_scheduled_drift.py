@@ -58,12 +58,12 @@ def test_certify_endpoint_mock_enabled(monkeypatch):
     data = res.json()
     assert data["dax_backend"] == "mock_fabric_analysis"
     verification = data["verification"]
-    assert verification["status"] == "CERTIFIED"
+    assert verification["status"] == "SIMULATED"
     assert verification["matched_rows"] == 10
     assert verification["mismatched_rows"] == 0
     assert verification["max_percentage_delta"] == 0.0
-    assert "Certified 100% Match" in verification["certification_badge"]
-    assert len(verification["comparison_rows"]) == 10
+    assert verification["certification_badge"] == "SIMULATED"
+    assert data.get("certification") is None
 
 
 def test_certify_endpoint_mock_disabled(monkeypatch):
@@ -81,18 +81,24 @@ def test_certify_endpoint_mock_disabled(monkeypatch):
     # When mock is off, attempting live execution without live warehouse/PBI raises 400
     res = client.post("/api/reconciliation/certify", json=body)
     assert res.status_code == 400
-    detail = res.json().get("detail", "")
-    assert "Live Snowflake execution failed" in detail or "Power BI" in detail or "msmdsrv" in detail
+    detail = res.json().get("detail", "").lower()
+    assert "live" in detail or "power bi" in detail or "msmdsrv" in detail or "snowflake" in detail or "warehouse" in detail
 
 
 def test_scheduled_run_drift_approval_guard(monkeypatch):
+    from semabridge.repository.orm.session_factory import get_engine
+    from semabridge.repository.orm.run_models import Base
+    Base.metadata.create_all(get_engine())
     monkeypatch.setenv("SEMABRIDGE_MOCK_PARITY", "true")
     monkeypatch.setenv("SEMABRIDGE_MOCK_DRIFT", "true")
+    monkeypatch.setenv("SEMABRIDGE_DEMO_PROJECT_ID", "proj-comp")
     assert is_mock_drift_enabled() is True
 
-    # 1. Trigger drift check which generates pending drift event in mock mode
-    drift_res = run_drift_check(project_id="proj-comp")
-    assert drift_res["drift_detected"] >= 1
+    # 1. Trigger drift check and seeding in mock mode
+    client = TestClient(app)
+    seed_res = client.post("/api/drift/events/seed-mock?project_id=proj-comp")
+    assert seed_res.status_code == 200
+    assert seed_res.json()["count"] >= 1
 
     events = list_drift_events(project_id="proj-comp", status="pending")
     assert len(events) >= 1

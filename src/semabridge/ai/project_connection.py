@@ -246,6 +246,9 @@ def resolve_project_scope(project_id: Optional[str], explicit_view: Optional[str
     distinct = _distinct_views(scope.domain_views.values())
 
     if scope.explicit_view:
+        from semabridge.repository.model_repository import ModelRepository
+        val_view = ModelRepository().validate_project_view(pid, scope.semantic_view)
+        scope.semantic_view = val_view
         # Restrict the ontology to the named view's domains (+ view-less shared ones).
         tail = _view_tail(scope.semantic_view)
         owners = [dn for dn, v in scope.domain_views.items() if _view_tail(v) == tail]
@@ -253,11 +256,23 @@ def resolve_project_scope(project_id: Optional[str], explicit_view: Optional[str
             _restrict_to(scope, domains, owners)
         return scope
 
-    if len(distinct) >= 2:
+    # Default when omitted = latest successful deploy
+    if not scope.semantic_view:
+        try:
+            from semabridge.repository.model_repository import ModelRepository
+            deployments = ModelRepository().list_project_deployments(pid, include_unmanaged=True)
+            latest = next((d for d in deployments if d.get("is_latest")), None)
+            if latest:
+                scope.semantic_view = latest["semantic_view"]
+        except Exception:
+            pass
+
+    if len(distinct) >= 2 and not scope.semantic_view:
         # Several models -> several views: pick per question (route_scope_to_view).
         scope.semantic_view = None
         return scope
-    scope.semantic_view = info.get("semantic_view") or (distinct[0] if distinct else None)
+    if not scope.semantic_view:
+        scope.semantic_view = info.get("semantic_view") or (distinct[0] if distinct else None)
 
     # If the project has a deployed semantic view or DDL, ensure allowed_domains is not an empty trap
     if not scope.allowed_domains and (scope.semantic_view or info.get("ddl")):

@@ -76,6 +76,7 @@ class NLQueryRequest(BaseModel):
     project_id: Optional[str] = None
     view_name: Optional[str] = None
     semantic_view: Optional[str] = None
+    view: Optional[str] = None
     allow_offline_draft: bool = False
 
 
@@ -366,25 +367,49 @@ def _try_cortex(prompt: str, scope: ProjectScope) -> tuple[Optional[QueryResolut
             return None, resp.get("explanation") or "Cortex Analyst returned no SQL statement"
         validate_safe_sql(sql)
 
-        is_sv_query = "SEMANTIC_VIEW(" in sql.upper()
-        query_path = "semantic_view" if is_sv_query else "free-form SQL"
+        from semabridge.ai.sql_guard_engine import (
+            _extract_dimension_names_from_sv_sql,
+            _extract_metric_names_from_sv_sql,
+            inspect_and_guard_generated_sql,
+        )
+        all_metrics = []
+        all_concepts = []
+        if ontology_store.query_engine and hasattr(ontology_store.query_engine, "ontology") and ontology_store.query_engine.ontology:
+            all_metrics = list(ontology_store.query_engine.ontology.metrics.values())
+            all_concepts = list(ontology_store.query_engine.ontology.concepts.values())
 
-        if not is_sv_query and ontology_store.query_engine:
-            checks_ok, fail_msg = _verify_free_form_plan_checks(sql, prompt, ontology_store.query_engine)
-            if not checks_ok:
-                return None, f"Cortex free-form SQL rejected by governance guard: {fail_msg}"
+        guard_decision = inspect_and_guard_generated_sql(
+            sql=sql,
+            prompt=prompt,
+            all_metrics=all_metrics,
+            all_concepts=all_concepts,
+            semantic_view_name=scope.semantic_view,
+        )
+
+        if not guard_decision.allowed:
+            return None, guard_decision.refusal_reason or "Cortex SQL rejected by governance guard."
+
+        effective_sql = guard_decision.rewritten_sql or sql
+        effective_path = guard_decision.query_path
+        detected_metrics = _extract_metric_names_from_sv_sql(effective_sql)
+        detected_dims = [d.split(".")[-1] for d in _extract_dimension_names_from_sv_sql(effective_sql)]
 
         plan = QueryResolutionPlan(
             original_prompt=prompt,
-            detected_metrics=[],
-            detected_dimensions=[],
+            detected_metrics=detected_metrics,
+            detected_dimensions=detected_dims,
             resolved_tables=[scope.semantic_view],
-            generated_sql=sql,
+            generated_sql=effective_sql,
             confidence_score=0.95,
             explanation=f"[Snowflake Cortex Analyst] {resp.get('explanation', '')}".strip(),
-            warnings=[],
-            query_path=query_path,
-            is_certified=False,
+            warnings=guard_decision.warnings,
+            assumptions=guard_decision.assumptions,
+            guard_checks=guard_decision.checks,
+            suggested_metrics=guard_decision.suggested_metrics,
+            query_path=effective_path,
+            is_certified=guard_decision.is_certified_eligible and guard_decision.checks_passed and effective_path == "semantic_view",
+            view=scope.semantic_view,
+            semantic_view=scope.semantic_view,
         )
         return plan, None
     except Exception as exc:
@@ -444,7 +469,11 @@ def resolve_natural_language_query(req: NLQueryRequest, request: Request) -> Que
     _require_project_access(req.project_id, request)
 
     dialect = _normalize_dialect(req)
-    scope = _scope_for(req.project_id, explicit_view=req.semantic_view or req.view_name)
+    explicit_view = req.view or req.semantic_view or req.view_name
+    try:
+        scope = _scope_for(req.project_id, explicit_view=explicit_view)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     route_scope_to_view(req.prompt, scope)
     if scope.candidate_views and not scope.semantic_view:
         plan = _empty_plan(
@@ -462,6 +491,12 @@ def _with_answer_source(plan: QueryResolutionPlan, scope: ProjectScope) -> Query
     """Stamp which semantic view / domain answered (shown in Ask AI)."""
     if scope.semantic_view and not plan.answered_by_view:
         plan.answered_by_view = scope.semantic_view
+    if scope.semantic_view:
+        plan.view = scope.semantic_view
+        plan.semantic_view = scope.semantic_view
+    elif plan.answered_by_view:
+        plan.view = plan.answered_by_view
+        plan.semantic_view = plan.answered_by_view
     if not plan.answered_by_domain:
         plan.answered_by_domain = scope.answered_by_domain or (
             next((d for d, v in scope.domain_views.items() if v == scope.semantic_view), None)
@@ -747,6 +782,23 @@ def execute_semantic_query(
     if not re.search(r"\blimit\s+\d+\s*$", exec_sql, re.IGNORECASE):
         exec_sql = f"{exec_sql} LIMIT {int(req.limit)}"
 
+    from semabridge.ai.sql_guard_engine import inspect_and_guard_generated_sql
+    all_metrics = []
+    all_concepts = []
+    if ontology_store.query_engine and hasattr(ontology_store.query_engine, "ontology") and ontology_store.query_engine.ontology:
+        all_metrics = list(ontology_store.query_engine.ontology.metrics.values())
+        all_concepts = list(ontology_store.query_engine.ontology.concepts.values())
+
+    guard_decision = inspect_and_guard_generated_sql(
+        sql=clean_sql,
+        prompt=req.question or "",
+        all_metrics=all_metrics,
+        all_concepts=all_concepts,
+        semantic_view_name=req.view_name,
+    )
+    if not guard_decision.allowed:
+        raise HTTPException(status_code=400, detail=guard_decision.refusal_reason or "SQL rejected by governance guard.")
+
     target = (req.target or "SNOWFLAKE").upper()
     if target in ("SNOWFLAKE", "CORTEX"):
         is_free_form = "SEMANTIC_VIEW(" not in exec_sql.upper()
@@ -806,8 +858,17 @@ def execute_semantic_query(
         if res_warns:
             resp.warnings.extend(res_warns)
 
-    query_path = req.query_path or ("semantic_view" if "SEMANTIC_VIEW(" in exec_sql.upper() else "free-form SQL")
+    query_path = req.query_path or guard_decision.query_path
     resp.query_path = query_path
+
+    if guard_decision.assumptions:
+        for asm in guard_decision.assumptions:
+            if asm not in resp.warnings:
+                resp.warnings.append(f"Assumption: {asm}")
+    if guard_decision.warnings:
+        for gw in guard_decision.warnings:
+            if gw not in resp.warnings:
+                resp.warnings.append(gw)
 
     from semabridge.ai.verified_queries_service import has_successful_execution
     from semabridge.reconciliation.certification_service import check_sql_certification_status
@@ -819,10 +880,12 @@ def execute_semantic_query(
 
     resp.certified = bool(
         resp.success
+        and guard_decision.is_certified_eligible
+        and guard_decision.checks_passed
         and (is_verified or is_gov_sv or has_certified_metrics)
-        and not resp.warnings
+        and not [w for w in resp.warnings if not w.startswith("Assumption:")]
         and not resp.error
-        and query_path != "free-form SQL"
+        and query_path == "semantic_view"
     )
     return resp
 

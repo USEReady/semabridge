@@ -16,6 +16,7 @@ import {
 const RING = {
   breaking: { glyph: '!', color: 'var(--color-error)' },
   warning: { glyph: '!', color: 'var(--color-warning)' },
+  info: { glyph: 'i', color: 'var(--accent-blue, #0284c7)' },
   pending: { glyph: '–', color: 'var(--text-tertiary)' },
   passing: { glyph: '✓', color: 'var(--color-success)' },
 };
@@ -131,6 +132,7 @@ export default function HealthView({
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
         <Pill tone="bad">{counts.breaking || 0} breaking</Pill>
         <Pill tone="warn">{counts.warning || 0} {counts.warning === 1 ? 'warning' : 'warnings'}</Pill>
+        {counts.info > 0 && <Pill tone="info">{counts.info} info</Pill>}
         <Pill tone="ok">{counts.passing || 0} passing</Pill>
         {counts.pending > 0 && <Pill tone="n">{counts.pending} not checked</Pill>}
         <span style={{ flex: 1 }} />

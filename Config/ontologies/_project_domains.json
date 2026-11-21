@@ -1,18 +1,4 @@
 {
-  "preview-357299ea71a9": {
-    "models": {
-      "artificial_intelligence_sample": [
-        "preview_357299ea71a9__artificial_intelligence_sample"
-      ],
-      "competitive_marketing_analysis": [
-        "preview_357299ea71a9__competitive_marketing_analysis"
-      ],
-      "human_resources_sample_pbix": [
-        "preview_357299ea71a9__human_resources_sample_pbix"
-      ]
-    },
-    "shared": []
-  },
   "proj-ai_databricks": {
     "models": {
       "semabridge_public_artificial_intelligence_sample_metric_view": [
@@ -41,20 +27,6 @@
     "models": {
       "human_resources_sample_pbix": [
         "human_res__human_resources_sample_pbix"
-      ]
-    },
-    "shared": []
-  },
-  "proj-multi_sync": {
-    "models": {
-      "competitive_marketing_analysis": [
-        "multi_sync__competitive_marketing_analysis"
-      ],
-      "continent": [
-        "multi_sync__continent"
-      ],
-      "core_finance_v1": [
-        "multi_sync__core_finance_v1"
       ]
     },
     "shared": []

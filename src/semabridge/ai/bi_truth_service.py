@@ -34,11 +34,14 @@ class TruthCasesResult(list):
         added_count: int = 0,
         skipped_count: int = 0,
         skipped: Optional[List[Dict[str, Any]]] = None,
+        view: Optional[str] = None,
     ):
         super().__init__(items or [])
         self.added_count = added_count
         self.skipped_count = skipped_count
         self.skipped = list(skipped or [])
+        self.view = view
+        self.semantic_view = view
 
 
 def _suite_path() -> Path:
@@ -558,6 +561,7 @@ def generate_truth_cases(
     limit: int = 20,
     replace_drafts: bool = False,
     owner_id: Optional[str] = None,
+    view: Optional[str] = None,
 ) -> TruthCasesResult:
     """Build draft BI-truth Q&A cases with runnable SEMANTIC_VIEW SQL, reachable dimensions, and answer execution."""
     from semabridge.ai.verified_queries_service import list_verified_queries_for_project
@@ -577,6 +581,16 @@ def generate_truth_cases(
         except Exception:
             pass
     now = datetime.now(timezone.utc).isoformat()
+
+    resolved_view = None
+    if pid:
+        repo = ModelRepository()
+        if view:
+            resolved_view = repo.validate_project_view(pid, view)
+        else:
+            deployments = repo.list_project_deployments(pid, include_unmanaged=True)
+            latest = next((d for d in deployments if d.get("is_latest")), None)
+            resolved_view = latest["semantic_view"] if latest else None
 
     if replace_drafts and pid:
         state[_CASES_KEY] = [
@@ -682,7 +696,7 @@ def generate_truth_cases(
         if len(created) >= limit:
             break
         d_name = dom.domain
-        view_name = getattr(dom, "semantic_view_name", None)
+        view_name = resolved_view or getattr(dom, "semantic_view_name", None)
         if not view_name and pid:
             try:
                 dep_info = ModelRepository().get_project_deployment_info(pid)
@@ -1021,6 +1035,7 @@ def generate_truth_cases(
         added_count=len(created),
         skipped_count=len(skipped),
         skipped=[_sanitize_cell_value(s) for s in skipped],
+        view=resolved_view,
     )
 
 
@@ -1305,6 +1320,75 @@ def _is_eligible_for_certification(c: Dict[str, Any]) -> bool:
     return False
 
 
+def _promote_truth_case_to_verified_query(case: Dict[str, Any]) -> None:
+    """Auto-promote certified truth case to verified query via save_verified_query."""
+    try:
+        from semabridge.ai.verified_queries_service import (
+            record_query_execution,
+            save_verified_query,
+        )
+        pid = str(case.get("project_id") or "").strip()
+        q = str(case.get("question") or "").strip()
+        sql = str(case.get("expected_sql") or "").strip()
+        v_name = case.get("view") or case.get("semantic_view")
+        if pid and q and sql:
+            record_query_execution(
+                sql=sql,
+                project_id=pid,
+                success=True,
+                row_count=case.get("expected_row_count") or 1,
+            )
+            save_verified_query(
+                project_id=pid,
+                question=q,
+                sql=sql,
+                confirmed=True,
+                user_id="bi_truth_certifier",
+                view_name=v_name,
+                domain=case.get("domain"),
+            )
+    except Exception as exc:
+        logger.warning("Could not auto-promote certified truth case %s to verified query: %s", case.get("id"), exc)
+
+
+def build_engine_instructions_for_view(
+    view_name: Optional[str] = None,
+    metrics: Optional[List[Any]] = None,
+    concepts: Optional[List[Any]] = None,
+    data_max_date: Optional[str] = None,
+) -> str:
+    """Build engine instructions per view from model metadata (governed path, no today's date, period metrics)."""
+    instructions: List[str] = [  # hardcoding-ok: template instructions for AI engines
+        "Always query using SEMANTIC_VIEW with governed METRICS and DIMENSIONS; never query base/physical or enriched tables directly.",
+        "Never use invented business rules or status checks (e.g. checking if a date is NULL) - use the governed metrics provided.",
+        "Never filter or anchor on the current date (CURRENT_DATE, GETDATE, NOW) because historical model data does not extend to the current date.",
+    ]
+    if data_max_date:
+        instructions.append(f"Model data ends at {data_max_date}; for period comparisons or 'last year', evaluate relative to the latest data period.")  # hardcoding-ok: template instruction
+    else:
+        instructions.append("Model data ends at historical anchor dates; for period comparisons or 'last year', evaluate relative to the latest data period.")  # hardcoding-ok: template instruction
+
+    m_list = metrics or []
+    period_metrics: List[str] = []
+    for m in m_list:
+        m_name = getattr(m, "name", None) or getattr(m, "unique_name", None) or ""
+        if any(tag in m_name.upper() for tag in ("_SPLY", "_YOY", "_YTD", "SPLY", "YOY")):
+            period_metrics.append(m_name)
+
+    if period_metrics:
+        instructions.append(f"Use governed period metrics ({', '.join(period_metrics[:5])}) for year-over-year and historical comparisons.")  # hardcoding-ok: template instruction
+
+    snapshot_dims: List[str] = []
+    for m in m_list:
+        semi_dim = getattr(m, "non_additive_dimension", None)
+        if semi_dim:
+            snapshot_dims.append(f"{getattr(m, 'name', '')} by {semi_dim}")
+    if snapshot_dims:
+        instructions.append(f"Semi-additive metrics ({', '.join(snapshot_dims[:3])}) must not be summed over time; evaluate them at the end of the period.")  # hardcoding-ok: template instruction
+
+    return "\n".join(f"- {inst}" for inst in instructions)
+
+
 def set_truth_case_status(case_id: str, status: str, question: Optional[str] = None) -> Optional[Dict[str, Any]]:
     state = _load_suite()
     for c in state[_CASES_KEY]:
@@ -1317,6 +1401,8 @@ def set_truth_case_status(case_id: str, status: str, question: Optional[str] = N
             if question is not None and question.strip():
                 c["question"] = question.strip()
             c["updated_at"] = datetime.now(timezone.utc).isoformat()
+            if status == "certified":
+                _promote_truth_case_to_verified_query(c)
             _save_suite(state)
             return c
     return None
@@ -1345,6 +1431,8 @@ def set_batch_truth_case_status(
             )
         c["status"] = status
         c["updated_at"] = now
+        if status == "certified":
+            _promote_truth_case_to_verified_query(c)
         count += 1
 
     if count > 0:
@@ -1357,12 +1445,24 @@ def run_truth_suite(
     project_id: Optional[str] = None,
     owner_id: Optional[str] = None,
     max_cases: int = 50,
+    view: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Execute approved BI-truth questions against Cortex / NL engine and record accuracy."""
     from concurrent.futures import ThreadPoolExecutor
     from semabridge.ai.nl_query_engine import NLQueryEngine
     from semabridge.ai.project_connection import resolve_project_scope, resolve_project_warehouse_config
     from semabridge.ontology.store import ontology_store
+
+    resolved_view = None
+    if project_id:
+        from semabridge.repository.model_repository import ModelRepository
+        repo = ModelRepository()
+        if view:
+            resolved_view = repo.validate_project_view(project_id, view)
+        else:
+            deployments = repo.list_project_deployments(project_id, include_unmanaged=True)
+            latest = next((d for d in deployments if d.get("is_latest")), None)
+            resolved_view = latest["semantic_view"] if latest else None
 
     state = _load_suite()
     approved = [
@@ -1381,7 +1481,10 @@ def run_truth_suite(
     def _get_scope(pid: Optional[str]):
         p = pid or ""
         if p not in scopes_cache:
-            scopes_cache[p] = resolve_project_scope(p)
+            scopes_cache[p] = resolve_project_scope(
+                p,
+                explicit_view=resolved_view if (not pid or pid == project_id) else None,
+            )
         return scopes_cache[p]
 
     def _get_sf(pid: Optional[str]):
@@ -1515,6 +1618,8 @@ def run_truth_suite(
     run_rec = {
         "id": f"trun-{uuid.uuid4().hex[:8]}",
         "project_id": project_id,
+        "view": resolved_view,
+        "semantic_view": resolved_view,
         "total": total,
         "passed": passed,
         "accuracy_pct": accuracy,
