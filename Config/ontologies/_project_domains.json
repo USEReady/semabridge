@@ -1,4 +1,50 @@
 {
+  "preview-357299ea71a9": {
+    "models": {
+      "artificial_intelligence_sample": [
+        "preview_357299ea71a9__artificial_intelligence_sample"
+      ],
+      "competitive_marketing_analysis": [
+        "preview_357299ea71a9__competitive_marketing_analysis"
+      ],
+      "human_resources_sample_pbix": [
+        "preview_357299ea71a9__human_resources_sample_pbix"
+      ]
+    },
+    "shared": []
+  },
+  "proj-ai_databricks": {
+    "models": {
+      "semabridge_public_artificial_intelligence_sample_metric_view": [
+        "ai_databricks__semabridge_public_artificial_i_4f115c"
+      ]
+    },
+    "shared": []
+  },
+  "proj-ai_sample_test": {
+    "models": {
+      "artificial_intelligence_sample": [
+        "ai_sample_test__artificial_intelligence_sample"
+      ]
+    },
+    "shared": []
+  },
+  "proj-hr": {
+    "models": {
+      "human_resources_sample_pbix": [
+        "hr__human_resources_sample_pbix"
+      ]
+    },
+    "shared": []
+  },
+  "proj-human-res": {
+    "models": {
+      "human_resources_sample_pbix": [
+        "human_res__human_resources_sample_pbix"
+      ]
+    },
+    "shared": []
+  },
   "proj-multi_sync": {
     "models": {
       "competitive_marketing_analysis": [

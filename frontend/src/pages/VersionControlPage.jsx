@@ -328,6 +328,8 @@ export default function VersionControlPage() {
     const setSearchQuery = (v) => setVcCache({ searchQuery: v });
     const { addLog } = useLogs();
 
+    const latestProjectIdRef = useRef(selectedProjectId);
+
     // A ?project= link wins over the project remembered for this tab.
     useEffect(() => {
         const fromUrl = searchParams.get('project');
@@ -339,7 +341,6 @@ export default function VersionControlPage() {
     }, []);
     const normalizeId = useCallback((value) => String(value ?? '').trim(), []);
 
-    const latestProjectIdRef = useRef(selectedProjectId);
     useEffect(() => {
         latestProjectIdRef.current = selectedProjectId;
     }, [selectedProjectId]);
@@ -361,10 +362,10 @@ export default function VersionControlPage() {
 
             const currentId = normalizeId(latestProjectIdRef.current);
             const hasCurrent = currentId && projectList.some((p) => normalizeId(p?.id ?? p?.project_id) === currentId);
-            if (projectList.length > 0 && !hasCurrent) {
-                const nextId = normalizeId(projectList[0].id ?? projectList[0].project_id);
-                latestProjectIdRef.current = nextId;
-                setVcCache({ selectedProjectId: nextId });
+            if (!hasCurrent && currentId) {
+                // If previously selected project no longer exists in project list, clear it
+                latestProjectIdRef.current = '';
+                setVcCache({ selectedProjectId: '' });
             }
             setHasLoadedProjects(true);
         } catch (err) {
@@ -672,7 +673,7 @@ export default function VersionControlPage() {
                             background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border-main)', cursor: 'pointer',
                         }}
                     >
-                        {projects.length === 0 && <option value="">No projects</option>}
+                        <option value="">Select a project…</option>
                         {projects.map(p => (
                             <option key={normalizeId(p?.id ?? p?.project_id)} value={normalizeId(p?.id ?? p?.project_id)}>{p.name || p.id}</option>
                         ))}

@@ -1430,8 +1430,8 @@ def resolve_canonical_project_id(project_id: Optional[str]) -> Optional[str]:
             ).first()
             if match_name and match_name[0]:
                 return str(match_name[0])
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Canonical project id DB lookup error: %s", exc)
 
     # 2. Check _compat_projects cache by id or name
     with _compat_store_lock:
@@ -1450,6 +1450,8 @@ def resolve_canonical_project_id(project_id: Optional[str]) -> Optional[str]:
         if _compat_project_yaml_path(candidate).is_file():
             return candidate
 
+    if slug and not (raw.startswith("proj-") or raw.startswith("preview-")):
+        return f"proj-{slug}"
     return raw
 
 

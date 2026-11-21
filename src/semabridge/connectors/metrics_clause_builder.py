@@ -1660,7 +1660,7 @@ class MetricsClauseBuilder:
                 if alias and col_name:
                     # Skip metrics bound to virtual Power BI measures tables — they have
                     # no real data columns in Snowflake and will always fail.
-                    if not sql_expr and self._is_virtual_measures_table(metric.dataset, dataset_col_lookup):
+                    if not getattr(metric, "sql_expression", None) and self._is_virtual_measures_table(metric.dataset, dataset_col_lookup):
                         logger.warning(
                             "Metric '%s': dataset '%s' appears to be a virtual measures table "
                             "with no physical columns. Skipping to prevent DDL failure.",

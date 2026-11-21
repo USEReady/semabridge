@@ -2192,7 +2192,7 @@ class LocalPBIXConnector(BaseConnector):
         ``Property`` holding the field name — confirmed against real PBIX
         Report/Layout JSON, where a column-bound Select entry has the
         identical shape as a measure-bound one:
-            {"Column": {"Expression": {"SourceRef": {"Source": "p"}}, "Property": "isVanArsdel"}}
+            {"Column": {"Expression": {"SourceRef": {"Source": "p"}}, "Property": "isBrand"}}
             {"Measure": {"Expression": {"SourceRef": {"Source": "s"}}, "Property": "Total Units"}}
 
         Only references found inside a ``Select`` clause are extracted —

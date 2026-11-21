@@ -1087,6 +1087,8 @@ def generate_run_report_markdown(
                     "dropped_entities": top_summary.get("dropped_entities") or [],
                     "data_backfill_results": top_summary.get("data_backfill_results") or [],
                     "cortex_validation_results": top_summary.get("cortex_validation_results") or [],
+                    "ti_anchor_stats": top_summary.get("ti_anchor_stats") or [],
+                    "ti_failed_closed_metrics": top_summary.get("ti_failed_closed_metrics") or [],
                 }
             ]
 
@@ -1111,6 +1113,8 @@ def generate_run_report_markdown(
     excluded_by_design_by_stage: Dict[str, List[Dict[str, Any]]] = {}
     data_backfill_results: List[Dict[str, Any]] = []
     cortex_validation_results: List[Dict[str, Any]] = []
+    ti_anchor_stats: List[Dict[str, Any]] = []
+    ti_failed_closed_metrics: List[Dict[str, Any]] = []
     target_type = ""
 
     for result in model_results:

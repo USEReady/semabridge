@@ -304,7 +304,7 @@ class NLQueryEngine:
         return False, []
 
     @staticmethod
-    def _get_semi_additive_dimension(m: DomainMetric) -> Optional[str]:
+    def _get_semi_additive_dimension(m: DomainMetric, concepts: Optional[List[DomainConcept]] = None) -> Optional[str]:
         """Extract non-additive dimension from NON ADDITIVE BY or metadata."""
         expr = str(m.sql_expression or "")
         pm = re.search(r"NON\s+ADDITIVE\s+BY\s*\(\s*(?:([A-Za-z0-9_]+)\.)?([A-Za-z0-9_]+)", expr, re.I)
@@ -314,6 +314,20 @@ class NLQueryEngine:
             return str(m.non_additive_by).split(".")[-1].strip()
         agg = (getattr(m, "aggregation_type", "") or "").upper()
         if agg in ("NON_ADDITIVE", "NONADDITIVE", "SNAPSHOT"):
+            if concepts:
+                concept_list = list(concepts.values()) if isinstance(concepts, dict) else list(concepts)
+                c_matches = [
+                    c for c in concept_list
+                    if isinstance(c, DomainConcept) and c.name == m.concept
+                ]
+                target_concepts = c_matches or [c for c in concept_list if isinstance(c, DomainConcept)]
+                for c in target_concepts:
+                    for a in (c.attributes or []):
+                        dt = str(getattr(a, "data_type", "") or "").upper()
+                        an = str(getattr(a, "name", "") or "").lower()
+                        if dt in ("DATE", "DATETIME", "TIMESTAMP", "TIMESTAMP_NTZ", "TIMESTAMP_LTZ", "TIMESTAMP_TZ") or "date" in an:
+                            return a.name
+                return None
             return "date"
         return None
 
@@ -382,14 +396,11 @@ class NLQueryEngine:
         while queue:
             curr, path_steps = queue.pop(0)
             if curr == target:
-                has_m2o = False
                 for step in path_steps:
                     if step == "MANY_TO_MANY":
                         return True, f"Join path from '{m_concept}' to '{d_concept}' contains a many-to-many relationship (fan-out)."
-                    if step == "MANY_TO_ONE":
-                        has_m2o = True
-                    elif step == "ONE_TO_MANY" and has_m2o:
-                        return True, f"Join path from '{m_concept}' to '{d_concept}' goes many-to-one-to-many (fan-out / chasm trap); metric would multiply."
+                    if step == "ONE_TO_MANY":
+                        return True, f"Join path from '{m_concept}' to '{d_concept}' contains a one-to-many relationship (fan-out / chasm trap); metric would multiply."
                 return False, None
 
             for nxt, step_type in adj.get(curr, []):
@@ -1033,7 +1044,9 @@ class NLQueryEngine:
                 missing_dims = []
                 for rd in req_dims:
                     rd_clean = rd.split(".")[-1].strip().casefold()
-                    if not any(d.split(".")[-1].strip().casefold() == rd_clean for d in dim_names):
+                    in_dims = any(d.split(".")[-1].strip().casefold() == rd_clean for d in dim_names)
+                    in_prompt = bool(re.search(rf"\b{re.escape(rd_clean)}\b", prompt, re.I))
+                    if not (in_dims or in_prompt):
                         missing_dims.append(rd)
                 if missing_dims:
                     plan_checks_failed = True
@@ -1044,7 +1057,7 @@ class NLQueryEngine:
 
         # 2d: Semi-additive (NON ADDITIVE BY) metrics never summed over their non-additive dimension
         for m in detected_metrics:
-            semi_dim = self._get_semi_additive_dimension(m)
+            semi_dim = self._get_semi_additive_dimension(m, self.ontology.concepts if hasattr(self, "ontology") and self.ontology else None)
             if semi_dim:
                 semi_clean = semi_dim.split(".")[-1].strip().casefold()
                 grouped_by_semi = any(d.split(".")[-1].strip().casefold() == semi_clean for d in dim_names)

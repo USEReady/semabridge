@@ -29,7 +29,7 @@ through the model's other metrics — including transparently through
 CALCULATE(...) wrappers whose only filter modifiers are FILTER/ALL/
 ALLEXCEPT (which change *what rows* are included, not *what date window*
 the value represents) — so a metric like
-`CALCULATE([TOTAL_UNITS_YTD], FILTER(ALL(Product[isVanArsdel]), ...))`
+`CALCULATE([TOTAL_UNITS_YTD], FILTER(ALL(Product[isBrand]), ...))`
 is correctly recognized as still being YTD-shaped for this purpose, even
 though it has no time-intelligence function call of its own.
 """
@@ -44,6 +44,7 @@ from semabridge.converter.dax_ast_parser import (
     DaxAstParser,
     DaxNode,
     FunctionCallNode,
+    LiteralNode,
     MeasureRefNode,
     UnaryOpNode,
     VarNode,
@@ -159,7 +160,7 @@ def flag_column_name(shape: Shape) -> str:
 
 
 # Real incident: dry-run's DDL-emission schema-validation step rejected an
-# already-correctly-translated metric (SUM(CASE WHEN SALESFACT.IS_YTD ...))
+# already-correctly-translated metric (SUM(CASE WHEN FACT_TABLE.IS_YTD ...))
 # because IS_YTD only exists on the enriched view _create_enriched_view
 # builds at real-deploy time -- dry-run's trial DDL-build pass has no live
 # connection, so its dataset_col_lookup is built from the model's own

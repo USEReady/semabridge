@@ -223,7 +223,13 @@ def _validate_generate_queries_request(req: GenerateQueriesRequest, resolved_kin
                     project_metrics.setdefault(m_c, set()).add(normalize_separator_ident(cand, pct_word=True))
 
     if (resolved_kind or "").strip().lower() == "semantic_view":
-        sv_metric = expr or req.metric_name.strip()
+        sv_metric = _effective_semantic_view_metric(expr, req.metric_name.strip())
+        if "." not in sv_metric and project_metrics:
+            m_norm = normalize_separator_ident(sv_metric, pct_word=True)
+            for c_name, m_set in project_metrics.items():
+                if m_norm in m_set:
+                    sv_metric = f"{c_name}.{sv_metric}"
+                    break
         if not _QUALIFIED_IDENT_RE.fullmatch(sv_metric):
             raise HTTPException(
                 status_code=400,
@@ -532,6 +538,14 @@ def certify_metric_end_to_end(req: CertifyMetricRequest, request: Request) -> Di
         is_mock_parity_enabled,
         generate_mock_comparative_data,
     )
+    from semabridge.ai.project_connection import _project_meta
+    meta = _project_meta(req.project_id) if req.project_id else {}
+    target_dict = meta.get("target") or (meta.get("targets")[0] if isinstance(meta.get("targets"), list) and meta.get("targets") else {})
+    is_dbx = (
+        str(meta.get("target_platform") or "").lower() == "databricks"
+        or str(getattr(target_dict, "get", lambda *a: "")("platform") or getattr(target_dict, "get", lambda *a: "")("type") or "").lower() == "databricks"
+    )
+    target_engine = "DATABRICKS" if is_dbx else "SNOWFLAKE"
     mock_active = is_mock_parity_enabled()
 
     sql_rows: List[Dict[str, Any]] = []
@@ -551,12 +565,12 @@ def certify_metric_end_to_end(req: CertifyMetricRequest, request: Request) -> Di
         dax_backend_used = "mock_fabric_analysis"
     else:
         # Real connection execution path
-        # 1. Execute Snowflake / SQL query live (non-simulated)
+        # 1. Execute SQL query live (non-simulated)
         uid = getattr(request.state, "user_id", None)
         exec_resp = execute_semantic_query(
             ExecuteQueryRequest(
                 sql=sql_query,
-                target="SNOWFLAKE",
+                target=target_engine,
                 project_id=req.project_id,
                 limit=100000,
                 allow_simulated=False,
@@ -566,7 +580,7 @@ def certify_metric_end_to_end(req: CertifyMetricRequest, request: Request) -> Di
         if not exec_resp.success or exec_resp.is_simulated:
             raise HTTPException(
                 status_code=400,
-                detail=f"Live Snowflake execution failed: {exec_resp.error or exec_resp.message or 'unknown error'}",
+                detail=f"Live {target_engine} execution failed: {exec_resp.error or exec_resp.message or 'unknown error'}",
             )
 
         raw_sf_rows = [dict(zip(exec_resp.columns, r)) for r in exec_resp.rows]
@@ -608,10 +622,15 @@ def certify_metric_end_to_end(req: CertifyMetricRequest, request: Request) -> Di
         custom_tolerance=req.tolerance,
     )
     tol = req.tolerance or verifier.tolerance
+    cert_status = "SIMULATED" if mock_active else result.status
+    cert_badge = "SIMULATED" if mock_active else result.certification_badge
+    if mock_active:
+        result = result.model_copy(update={"status": "SIMULATED", "certification_badge": "SIMULATED"})
+
     cert_record = save_certification_record(
         metric_name=req.metric_name,
-        status=result.status,
-        certification_badge=result.certification_badge,
+        status=cert_status,
+        certification_badge=cert_badge,
         project_id=req.project_id,
         domain=req.domain,
         view_metric=view_metric,
@@ -631,14 +650,14 @@ def certify_metric_end_to_end(req: CertifyMetricRequest, request: Request) -> Di
     )
 
     verified_entry = None
-    if req.register_verified_query and result.status == "CERTIFIED":
+    if req.register_verified_query and (not mock_active) and result.status == "CERTIFIED":
         question_text = (req.verified_question or "").strip() or (
             f"What is {req.metric_name}" + (f" by {', '.join(pbi_dims)}" if pbi_dims else "") + "?"
         )
         verified_entry = save_verified_query_record(
             question=question_text,
             sql=sql_query,
-            target="SNOWFLAKE",
+            target=target_engine,
             project_id=req.project_id,
             domain=req.domain,
         )

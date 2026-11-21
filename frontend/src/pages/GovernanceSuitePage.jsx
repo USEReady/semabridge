@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { authFetch } from '../utils/api';
+import { useProjects } from '../hooks/useProjects';
 import Modal from '../components/common/Modal';
 import { ImpactReport } from '../components/ontology/GovernancePanels';
 import {
@@ -45,23 +46,6 @@ const BTN_PRIMARY = {
   background: 'var(--accent-blue)',
   color: '#fff',
 };
-
-function useProjects() {
-  const [projects, setProjects] = useState([]);
-  const [projectId, setProjectId] = useState('');
-  useEffect(() => {
-    authFetch('/api/ontology/projects')
-      .then((r) => (r.ok ? r.json() : []))
-      .then((list) => setProjects(Array.isArray(list) ? list : (list?.projects || [])))
-      .catch(() => {
-        authFetch('/api/projects?limit=500&offset=0')
-          .then((r) => (r.ok ? r.json() : []))
-          .then((list) => setProjects(Array.isArray(list) ? list : (list?.projects || [])))
-          .catch(() => setProjects([]));
-      });
-  }, []);
-  return { projects, projectId, setProjectId };
-}
 
 export function DriftView({ projectId = '' }) {
   const [events, setEvents] = useState([]);
@@ -1691,8 +1675,8 @@ function CrossPlatformView({ projectId }) {
   const [accounts, setAccounts] = useState([]);
   const [sfAccountId, setSfAccountId] = useState('');
   const [dbAccountId, setDbAccountId] = useState('');
-  const [sfSql, setSfSql] = useState('SELECT 1 AS OK');
-  const [dbSql, setDbSql] = useState('SELECT 1 AS OK');
+  const [sfSql, setSfSql] = useState('');
+  const [dbSql, setDbSql] = useState('');
   const [parity, setParity] = useState(null);
   const [checking, setChecking] = useState(false);
 
@@ -1806,7 +1790,7 @@ const TITLES = {
 };
 
 export default function GovernanceSuitePage({ mode = 'drift' }) {
-  const { projects, projectId, setProjectId } = useProjects();
+  const { projects, selectedProjectId: projectId, setSelectedProjectId: setProjectId } = useProjects();
   const [title, subtitle] = TITLES[mode] || TITLES.drift;
   return (
     <div style={{ height: '100%', overflow: 'auto', padding: '24px 28px', background: 'var(--bg-app)' }}>

@@ -35,7 +35,7 @@ def generate_mock_comparative_data(
     if dim_key:
         dim_upper = dim_key.upper()
         if any(k in dim_upper for k in ("MANUF", "PRODUCT", "VENDOR", "BRAND")):
-            slice_vals = ["Abbas", "Aliqui", "Barba", "Curio", "Fama", "Leo", "Natura", "Pirum", "Select", "VanArsdel"]
+            slice_vals = ["Abbas", "Aliqui", "Barba", "Curio", "Fama", "Leo", "Natura", "Pirum", "Select", "Acme"]
             base_numbers = [342, 280, 515, 190, 430, 260, 610, 390, 185, 720]
         elif any(k in dim_upper for k in ("YEAR", "DATE", "TIME", "PERIOD")):
             slice_vals = ["2021", "2022", "2023", "2024"]

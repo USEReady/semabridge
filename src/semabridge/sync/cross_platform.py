@@ -31,10 +31,10 @@ def preview_cross_platform_definitions(
         lines = [f"-- Version: {version_tag} ({datetime.now(timezone.utc).isoformat()})"]
         gaps: List[str] = []
         for m in metrics:
-            expr = m.sql_expression or m.dax_expression or ""
             if not m.sql_expression:
-                gaps.append(f"{m.name}: missing SQL expression (fallback to DAX)")
-            lines.append(f"  {m.name} AS {expr or '0'} COMMENT = '{(m.description or '').replace(chr(39), '')}'")
+                gaps.append(f"{m.name}: missing SQL expression")
+                continue
+            lines.append(f"  {m.name} AS {m.sql_expression} COMMENT = '{(m.description or '').replace(chr(39), '')}'")
         previews["snowflake"] = {
             "version_tag": version_tag,
             "metric_count": len(metrics),
@@ -46,10 +46,10 @@ def preview_cross_platform_definitions(
         lines = [f"-- Databricks Unity Catalog Metric View ({version_tag})"]
         gaps = []
         for m in metrics:
-            expr = m.sql_expression or ""
-            if not expr:
+            if not m.sql_expression:
                 gaps.append(f"{m.name}: requires SQL expression for Databricks Metric View")
-            lines.append(f"  - name: {m.name}\n    expr: {expr or 'NULL'}")
+                continue
+            lines.append(f"  - name: {m.name}\n    expr: {m.sql_expression}")
         previews["databricks"] = {
             "version_tag": version_tag,
             "metric_count": len(metrics),
@@ -61,10 +61,10 @@ def preview_cross_platform_definitions(
         lines = [f"// Power BI / Fabric TMDL ({version_tag})"]
         gaps = []
         for m in metrics:
-            expr = m.dax_expression or m.sql_expression or "0"
             if not m.dax_expression:
-                gaps.append(f"{m.name}: missing DAX expression (using SQL fallback)")
-            lines.append(f"measure '{m.name}' = {expr}")
+                gaps.append(f"{m.name}: missing DAX expression")
+                continue
+            lines.append(f"measure '{m.name}' = {m.dax_expression}")
         previews["fabric"] = {
             "version_tag": version_tag,
             "metric_count": len(metrics),

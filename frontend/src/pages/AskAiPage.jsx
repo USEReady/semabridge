@@ -8,9 +8,9 @@ import {
   certifyAnswer,
   ENGINES,
   fetchDynamicSuggestedQuestions,
-  fetchProjects,
   fetchVerifiedQueries,
 } from '../components/ask/askApi';
+import { useProjects } from '../hooks/useProjects';
 import { BTN_PRIMARY } from '../components/ask/askStyles';
 
 /**
@@ -60,14 +60,43 @@ let nextId = Date.now();
 export default function AskAiPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const urlQuestion = searchParams.get('q') || '';
-  const projectParam = searchParams.get('project') || '';
+
+  const {
+    projects,
+    selectedProjectId: projectId,
+    setSelectedProjectId: setProjectId,
+  } = useProjects();
+
+  const selectedProject = projects.find(
+    (p) => (p.id || p.project_id || p.name) === projectId
+  );
+  const projectPlatform = (
+    selectedProject?.target_platform ||
+    selectedProject?.platform ||
+    selectedProject?.target?.platform ||
+    selectedProject?.target?.connector_type ||
+    selectedProject?.target_type ||
+    ''
+  ).toLowerCase();
+
+  const availableEngines = ENGINES.filter((e) => {
+    if (projectPlatform === 'databricks' && e.id === 'SNOWFLAKE') return false;
+    if (projectPlatform === 'snowflake' && e.id === 'DATABRICKS') return false;
+    return true;
+  });
 
   const [target, setTarget] = useState(() => {
     const saved = readStore(window.localStorage, TARGET_KEY, 'SNOWFLAKE');
     return ENGINES.some((e) => e.id === saved) ? saved : 'SNOWFLAKE';
   });
-  const [projectId, setProjectId] = useState(projectParam);
-  const [projects, setProjects] = useState([]);
+
+  useEffect(() => {
+    if (projectPlatform === 'databricks' && target === 'SNOWFLAKE') {
+      setTarget('DATABRICKS');
+    } else if (projectPlatform === 'snowflake' && target === 'DATABRICKS') {
+      setTarget('SNOWFLAKE');
+    }
+  }, [projectPlatform, target]);
   const [suggestedQuestions, setSuggestedQuestions] = useState([]);
   const [draft, setDraft] = useState(urlQuestion);
   // Entries that were mid-flight when the page was left come back as errors.
@@ -86,27 +115,6 @@ export default function AskAiPage() {
   useEffect(() => writeStore(window.sessionStorage, THREAD_KEY, thread), [thread]);
   useEffect(() => writeStore(window.sessionStorage, CERTIFIED_KEY, certified), [certified]);
   useEffect(() => writeStore(window.localStorage, TARGET_KEY, target), [target]);
-
-  useEffect(() => {
-    let alive = true;
-    fetchProjects()
-      .then((list) => {
-        if (!alive) return;
-        setProjects(list);
-        if (!projectParam && list.length > 0) {
-          const preferred =
-            list.find((p) => String(p.status || '').toLowerCase() === 'active') || list[0];
-          const firstId = preferred?.id || preferred?.name || '';
-          if (firstId) {
-            setProjectId((cur) => cur || firstId);
-          }
-        }
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, [projectParam]);
 
   useEffect(() => {
     let alive = true;
@@ -240,7 +248,7 @@ export default function AskAiPage() {
         )}
         <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Run on</span>
         <div className="ask-seg" role="radiogroup" aria-label="Run on" style={{ display: 'inline-flex', padding: 2, borderRadius: 8, border: '1px solid var(--border-main)', background: 'var(--bg-surface)' }}>
-          {ENGINES.map((e) => {
+          {availableEngines.map((e) => {
             const on = e.id === target;
             return (
               <button

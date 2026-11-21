@@ -183,9 +183,11 @@ export default function AnswerCard({ entry, onCertify, onRetry, onOfflineDraft, 
           <b style={{ fontSize: 13.5, color: 'var(--text-primary)' }}>
             {errorStage === 'run'
               ? 'The query could not be run'
-              : candidateViews.length > 0
-                ? 'Several models can answer this'
-                : cortexUnavailable ? 'Cortex unavailable' : 'The question could not be interpreted'}
+              : String(error || '').toLowerCase().includes('refus') || String(error || '').toLowerCase().includes('reject')
+                ? 'Query refused by safety guard'
+                : candidateViews.length > 0
+                  ? 'Several models can answer this'
+                  : cortexUnavailable ? 'Cortex unavailable' : 'The question could not be interpreted'}
           </b>
           <span style={{ flex: 1 }} />
           {cortexUnavailable && onOfflineDraft && (
@@ -219,12 +221,17 @@ export default function AnswerCard({ entry, onCertify, onRetry, onOfflineDraft, 
   }
 
   const usesCertified = (plan?.detected_metrics || []).length > 0;
-  const isCertifiedAnswer = Boolean(result?.certified ?? (plan?.certified && !(result?.warnings || []).length));
-  const queryPath = result?.query_path || (usesCertified ? 'semantic view' : 'free-form SQL');
   const allWarnings = [
     ...(plan?.warnings || []),
     ...(result?.warnings || []),
   ];
+  const hasCertifiedSource = Boolean(plan?.is_verified_query || plan?.has_certified_metric || plan?.certified_source || result?.certified_source);
+  const isCertifiedAnswer = Boolean(
+    (result?.certified || hasCertifiedSource) &&
+    allWarnings.length === 0 &&
+    result && result.success !== false
+  );
+  const queryPath = result?.query_path || (usesCertified ? 'semantic view' : (plan?.route === 'cortex' ? 'free-form SQL' : 'semantic view'));
   const certified = certifyState === 'done' || isCertifiedAnswer;
   // Only answers computed by a live warehouse can be certified, never preview rows.
   // (0 rows is a valid answer; the backend also requires a recorded real run.)

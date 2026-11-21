@@ -226,5 +226,5 @@ def test_step9_confirmed_pass_corrects_a_persisted_wrong_prediction():
     )
 
     assert count == 1
-    assert 'SALESFACT."IS_YTD"' not in model.metrics[0].sql_expression
-    assert "CURRENT_DATE()" in model.metrics[0].sql_expression
+    assert model.metrics[0].sql_expression is None
+    assert "no data anchor" in (model.metrics[0].sync_failure_reason or "")

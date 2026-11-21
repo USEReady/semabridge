@@ -1042,32 +1042,21 @@ class ModelRepository:
             except Exception:
                 pass
 
-        for candidate_pid in pids:
-            for candidate in (
-                Path("output") / "reverse" / candidate_pid / "semantic_view.sql",
-                Path("output") / "reverse" / ".staging" / candidate_pid / "semantic_view.sql",
-            ):
-                if candidate.is_file():
-                    try:
-                        info["ddl"] = candidate.read_text(encoding="utf-8")
-                        break
-                    except Exception:
-                        pass
-            if info["ddl"]:
-                break
-
-        if not info["semantic_view"] and info["ddl"]:
-            m_view = re.search(r"(?i)\bCREATE\s+(?:OR\s+REPLACE\s+)?SEMANTIC\s+VIEW\s+([A-Za-z0-9_.\"\-]+)", info["ddl"])
-            if m_view:
-                full_view = m_view.group(1).strip()
-                info["semantic_view"] = full_view
-                parts = [p.strip().strip('"') for p in full_view.split(".") if p.strip()]
-                if len(parts) == 3:
-                    info["database"], info["schema"], info["view_name"] = parts
-                elif len(parts) == 2:
-                    info["schema"], info["view_name"] = parts
-                elif len(parts) == 1:
-                    info["view_name"] = parts[0]
+        # Only load DDL and consider semantic view valid if it was confirmed in Snowflake
+        if info["semantic_view"]:
+            for candidate_pid in pids:
+                for candidate in (
+                    Path("output") / "reverse" / candidate_pid / "semantic_view.sql",
+                    Path("output") / "reverse" / ".staging" / candidate_pid / "semantic_view.sql",
+                ):
+                    if candidate.is_file():
+                        try:
+                            info["ddl"] = candidate.read_text(encoding="utf-8")
+                            break
+                        except Exception:
+                            pass
+                if info["ddl"]:
+                    break
 
         return info
 

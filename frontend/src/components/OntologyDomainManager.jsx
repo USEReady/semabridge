@@ -240,7 +240,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
 
   const [bootstrapDuplicateError, setBootstrapDuplicateError] = useState(null);
 
-  const fetchCertifications = async (projectId, domainName) => {
+  async function fetchCertifications(projectId, domainName) {
     try {
       const qs = new URLSearchParams();
       if (projectId) qs.set('project_id', projectId);
@@ -299,6 +299,14 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
   };
 
   const effectiveGovProjectId = govProjectId || selectedProjectSlug || '';
+  const _reconProjectId = () => (
+    govProjectId
+    || selectedProjectSlug
+    || inspectingDomainData?.source_project_id
+    || domainDetails[inspectingDomain]?.source_project_id
+    || domainData.domains?.find((d) => d.domain === inspectingDomain)?.source_project_id
+    || undefined
+  );
   useEffect(() => {
     setImpactReports({});
     setImpactLoading({});
@@ -309,7 +317,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
     resetParityState();
   }, [effectiveGovProjectId]);
 
-  const fetchDomains = async (autoSelectFirst = false) => {
+  async function fetchDomains(autoSelectFirst = false) {
     setLoading(true);
     try {
       const res = await authFetch('/api/ontology/domains');
@@ -345,7 +353,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
   };
 
   // Load every domain's metrics and concepts (overview counts, Run all checks)
-  const loadDomainDetails = async (domains) => {
+  async function loadDomainDetails(domains) {
     const entries = await runPool(domains.slice(0, 100), 6, async (d) => {
       try {
         const res = await authFetch(`/api/ontology/domains/${encodeURIComponent(d.domain)}`);
@@ -357,17 +365,16 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
     const map = Object.fromEntries(entries.filter(Boolean));
     setDomainDetails(map);
     return map;
-  };
+  }
 
-
-  const fetchProjects = async () => {
+  async function fetchProjects() {
     try {
       const res = await authFetch('/api/ontology/projects');
       if (res.ok) {
         const list = await res.json();
         setProjectsList(Array.isArray(list) ? list : list?.projects || []);
       } else {
-        const altRes = await authFetch('/api/projects?limit=500');
+        const altRes = await authFetch('/api/projects');
         if (altRes.ok) {
           const data = await altRes.json();
           setProjectsList(Array.isArray(data) ? data : data?.projects || []);
@@ -376,9 +383,9 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
     } catch (err) {
       console.warn('Could not load projects:', err);
     }
-  };
+  }
 
-  const handleOpenDomainInspector = async (domainName, initialTab = 'metrics') => {
+  async function handleOpenDomainInspector(domainName, initialTab = 'metrics') {
     if (!domainName) return;
     setInspectingDomain(domainName);
     setInspectorActiveTab(initialTab);
@@ -579,7 +586,8 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
   };
 
   const handleJumpToAiTest = (metricName) => {
-    const domConcepts = inspectingDomainData?.parsed?.concepts || allConcepts || [];
+    const fallbackConcepts = (domainData?.domains || []).flatMap((d) => domainDetails[d.domain]?.parsed?.concepts || []);
+    const domConcepts = inspectingDomainData?.parsed?.concepts || fallbackConcepts || [];
     const firstDim = domConcepts
       .flatMap((c) => c.attributes || [])
       .find((a) => !a.is_hidden && !/INT|DEC|FLOAT|NUM/i.test(a.data_type || ''));
@@ -599,7 +607,6 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
         change_type: changeType,
         table_context: tableCtx || undefined,
         project_id: effectiveGovProjectId || undefined,
-        mock_mode: true,
       }),
     });
     const data = await res.json();
@@ -733,14 +740,19 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
       : (m.logical_name || m.name);
     const mName = m.name || logicalMetric;
     setReconMetric(mName);
-    const sqlEx = m.sql_expression || logicalMetric;
-    setReconExpr(sqlEx);
-    setReconCustomSql(sqlEx);
-    setReconDaxExpr(m.dax_expression || '');
     const svName = m.semantic_view_name || m.target_table_or_view || inspectingDomainData?.parsed?.semantic_view_name || concept?.physical_table || m.concept || '';
     setReconTable(svName);
     const isSv = Boolean(m.semantic_view_name || inspectingDomainData?.parsed?.semantic_view_name || m.target_kind === 'semantic_view');
     setReconTargetKind(isSv ? 'semantic_view' : 'table');
+    const svMetricIdent = (concept?.name || m.concept) && m.name
+      ? `${concept?.name || m.concept}.${m.name}`
+      : logicalMetric;
+    const sqlEx = isSv && svMetricIdent && svMetricIdent.includes('.')
+      ? svMetricIdent
+      : (m.sql_expression || logicalMetric);
+    setReconExpr(sqlEx);
+    setReconCustomSql(sqlEx);
+    setReconDaxExpr(m.dax_expression || '');
     let chosenDim = '';
     if (m.dimensions?.length) {
       chosenDim = m.dimensions[0];
@@ -781,7 +793,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
     selectTab('governance');
   };
 
-  const handleRunLinter = async (stewardOverride) => {
+  async function handleRunLinter(stewardOverride) {
     const activeSteward = stewardOverride || lintStewardSeverity;
     setRunningLint(true);
     setQualityChecked(true);
@@ -841,57 +853,6 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
       setReconSliceRows([]);
     }
     fetchCertifications(govProjectId || selectedProjectSlug || undefined, inspectingDomain || undefined);
-  };
-
-  const _reconProjectId = () => (
-    govProjectId
-    || selectedProjectSlug
-    || inspectingDomainData?.source_project_id
-    || domainDetails[inspectingDomain]?.source_project_id
-    || domainData.domains?.find((d) => d.domain === inspectingDomain)?.source_project_id
-    || undefined
-  );
-
-  const handleUpdateMetricSql = async (newSql, reRun = false) => {
-    const targetM = reconMetric.trim();
-    if (!targetM || !newSql?.trim()) return;
-    setRunningRecon(true);
-    setReconError(null);
-    try {
-      const res = await authFetch('/api/reconciliation/update-metric-sql', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_id: _reconProjectId(),
-          domain: inspectingDomain || undefined,
-          metric_name: targetM,
-          sql_expression: newSql.trim(),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setReconError(describeApiError(data, 'Failed to update Snowflake SQL.'));
-        return;
-      }
-      setReconExpr(newSql.trim());
-      setReconCustomSql(newSql.trim());
-      setStatusMessage({ type: 'success', text: `Updated Snowflake SQL for ${targetM}.` });
-      fetchDomainData();
-      fetchProjectReconMetrics(govProjectId || selectedProjectSlug || undefined);
-      if (reRun) {
-        // Run with custom SQL query
-        const customSql = reconQueries?.sql_query
-          ? reconQueries.sql_query.replace(new RegExp(reconExpr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), newSql.trim())
-          : undefined;
-        await handleRunAutoDaxCertify({ customSqlQuery: customSql, overrideSqlExpr: newSql.trim() });
-      } else {
-        await handleGenerateReconQueries({ overrideSqlExpr: newSql.trim() });
-      }
-    } catch (err) {
-      setReconError(String(err));
-    } finally {
-      setRunningRecon(false);
-    }
   };
 
   const fetchProjectReconMetrics = useCallback(async (projId) => {
@@ -1041,6 +1002,48 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
           dax_query: data.certification?.dax_query || reconQueries?.dax_query || '',
           sql_query: data.certification?.sql_query || reconQueries?.sql_query || '',
         });
+      }
+    } catch (err) {
+      setReconError(String(err));
+    } finally {
+      setRunningRecon(false);
+    }
+  };
+
+  const handleUpdateMetricSql = async (newSql, reRun = false) => {
+    const targetM = reconMetric.trim();
+    if (!targetM || !newSql?.trim()) return;
+    setRunningRecon(true);
+    setReconError(null);
+    try {
+      const res = await authFetch('/api/reconciliation/update-metric-sql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: _reconProjectId(),
+          domain: inspectingDomain || undefined,
+          metric_name: targetM,
+          sql_expression: newSql.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setReconError(describeApiError(data, 'Failed to update Snowflake SQL.'));
+        return;
+      }
+      setReconExpr(newSql.trim());
+      setReconCustomSql(newSql.trim());
+      setStatusMessage({ type: 'success', text: `Updated Snowflake SQL for ${targetM}.` });
+      fetchDomains();
+      fetchProjectReconMetrics(govProjectId || selectedProjectSlug || undefined);
+      if (reRun) {
+        // Run with custom SQL query
+        const customSql = reconQueries?.sql_query
+          ? reconQueries.sql_query.replace(new RegExp(reconExpr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), newSql.trim())
+          : undefined;
+        await handleRunAutoDaxCertify({ customSqlQuery: customSql, overrideSqlExpr: newSql.trim() });
+      } else {
+        await handleGenerateReconQueries({ overrideSqlExpr: newSql.trim() });
       }
     } catch (err) {
       setReconError(String(err));
@@ -1506,7 +1509,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
                 }}
               >
                 {t.label}
-                {t.count !== undefined && <span style={{ color: 'var(--text-tertiary)', fontWeight: 500 }}>{t.count}</span>}
+                 {t.count !== undefined && <span style={{ color: 'var(--text-tertiary)', fontWeight: 500 }}>{t.count}</span>}
                 {t.badge > 0 && <Pill tone="warn">{t.badge}</Pill>}
               </button>
             );

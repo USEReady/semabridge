@@ -128,9 +128,9 @@ def build_prefix_rewrite_map(
 
     For each logical name in *dataset_aliases* the map contains:
 
-    * Uppercase-alphanumeric form (e.g. ``SALESFACT``)
-    * Physical table name (e.g. ``SALES_FACT``)
-    * The original logical name itself (e.g. ``SalesFact``)
+    * Uppercase-alphanumeric form (e.g. ``CUSTOMERORDERS``)
+    * Physical table name (e.g. ``CUSTOMER_ORDERS``)
+    * The original logical name itself (e.g. ``CustomerOrders``)
 
     If *database* / *schema_name* are provided they are added as known
     schema-level prefixes that must **never** appear as column prefixes.
@@ -146,7 +146,7 @@ def build_prefix_rewrite_map(
     """
     rewrite: Dict[str, str] = {}
     for logical, alias in dataset_aliases.items():
-        # 1. Uppercase-alphanumeric  (SALESFACT)
+        # 1. Uppercase-alphanumeric  (CUSTOMERORDERS)
         uc_alpha = "".join(c for c in logical if c.isalnum()).upper()
         if uc_alpha != alias:
             rewrite[uc_alpha] = alias
@@ -494,7 +494,7 @@ def validate_semantic_view_sql(
     2. No raw logical model names (CamelCase originals) appear
        in the final SQL.
     3. No ``UPPER_ALIAS.col`` patterns that mix physical name with column
-       (e.g. ``SALESFACT.SCORE`` instead of ``salesfact."SCORE"``).
+       (e.g. ``CUSTOMERORDERS.SCORE`` instead of ``customerorders."SCORE"``).
     4. No physical table names used as column prefixes
        (e.g. ``SALES_FACT.SCORE`` instead of ``salesfact."SCORE"``).
     5. No database or schema names used as column prefixes
@@ -573,8 +573,8 @@ def validate_semantic_view_sql(
             )
 
     # ── Check 3: UPPERCASE alias + dot pattern ─────────────────────────
-    # e.g. SALESFACT.SCORE   (wrong)
-    #      salesfact."SCORE"  (correct)
+    # e.g. CUSTOMERORDERS.SCORE   (wrong)
+    #      customerorders."SCORE"  (correct)
     uppercase_dot = re.findall(r"\b([A-Z][A-Z0-9_]+)\.(?!\")", check_body)
     # Build a set of schema-level identifiers that are allowed uppercase
     _schema_ignore = {"SEMANTIC_LAYER", "SEMABRIDGE", "PUBLIC"}

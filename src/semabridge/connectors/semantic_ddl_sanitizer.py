@@ -92,6 +92,31 @@ class SemanticDDLSanitizer:
 
         invalid_norm = invalid_identifier.upper().replace('"', "")
 
+        # Special case: MAX_DATE is a synthetic anchor that the translator
+        # injected by replacing CURRENT_DATE().  Snowflake semantic views do
+        # not have this column in scope, but CURRENT_DATE() is valid.  Replace
+        # all bare MAX_DATE tokens globally rather than nulling out metrics.
+        if invalid_norm == "MAX_DATE":
+            # Replace bare MAX_DATE (not inside quotes) with CURRENT_DATE()
+            fixed = re.sub(r'(?<!["\w])MAX_DATE(?!["\w])', 'CURRENT_DATE()', ddl)
+            if fixed != ddl:
+                return fixed, True, []
+            return ddl, False, []
+
+        if invalid_norm == "MAX_MONTHINDEX":
+            # MAX_MONTHINDEX is a synthetic anchor column for rolling-period metrics.
+            # Replace with EXTRACT(MONTH FROM CURRENT_DATE()) * 12 + EXTRACT(YEAR FROM CURRENT_DATE())
+            # as a close semantic approximation (months since epoch).  This keeps the
+            # metric alive with a sensible current-period value.
+            fixed = re.sub(
+                r'(?<!["\w])MAX_MONTHINDEX(?!["\w])',
+                '(EXTRACT(YEAR FROM CURRENT_DATE()) * 12 + EXTRACT(MONTH FROM CURRENT_DATE()))',
+                ddl
+            )
+            if fixed != ddl:
+                return fixed, True, []
+            return ddl, False, []
+
 
         invalid_alias: Optional[str] = None
         invalid_col: Optional[str] = None
@@ -265,7 +290,7 @@ class SemanticDDLSanitizer:
                 continue
             start = idx + 1
             # Track paren depth so multi-line inline subqueries inside TABLES
-            # (e.g. "SALESFACT AS (\n  SELECT ...\n) PRIMARY KEY (...)") are
+            # (e.g. "FACT_TABLE AS (\n  SELECT ...\n) PRIMARY KEY (...)") are
             # not mistaken for the closing paren of the clause itself.
             end = start
             depth = 1  # we are one level inside "CLAUSE_HEADER ("

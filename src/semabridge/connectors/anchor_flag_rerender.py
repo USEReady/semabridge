@@ -187,8 +187,8 @@ def rerender_anchor_dependent_metrics(
             continue
 
         if not flag_map_for_dataset:
-            # Requirement 3 & 4b: No own flags -> metric NULL with reason; never another table's anchor,
-            # and never keep the first-pass CURRENT_DATE() fallback rendering.
+            # Policy: Time-intelligence metrics without a data anchor flag must fail closed
+            # to NULL rather than silently falling back to CURRENT_DATE() (unless explicit TODAY()/NOW()).
             has_today_now = bool(re.search(r"\b(TODAY|NOW)\s*\(", str(dax_expr or "").upper()))
             if not has_today_now:
                 metric.sql_expression = None

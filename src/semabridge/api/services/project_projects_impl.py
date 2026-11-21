@@ -730,6 +730,32 @@ async def create_project_compat(request: dict):
         await asyncio.sleep(0.1)
 
     try:
+        # Fabric re-discovery reuses existing project for the same semantic model
+        is_fabric = str(src.get("type") or "").lower() == "fabric"
+        existing_project_id = None
+        existing_project = None
+        if is_fabric:
+            entries = _compat_projects.items() if isinstance(_compat_projects, dict) else [(p.get("id"), p) for p in _compat_projects if isinstance(p, dict)]
+            for candidate_id, candidate in entries:
+                if not isinstance(candidate, dict) or candidate_id in _compat_deleted_project_ids:
+                    continue
+                if _project_semantic_key(candidate, candidate_id) == requested_semantic_name.strip().casefold():
+                    existing_project_id = candidate_id
+                    existing_project = candidate
+                    break
+
+        if existing_project_id:
+            project_id = existing_project_id
+            project = dict(existing_project or {})
+            project.update(_compat_project_payload(project_id, payload))
+            project["semantic_name"] = requested_semantic_name
+            project["name"] = requested_semantic_name
+            project["display_name"] = requested_semantic_name
+            await asyncio.to_thread(_upsert_project_in_orm, project_id, project, payload)
+            _compat_deleted_project_ids.discard(project_id)
+            _compat_projects[project_id] = project
+            return project
+
         # 1. Name and ID clash check against DB and cache (no silent milliseconds suffix!)
         name_norm = payload_name.strip().casefold()
         existing_match = None
@@ -746,8 +772,8 @@ async def create_project_compat(request: dict):
                 ).first()
                 if row:
                     existing_match = (row.project_id, row.name)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Project name/id existence check error: %s", exc)
 
         if not existing_match:
             entries = _compat_projects.items() if isinstance(_compat_projects, dict) else [(p.get("id"), p) for p in _compat_projects if isinstance(p, dict)]
@@ -758,9 +784,6 @@ async def create_project_compat(request: dict):
                 if c_name.casefold() == name_norm or (candidate_id and candidate_id.casefold() in (project_id.casefold(), default_id.casefold())):
                     existing_match = (candidate_id, c_name)
                     break
-
-        if not existing_match and (_project_id_exists_anywhere(project_id) or _project_id_exists_anywhere(default_id)):
-            existing_match = (project_id, payload_name)
 
         if existing_match:
             ex_id, ex_name = existing_match
@@ -773,6 +796,9 @@ async def create_project_compat(request: dict):
                     "message": f"A project named '{ex_name or payload_name}' already exists ({ex_id}).",
                 },
             )
+
+        if _project_id_exists_anywhere(project_id) or _project_id_exists_anywhere(default_id):
+            project_id = f"{project_id}-{int(_time.time() * 1000)}"
 
         # 2. Source content clash check (file hash / Fabric dataset ID)
         create_anyway = bool(payload.get("create_anyway"))

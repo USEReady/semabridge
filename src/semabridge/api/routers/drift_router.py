@@ -74,11 +74,21 @@ def get_drift_events(project_id: Optional[str] = None, status: Optional[str] = N
     if not is_mock_drift_enabled():
         events = [e for e in events if not e.get("mock")]
     target_info = get_project_drift_target_info(project_id) if project_id else {}
+    from semabridge.governance.drift_service import _load_state
+    state = _load_state()
+    last_checks = dict(state.get("last_checks") or {})
     return {
         "count": len(events),
         "events": events,
         "views_checked": target_info.get("views_checked", []),
         "checked_at": target_info.get("checked_at"),
+        "status": target_info.get("status"),
+        "reason": target_info.get("reason"),
+        "not_checked_reason": target_info.get("not_checked_reason"),
+        "baseline_source": target_info.get("baseline_source"),
+        "baseline_at": target_info.get("baseline_at"),
+        "metrics_compared": target_info.get("metrics_compared", 0),
+        "last_checks": last_checks,
     }
 
 

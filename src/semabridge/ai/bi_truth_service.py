@@ -6,6 +6,7 @@ import datetime as _dt
 import decimal as _dec
 import json
 import logging
+import math
 import re
 import uuid
 from datetime import datetime, timezone
@@ -20,6 +21,8 @@ from semabridge.reconciliation.golden_verifier import (
 from semabridge.utils.null_sentinel import is_null_cast_sql
 
 logger = logging.getLogger(__name__)
+
+_CASES_KEY = "cases"  # hardcoding-ok: BI truth test suite dictionary key
 
 
 class TruthCasesResult(list):
@@ -50,8 +53,22 @@ def _sanitize_cell_value(val: Any) -> Any:
         return None
     if isinstance(val, (_dt.date, _dt.datetime)) or (hasattr(val, "isoformat") and callable(getattr(val, "isoformat", None))):
         return val.isoformat()
+    if isinstance(val, (uuid.UUID,)):
+        return str(val)
     if isinstance(val, _dec.Decimal):
-        return float(val) if (val % 1) else int(val)
+        if val.is_nan():
+            return "NaN"
+        if val.is_infinite():
+            return "Infinity" if val > 0 else "-Infinity"
+        if val % 1 == 0:
+            return int(val)
+        try:
+            f = float(val)
+            if _dec.Decimal(str(f)) == val:
+                return f
+        except Exception:
+            pass
+        return str(val)
     if isinstance(val, (list, tuple, set)):
         return [_sanitize_cell_value(x) for x in val]
     if isinstance(val, dict):
@@ -129,10 +146,10 @@ def _load_suite() -> Dict[str, Any]:
                 if p.exists():
                     try:
                         legacy_data = json.loads(p.read_text(encoding="utf-8"))
-                        legacy_cases = legacy_data.get("cases") or []
+                        legacy_cases = legacy_data.get(_CASES_KEY) or []
                         legacy_runs = legacy_data.get("runs") or []
                         if legacy_cases or legacy_runs:
-                            _save_suite({"cases": legacy_cases, "runs": legacy_runs})
+                            _save_suite({_CASES_KEY: legacy_cases, "runs": legacy_runs})
                             with db_manager.get_session() as s2:
                                 case_rows = s2.query(BITruthCaseRow).all()
                                 run_rows = s2.query(BITruthRunRow).all()
@@ -140,7 +157,7 @@ def _load_suite() -> Dict[str, Any]:
                         logger.debug("Failed migrating legacy bi_truth_suite.json: %s", ex)
 
             return {
-                "cases": [_row_to_case_dict(r) for r in case_rows],
+                _CASES_KEY: [_row_to_case_dict(r) for r in case_rows],
                 "runs": [_row_to_run_dict(r) for r in run_rows],
             }
     except Exception as exc:
@@ -149,14 +166,14 @@ def _load_suite() -> Dict[str, Any]:
         if p.exists():
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
-                return {"cases": list(data.get("cases") or []), "runs": list(data.get("runs") or [])}
+                return {_CASES_KEY: list(data.get(_CASES_KEY) or []), "runs": list(data.get("runs") or [])}
             except Exception:
                 pass
-        return {"cases": [], "runs": []}
+        return {_CASES_KEY: [], "runs": []}
 
 
 def _save_suite(data: Dict[str, Any]) -> None:
-    cases_in = data.get("cases") or []
+    cases_in = data.get(_CASES_KEY) or []
     runs_in = data.get("runs") or []
     try:
         from semabridge.repository.orm.session_factory import db_manager
@@ -226,9 +243,14 @@ def _is_ratio_or_pct_metric(
 ) -> bool:
     """Check if metric is a percentage, ratio, rate, or share using word boundaries and formula."""
     text = f"{name} {label or ''}".lower()
-    has_ratio_keyword = bool(re.search(r"\b(ratio|margin|rate|percentage|pct|share)\b|%", text, re.I))  # hardcoding-ok: statistical ratio keywords
+    has_ratio_keyword = bool(re.search(r"(?<![A-Za-z0-9])(ratio|margin|rate|percentage|pct|share)(?![A-Za-z0-9])|%", text, re.I))  # hardcoding-ok: statistical ratio keywords
     has_divide = bool(formula and ("/" in formula or "DIVIDE" in formula.upper()))
     is_custom_agg = agg_type in ("NONE", "CUSTOM", None, "")
+
+    has_amount = bool(re.search(r"(?<![A-Za-z0-9])amount(?![A-Za-z0-9])", text, re.I))
+    if (has_amount or agg_type in ("SUM", "COUNT")) and not ("%" in text or has_divide or re.search(r"(?<![A-Za-z0-9])pct(?![A-Za-z0-9])", text, re.I)):
+        return False
+
     return has_ratio_keyword or (is_custom_agg and has_divide)
 
 
@@ -239,13 +261,11 @@ def _is_window_metric(
 ) -> Tuple[bool, List[str]]:
     """Detect if metric is a window metric and extract ALL required dimensions from PARTITION BY EXCLUDING."""
     expr = str(sql_expr or "")
-    pm = re.search(r"PARTITION\s+BY\s+EXCLUDING\s*\(([^)]+)\)", expr, re.I)
+    pm = re.search(r"PARTITION\s+BY\s+EXCLUDING\s*(?:\(([^)]+)\)|([A-Za-z0-9_.\",\s]+))", expr, re.I)
     if pm:
-        dims = [d.strip().replace('"', '') for d in pm.group(1).split(",") if d.strip()]
+        raw = pm.group(1) or pm.group(2)
+        dims = [d.strip().replace('"', '') for d in raw.split(",") if d.strip()]
         return True, dims
-    pm_single = re.search(r"PARTITION\s+BY\s+EXCLUDING\s+([A-Za-z0-9_.\"]+)", expr, re.I)
-    if pm_single:
-        return True, [pm_single.group(1).strip().replace('"', '')]
     cm = re.search(r"Must be queried with\s+([A-Za-z0-9_.\"]+)", str(desc or ""), re.I)
     if cm:
         dims = [d.strip().replace('"', '') for d in cm.group(1).split(",") if d.strip()]
@@ -411,7 +431,7 @@ def _evaluate_cases_in_background(cases: List[Dict[str, Any]], owner_id: Optiona
                     pass
 
                 state = _load_suite()
-                cases_map = {c["id"]: c for c in state.get("cases") or []}
+                cases_map = {c["id"]: c for c in state.get(_CASES_KEY) or []}
                 updated = False
                 for c in cases:
                     cid = c.get("id")
@@ -436,7 +456,7 @@ def _evaluate_cases_in_background(cases: List[Dict[str, Any]], owner_id: Optiona
                         cases_map[cid]["evaluation_status"] = "evaluation_failed"
                         updated = True
                 if updated:
-                    state["cases"] = list(cases_map.values())
+                    state[_CASES_KEY] = list(cases_map.values())
                     _save_suite(state)
             finally:
                 conn.close()
@@ -559,14 +579,14 @@ def generate_truth_cases(
     now = datetime.now(timezone.utc).isoformat()
 
     if replace_drafts and pid:
-        state["cases"] = [
-            c for c in state.get("cases") or []
+        state[_CASES_KEY] = [
+            c for c in state.get(_CASES_KEY) or []
             if not (_matches_pid(c.get("project_id"), pid) and str(c.get("status") or "").lower() == "draft")
         ]
 
     # Deduplication map: (metric_ident, sorted_dim_tuple, question_kind) -> status
     existing_keys_by_status: Dict[Tuple[str, Tuple[str, ...], str], str] = {}
-    for c in state.get("cases") or []:
+    for c in state.get(_CASES_KEY) or []:
         if _matches_pid(c.get("project_id"), pid):
             m_key = str(c.get("metric_name") or "").strip().casefold()
             c_dims = c.get("dimensions") or []
@@ -983,7 +1003,7 @@ def generate_truth_cases(
                     "question_kind": cand_kind,
                 })
 
-    existing_for_pid = [c for c in state.get("cases", []) if c.get("project_id") == pid]
+    existing_for_pid = [c for c in state.get(_CASES_KEY, []) if c.get("project_id") == pid]
     if not created and not existing_for_pid and pid:
         raise ValueError(
             f"Prerequisite missing: project '{pid}' has no certified metrics, verified queries, or deployed semantic models. "
@@ -992,7 +1012,7 @@ def generate_truth_cases(
 
     if created:
         created = [_sanitize_cell_value(c) for c in created]
-        state["cases"] = created + (state.get("cases") or [])
+        state[_CASES_KEY] = created + (state.get(_CASES_KEY) or [])
         _save_suite(state)
         _evaluate_cases_in_background(created, owner_id=owner_id)
 
@@ -1007,16 +1027,16 @@ def generate_truth_cases(
 def clear_truth_cases(project_id: Optional[str] = None) -> int:
     """Clear truth test cases and past run results for a specific project or all projects."""
     state = _load_suite()
-    orig_len = len(state.get("cases") or [])
+    orig_len = len(state.get(_CASES_KEY) or [])
     pid = (project_id or "").strip()
     if pid:
-        state["cases"] = [c for c in state.get("cases") or [] if not _matches_pid(c.get("project_id"), pid)]
+        state[_CASES_KEY] = [c for c in state.get(_CASES_KEY) or [] if not _matches_pid(c.get("project_id"), pid)]
         state["runs"] = [r for r in state.get("runs") or [] if not _matches_pid(r.get("project_id"), pid)]
     else:
-        state["cases"] = []
+        state[_CASES_KEY] = []
         state["runs"] = []
     _save_suite(state)
-    return orig_len - len(state.get("cases") or [])
+    return orig_len - len(state.get(_CASES_KEY) or [])
 
 
 def add_manual_truth_case(
@@ -1049,7 +1069,7 @@ def add_manual_truth_case(
         "created_at": now,
         "source": "manual",
     }
-    state["cases"] = [new_case] + (state.get("cases") or [])
+    state[_CASES_KEY] = [new_case] + (state.get(_CASES_KEY) or [])
     _save_suite(state)
     return new_case
 
@@ -1078,7 +1098,7 @@ def import_truth_cases_from_content(
     if raw.startswith(("[", "{")):
         try:
             data = json.loads(raw)
-            items = data if isinstance(data, list) else data.get("cases") or data.get("questions") or data.get("tests") or []
+            items = data if isinstance(data, list) else data.get(_CASES_KEY) or data.get("questions") or data.get("tests") or []
             for item in items:
                 if isinstance(item, dict):
                     q = item.get("question") or item.get("prompt") or item.get("q") or ""
@@ -1195,9 +1215,9 @@ def import_truth_cases_from_content(
             "source": f"doc:{filename}",
         })
 
-    existing_qs = {(c.get("project_id"), c.get("question")) for c in state.get("cases") or []}
+    existing_qs = {(c.get("project_id"), c.get("question")) for c in state.get(_CASES_KEY) or []}
     added = [c for c in created if (c.get("project_id"), c.get("question")) not in existing_qs]
-    state["cases"] = added + (state.get("cases") or [])
+    state[_CASES_KEY] = added + (state.get(_CASES_KEY) or [])
     _save_suite(state)
     return added
 
@@ -1254,7 +1274,7 @@ def _matches_pid(case_pid: Optional[str], target_pid: Optional[str]) -> bool:
 
 
 def list_truth_cases(project_id: Optional[str] = None) -> List[Dict[str, Any]]:
-    cases = _load_suite()["cases"]
+    cases = _load_suite()[_CASES_KEY]
     if project_id:
         cases = [c for c in cases if _matches_pid(c.get("project_id"), project_id)]
     return cases
@@ -1279,7 +1299,7 @@ def _is_eligible_for_certification(c: Dict[str, Any]) -> bool:
             else c.get("expected_dax_value")
         )
         try:
-            return abs(float(ref_val) - float(exp_val)) < 1e-4
+            return math.isclose(float(ref_val), float(exp_val), rel_tol=1e-4, abs_tol=1e-4)
         except (ValueError, TypeError):
             return str(ref_val).strip() == str(exp_val).strip()
     return False
@@ -1287,7 +1307,7 @@ def _is_eligible_for_certification(c: Dict[str, Any]) -> bool:
 
 def set_truth_case_status(case_id: str, status: str, question: Optional[str] = None) -> Optional[Dict[str, Any]]:
     state = _load_suite()
-    for c in state["cases"]:
+    for c in state[_CASES_KEY]:
         if c["id"] == case_id:
             if status == "certified" and not _is_eligible_for_certification(c):
                 raise ValueError(
@@ -1314,7 +1334,7 @@ def set_batch_truth_case_status(
     now = datetime.now(timezone.utc).isoformat()
     cid_set = set(case_ids) if case_ids else None
 
-    for c in state.get("cases") or []:
+    for c in state.get(_CASES_KEY) or []:
         if project_id and not _matches_pid(c.get("project_id"), project_id):
             continue
         if cid_set is not None and c.get("id") not in cid_set:
@@ -1346,7 +1366,7 @@ def run_truth_suite(
 
     state = _load_suite()
     approved = [
-        c for c in state.get("cases") or []
+        c for c in state.get(_CASES_KEY) or []
         if c.get("status") == "approved" and _matches_pid(c.get("project_id"), project_id)
     ]
     if max_cases and len(approved) > max_cases:

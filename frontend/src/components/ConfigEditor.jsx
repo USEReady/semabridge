@@ -122,7 +122,7 @@ export default function ConfigEditor() {
     const formData = new FormData();
     formData.append('file', file);
     try {
-        const resp = await fetch('/api/project/import', { method: 'POST', body: formData });
+        const resp = await fetch('/api/projects/import', { method: 'POST', body: formData });
         if (resp.ok) {
            window.location.reload();
         } else {

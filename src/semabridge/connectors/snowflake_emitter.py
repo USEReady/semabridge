@@ -100,8 +100,10 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
         behavior: Optional[ConnectorBehavior] = None,
         physical_namespace: Optional[str] = None,
         drop_ledger: Optional[DropLedger] = None,
+        project_id: Optional[str] = None,
     ):
         self.config = config
+        self.project_id = project_id or getattr(config, "project_id", None)
         # Per-model physical-object namespace (multi-model batches only; see
         # core/engine/targets/snowflake.py's emitter_physical_namespace).
         # When set, every physical object this emitter creates/references in
@@ -279,7 +281,7 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
     def _physical_namespace_scope(self, model: Any):
         """Scope for model deployment.
 
-        Physical source tables in Snowflake (CATEGORY, DATE, SALESFACT, etc.)
+        Physical source tables in Snowflake (CATEGORY, DATE, ORDERS, etc.)
         are pre-existing user-owned data tables and must never be rewritten with model
         prefixes, preserving parity with the demo_version sync engine.
         """
@@ -292,12 +294,13 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
         return self._id.sanitize_table_name(str(raw)).upper()
 
     def _run_source_data_backfill(self, cursor: Any, model: Any, source_pbix_path: str) -> list:
-        """Opt-in data backfill is disabled by architecture."""
-        logger.info(
-            "Data loading/backfill is disabled by architecture: "
-            "SemaBridge never writes data or modifies physical tables in Snowflake."
-        )
-        return []
+        """Opt-in data backfill, namespace-aware."""
+        if not getattr(getattr(self, "behavior", None), "allow_source_data_backfill", False) and not getattr(self, "enable_data_backfill", False):
+            logger.info(
+                "Data loading/backfill is disabled by architecture: "
+                "SemaBridge never writes data or modifies physical tables in Snowflake."
+            )
+            return []
         try:
             from pbixray import PBIXRay
         except Exception as exc:
@@ -983,17 +986,43 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
                         if _base_metrics:
                             from semabridge.governance.drift_service import record_deploy_baseline
                             _src_defs = {}
+                            if hasattr(model, "metrics"):
+                                for _m in (getattr(model, "metrics", []) or []):
+                                    _mn = getattr(_m, "name", None) or getattr(_m, "unique_name", None)
+                                    if _mn:
+                                        _src_defs[_mn.upper()] = (getattr(_m, "expression", "") or getattr(_m, "dax_expression", "") or getattr(_m, "sql_expression", "") or "").strip()
                             if hasattr(model, "datasets"):
                                 for _ds in (getattr(model, "datasets", []) or []):
                                     for _m in (getattr(_ds, "metrics", []) or []):
-                                        _mn = getattr(_m, "name", None)
-                                        if _mn:
-                                            _src_defs[_mn.upper()] = (getattr(_m, "dax_expression", "") or getattr(_m, "sql_expression", "") or "").strip()
+                                        _mn = getattr(_m, "name", None) or getattr(_m, "unique_name", None)
+                                        if _mn and _mn.upper() not in _src_defs:
+                                            _src_defs[_mn.upper()] = (getattr(_m, "dax_expression", "") or getattr(_m, "sql_expression", "") or getattr(_m, "expression", "") or "").strip()
+                            resolved_pid = (
+                                getattr(model, "project_id", None)
+                                or getattr(model, "source_project_id", None)
+                                or (getattr(model, "metadata", {}) or {}).get("project_id")
+                                or getattr(self, "project_id", None)
+                                or getattr(getattr(self, "config", None), "project_id", None)
+                            )
+                            if not resolved_pid and hasattr(self, "output_dir") and self.output_dir:
+                                try:
+                                    resolved_pid = Path(self.output_dir).name
+                                except Exception:
+                                    pass
+                            if not resolved_pid:
+                                try:
+                                    from semabridge.api.services.project_shared import resolve_canonical_project_id
+                                    m_name = getattr(model, "label", None) or getattr(model, "unique_name", None) or getattr(model, "name", None)
+                                    if m_name:
+                                        resolved_pid = resolve_canonical_project_id(m_name)
+                                except Exception:
+                                    pass
                             record_deploy_baseline(
-                                project_id=getattr(model, "project_id", None) or getattr(self, "project_id", None),
+                                project_id=resolved_pid,
                                 view_name=_last_qualified_view_name,
                                 metrics=_base_metrics,
                                 source_definitions=_src_defs,
+                                baseline_source="deploy",
                             )
                     except Exception as _base_exc:
                         logger.warning(

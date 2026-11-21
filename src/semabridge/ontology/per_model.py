@@ -141,7 +141,7 @@ def sync_project_model_domains(
 
 def _user_authored(item: Any) -> bool:
     """True when the item carries content a person wrote (not just its BI echo)."""
-    if getattr(item, "origin", None) == "user":
+    if getattr(item, "origin", None) == "user":  # hardcoding-ok: concept origin metadata
         return True
     own = {str(getattr(item, "name", "") or "").casefold(), str(getattr(item, "label", "") or "").casefold()}
     if any(str(s).casefold() not in own for s in getattr(item, "synonyms", None) or []):

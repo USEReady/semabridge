@@ -617,22 +617,6 @@ export default function ProjectsPage() {
     }
   };
 
-  const handleBulkExport = async () => {
-    if (!selectedVisible.length) return;
-    await api.exportProjectsBulk(selectedVisible.map(p => p.id));
-  };
-
-  const handleBulkRun = async () => {
-    const targets = selectedVisible.filter(p => !runningProjectIds.has(p.id));
-    if (!targets.length) return;
-    if (!confirm(`Run sync now for ${targets.length} project${targets.length !== 1 ? 's' : ''}?`)) return;
-    for (const p of targets) {
-      await handleRunNow(p);
-    }
-  };
-
-  const handleImported = useCallback(() => { refreshData(); }, [refreshData]);
-
   const handleRunNow = useCallback(async (projectOrId) => {
     const projectId = typeof projectOrId === 'object' ? (projectOrId?.id || projectOrId?.project_id) : projectOrId;
     if (!projectId) return;
@@ -692,6 +676,22 @@ export default function ProjectsPage() {
       });
     }
   }, [setProjects, refetchProjects, openRunsPage]);
+
+  const handleBulkExport = async () => {
+    if (!selectedVisible.length) return;
+    await api.exportProjectsBulk(selectedVisible.map(p => p.id));
+  };
+
+  const handleBulkRun = async () => {
+    const targets = selectedVisible.filter(p => !runningProjectIds.has(p.id));
+    if (!targets.length) return;
+    if (!confirm(`Run sync now for ${targets.length} project${targets.length !== 1 ? 's' : ''}?`)) return;
+    for (const p of targets) {
+      await handleRunNow(p);
+    }
+  };
+
+  const handleImported = useCallback(() => { refreshData(); }, [refreshData]);
 
   /* ── Render ── */
   if (loadFailed) {

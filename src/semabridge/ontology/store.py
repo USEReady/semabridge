@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -361,6 +362,12 @@ relationships:
         Raises :class:`OntologyValidationError` on invalid content.
         """
         with self._lock:
+            if getattr(domain_ontology, "semantic_view_name", None):
+                sv = domain_ontology.semantic_view_name
+                if re.search(r'(\b[\w$]+\.[\w$]+)\.(?:")?\1\b', sv, re.I):
+                    domain_ontology = domain_ontology.model_copy(
+                        update={"semantic_view_name": re.sub(r'(\b[\w$]+\.[\w$]+)\.(?:")?\1\b', r'\1', sv, flags=re.I).replace('"', '')}
+                    )
             orig = self.get_domain(original) if original else None
             if orig is not None and domain_ontology.id == slugify_domain(domain_ontology.domain) and orig.id:
                 # The YAML did not pin an id: keep the existing stable id across a rename.

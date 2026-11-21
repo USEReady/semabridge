@@ -13,6 +13,7 @@ export {
 import {
   shortDeterministicHash,
   sanitizeMappingName,
+  parseDatasetFromPath,
   resolveColumnSourceTable,
   buildSourceFingerprint,
   suggestCollisionResolutions,

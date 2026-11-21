@@ -32,11 +32,11 @@ GENERIC_OK = {  # technical words that legitimately appear in code
     "min", "max", "total", "label", "description", "table", "column", "measure", "metric", "metrics", "level", "sort",
     "order", "index", "code", "rank", "category", "amount", "number", "price", "cost", "rate", "score",
     "model", "models", "root", "owner", "account", "empty", "entity", "entities", "period", "custom", "updated",
-    "path", "store", "agent", "calculations", "case", "cases",
+    "path", "store", "agent", "calculations",
     # DAX / SQL keywords and date parts that are also common column names
     "blank", "true", "false", "null", "all", "filter", "week", "weekday", "quarter", "hour", "minute",
     "second", "time", "datetime", "timestamp", "text", "string", "boolean", "values", "select", "from",
-    "group", "where", "having", "limit", "distinct", "join", "on", "as", "role", "origin", "state", "months", "years",
+    "group", "where", "having", "limit", "distinct", "join", "on", "as",
 }
 
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)

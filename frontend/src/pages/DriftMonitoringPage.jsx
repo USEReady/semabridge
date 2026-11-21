@@ -6,6 +6,7 @@ import {
   ShieldCheck, ShieldAlert, Search, ChevronRight, FileText, Zap,
 } from 'lucide-react';
 import { authFetch } from '../utils/api';
+import { useProjects, normalizeProjectId, matchesProjectId } from '../hooks/useProjects';
 import Modal from '../components/common/Modal';
 import { ImpactReport } from '../components/ontology/GovernancePanels';
 const CARD = {
@@ -70,9 +71,14 @@ function formatOccurred(isoStr) {
 }
 
 export default function DriftMonitoringPage() {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const [projects, setProjects] = useState([]);
-  const [selectedProjectId, setSelectedProjectId] = useState('');
+  const {
+    projects,
+    selectedProjectId,
+    setSelectedProjectId,
+    selectedProject,
+    loading: projectsLoading,
+  } = useProjects();
+
   const [projectSearch, setProjectSearch] = useState('');
   const [allEvents, setAllEvents] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -80,6 +86,8 @@ export default function DriftMonitoringPage() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [checkMsg, setCheckMsg] = useState('');
   const [targetInfo, setTargetInfo] = useState({});
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastCheckResult, setLastCheckResult] = useState(null);
 
   // Blast Radius Modal state
   const [blastModalOpen, setBlastModalOpen] = useState(false);
@@ -90,6 +98,71 @@ export default function DriftMonitoringPage() {
   const [blastReport, setBlastReport] = useState(null);
   const [blastError, setBlastError] = useState('');
   const [projectMetrics, setProjectMetrics] = useState([]);
+
+  // Match project ID flexibly across clean ids and display names
+  const cleanPid = normalizeProjectId;
+  const matchesProject = (evPid, proj, selId) => {
+    if (!selId && !proj) return true;
+    if (!evPid) return false;
+    if (selId && matchesProjectId(evPid, selId)) return true;
+    if (proj && (matchesProjectId(evPid, proj.id) || matchesProjectId(evPid, proj.name))) return true;
+    return false;
+  };
+
+  const projectEvents = allEvents.filter((e) => {
+    if (!selectedProjectId) return true;
+    return matchesProject(e.project_id, selectedProject, selectedProjectId);
+  });
+
+  const quickTargets = Array.from(new Set(projectMetrics.map((m) => m.name || m.logical_name).filter(Boolean)));
+
+  const pendingEvents = projectEvents.filter((e) => e.status === 'pending');
+  const approvedEvents = projectEvents.filter((e) => e.status === 'approved');
+  const ignoredEvents = projectEvents.filter((e) => e.status === 'ignored');
+  const supersededEvents = projectEvents.filter((e) => e.status === 'superseded');
+
+  const getProjectTarget = (proj) => {
+    if (!proj) return {};
+    const idKey = proj.id ? cleanPid(proj.id) : '';
+    const nameKey = proj.name ? cleanPid(proj.name) : '';
+    return (idKey && targetInfo[idKey])
+      || (nameKey && targetInfo[nameKey])
+      || (proj.id && targetInfo[proj.id])
+      || (proj.name && targetInfo[proj.name])
+      || {};
+  };
+
+  const curTarget = {
+    ...getProjectTarget(selectedProject),
+    ...(selectedProjectId ? (targetInfo[cleanPid(selectedProjectId)] || targetInfo[selectedProjectId] || {}) : {}),
+    ...(lastCheckResult && matchesProject(lastCheckResult.project_id, selectedProject, selectedProjectId) ? lastCheckResult : {}),
+  };
+
+  const displayStatus = (() => {
+    if (pendingEvents.length > 0) return 'DRIFT_DETECTED';
+    if (curTarget.status) return curTarget.status;
+    if (projectEvents.length > 0) return 'IN_SYNC';
+    return 'NOT_CHECKED';
+  })();
+
+  const filteredEvents = projectEvents.filter((ev) => {
+    if (statusFilter === 'all') return ev.status !== 'superseded';
+    if (statusFilter === 'superseded') return ev.status === 'superseded';
+    return ev.status === statusFilter;
+  });
+
+  // Filter projects by search
+  const visibleProjects = projects.filter((p) => {
+    if (!p) return false;
+    if (!projectSearch.trim()) return true;
+    const term = projectSearch.toLowerCase();
+    return (p.name || '').toLowerCase().includes(term) || (p.id || '').toLowerCase().includes(term);
+  });
+
+  const selectProject = (pid) => {
+    setSelectedProjectId(pid);
+    setCheckMsg('');
+  };
 
   useEffect(() => {
     if (!selectedProjectId) {
@@ -146,47 +219,52 @@ export default function DriftMonitoringPage() {
     }
   };
 
-  // 1. Load project list
-  useEffect(() => {
-    authFetch('/api/projects?limit=200&offset=0')
-      .then((r) => (r.ok ? r.json() : []))
-      .then((data) => {
-        const list = Array.isArray(data) ? data : (data?.projects || []);
-        setProjects(list);
-        const urlPid = searchParams.get('project');
-        if (urlPid) {
-          setSelectedProjectId(urlPid);
-        } else if (list.length > 0) {
-          setSelectedProjectId(list[0].id || list[0].name);
-        }
-      })
-      .catch(() => setProjects([]))
-      .finally(() => setLoading(false));
-  }, []);
-
-  // 2. Load all drift events across projects
+  // Load drift events
   const refreshEvents = useCallback(async () => {
     try {
       const res = await authFetch('/api/drift/events');
       if (res.ok) {
         const data = await res.json();
         setAllEvents(data.events || []);
+        if (data.last_checks && typeof data.last_checks === 'object') {
+          setTargetInfo((prev) => {
+            const next = { ...prev };
+            Object.entries(data.last_checks).forEach(([k, v]) => {
+              const normK = cleanPid(k);
+              next[normK] = {
+                ...(next[normK] || {}),
+                ...v,
+              };
+            });
+            return next;
+          });
+        }
       }
       if (selectedProjectId) {
         const pRes = await authFetch(`/api/drift/events?project_id=${encodeURIComponent(selectedProjectId)}`);
         if (pRes.ok) {
           const pData = await pRes.json();
+          const normPid = cleanPid(selectedProjectId);
           setTargetInfo((prev) => ({
             ...prev,
-            [cleanPid(selectedProjectId)]: {
+            [normPid]: {
+              ...(prev[normPid] || {}),
               views_checked: pData.views_checked || [],
               checked_at: pData.checked_at || null,
+              status: pData.status,
+              reason: pData.reason || pData.not_checked_reason,
+              not_checked_reason: pData.not_checked_reason,
+              baseline_source: pData.baseline_source,
+              baseline_at: pData.baseline_at,
+              metrics_compared: pData.metrics_compared,
             },
           }));
         }
       }
     } catch (err) {
       console.error('Failed to load drift events:', err);
+    } finally {
+      setLoading(false);
     }
   }, [selectedProjectId, authFetch]);
 
@@ -195,31 +273,6 @@ export default function DriftMonitoringPage() {
     const interval = setInterval(refreshEvents, 10000);
     return () => clearInterval(interval);
   }, [refreshEvents]);
-
-  const selectProject = (pid) => {
-    setSelectedProjectId(pid);
-    setSearchParams({ project: pid });
-    setCheckMsg('');
-  };
-
-  // Match project ID flexibly
-  const cleanPid = (id) => String(id || '').toLowerCase().removeprefix?.('proj-') || String(id || '').toLowerCase().replace(/^proj-/, '');
-
-  const projectEvents = allEvents.filter((e) => {
-    if (!selectedProjectId) return true;
-    return cleanPid(e.project_id) === cleanPid(selectedProjectId);
-  });
-
-  const quickTargets = Array.from(new Set(projectMetrics.map((m) => m.name || m.logical_name).filter(Boolean)));
-
-  const pendingEvents = projectEvents.filter((e) => e.status === 'pending');
-  const approvedEvents = projectEvents.filter((e) => e.status === 'approved');
-  const ignoredEvents = projectEvents.filter((e) => e.status === 'ignored');
-
-  const filteredEvents = projectEvents.filter((ev) => {
-    if (statusFilter === 'all') return true;
-    return ev.status === statusFilter;
-  });
 
   // Event approval / ignore handler
   const handleResolve = async (id, action) => {
@@ -249,13 +302,30 @@ export default function DriftMonitoringPage() {
         body: JSON.stringify({ project_id: selectedProjectId || undefined }),
       });
       const data = await res.json();
-      setCheckMsg(`Checked ${data.checked_metrics} metric(s) · ${data.drift_detected} drift event(s) detected.`);
+      setLastCheckResult(data);
+      if (data.status === 'BASELINE_CAPTURED') {
+        setCheckMsg(`Baseline captured (${data.baseline_metrics || data.metrics_compared || data.checked_metrics || 0} metrics) — next check compares.`);
+      } else if (data.status === 'NOT_CHECKED') {
+        setCheckMsg(`Check not run: ${data.not_checked_reason || 'Not checked'}`);
+      } else if (data.status === 'IN_SYNC') {
+        setCheckMsg(`In sync: Checked ${data.metrics_compared ?? data.checked_metrics} metric(s) · 0 drift detected.`);
+      } else {
+        setCheckMsg(`Drift detected: Checked ${data.metrics_compared ?? data.checked_metrics} metric(s) · ${data.drift_detected} drift event(s) detected.`);
+      }
       if (selectedProjectId) {
+        const normPid = cleanPid(selectedProjectId);
         setTargetInfo((prev) => ({
           ...prev,
-          [cleanPid(selectedProjectId)]: {
+          [normPid]: {
+            ...(prev[normPid] || {}),
             views_checked: data.views_checked || [],
-            checked_at: data.checked_at || null,
+            checked_at: data.checked_at || new Date().toISOString(),
+            status: data.status,
+            reason: data.reason || data.not_checked_reason,
+            not_checked_reason: data.not_checked_reason,
+            baseline_source: data.baseline_source,
+            baseline_at: data.baseline_at,
+            metrics_compared: data.metrics_compared ?? data.checked_metrics,
           },
         }));
       }
@@ -269,8 +339,15 @@ export default function DriftMonitoringPage() {
 
   // Refresh drift logs
   const handleRefreshLogs = async () => {
-    await refreshEvents();
-    setCheckMsg('Drift events refreshed.');
+    setRefreshing(true);
+    try {
+      await refreshEvents();
+      setCheckMsg('Drift events refreshed.');
+    } catch (err) {
+      setCheckMsg(`Refresh failed: ${err}`);
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   // Clear drift history
@@ -284,18 +361,6 @@ export default function DriftMonitoringPage() {
     } catch (err) {
       alert(`Failed to clear: ${err}`);
     }
-  };
-
-  // Filter projects by search
-  const visibleProjects = projects.filter((p) => {
-    if (!projectSearch.trim()) return true;
-    const term = projectSearch.toLowerCase();
-    return (p.name || '').toLowerCase().includes(term) || (p.id || '').toLowerCase().includes(term);
-  });
-
-  const selectedProject = projects.find((p) => p.id === selectedProjectId || cleanPid(p.id) === cleanPid(selectedProjectId)) || {
-    name: selectedProjectId,
-    id: selectedProjectId,
   };
 
   return (
@@ -348,8 +413,14 @@ export default function DriftMonitoringPage() {
           >
             <Zap size={13} style={{ color: 'var(--accent-purple, #a855f7)' }} /> Check Blast Radius
           </button>
-          <button type="button" style={BTN} onClick={refreshEvents} title="Refresh drift status">
-            <RefreshCw size={13} /> Refresh
+          <button
+            type="button"
+            style={BTN}
+            onClick={handleRefreshLogs}
+            disabled={refreshing}
+            title="Refresh drift status"
+          >
+            <RefreshCw size={13} style={{ animation: refreshing ? 'spin 1s linear infinite' : 'none' }} /> {refreshing ? 'Refreshing…' : 'Refresh'}
           </button>
         </div>
       </div>
@@ -385,9 +456,10 @@ export default function DriftMonitoringPage() {
           {/* Projects Scrollable List */}
           <div style={{ flex: 1, overflowY: 'auto', padding: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
             {visibleProjects.map((p) => {
-              const pid = p.id || p.name;
+              const pid = p?.id || p?.name;
+              if (!pid) return null;
               const isSelected = selectedProjectId === pid || cleanPid(selectedProjectId) === cleanPid(pid);
-              const pEvs = allEvents.filter((e) => cleanPid(e.project_id) === cleanPid(pid));
+              const pEvs = allEvents.filter((e) => matchesProject(e.project_id, p, pid));
               const pPending = pEvs.filter((e) => e.status === 'pending').length;
 
               return (
@@ -418,7 +490,7 @@ export default function DriftMonitoringPage() {
                       overflow: 'hidden',
                       textOverflow: 'ellipsis',
                     }}>
-                      {p.name || pid}
+                      {p?.name || pid}
                     </div>
                     <div style={{ fontSize: 11, color: 'var(--text-tertiary)', fontFamily: 'monospace' }}>
                       {pid}
@@ -427,50 +499,80 @@ export default function DriftMonitoringPage() {
 
                   {/* Status Badge */}
                   <div style={{ flexShrink: 0, marginLeft: 8 }}>
-                    {pPending > 0 ? (
-                      <span style={{
-                        fontSize: 10.5,
-                        fontWeight: 700,
-                        padding: '2px 7px',
-                        borderRadius: 12,
-                        background: 'rgba(234, 179, 8, 0.15)',
-                        color: 'var(--color-warning)',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 4,
-                      }}>
-                        <AlertTriangle size={11} /> {pPending} Drift{pPending > 1 ? 's' : ''}
-                      </span>
-                    ) : pRealEvs.length > 0 ? (
-                      <span style={{
-                        fontSize: 10.5,
-                        fontWeight: 700,
-                        padding: '2px 7px',
-                        borderRadius: 12,
-                        background: 'rgba(34, 197, 94, 0.12)',
-                        color: 'var(--color-success)',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 4,
-                      }}>
-                        <CheckCircle2 size={11} /> In Sync
-                      </span>
-                    ) : (
-                      <span style={{
-                        fontSize: 10.5,
-                        fontWeight: 600,
-                        padding: '2px 7px',
-                        borderRadius: 12,
-                        background: 'var(--bg-surface-raised)',
-                        color: 'var(--text-tertiary)',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 4,
-                        border: '1px solid var(--border-main)',
-                      }}>
-                        <Clock size={11} /> Not checked
-                      </span>
-                    )}
+                    {(() => {
+                      const pTarget = getProjectTarget(p);
+                      const pStatus = pPending > 0 ? 'DRIFT_DETECTED' : (pTarget.status || (pEvs.length > 0 ? 'IN_SYNC' : 'NOT_CHECKED'));
+                      if (pStatus === 'DRIFT_DETECTED' || pPending > 0) {
+                        return (
+                          <span style={{
+                            fontSize: 10.5,
+                            fontWeight: 700,
+                            padding: '2px 7px',
+                            borderRadius: 12,
+                            background: 'rgba(234, 179, 8, 0.15)',
+                            color: 'var(--color-warning)',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 4,
+                          }}>
+                            <AlertTriangle size={11} /> {pPending > 0 ? `${pPending} Drift${pPending > 1 ? 's' : ''}` : 'Drift Detected'}
+                          </span>
+                        );
+                      }
+                      if (pStatus === 'BASELINE_CAPTURED') {
+                        return (
+                          <span style={{
+                            fontSize: 10.5,
+                            fontWeight: 700,
+                            padding: '2px 7px',
+                            borderRadius: 12,
+                            background: 'rgba(59, 130, 246, 0.15)',
+                            color: 'var(--accent-blue)',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 4,
+                          }}>
+                            <Clock size={11} /> Baseline captured
+                          </span>
+                        );
+                      }
+                      if (pStatus === 'IN_SYNC') {
+                        return (
+                          <span style={{
+                            fontSize: 10.5,
+                            fontWeight: 700,
+                            padding: '2px 7px',
+                            borderRadius: 12,
+                            background: 'rgba(34, 197, 94, 0.12)',
+                            color: 'var(--color-success)',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 4,
+                          }}>
+                            <CheckCircle2 size={11} /> In Sync
+                          </span>
+                        );
+                      }
+                      return (
+                        <span
+                          title={pTarget.not_checked_reason || pTarget.reason || 'Not checked'}
+                          style={{
+                            fontSize: 10.5,
+                            fontWeight: 600,
+                            padding: '2px 7px',
+                            borderRadius: 12,
+                            background: 'var(--bg-surface-raised)',
+                            color: 'var(--text-tertiary)',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 4,
+                            border: '1px solid var(--border-main)',
+                          }}
+                        >
+                          <Clock size={11} /> Not checked
+                        </span>
+                      );
+                    })()}
                   </div>
                 </button>
               );
@@ -480,41 +582,75 @@ export default function DriftMonitoringPage() {
 
         {/* ── RIGHT PANE: PROJECT DRIFT MONITORING DETAILS ───────────────── */}
         <div style={{ flex: 1, minWidth: 0, overflowY: 'auto', padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {/* Project Header Bar */}
-          <div style={{
-            ...CARD,
-            padding: 16,
-            background: 'var(--bg-surface)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            flexWrap: 'wrap',
-            gap: 12,
-          }}>
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <h2 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: 'var(--text-primary)' }}>
-                  {selectedProject.name || selectedProjectId}
-                </h2>
-                <code style={{ fontSize: 11.5, padding: '2px 6px', borderRadius: 4, background: 'var(--bg-app)', color: 'var(--text-secondary)' }}>
-                  {selectedProjectId}
-                </code>
+          {!selectedProjectId ? (
+            <div style={{
+              ...CARD,
+              padding: 48,
+              textAlign: 'center',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 12,
+              marginTop: 40,
+            }}>
+              <Activity size={40} style={{ color: 'var(--text-tertiary)', opacity: 0.6 }} />
+              <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)' }}>Select a Project</div>
+              <div style={{ fontSize: 13, color: 'var(--text-secondary)', maxWidth: 420 }}>
+                Choose a project from the left sidebar to monitor schema drift, view verified metrics, and check synchronization against Snowflake.
               </div>
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <Database size={13} style={{ color: 'var(--accent-blue)' }} /> {
-                  (() => {
-                    const info = targetInfo[cleanPid(selectedProjectId)] || {};
-                    const views = info.views_checked || [];
-                    const time = info.checked_at;
-                    if (views.length > 0) {
-                      return `Target View${views.length > 1 ? 's' : ''}: ${views.join(', ')}${time ? ` · Checked: ${formatOccurred(time)}` : ''}`;
+            </div>
+          ) : (
+            <>
+              {/* Project Header Bar */}
+              <div style={{
+                ...CARD,
+                padding: 16,
+                background: 'var(--bg-surface)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: 12,
+              }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <h2 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: 'var(--text-primary)' }}>
+                      {selectedProject?.name || selectedProjectId || 'Select a project'}
+                    </h2>
+                    {selectedProjectId && (
+                      <code style={{ fontSize: 11.5, padding: '2px 6px', borderRadius: 4, background: 'var(--bg-app)', color: 'var(--text-secondary)' }}>
+                        {selectedProjectId}
+                      </code>
+                    )}
+                  </div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <Database size={13} style={{ color: 'var(--accent-blue)', flexShrink: 0 }} />
+                <span>
+                  {(() => {
+                    const views = curTarget.views_checked || [];
+                    const targetText = views.length > 0
+                      ? `Target View${views.length > 1 ? 's' : ''}: ${views.join(', ')}`
+                      : 'Target: Semantic views (not checked yet)';
+                    const parts = [targetText];
+                    if (curTarget.baseline_source) {
+                      const srcLabel = curTarget.baseline_source === 'deploy'
+                        ? 'Deploy'
+                        : curTarget.baseline_source === 'snapshot'
+                        ? 'Snapshot'
+                        : 'Live capture';
+                      const atText = curTarget.baseline_at ? ` (${formatOccurred(curTarget.baseline_at)})` : '';
+                      parts.push(`Baseline: ${srcLabel}${atText}`);
                     }
-                    if (time) {
-                      return `Target: Checked ${formatOccurred(time)}`;
+                    if (curTarget.metrics_compared !== undefined && curTarget.metrics_compared !== null && curTarget.metrics_compared > 0) {
+                      parts.push(`${curTarget.metrics_compared} metrics compared`);
                     }
-                    return 'Target: Semantic views (not checked yet)';
-                  })()
-                }
+                    if (curTarget.checked_at) {
+                      parts.push(`Checked: ${formatOccurred(curTarget.checked_at)}`);
+                    }
+                    return parts.join(' · ');
+                  })()}
+                </span>
               </div>
             </div>
 
@@ -532,9 +668,10 @@ export default function DriftMonitoringPage() {
                 type="button"
                 style={BTN}
                 onClick={handleRefreshLogs}
+                disabled={refreshing}
                 title="Refresh drift logs from warehouse and semantic models"
               >
-                <RefreshCw size={13} /> Refresh
+                <RefreshCw size={13} style={{ animation: refreshing ? 'spin 1s linear infinite' : 'none' }} /> {refreshing ? 'Refreshing…' : 'Refresh'}
               </button>
               <button
                 type="button"
@@ -551,19 +688,39 @@ export default function DriftMonitoringPage() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
             <div style={{ ...CARD, padding: 14 }}>
               <div style={{ fontSize: 11.5, color: 'var(--text-tertiary)', fontWeight: 600, textTransform: 'uppercase' }}>Drift Status</div>
-              <div style={{ fontSize: 18, fontWeight: 800, marginTop: 4, color: pendingEvents.length > 0 ? 'var(--color-warning)' : projectEvents.length > 0 ? 'var(--color-success)' : 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                {pendingEvents.length > 0 ? (
-                  <><AlertTriangle size={18} /> {pendingEvents.length} Action Needed</>
-                ) : projectEvents.length > 0 ? (
+              <div style={{
+                fontSize: 18,
+                fontWeight: 800,
+                marginTop: 4,
+                color: displayStatus === 'DRIFT_DETECTED'
+                  ? 'var(--color-warning)'
+                  : displayStatus === 'IN_SYNC'
+                  ? 'var(--color-success)'
+                  : displayStatus === 'BASELINE_CAPTURED'
+                  ? 'var(--accent-blue)'
+                  : 'var(--text-tertiary)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+              }}>
+                {displayStatus === 'DRIFT_DETECTED' ? (
+                  <><AlertTriangle size={18} /> {pendingEvents.length > 0 ? `${pendingEvents.length} Action Needed` : 'Drift Detected'}</>
+                ) : displayStatus === 'BASELINE_CAPTURED' ? (
+                  <><Clock size={18} /> Baseline Captured</>
+                ) : displayStatus === 'IN_SYNC' ? (
                   <><ShieldCheck size={18} /> In Sync (Clean)</>
                 ) : (
                   <><Clock size={18} /> Not Checked</>
                 )}
               </div>
               <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>
-                {projectEvents.length === 0
-                  ? 'No drift comparison run yet for this project'
-                  : (pendingEvents.length > 0 ? 'Direct upsert paused on schedule' : 'Direct upsert permitted')}
+                {displayStatus === 'DRIFT_DETECTED'
+                  ? 'Direct upsert paused on schedule'
+                  : displayStatus === 'BASELINE_CAPTURED'
+                  ? `Baseline captured (${curTarget.metrics_compared || curTarget.baseline_metrics || 'all'} metrics) — next check compares`
+                  : displayStatus === 'IN_SYNC'
+                  ? `Direct upsert permitted · ${curTarget.metrics_compared ? curTarget.metrics_compared + ' metrics verified' : 'No drift detected'}`
+                  : (curTarget.not_checked_reason || curTarget.reason ? `Reason: ${curTarget.not_checked_reason || curTarget.reason}` : 'No drift comparison run yet for this project')}
               </div>
             </div>
 
@@ -611,10 +768,11 @@ export default function DriftMonitoringPage() {
               {/* Filter Tabs */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 {[
-                  { id: 'all', label: `All (${projectEvents.length})` },
+                  { id: 'all', label: `Active (${projectEvents.length - supersededEvents.length})` },
                   { id: 'pending', label: `Pending (${pendingEvents.length})` },
                   { id: 'approved', label: `Approved (${approvedEvents.length})` },
                   { id: 'ignored', label: `Ignored (${ignoredEvents.length})` },
+                  ...(supersededEvents.length > 0 ? [{ id: 'superseded', label: `Superseded (${supersededEvents.length})` }] : []),
                 ].map((f) => (
                   <button
                     key={f.id}
@@ -647,20 +805,45 @@ export default function DriftMonitoringPage() {
                 alignItems: 'center',
                 gap: 8,
               }}>
-                <ShieldCheck size={32} style={{ color: 'var(--color-success)' }} />
-                <strong style={{ fontSize: 14, color: 'var(--text-primary)' }}>
-                  All metrics in sync with Snowflake
-                </strong>
-                <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)', maxWidth: 460 }}>
-                  No drift detected between your BI semantic models and deployed Snowflake semantic views.
-                  Scheduled parity checks will monitor and display any drift here automatically.
-                </p>
+                {displayStatus === 'BASELINE_CAPTURED' ? (
+                  <>
+                    <Clock size={32} style={{ color: 'var(--accent-blue)' }} />
+                    <strong style={{ fontSize: 14, color: 'var(--text-primary)' }}>
+                      Baseline captured ({curTarget.metrics_compared || curTarget.baseline_metrics || 'all'} metrics) — next check compares
+                    </strong>
+                    <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)', maxWidth: 460 }}>
+                      Initial metric definitions recorded. Subsequent scheduled checks will compare and report drift against this baseline.
+                    </p>
+                  </>
+                ) : displayStatus === 'NOT_CHECKED' ? (
+                  <>
+                    <Clock size={32} style={{ color: 'var(--text-tertiary)' }} />
+                    <strong style={{ fontSize: 14, color: 'var(--text-primary)' }}>
+                      Not Checked{curTarget.not_checked_reason || curTarget.reason ? ` (${curTarget.not_checked_reason || curTarget.reason})` : ''}
+                    </strong>
+                    <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)', maxWidth: 460 }}>
+                      No drift comparison run yet for this project.{curTarget.not_checked_reason || curTarget.reason ? ` Reason: ${curTarget.not_checked_reason || curTarget.reason}.` : ''}
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <ShieldCheck size={32} style={{ color: 'var(--color-success)' }} />
+                    <strong style={{ fontSize: 14, color: 'var(--text-primary)' }}>
+                      All metrics in sync
+                    </strong>
+                    <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)', maxWidth: 460 }}>
+                      No drift detected between your BI semantic models and deployed warehouse semantic views.
+                      Scheduled parity checks will monitor and display any drift here automatically.
+                    </p>
+                  </>
+                )}
                 <button
                   type="button"
                   style={{ ...BTN, marginTop: 8 }}
                   onClick={handleRefreshLogs}
+                  disabled={refreshing}
                 >
-                  <RefreshCw size={13} /> Refresh Logs
+                  <RefreshCw size={13} style={{ animation: refreshing ? 'spin 1s linear infinite' : 'none' }} /> {refreshing ? 'Refreshing…' : 'Refresh Logs'}
                 </button>
               </div>
             ) : (
@@ -923,6 +1106,8 @@ export default function DriftMonitoringPage() {
               </div>
             )}
           </div>
+          </>
+        )}
         </div>
       </div>
 

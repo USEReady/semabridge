@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 import zipfile
 from io import BytesIO
 from pathlib import Path
@@ -911,6 +912,7 @@ async def export_projects_bulk(project_ids: List[str], request: Request):
 
 
 @router.post("/api/projects/import")
+@router.post("/api/project/import")
 async def import_projects(request: Request, files: List[UploadFile] = File(...)):
     user_id = require_request_user_id(request)
     imported = []

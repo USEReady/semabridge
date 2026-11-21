@@ -52,7 +52,7 @@ _SYNTAX_STOPWORDS = frozenset({
 # Relative-period / trend / growth wording. Year & quarter literals (2024, Q1)
 # are handled separately as explicit filters.
 _TIME_INTENT_RE = re.compile(
-    r"\b(?:trends?|trending)(?:\s+over\s+time)?\b|\bover\s+time\b"
+    r"\b(?:trends?|trending)(?:\s+over\s+time)?\b|\bover\s+time\b"  # hardcoding-ok: generic time patterns
     r"|\b(?:growth|change|variance)\b"
     r"|\b(?:last|previous|prior|past|this|current|next)\s+(?:\d+\s+)?(?:years?|quarters?|months?|weeks?|days?)\b"
     r"|\b(?:ytd|qtd|mtd|yoy|mom|qoq|sply|year[- ]?to[- ]?date|quarter[- ]?to[- ]?date|month[- ]?to[- ]?date"

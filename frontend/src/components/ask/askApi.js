@@ -112,7 +112,7 @@ export async function fetchVerifiedQueries(projectId) {
 }
 
 export async function fetchProjects() {
-  const res = await authFetch('/api/projects?limit=50');
+  const res = await authFetch('/api/projects');
   if (!res.ok) return [];
   const data = await res.json();
   return Array.isArray(data) ? data : data.projects || [];

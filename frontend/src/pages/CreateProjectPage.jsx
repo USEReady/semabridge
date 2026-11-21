@@ -279,6 +279,9 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   const prevWorkspaceIdRef = useRef(null);
   const prevSourceConnectorRef = useRef(null);
 
+  const [localFolders, setLocalFolders] = useState([]);
+  const [localFoldersLoading, setLocalFoldersLoading] = useState(false);
+
   const refreshLocalFolders = useCallback(async () => {
     setLocalFoldersLoading(true);
     try {
@@ -421,8 +424,6 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   // per-model edits live in useMultiDryRunJob below.
   const [multiDryRunJob, setMultiDryRunJob] = useState(null);
 
-  const [localFolders, setLocalFolders] = useState([]);
-  const [localFoldersLoading, setLocalFoldersLoading] = useState(false);
   const [pbixFiles, setPbixFiles] = useState([]);
   const [pbixFilesLoading, setPbixFilesLoading] = useState(false);
   const [pbixFilesError, setPbixFilesError] = useState('');
@@ -947,16 +948,17 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     if (next[wsid]) loadWsModels(wsid);
   };
 
+  // One click on a model row (see utils/modelSelection.js): removes EVERY key
+  // that refers to the model (name and/or GUID), or adds it -- Fabric is
+  // capped at MAX_SELECTED_MODELS per project, matching the backend.
+  const [modelSelectionNotice, setModelSelectionNotice] = useState('');
+
   const clearSelectedModels = () => {
     setSelectedModels(new Set());
     setSelectedModelNameByKey({});
     setModelSelectionNotice('');
   };
 
-  // One click on a model row (see utils/modelSelection.js): removes EVERY key
-  // that refers to the model (name and/or GUID), or adds it -- Fabric is
-  // capped at MAX_SELECTED_MODELS per project, matching the backend.
-  const [modelSelectionNotice, setModelSelectionNotice] = useState('');
   const toggleModel = useCallback((model) => {
     const { wizard: current } = useProjectWizardStore.getState();
     const result = toggleModelSelection({
@@ -972,6 +974,53 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     setModelSelectionNotice('');
     setWizardState({ selectedModels: result.selectedKeys, selectedModelNameByKey: result.nameByKey });
   }, [setWizardState, sourceConnector]);
+
+  // ── Multi-model dry run: polling + per-model rows/edits keyed by file_id ──
+  const multiJob = useMultiDryRunJob({
+    projectId: multiDryRunJob?.api_project_id || 'preview',
+    job: multiDryRunJob,
+  });
+  const multiSections = multiJob.sections;
+  const isMultiModelRun = Boolean(multiDryRunJob?.job_id) && multiSections.length > 0;
+  const updateMultiFileRows = multiJob.updateFileRows;
+
+  const handleRemoveMultiFile = useCallback((fileId) => {
+    const sec = multiSections.find((s) => s.fileId === fileId);
+    const jobFile = (multiJob.jobStatus?.files || []).find((f) => f.file_id === fileId);
+    const label = sec?.label || jobFile?.file_name || jobFile?.display_name || '';
+    const fpath = jobFile?.pbix_path || jobFile?.source_path || jobFile?.path || '';
+
+    setWizardState((prev) => {
+      const lblLow = label.toLowerCase();
+      const baseLow = lblLow.replace(/^[0-9a-f]{24,}_/i, '').replace(/\.pbix$/i, '');
+      const nextEntries = (prev.pbixFileEntries || []).filter((e) => {
+        if (fpath && e.path === fpath) return false;
+        const pLow = String(e.path || '').toLowerCase();
+        const nLow = String(e.name || '').toLowerCase().replace(/\.pbix$/i, '');
+        if (lblLow && (pLow.includes(lblLow) || nLow === lblLow)) return false;
+        if (baseLow && (nLow === baseLow || pLow.includes(baseLow))) return false;
+        return true;
+      });
+      const nextSelected = (prev.selectedModelNames || []).filter((m) => m !== label && m !== fpath);
+      return {
+        pbixFileEntries: nextEntries,
+        selectedModelNames: nextSelected,
+      };
+    });
+    multiJob.removeFile(fileId);
+  }, [multiSections, multiJob, setWizardState]);
+
+  // Which dry run / preview project(s) the user's dry-run-time edits (e.g.
+  // synonyms) were saved against -- sent on create / edit-save so the backend
+  // can migrate them to the real project. Single: preview_project_id from
+  // the /dry-run response. Multi: the job id plus every model's preview id.
+  const multiJobId = multiDryRunJob?.job_id || '';
+  const singlePreviewProjectId = dryRunData?.project_id || '';
+  const dryRunMigrationFields = buildDryRunMigrationFields({
+    multiJobId,
+    sections: multiSections,
+    singlePreviewProjectId,
+  });
 
   /* ─── Submit ─── */
   const handleFinish = async () => {
@@ -1210,7 +1259,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     }
   };
 
-  const buildSourceConfig = () => {
+  function buildSourceConfig() {
     const source = { type: sourceConnector };
 
     if (sourceConnector === 'fabric') {
@@ -1270,7 +1319,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     return source;
   };
 
-  const buildTargetConfigs = () => {
+  function buildTargetConfigs() {
     return Array.from(targetConnectors).map(connector => {
       const target = { type: connector };
 
@@ -1305,7 +1354,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     });
   };
 
-  const buildConfigYaml = (source, targets, overrides = {}) => {
+  function buildConfigYaml(source, targets, overrides = {}) {
     const projectName = String(overrides.projectName || name.trim() || 'Untitled Project').trim();
     const projectDescription = overrides.description ?? description.trim();
     const lines = [`project_name: "${escapeYamlString(projectName)}"`];
@@ -1657,53 +1706,6 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     snowflakeSchema, targetConnectors, targetDatabase, targetSchema,
     selectedModelNames, currentMappingSignature, fabricAccountId, effectiveSources,
   ]);
-
-  // ── Multi-model dry run: polling + per-model rows/edits keyed by file_id ──
-  const multiJob = useMultiDryRunJob({
-    projectId: multiDryRunJob?.api_project_id || 'preview',
-    job: multiDryRunJob,
-  });
-  const multiSections = multiJob.sections;
-  const isMultiModelRun = Boolean(multiDryRunJob?.job_id) && multiSections.length > 0;
-  const updateMultiFileRows = multiJob.updateFileRows;
-
-  const handleRemoveMultiFile = useCallback((fileId) => {
-    const sec = multiSections.find((s) => s.fileId === fileId);
-    const jobFile = (multiJob.jobStatus?.files || []).find((f) => f.file_id === fileId);
-    const label = sec?.label || jobFile?.file_name || jobFile?.display_name || '';
-    const fpath = jobFile?.pbix_path || jobFile?.source_path || jobFile?.path || '';
-
-    setWizardState((prev) => {
-      const lblLow = label.toLowerCase();
-      const baseLow = lblLow.replace(/^[0-9a-f]{24,}_/i, '').replace(/\.pbix$/i, '');
-      const nextEntries = (prev.pbixFileEntries || []).filter((e) => {
-        if (fpath && e.path === fpath) return false;
-        const pLow = String(e.path || '').toLowerCase();
-        const nLow = String(e.name || '').toLowerCase().replace(/\.pbix$/i, '');
-        if (lblLow && (pLow.includes(lblLow) || nLow === lblLow)) return false;
-        if (baseLow && (nLow === baseLow || pLow.includes(baseLow))) return false;
-        return true;
-      });
-      const nextSelected = (prev.selectedModelNames || []).filter((m) => m !== label && m !== fpath);
-      return {
-        pbixFileEntries: nextEntries,
-        selectedModelNames: nextSelected,
-      };
-    });
-    multiJob.removeFile(fileId);
-  }, [multiSections, multiJob, setWizardState]);
-
-  // Which dry run / preview project(s) the user's dry-run-time edits (e.g.
-  // synonyms) were saved against -- sent on create / edit-save so the backend
-  // can migrate them to the real project. Single: preview_project_id from
-  // the /dry-run response. Multi: the job id plus every model's preview id.
-  const multiJobId = multiDryRunJob?.job_id || '';
-  const singlePreviewProjectId = dryRunData?.project_id || '';
-  const dryRunMigrationFields = buildDryRunMigrationFields({
-    multiJobId,
-    sections: multiSections,
-    singlePreviewProjectId,
-  });
 
   // ── Per-model routing for the mapping handlers below ─────────────────────────
   // Multi-model dry runs call the SAME handlers as the single-model table; the

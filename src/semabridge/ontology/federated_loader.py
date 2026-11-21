@@ -1254,6 +1254,10 @@ class FederatedOntologyLoader:
             or sv_meta.get("view_name")
             or (existing_ontology.semantic_view_name if existing_ontology else None)
         )
+        if resolved_sv_name:
+            _double_q = re.search(r'(\b[\w$]+\.[\w$]+)\.(?:")?\1\b', resolved_sv_name, re.I)
+            if _double_q:
+                resolved_sv_name = re.sub(r'(\b[\w$]+\.[\w$]+)\.(?:")?\1\b', r'\1', resolved_sv_name, flags=re.I).replace('"', '')
 
         def _norm_key(val: str) -> str:
             return re.sub(r"[^a-z0-9]+", "", str(val or "").casefold())
