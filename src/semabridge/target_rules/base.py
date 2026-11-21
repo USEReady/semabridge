@@ -11,45 +11,140 @@ in three parts:
 * ``dialect``      -- how SQL is spelled (quoting, casts, function names).
 
 Understanding a DAX measure is platform-neutral; *deciding* about it and
-*spelling* its SQL is not. Shared code asks the rules instead of hard-coding
-Snowflake choices.
-
-Status: nothing calls this yet. Later steps move today's hard-coded
-Snowflake choices behind it, one at a time, with the golden tests
-(Tests/golden) proving Snowflake's output does not change.
+*spelling* its SQL is not. Shared code reports WHAT it found as a neutral
+``ReasonCode``; the platform's policies decide keep/decline and word the
+reason. Shared code asks the rules instead of hard-coding Snowflake choices.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import Enum
+from types import MappingProxyType
+from typing import Mapping, Optional
 
 # Deliberately imports nothing from semabridge.converter or
-# semabridge.dax_translation: the DAX renderer will import these rules
-# (Phase 2b), so importing back would be circular.
+# semabridge.dax_translation: the DAX renderer imports these rules, so
+# importing back would be circular.
+
+
+class ReasonCode(str, Enum):
+    """Why a measure may not be expressible, found by shared code.
+
+    Platform-neutral: the code says what the DAX is or does; each platform's
+    policies decide whether that means keep or decline, and how to word it.
+    """
+
+    # Found by the converter (osi_to_sml) from the measure's facts.
+    MISSING_COLUMNS = "missing_columns"            # detail: the missing refs
+    EMPTY_EXPRESSION = "empty_expression"
+    CONSTANT_EXPRESSION = "constant_expression"    # no column/measure/table ref
+    STRING_FUNCTION_ROOT = "string_function_root"  # string function/literal at the root
+    CONTEXT_TRANSITION = "context_transition"      # detail: the analyser's reason
+
+    # Found by the DAX classifier before rendering
+    # (dax_ast_parser.classify_dax_ast_reason).
+    DATEADD_NOT_LITERAL = "dateadd_not_literal"
+    TEXT_RESULT = "text_result"
+    CONSTANT = "constant"
+    WINDOW_CASE = "window_case"                    # IF/CASE over a window construct
+    TREATAS = "treatas"                            # virtual relationship
+    RANKING = "ranking"
+    ALLSELECTED = "allselected"                    # depends on report selection
+    NEEDS_WINDOW = "needs_window"
+    NOT_DECOMPOSABLE_WINDOW = "not_decomposable_window"
+    NON_ADDITIVE_TIME_INTEL = "non_additive_time_intel"
+    SEMI_ADDITIVE_CASE = "semi_additive_case"      # detail: the measure
+    NON_ADDITIVE_DEPENDENCY = "non_additive_dependency"  # detail: the measure
+    DISCONNECTED_SELECTOR = "disconnected_selector"
+
+
+@dataclass(frozen=True)
+class DecisionRule:
+    """How one platform treats one ReasonCode."""
+
+    keep: bool
+    # Reason text when declined; may contain "{detail}".
+    text: str = ""
+    # Prefix the reason with the policy's by-design marker.
+    by_design: bool = False
+
+
+@dataclass(frozen=True)
+class Decision:
+    """A platform's verdict on one measure."""
+
+    keep: bool
+    # The reason stored on a declined measure (sync_failure_reason).
+    reason: Optional[str] = None
+
+
+class UnhandledReasonError(KeyError):
+    """A platform's policies have no rule for a ReasonCode."""
 
 
 @dataclass(frozen=True)
 class TargetPolicies:
     """Fixed decisions about measures for one target platform."""
 
-    # Measures whose result is text (e.g. "Sales: " & FORMAT(...)).
-    decline_text_measures: bool
-    # Measures with no column/measure/table reference (a constant).
-    decline_constant_measures: bool
-    # Measures that need two fact tables (e.g. [Sales] / [Budget]).
-    decline_two_table_measures: bool
     # SQL a declined or empty measure is given as a stand-in.
     placeholder_sql: str
     # Prefix marking a decline as "by design" rather than a translation gap.
     by_design_prefix: str
-    # Reason text (after the prefix) for each by-design decline.
-    constant_measure_reason: str
-    text_measure_reason: str
+    # Measures that need two fact tables (e.g. [Sales] / [Budget]).
+    decline_two_table_measures: bool
+    # How each ReasonCode is decided and worded on this platform.
+    rules: Mapping[ReasonCode, DecisionRule] = field(default_factory=dict)
+    # Text that marks SQL as a placeholder (a declined measure's stand-in),
+    # matched case-insensitively. Defaults to the start of placeholder_sql
+    # up to "AS".
+    placeholder_marker: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "rules", MappingProxyType(dict(self.rules)))
+        if not self.placeholder_marker:
+            marker = self.placeholder_sql
+            cut = marker.upper().find(" AS ")
+            marker = marker[: cut + len(" AS")] if cut >= 0 else marker
+            object.__setattr__(self, "placeholder_marker", marker)
+
+    def rule_for(self, code: ReasonCode) -> DecisionRule:
+        try:
+            return self.rules[ReasonCode(code)]
+        except KeyError:
+            raise UnhandledReasonError(f"no policy for reason code {code!r}") from None
+
+    def reason_text(self, code: ReasonCode, detail: Optional[str] = None, by_design: Optional[bool] = None) -> str:
+        """The worded reason for a code (with the by-design prefix when the
+        rule, or the caller via by_design=True/False, says so)."""
+        rule = self.rule_for(code)
+        text = rule.text.format(detail=detail if detail is not None else "")
+        prefixed = rule.by_design if by_design is None else by_design
+        return f"{self.by_design_prefix}: {text}" if prefixed else text
+
+    def decide(self, code: ReasonCode, detail: Optional[str] = None, by_design: Optional[bool] = None) -> Decision:
+        """Keep or decline a measure for a ReasonCode, with its worded reason."""
+        rule = self.rule_for(code)
+        if rule.keep:
+            return Decision(keep=True)
+        return Decision(keep=False, reason=self.reason_text(code, detail, by_design))
 
     def by_design_reason(self, reason: str) -> str:
         """Full decline reason as stored on a measure: '<prefix>: <reason>'."""
         return f"{self.by_design_prefix}: {reason}"
+
+    def is_placeholder(self, sql: Optional[str]) -> bool:
+        """True when SQL is (or contains) a declined measure's placeholder."""
+        return bool(sql) and self.placeholder_marker.upper() in str(sql).upper()
+
+    @property
+    def decline_text_measures(self) -> bool:
+        return not self.rule_for(ReasonCode.TEXT_RESULT).keep
+
+    @property
+    def decline_constant_measures(self) -> bool:
+        return not self.rule_for(ReasonCode.CONSTANT).keep
 
 
 @dataclass(frozen=True)

@@ -3,48 +3,50 @@
     from semabridge.target_rules import get_target_rules
     rules = get_target_rules("snowflake")
 
-See base.py for what each part means. Only Snowflake exists so far
-(reproducing today's behaviour); Databricks is added in Phase 3.
+base.py      the shapes: TargetRules, TargetPolicies (ReasonCode -> Decision),
+             TargetCapabilities, SqlDialect
+registry.py  platforms register their rules; shared code looks them up
+snowflake/   Snowflake's rules (dialect, policies, capabilities)
+
+Only Snowflake exists so far (reproducing today's behaviour); Databricks is
+added in Phase 3 as another sub-package that registers itself.
 """
 
 from __future__ import annotations
 
 from semabridge.target_rules.base import (
+    Decision,
+    DecisionRule,
+    ReasonCode,
     SqlDialect,
     TargetCapabilities,
     TargetPolicies,
     TargetRules,
+    UnhandledReasonError,
 )
-from semabridge.target_rules.snowflake import SNOWFLAKE_RULES, SnowflakeDialect
+from semabridge.target_rules.registry import (
+    UnsupportedTargetError,
+    get_target_rules,
+    register_target_rules,
+    registered_targets,
+)
 
-_RULES_BY_TARGET = {
-    "snowflake": SNOWFLAKE_RULES,
-}
-
-
-class UnsupportedTargetError(ValueError):
-    """No rules exist for the requested target platform yet."""
-
-
-def get_target_rules(target: str) -> TargetRules:
-    """Rules for a target platform name such as "snowflake" (case-insensitive)."""
-    key = str(target or "").strip().lower()
-    try:
-        return _RULES_BY_TARGET[key]
-    except KeyError:
-        supported = ", ".join(sorted(_RULES_BY_TARGET))
-        raise UnsupportedTargetError(
-            f"No target rules for {target!r} yet (supported: {supported})."
-        ) from None
-
+# Importing a platform's package registers its rules.
+from semabridge.target_rules.snowflake import SNOWFLAKE_RULES, SnowflakeDialect  # noqa: E402
 
 __all__ = [
+    "Decision",
+    "DecisionRule",
+    "ReasonCode",
     "SNOWFLAKE_RULES",
     "SnowflakeDialect",
     "SqlDialect",
     "TargetCapabilities",
     "TargetPolicies",
     "TargetRules",
+    "UnhandledReasonError",
     "UnsupportedTargetError",
     "get_target_rules",
+    "register_target_rules",
+    "registered_targets",
 ]

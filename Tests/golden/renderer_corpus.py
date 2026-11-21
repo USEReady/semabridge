@@ -22,6 +22,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 HERE = Path(__file__).resolve().parent
 FEATURES = HERE.parent / "phase_a" / "feature_tests_for_measures"
@@ -214,6 +215,50 @@ def _direct_cases() -> dict:
     return out
 
 
+# Classifier cases: classify_dax_ast_not_applicable decides "not applicable"
+# BEFORE rendering. Each case aims at one of its outcomes; the extra
+# arguments are the model context the translator passes it.
+_NON_ADDITIVE = {"Closing": ("Date", "LAST"), "Stock": (None, "LAST")}
+CLASSIFY_CASES = [
+    ("dateadd_not_literal", "CALCULATE(SUM(Sales[Amount]), DATEADD('Date'[Date], [Shift], MONTH))", {}),
+    ("text_concat", '"Sales: " & FORMAT(SUM(Sales[Amount]), "0")', {}),
+    ("text_function", 'FORMAT(SUM(Sales[Amount]), "0")', {}),
+    ("constant_blank", '""', {}),
+    ("constant_numeric", "5", {}),
+    ("window_case", "IF(RANKX(ALL(Product), SUM(Sales[Amount])) = 1, 1, 0)", {}),
+    ("treatas", "CALCULATE(SUM(Sales[Amount]), TREATAS(VALUES(Budget[Product]), Sales[Product]))", {}),
+    ("ranking", "RANKX(ALL(Product), SUM(Sales[Amount]))", {}),
+    ("allselected", "DIVIDE(SUM(Sales[Amount]), CALCULATE(SUM(Sales[Amount]), ALLSELECTED(Sales)))", {}),
+    ("selectedvalue_all", "CALCULATE(SUM(Sales[Amount]), FILTER(ALL(Product), Product[Color] = SELECTEDVALUE(Product[Color])))", {}),
+    ("all_modifier", "CALCULATE(SUM(Sales[Amount]), ALL(Product))", {}),
+    ("all_modifier_distinct", "CALCULATE(DISTINCTCOUNT(Sales[OrderID]), ALL(Product))", {}),
+    ("allexcept_distinct", "CALCULATE(DISTINCTCOUNT(Sales[OrderID]), ALLEXCEPT(Sales, Sales[Region]))", {}),
+    ("removefilters", "CALCULATE(SUM(Sales[Amount]), REMOVEFILTERS(Product))", {}),
+    ("closing_balance_ti", "CALCULATE(SUM(Stock[Qty]), LASTDATE('Date'[Date]), SAMEPERIODLASTYEAR('Date'[Date]))", {}),
+    ("closing_balance_ti_2", "CALCULATE(SUM(Stock[Qty]), FILTER(ALL('Date'), 'Date'[Date] = MAX('Date'[Date])), DATEADD('Date'[Date], -1, MONTH))", {}),
+    ("semi_additive_case", "IF([Closing] > 0, [Closing], 0)", {"non_additive_map": _NON_ADDITIVE}),
+    ("non_additive_dep", "CALCULATE([Closing], FILTER(Sales, [Other] > 0))", {"non_additive_map": _NON_ADDITIVE}),
+    ("non_additive_ratio", "[Closing] / [Other]", {"non_additive_map": _NON_ADDITIVE}),
+    ("non_additive_plain", "SUMX(Sales, [Closing])", {"non_additive_map": _NON_ADDITIVE}),
+    ("disconnected_selector", 'IF(SELECTEDVALUE(Param[Mode]) = "A", SUM(Sales[Amount]), SUM(Sales[Cost]))',
+     {"relationships": [SimpleNamespace(from_dataset="Sales", to_dataset="Product")]}),
+    ("plain_sum", "SUM(Sales[Amount])", {}),
+    ("show_value_for_dates", "__FirstDateVisible <= __LastDateWithData", {}),
+]
+
+
+def _classify_cases(all_dax: list) -> dict:
+    from semabridge.converter.dax_ast_parser import DaxAstParser, classify_dax_ast_not_applicable
+
+    out = {}
+    for case_id, dax, extra in CLASSIFY_CASES:
+        out[case_id] = classify_dax_ast_not_applicable(DaxAstParser().parse(dax), **extra)
+    # Every other DAX expression in the corpus, with no model context.
+    for i, dax in enumerate(all_dax):
+        out[f"corpus_{i:03d}"] = classify_dax_ast_not_applicable(DaxAstParser().parse(dax))
+    return out
+
+
 def _record(res: dict) -> dict:
     return {"status": res.get("status"), "sql": res.get("sql"), "reason": res.get("reason") or ""}
 
@@ -232,6 +277,11 @@ def main() -> None:
         out["complex_measures"][name] = _record(res)
 
     out["renderer_direct"] = _direct_cases()
+
+    all_dax = [c["dax"] for c in CASES]
+    all_dax += [dax for _, (_, dax) in sorted(measures.items())]
+    all_dax += [dax for _, dax, _ in DIRECT_CASES]
+    out["classify"] = _classify_cases(all_dax)
 
     sys.stdout.write(json.dumps(out, indent=2, ensure_ascii=False, sort_keys=True) + "\n")
 
