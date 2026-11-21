@@ -1,0 +1,722 @@
+{
+  "complex_measures": {
+    "Case Count": {
+      "reason": "",
+      "sql": "COUNT(*)",
+      "status": "ok"
+    },
+    "Cases % by Product": {
+      "reason": "not applicable: needs window metric",
+      "sql": null,
+      "status": "not_applicable"
+    },
+    "Cases MoM%": {
+      "reason": "",
+      "sql": "((COUNT(*)) - (COUNT(CASE WHEN YEAR(CASE_CALENDAR.\"COL_DATE\") = YEAR(DATEADD(MONTH, -1, CURRENT_DATE())) AND MONTH(CASE_CALENDAR.\"COL_DATE\") = MONTH(DATEADD(MONTH, -1, CURRENT_DATE())) THEN 1 END))) / NULLIF((COUNT(CASE WHEN YEAR(CASE_CALENDAR.\"COL_DATE\") = YEAR(DATEADD(MONTH, -1, CURRENT_DATE())) AND MONTH(CASE_CALENDAR.\"COL_DATE\") = MONTH(DATEADD(MONTH, -1, CURRENT_DATE())) THEN 1 END)), 0)",
+      "status": "ok"
+    },
+    "Close %": {
+      "reason": "",
+      "sql": "(COUNT(CASE WHEN OPPORTUNITIES.\"STATUS\" = 'Won' THEN OPPORTUNITIES.\"OPPORTUNITYSEQ\" END)) / NULLIF((COUNT(CASE WHEN OPPORTUNITIES.\"STATUS\" = 'Won' THEN OPPORTUNITIES.\"OPPORTUNITYSEQ\" END)) + (COUNT(CASE WHEN OPPORTUNITIES.\"STATUS\" = 'Lost' THEN OPPORTUNITIES.\"OPPORTUNITYSEQ\" END)), 0)",
+      "status": "ok"
+    },
+    "Count of Lost": {
+      "reason": "",
+      "sql": "COUNT(CASE WHEN OPPORTUNITIES.\"STATUS\" = 'Lost' THEN OPPORTUNITIES.\"OPPORTUNITYSEQ\" END)",
+      "status": "ok"
+    },
+    "Count of Won": {
+      "reason": "",
+      "sql": "COUNT(CASE WHEN OPPORTUNITIES.\"STATUS\" = 'Won' THEN OPPORTUNITIES.\"OPPORTUNITYSEQ\" END)",
+      "status": "ok"
+    },
+    "Forecast": {
+      "reason": "",
+      "sql": "CASE WHEN (SUM(CASE WHEN OPPORTUNITIES.\"STATUS\" = 'Won' THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)) IS NULL AND (CASE WHEN (SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 2) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)) IS NULL AND ((SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 2) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)) * OPPORTUNITY_FORECAST_ADJUSTMENT.\"FORECAST_ADJUSTMENT_VALUE\" / 100) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 2) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)), 0) + COALESCE((SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 2) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)) * OPPORTUNITY_FORECAST_ADJUSTMENT.\"FORECAST_ADJUSTMENT_VALUE\" / 100, 0) END) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN OPPORTUNITIES.\"STATUS\" = 'Won' THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)), 0) + COALESCE((CASE WHEN (SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 2) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)) IS NULL AND ((SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 2) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)) * OPPORTUNITY_FORECAST_ADJUSTMENT.\"FORECAST_ADJUSTMENT_VALUE\" / 100) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 2) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)), 0) + COALESCE((SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 2) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)) * OPPORTUNITY_FORECAST_ADJUSTMENT.\"FORECAST_ADJUSTMENT_VALUE\" / 100, 0) END), 0) END",
+      "status": "ok"
+    },
+    "Forecast %": {
+      "reason": "",
+      "sql": "(CASE WHEN (SUM(CASE WHEN OPPORTUNITIES.\"STATUS\" = 'Won' THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)) IS NULL AND (CASE WHEN (SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 2) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)) IS NULL AND ((SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 2) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)) * OPPORTUNITY_FORECAST_ADJUSTMENT.\"FORECAST_ADJUSTMENT_VALUE\" / 100) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 2) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)), 0) + COALESCE((SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 2) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)) * OPPORTUNITY_FORECAST_ADJUSTMENT.\"FORECAST_ADJUSTMENT_VALUE\" / 100, 0) END) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN OPPORTUNITIES.\"STATUS\" = 'Won' THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)), 0) + COALESCE((CASE WHEN (SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 2) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)) IS NULL AND ((SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 2) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)) * OPPORTUNITY_FORECAST_ADJUSTMENT.\"FORECAST_ADJUSTMENT_VALUE\" / 100) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 2) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)), 0) + COALESCE((SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 2) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)) * OPPORTUNITY_FORECAST_ADJUSTMENT.\"FORECAST_ADJUSTMENT_VALUE\" / 100, 0) END), 0) END) / NULLIF(CASE WHEN (ROUND((CASE WHEN NULL IS NULL AND ((SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 3) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)) * 0.75) IS NULL THEN NULL ELSE 0 + COALESCE((SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 3) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)) * 0.75, 0) END) / (100000)) * (100000)) > 0 THEN (ROUND((CASE WHEN NULL IS NULL AND ((SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 3) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)) * 0.75) IS NULL THEN NULL ELSE 0 + COALESCE((SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 3) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)) * 0.75, 0) END) / (100000)) * (100000)) ELSE ROUND((CASE WHEN NULL IS NULL AND ((SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 3) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)) * 0.75) IS NULL THEN NULL ELSE 0 + COALESCE((SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 3) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)) * 0.75, 0) END) / (10000)) * (10000) END, 0)",
+      "status": "ok"
+    },
+    "Forecast Adjustment Value": {
+      "reason": "",
+      "sql": "IFF(COUNT(DISTINCT OPPORTUNITY_FORECAST_ADJUSTMENT.\"FORECAST_ADJUSTMENT\") + MAX(IFF(OPPORTUNITY_FORECAST_ADJUSTMENT.\"FORECAST_ADJUSTMENT\" IS NULL, 1, 0)) = 1, MAX(OPPORTUNITY_FORECAST_ADJUSTMENT.\"FORECAST_ADJUSTMENT\"), 0)",
+      "status": "ok"
+    },
+    "Rev Goal": {
+      "reason": "",
+      "sql": "CASE WHEN (ROUND((CASE WHEN NULL IS NULL AND ((SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 3) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)) * 0.75) IS NULL THEN NULL ELSE 0 + COALESCE((SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 3) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)) * 0.75, 0) END) / (100000)) * (100000)) > 0 THEN (ROUND((CASE WHEN NULL IS NULL AND ((SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 3) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)) * 0.75) IS NULL THEN NULL ELSE 0 + COALESCE((SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 3) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)) * 0.75, 0) END) / (100000)) * (100000)) ELSE ROUND((CASE WHEN NULL IS NULL AND ((SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 3) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)) * 0.75) IS NULL THEN NULL ELSE 0 + COALESCE((SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 3) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)) * 0.75, 0) END) / (10000)) * (10000) END",
+      "status": "ok"
+    },
+    "Revenue In Pipeline": {
+      "reason": "",
+      "sql": "CASE WHEN (SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 2) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)) IS NULL AND ((SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 2) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)) * OPPORTUNITY_FORECAST_ADJUSTMENT.\"FORECAST_ADJUSTMENT_VALUE\" / 100) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 2) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)), 0) + COALESCE((SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"PIPELINESTEP\", 1)) >= 2) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)) * OPPORTUNITY_FORECAST_ADJUSTMENT.\"FORECAST_ADJUSTMENT_VALUE\" / 100, 0) END",
+      "status": "ok"
+    },
+    "Revenue Won": {
+      "reason": "",
+      "sql": "SUM(CASE WHEN OPPORTUNITIES.\"STATUS\" = 'Won' THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)",
+      "status": "ok"
+    }
+  },
+  "feature_cases": {
+    "F1.1": {
+      "reason": "",
+      "sql": "COUNT(CASE WHEN ORDERS.\"STATUS\" = 'Open' THEN ORDERS.\"ORDERID\" END)",
+      "status": "ok"
+    },
+    "F1.2": {
+      "reason": "",
+      "sql": "SUM(ORDERS.\"QTY\"::FLOAT)",
+      "status": "ok"
+    },
+    "F1.3": {
+      "reason": "",
+      "sql": "COUNT(CASE WHEN ORDERS.\"IS_PRIORITY\" = TRUE THEN 1 END)",
+      "status": "ok"
+    },
+    "F1.4": {
+      "reason": "",
+      "sql": "COUNT(CASE WHEN COALESCE(ORDERS.\"IS_PRIORITY\", FALSE) = FALSE THEN 1 END)",
+      "status": "ok"
+    },
+    "F1.5": {
+      "reason": "",
+      "sql": "CASE WHEN (ROUND(AVG(ORDERS.\"QTY\"::FLOAT) / 2, 1)) IS NULL AND (1) IS NULL THEN NULL ELSE COALESCE(ROUND(AVG(ORDERS.\"QTY\"::FLOAT) / 2, 1), 0) - 1 END",
+      "status": "ok"
+    },
+    "F1.6": {
+      "reason": "",
+      "sql": "CASE WHEN (IFF(COALESCE(SUM(ORDERS.\"QTY\"::FLOAT), 0) = 0, 0, SUM(ORDERS.\"AMOUNT\"::FLOAT) / SUM(ORDERS.\"QTY\"::FLOAT))) IS NULL AND (1) IS NULL THEN NULL ELSE COALESCE(IFF(COALESCE(SUM(ORDERS.\"QTY\"::FLOAT), 0) = 0, 0, SUM(ORDERS.\"AMOUNT\"::FLOAT) / SUM(ORDERS.\"QTY\"::FLOAT)), 0) - 1 END",
+      "status": "ok"
+    },
+    "F1.7": {
+      "reason": "",
+      "sql": "CASE WHEN SUM(ORDERS.\"QTY\"::FLOAT) > 0 THEN -1 * SUM(ORDERS.\"QTY\"::FLOAT) ELSE -1 END",
+      "status": "ok"
+    },
+    "F1.8": {
+      "reason": "DAX translation failed: DAX expression could not be parsed",
+      "sql": null,
+      "status": "fail"
+    },
+    "F10.1": {
+      "reason": "",
+      "sql": "IFF(COUNT(DISTINCT PARAM.\"COL_VALUE\") + MAX(IFF(PARAM.\"COL_VALUE\" IS NULL, 1, 0)) = 1, MAX(PARAM.\"COL_VALUE\"), 0)",
+      "status": "ok"
+    },
+    "F10.2": {
+      "reason": "",
+      "sql": "IFF(COUNT(DISTINCT SCENARIO.\"COL_VALUE\") + MAX(IFF(SCENARIO.\"COL_VALUE\" IS NULL, 1, 0)) = 1, MAX(SCENARIO.\"COL_VALUE\"), 0)",
+      "status": "ok"
+    },
+    "F10.3": {
+      "reason": "",
+      "sql": "IFF(COUNT(DISTINCT NULLABLE.\"COL_VALUE\") + MAX(IFF(NULLABLE.\"COL_VALUE\" IS NULL, 1, 0)) = 1, MAX(NULLABLE.\"COL_VALUE\"), 0)",
+      "status": "ok"
+    },
+    "F10.4": {
+      "reason": "",
+      "sql": "SUM(ORDERS.\"QTY\"::FLOAT) * ((1 + COALESCE((0) / 100, 0)))",
+      "status": "ok"
+    },
+    "F10.5": {
+      "reason": "",
+      "sql": "CASE WHEN (SUM(ORDERS.\"AMOUNT\"::FLOAT)) IS NULL AND ((SUM(ORDERS.\"AMOUNT\"::FLOAT)) * 0) IS NULL THEN NULL ELSE COALESCE((SUM(ORDERS.\"AMOUNT\"::FLOAT)), 0) + 0 END",
+      "status": "ok"
+    },
+    "F10.6": {
+      "reason": "",
+      "sql": "CASE WHEN (SUM(CASE WHEN ORDERS.\"STATUS\" = 'Sold' THEN ORDERS.\"AMOUNT\" END::FLOAT)) IS NULL AND ((SUM(CASE WHEN ORDERS.\"STATUS\" = 'Sold' THEN ORDERS.\"AMOUNT\" END::FLOAT)) * 0) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN ORDERS.\"STATUS\" = 'Sold' THEN ORDERS.\"AMOUNT\" END::FLOAT)), 0) + 0 END",
+      "status": "ok"
+    },
+    "F11.1": {
+      "reason": "",
+      "sql": "SUM(ORDERS.\"AMOUNT\")",
+      "status": "ok"
+    },
+    "F11.2": {
+      "reason": "",
+      "sql": "IFF(COALESCE((SUM(ORDERS.\"AMOUNT\")), 0) = 0, 0, NULL)",
+      "status": "ok"
+    },
+    "F11.3": {
+      "reason": "",
+      "sql": "SUM(CASE WHEN PRODUCT.CATEGORY = 'Hardware' THEN ORDERS.\"QTY\" END)",
+      "status": "ok"
+    },
+    "F12.1": {
+      "reason": "",
+      "sql": "SUM(CASE WHEN PRODUCT.PRODUCTID = 2 THEN ORDERS.\"AMOUNT\" END)",
+      "status": "ok"
+    },
+    "F12.2": {
+      "reason": "",
+      "sql": "SUM(CASE WHEN PRODUCT.CATEGORY = 'Software' THEN ORDERS.\"AMOUNT\" END)",
+      "status": "ok"
+    },
+    "F12.3": {
+      "reason": "",
+      "sql": "CASE WHEN ((AVG(CASE WHEN PRODUCT.\"PRODUCTID\" = 1 THEN ORDERS.\"PRICE\" END::FLOAT) IS NOT NULL)) AND ((AVG(CASE WHEN PRODUCT.\"PRODUCTID\" = 3 THEN ORDERS.\"PRICE\" END::FLOAT) IS NOT NULL)) THEN CASE WHEN (AVG(CASE WHEN PRODUCT.\"PRODUCTID\" = 1 THEN ORDERS.\"PRICE\" END::FLOAT)) IS NULL AND (AVG(CASE WHEN PRODUCT.\"PRODUCTID\" = 3 THEN ORDERS.\"PRICE\" END::FLOAT)) IS NULL THEN NULL ELSE COALESCE(AVG(CASE WHEN PRODUCT.\"PRODUCTID\" = 1 THEN ORDERS.\"PRICE\" END::FLOAT), 0) - COALESCE(AVG(CASE WHEN PRODUCT.\"PRODUCTID\" = 3 THEN ORDERS.\"PRICE\" END::FLOAT), 0) END END",
+      "status": "ok"
+    },
+    "F12.4": {
+      "reason": "",
+      "sql": "SUM(CASE WHEN CALENDAR.MONTH_NO = 3 THEN ORDERS.\"AMOUNT\" END)",
+      "status": "ok"
+    },
+    "F13.1": {
+      "reason": "not applicable: USERELATIONSHIP requires an inactive-relationship path not representable in the semantic view (the view always joins through the active relationship)",
+      "sql": null,
+      "status": "not_applicable"
+    },
+    "F13.2": {
+      "reason": "not applicable: USERELATIONSHIP requires an inactive-relationship path not representable in the semantic view (the view always joins through the active relationship)",
+      "sql": null,
+      "status": "not_applicable"
+    },
+    "F13.3": {
+      "reason": "",
+      "sql": "COUNT(CASE WHEN CALENDAR.\"MONTH_NO\" = 1 THEN 1 END)",
+      "status": "ok"
+    },
+    "F13.4": {
+      "reason": "not applicable: USERELATIONSHIP requires an inactive-relationship path not representable in the semantic view (the view always joins through the active relationship)",
+      "sql": null,
+      "status": "not_applicable"
+    },
+    "F14.1": {
+      "reason": "not applicable: needs window metric",
+      "sql": null,
+      "status": "not_applicable"
+    },
+    "F14.2": {
+      "reason": "",
+      "sql": "ORDERS.\"TOTAL_AMOUNT\" / NULLIF(SUM(ORDERS.\"TOTAL_AMOUNT\"::FLOAT) OVER (PARTITION BY EXCLUDING PRODUCT.\"CATEGORY\"), 0)",
+      "status": "ok"
+    },
+    "F15.1": {
+      "reason": "",
+      "sql": "COUNT(SNAPSHOT.\"EMP_ID\")",
+      "status": "ok"
+    },
+    "F15.2": {
+      "reason": "",
+      "sql": "COUNT(CASE WHEN (SNAPSHOT.\"END_DATE\" IS NULL) THEN SNAPSHOT.\"EMP_ID\" ELSE NULL END)",
+      "status": "ok"
+    },
+    "F15.3": {
+      "reason": "",
+      "sql": "(COUNT(CASE WHEN (SNAPSHOT.\"END_DATE\" IS NOT NULL) THEN SNAPSHOT.\"EMP_ID\" END)) / NULLIF((COUNT(CASE WHEN (SNAPSHOT.\"END_DATE\" IS NULL) THEN SNAPSHOT.\"EMP_ID\" ELSE NULL END)), 0)",
+      "status": "ok"
+    },
+    "F15.4": {
+      "reason": "",
+      "sql": "(COUNT(SNAPSHOT.\"EMP_ID\")) - (COUNT(CASE WHEN (SNAPSHOT.\"END_DATE\" IS NULL) THEN SNAPSHOT.\"EMP_ID\" ELSE NULL END))",
+      "status": "ok"
+    },
+    "F16.1": {
+      "reason": "not applicable: selector over a disconnected table",
+      "sql": null,
+      "status": "not_applicable"
+    },
+    "F17.1": {
+      "reason": "",
+      "sql": "COUNT(CASE WHEN ORDERS.\"STATUS\" = 'X' THEN ORDERS.\"ORDERID\" END) / NULLIF(COUNT(CASE WHEN ORDERS.\"STATUS\" = 'X' THEN ORDERS.\"ORDERID\" END) + COUNT(CASE WHEN ORDERS.\"STATUS\" = 'Y' THEN ORDERS.\"ORDERID\" END), 0)",
+      "status": "ok"
+    },
+    "F17.2": {
+      "reason": "",
+      "sql": "SUM(ORDERS.\"AMOUNT\"::FLOAT) / NULLIF(SUM(CASE WHEN ORDERS.\"STATUS\" = 'X' THEN ORDERS.\"QTY\" END::FLOAT), 0)",
+      "status": "ok"
+    },
+    "F17.3": {
+      "reason": "",
+      "sql": "IFF(COALESCE(SUM(ORDERS.\"QTY\"::FLOAT), 0) = 0, 0, SUM(CASE WHEN ORDERS.\"STATUS\" = 'X' THEN ORDERS.\"AMOUNT\" END::FLOAT) / SUM(ORDERS.\"QTY\"::FLOAT))",
+      "status": "ok"
+    },
+    "F17.5": {
+      "reason": "",
+      "sql": "(CASE WHEN (SUM(ORDERS.\"AMOUNT\")) IS NULL AND (SUM(CASE WHEN ORDERS.STATUS = 'Sold' THEN ORDERS.\"AMOUNT\" END)) IS NULL THEN NULL ELSE COALESCE((SUM(ORDERS.\"AMOUNT\")), 0) - COALESCE((SUM(CASE WHEN ORDERS.STATUS = 'Sold' THEN ORDERS.\"AMOUNT\" END)), 0) END) / NULLIF((SUM(ORDERS.\"AMOUNT\")), 0)",
+      "status": "ok"
+    },
+    "F2.1": {
+      "reason": "",
+      "sql": "ROUND(AVG(ORDERS.\"PRICE\"::FLOAT), 0)",
+      "status": "ok"
+    },
+    "F2.2": {
+      "reason": "",
+      "sql": "SUM(CASE WHEN ORDERS.STATUS = 'Sold' THEN ORDERS.\"AMOUNT\" END)",
+      "status": "ok"
+    },
+    "F2.3": {
+      "reason": "",
+      "sql": "AVG(ORDERS.\"UNIT_PRICE_DOL\")",
+      "status": "ok"
+    },
+    "F2.4": {
+      "reason": "",
+      "sql": "CASE WHEN (CASE WHEN (SUM(ORDERS.\"QTY\"::FLOAT)) IS NULL AND (SUM(ORDERS.\"AMOUNT\"::FLOAT)) IS NULL THEN NULL ELSE COALESCE(SUM(ORDERS.\"QTY\"::FLOAT), 0) + COALESCE(SUM(ORDERS.\"AMOUNT\"::FLOAT), 0) END) IS NULL AND (SUM(ORDERS.\"PRICE\"::FLOAT)) IS NULL THEN NULL ELSE COALESCE(CASE WHEN (SUM(ORDERS.\"QTY\"::FLOAT)) IS NULL AND (SUM(ORDERS.\"AMOUNT\"::FLOAT)) IS NULL THEN NULL ELSE COALESCE(SUM(ORDERS.\"QTY\"::FLOAT), 0) + COALESCE(SUM(ORDERS.\"AMOUNT\"::FLOAT), 0) END, 0) + COALESCE(SUM(ORDERS.\"PRICE\"::FLOAT), 0) END",
+      "status": "ok"
+    },
+    "F3.1": {
+      "reason": "",
+      "sql": "SUM(ORDERS.\"QTY\" * ORDERS.\"PRICE\"::FLOAT)",
+      "status": "ok"
+    },
+    "F3.2": {
+      "reason": "",
+      "sql": "SUM(CASE WHEN ORDERS.\"STATUS\" = 'Sold' THEN ORDERS.\"AMOUNT\" END::FLOAT)",
+      "status": "ok"
+    },
+    "F3.3": {
+      "reason": "",
+      "sql": "COUNT(CASE WHEN ORDERS.\"STATUS\" = 'Sold' THEN ORDERS.\"ORDERID\" END)",
+      "status": "ok"
+    },
+    "F3.4": {
+      "reason": "",
+      "sql": "COUNT(*)",
+      "status": "ok"
+    },
+    "F3.5": {
+      "reason": "",
+      "sql": "COUNT(*)",
+      "status": "ok"
+    },
+    "F3.6": {
+      "reason": "",
+      "sql": "COUNT(CASE WHEN (ORDERS.\"SHIP_DATE\" IS NOT NULL) THEN ORDERS.\"ORDERID\" END)",
+      "status": "ok"
+    },
+    "F3.7": {
+      "reason": "",
+      "sql": "COUNT(CASE WHEN (ORDERS.\"SHIP_DATE\" IS NULL) THEN ORDERS.\"ORDERID\" END)",
+      "status": "ok"
+    },
+    "F3.8": {
+      "reason": "",
+      "sql": "AVG(DATEDIFF(DAY, ORDERS.\"ORDER_DATE\", ORDERS.\"SHIP_DATE\")::FLOAT)",
+      "status": "ok"
+    },
+    "F3.9": {
+      "reason": "",
+      "sql": "CASE WHEN (MAX(ORDERS.\"QTY\" * ORDERS.\"PRICE\")) IS NULL AND (MIN(ORDERS.\"PRICE\")) IS NULL THEN NULL ELSE COALESCE(MAX(ORDERS.\"QTY\" * ORDERS.\"PRICE\"), 0) - COALESCE(MIN(ORDERS.\"PRICE\"), 0) END",
+      "status": "ok"
+    },
+    "F4.1": {
+      "reason": "",
+      "sql": "(SUM(ORDERS.\"AMOUNT\"::FLOAT)) / NULLIF((SUM(ORDERS.\"QTY\"::FLOAT)), 0)",
+      "status": "ok"
+    },
+    "F4.2": {
+      "reason": "",
+      "sql": "CASE WHEN ((SUM(CASE WHEN ORDERS.\"STATUS\" = 'Sold' THEN ORDERS.\"AMOUNT\" END::FLOAT)) * 2) IS NULL AND (SUM(CASE WHEN ORDERS.\"STATUS\" = 'Sold' THEN ORDERS.\"AMOUNT\" END::FLOAT)) IS NULL THEN NULL ELSE COALESCE(((SUM(CASE WHEN ORDERS.\"STATUS\" = 'Sold' THEN ORDERS.\"AMOUNT\" END::FLOAT)) * 2), 0) + COALESCE((SUM(CASE WHEN ORDERS.\"STATUS\" = 'Sold' THEN ORDERS.\"AMOUNT\" END::FLOAT)), 0) END",
+      "status": "ok"
+    },
+    "F5.1": {
+      "reason": "",
+      "sql": "SUM(CASE WHEN TRY_TO_NUMBER(LEFT(ORDERS.\"STEP\", 1)) >= 3 THEN ORDERS.\"AMOUNT\" END::FLOAT)",
+      "status": "ok"
+    },
+    "F5.2": {
+      "reason": "",
+      "sql": "ROUND((SUM(ORDERS.\"AMOUNT\"::FLOAT)) / (100)) * (100)",
+      "status": "ok"
+    },
+    "F5.3": {
+      "reason": "",
+      "sql": "CASE WHEN (SIGN(AVG(ORDERS.\"PRICE\"::FLOAT)) * CEIL(ABS(AVG(ORDERS.\"PRICE\"::FLOAT)), 0)) IS NULL AND (SIGN(AVG(ORDERS.\"PRICE\"::FLOAT)) * FLOOR(ABS(AVG(ORDERS.\"PRICE\"::FLOAT)), 0)) IS NULL THEN NULL ELSE COALESCE(SIGN(AVG(ORDERS.\"PRICE\"::FLOAT)) * CEIL(ABS(AVG(ORDERS.\"PRICE\"::FLOAT)), 0), 0) + COALESCE(SIGN(AVG(ORDERS.\"PRICE\"::FLOAT)) * FLOOR(ABS(AVG(ORDERS.\"PRICE\"::FLOAT)), 0), 0) END",
+      "status": "ok"
+    },
+    "F5.4": {
+      "reason": "",
+      "sql": "IFF(COALESCE(SUM(CASE WHEN ORDERS.\"STATUS\" = 'Missing' THEN ORDERS.\"QTY\" END::FLOAT), 0) = 0, 0, SUM(ORDERS.\"AMOUNT\"::FLOAT) / SUM(CASE WHEN ORDERS.\"STATUS\" = 'Missing' THEN ORDERS.\"QTY\" END::FLOAT))",
+      "status": "ok"
+    },
+    "F6.1": {
+      "reason": "not applicable: text result",
+      "sql": null,
+      "status": "not_applicable"
+    },
+    "F6.2": {
+      "reason": "not applicable: text result",
+      "sql": null,
+      "status": "not_applicable"
+    },
+    "F6.3": {
+      "reason": "",
+      "sql": "(SUM(ORDERS.\"AMOUNT_SUM\"::FLOAT) OVER (PARTITION BY EXCLUDING ORDERS.\"STATUS\") - ORDERS.\"AMOUNT_SUM\")",
+      "status": "ok"
+    },
+    "F6.4": {
+      "reason": "not applicable: needs window metric (ranking)",
+      "sql": null,
+      "status": "not_applicable"
+    },
+    "F6.5": {
+      "reason": "",
+      "sql": "MAX(10000)",
+      "status": "ok"
+    },
+    "F7.1": {
+      "reason": "",
+      "sql": "CASE WHEN (SUM(ORDERS.\"AMOUNT\")) IS NULL AND (SUM(ORDERS.\"QTY\")) IS NULL THEN NULL ELSE COALESCE((SUM(ORDERS.\"AMOUNT\")), 0) - COALESCE((SUM(ORDERS.\"QTY\")), 0) END",
+      "status": "ok"
+    },
+    "F7.2": {
+      "reason": "",
+      "sql": "IFF(0 = 0, 0, NULL)",
+      "status": "ok"
+    }
+  },
+  "renderer_direct": {
+    "averagex_inner_sum": {
+      "advisories": [],
+      "errors": [],
+      "sql": "AVG(SALES.\"AMOUNT\")"
+    },
+    "averagex_measure": {
+      "advisories": [],
+      "errors": [],
+      "sql": "AVG((SALES.\"AMOUNT\")::FLOAT)"
+    },
+    "averagex_row": {
+      "advisories": [],
+      "errors": [],
+      "sql": "AVG(SALES.\"QTY\" * SALES.\"PRICE\"::FLOAT)"
+    },
+    "calc_filter_avg": {
+      "advisories": [],
+      "errors": [],
+      "sql": "AVG(CASE WHEN SALES.\"STATUS\" = 'Won' THEN SALES.\"AMOUNT\" END::FLOAT)"
+    },
+    "calc_filter_countrows": {
+      "advisories": [],
+      "errors": [],
+      "sql": "COUNT(CASE WHEN SALES.\"STATUS\" = 'Won' THEN 1 END)"
+    },
+    "calc_filter_distinct": {
+      "advisories": [],
+      "errors": [],
+      "sql": "COUNT(DISTINCT CASE WHEN SALES.\"STATUS\" = 'Won' THEN SALES.\"ORDERID\" END)"
+    },
+    "calc_filter_measure": {
+      "advisories": [],
+      "errors": [],
+      "sql": "SUM(CASE WHEN SALES.\"STATUS\" = 'Won' THEN SALES.\"AMOUNT\"::FLOAT ELSE NULL END)"
+    },
+    "calc_filter_sum": {
+      "advisories": [],
+      "errors": [],
+      "sql": "SUM(CASE WHEN SALES.\"STATUS\" = 'Won' THEN SALES.\"AMOUNT\" END::FLOAT)"
+    },
+    "coalesce_iff_operand": {
+      "advisories": [],
+      "errors": [],
+      "sql": "CASE WHEN (SUM(SALES.\"QTY\"::FLOAT)) IS NULL AND (IFF(COALESCE(SUM(SALES.\"COST\"::FLOAT), 0) = 0, 0, SUM(SALES.\"AMOUNT\"::FLOAT) / SUM(SALES.\"COST\"::FLOAT))) IS NULL THEN NULL ELSE COALESCE(SUM(SALES.\"QTY\"::FLOAT), 0) + COALESCE(IFF(COALESCE(SUM(SALES.\"COST\"::FLOAT), 0) = 0, 0, SUM(SALES.\"AMOUNT\"::FLOAT) / SUM(SALES.\"COST\"::FLOAT)), 0) END"
+    },
+    "coalesce_plain_operand": {
+      "advisories": [],
+      "errors": [],
+      "sql": "CASE WHEN (SUM(SALES.\"QTY\"::FLOAT)) IS NULL AND (SUM(SALES.\"COST\"::FLOAT)) IS NULL THEN NULL ELSE COALESCE(SUM(SALES.\"QTY\"::FLOAT), 0) - COALESCE(SUM(SALES.\"COST\"::FLOAT), 0) END"
+    },
+    "col_special_chars": {
+      "advisories": [],
+      "errors": [],
+      "sql": "CASE WHEN (SUM(SALES.\"MARGIN_PCT\"::FLOAT)) IS NULL AND (SUM(SALES.\"UNIT_DOL\"::FLOAT)) IS NULL THEN NULL ELSE COALESCE(SUM(SALES.\"MARGIN_PCT\"::FLOAT), 0) + COALESCE(SUM(SALES.\"UNIT_DOL\"::FLOAT), 0) END"
+    },
+    "col_sum": {
+      "advisories": [],
+      "errors": [],
+      "sql": "SUM(SALES.\"AMOUNT\"::FLOAT)"
+    },
+    "col_unqualified_bracket": {
+      "advisories": [],
+      "errors": [],
+      "sql": "SUM(SALES.\"AMOUNT\"::FLOAT)"
+    },
+    "dateadd_day": {
+      "advisories": [
+        "time_intelligence_anchored_to_current_date"
+      ],
+      "errors": [],
+      "sql": "SUM(CASE WHEN COL_DATE.\"COL_DATE\" = DATEADD(DAY, -1, CURRENT_DATE()) THEN SALES.\"AMOUNT\"::FLOAT END)"
+    },
+    "dateadd_quarter": {
+      "advisories": [
+        "time_intelligence_anchored_to_current_date"
+      ],
+      "errors": [],
+      "sql": "SUM(CASE WHEN YEAR(COL_DATE.\"COL_DATE\") = YEAR(DATEADD(QUARTER, -1, CURRENT_DATE())) AND QUARTER(COL_DATE.\"COL_DATE\") = QUARTER(DATEADD(QUARTER, -1, CURRENT_DATE())) THEN SALES.\"AMOUNT\"::FLOAT END)"
+    },
+    "dateadd_raw": {
+      "advisories": [],
+      "errors": [],
+      "sql": "MAX(DATEADD(month, -1, COL_DATE.\"COL_DATE\"))"
+    },
+    "dateadd_year": {
+      "advisories": [
+        "time_intelligence_anchored_to_current_date"
+      ],
+      "errors": [],
+      "sql": "SUM(CASE WHEN YEAR(COL_DATE.\"COL_DATE\") = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE.\"COL_DATE\" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALES.\"AMOUNT\"::FLOAT END)"
+    },
+    "datediff": {
+      "advisories": [],
+      "errors": [],
+      "sql": "DATEDIFF(DAY, MIN(SALES.\"ORDER_DATE\"), MAX(SALES.\"SHIP_DATE\"))"
+    },
+    "datesbetween_literal": {
+      "advisories": [],
+      "errors": [],
+      "sql": "SUM(CASE WHEN COL_DATE.\"COL_DATE\" >= DATE '2024-01-01' AND COL_DATE.\"COL_DATE\" <= DATE '2024-12-31' THEN SALES.\"AMOUNT\" END::FLOAT)"
+    },
+    "datesbetween_today": {
+      "advisories": [],
+      "errors": [],
+      "sql": "SUM(CASE WHEN COL_DATE.\"COL_DATE\" >= DATE '2024-01-01' AND COL_DATE.\"COL_DATE\" <= CURRENT_DATE() THEN SALES.\"AMOUNT\" END::FLOAT)"
+    },
+    "datesinperiod_back": {
+      "advisories": [
+        "time_intelligence_anchored_to_current_date"
+      ],
+      "errors": [],
+      "sql": "SUM(CASE WHEN COL_DATE.\"COL_DATE\" > DATEADD(MONTH, -3, CURRENT_DATE()) AND COL_DATE.\"COL_DATE\" <= CURRENT_DATE() THEN SALES.\"AMOUNT\" END::FLOAT)"
+    },
+    "datesinperiod_flag": {
+      "advisories": [],
+      "errors": [],
+      "sql": "SUM(CASE WHEN SALES.\"FLAG_R3M\" THEN SALES.\"AMOUNT\" END::FLOAT)"
+    },
+    "datesinperiod_forward": {
+      "advisories": [],
+      "errors": [],
+      "sql": "SUM(CASE WHEN COL_DATE.\"COL_DATE\" >= DATE '2024-01-01' AND COL_DATE.\"COL_DATE\" < DATEADD(MONTH, 2, DATE '2024-01-01') THEN SALES.\"AMOUNT\" END::FLOAT)"
+    },
+    "divide_alt": {
+      "advisories": [],
+      "errors": [],
+      "sql": "IFF(COALESCE(SUM(SALES.\"COST\"::FLOAT), 0) = 0, 0, SUM(SALES.\"AMOUNT\"::FLOAT) / SUM(SALES.\"COST\"::FLOAT))"
+    },
+    "divide_blank": {
+      "advisories": [],
+      "errors": [],
+      "sql": "SUM(SALES.\"AMOUNT\"::FLOAT) / NULLIF(SUM(SALES.\"COST\"::FLOAT), 0)"
+    },
+    "iferror": {
+      "advisories": [],
+      "errors": [],
+      "sql": "IFF(TRY_TO_NUMBER(TO_VARCHAR(SUM(SALES.\"AMOUNT\"::FLOAT) / NULLIF(SUM(SALES.\"COST\"::FLOAT), 0))) IS NULL, 0, SUM(SALES.\"AMOUNT\"::FLOAT) / NULLIF(SUM(SALES.\"COST\"::FLOAT), 0))"
+    },
+    "now": {
+      "advisories": [],
+      "errors": [],
+      "sql": "DATEDIFF(HOUR, MAX(SALES.\"ORDER_DATE\"), CURRENT_TIMESTAMP())"
+    },
+    "prev_month": {
+      "advisories": [
+        "time_intelligence_anchored_to_current_date"
+      ],
+      "errors": [],
+      "sql": "SUM(CASE WHEN YEAR(COL_DATE.\"COL_DATE\") = YEAR(DATEADD(MONTH, -1, CURRENT_DATE())) AND MONTH(COL_DATE.\"COL_DATE\") = MONTH(DATEADD(MONTH, -1, CURRENT_DATE())) THEN SALES.\"AMOUNT\"::FLOAT END)"
+    },
+    "prev_month_flag": {
+      "advisories": [],
+      "errors": [],
+      "sql": "SUM(CASE WHEN SALES.\"FLAG_PREV_MONTH\" THEN SALES.\"AMOUNT\"::FLOAT END)"
+    },
+    "prev_year_full": {
+      "advisories": [
+        "time_intelligence_anchored_to_current_date"
+      ],
+      "errors": [],
+      "sql": "SUM(CASE WHEN YEAR(COL_DATE.\"COL_DATE\") = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) THEN SALES.\"AMOUNT\"::FLOAT END)"
+    },
+    "prev_year_legacy": {
+      "advisories": [],
+      "errors": [],
+      "sql": "(SUM(CASE WHEN DATE.\"DATE\" <= LAST_DAY(DATEADD(YEAR, -1, SALES.\"MAX_DATE\"), 'YEAR') THEN SALES.\"AMOUNT\"::FLOAT END))"
+    },
+    "prev_year_ytd_measure": {
+      "advisories": [
+        "time_intelligence_anchored_to_current_date"
+      ],
+      "errors": [],
+      "sql": "(SUM(CASE WHEN DATE.\"DATE\" >= DATE_TRUNC('YEAR', LAST_DAY(DATEADD(YEAR, -1, CURRENT_DATE()), 'YEAR')) AND DATE.\"DATE\" <= LAST_DAY(DATEADD(YEAR, -1, CURRENT_DATE()), 'YEAR') THEN SALES.\"AMOUNT\"::FLOAT END))"
+    },
+    "selectedvalue": {
+      "advisories": [],
+      "errors": [],
+      "sql": "IFF(COUNT(DISTINCT SALES.\"STATUS\") + MAX(IFF(SALES.\"STATUS\" IS NULL, 1, 0)) = 1, MAX(SALES.\"STATUS\"), 'none')"
+    },
+    "sply": {
+      "advisories": [
+        "time_intelligence_anchored_to_current_date"
+      ],
+      "errors": [],
+      "sql": "SUM(CASE WHEN YEAR(COL_DATE.\"COL_DATE\") = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE.\"COL_DATE\" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALES.\"AMOUNT\"::FLOAT END)"
+    },
+    "sply_flag": {
+      "advisories": [],
+      "errors": [],
+      "sql": "SUM(CASE WHEN SALES.\"FLAG_SPLY\" THEN SALES.\"AMOUNT\"::FLOAT END)"
+    },
+    "sply_flag_measure": {
+      "advisories": [],
+      "errors": [],
+      "sql": "SUM(CASE WHEN SALES.\"FLAG_SPLY\" THEN SALES.\"AMOUNT\"::FLOAT ELSE NULL END)"
+    },
+    "sply_legacy": {
+      "advisories": [],
+      "errors": [],
+      "sql": "(SUM(CASE WHEN DATE.\"DATE\" <= DATEADD(YEAR, -1, SALES.\"MAX_DATE\") THEN SALES.\"AMOUNT\"::FLOAT END))"
+    },
+    "sply_measure": {
+      "advisories": [
+        "time_intelligence_anchored_to_current_date"
+      ],
+      "errors": [],
+      "sql": "SUM(CASE WHEN YEAR(COL_DATE.\"COL_DATE\") = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE.\"COL_DATE\" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALES.\"AMOUNT\"::FLOAT ELSE NULL END)"
+    },
+    "sply_nested_flag": {
+      "advisories": [],
+      "errors": [],
+      "sql": "(SUM(CASE WHEN SALES.\"FLAG_YTD_SPLY\" THEN SALES.\"AMOUNT\"::FLOAT END))"
+    },
+    "sply_ytd_measure": {
+      "advisories": [
+        "time_intelligence_anchored_to_current_date"
+      ],
+      "errors": [],
+      "sql": "(SUM(CASE WHEN DATE.\"DATE\" >= DATE_TRUNC('YEAR', DATEADD(YEAR, -1, CURRENT_DATE())) AND DATE.\"DATE\" <= DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALES.\"AMOUNT\"::FLOAT END))"
+    },
+    "sumx_constant_measure": {
+      "advisories": [],
+      "errors": [],
+      "sql": "SUM((100)::FLOAT)"
+    },
+    "sumx_filter": {
+      "advisories": [],
+      "errors": [],
+      "sql": "SUM(CASE WHEN SALES.\"STATUS\" = 'Won' THEN SALES.\"AMOUNT\" END::FLOAT)"
+    },
+    "sumx_row_expr_measure": {
+      "advisories": [],
+      "errors": [
+        "not applicable: measure [Row Price] inside a row iterator requires context transition over an expression that is not a single row-level aggregate of the iterated table"
+      ],
+      "sql": null
+    },
+    "sumx_row_measure": {
+      "advisories": [],
+      "errors": [],
+      "sql": "SUM((SALES.\"PRICE\")::FLOAT)"
+    },
+    "ti_date_fallback_column": {
+      "advisories": [],
+      "errors": [
+        "TOTALYTD: base expression 'SALES.\"AMOUNT\"' is not a simple aggregate this renderer can safely apply a date-range filter to without risking a nested aggregate"
+      ],
+      "sql": null
+    },
+    "ti_date_fallback_identifier": {
+      "advisories": [],
+      "errors": [
+        "TOTALYTD: base expression '\"AMOUNT\"' is not a simple aggregate this renderer can safely apply a date-range filter to without risking a nested aggregate"
+      ],
+      "sql": null
+    },
+    "ti_date_identifier": {
+      "advisories": [
+        "time_intelligence_anchored_to_current_date"
+      ],
+      "errors": [],
+      "sql": "SUM(CASE WHEN DATE.\"COL_DATE\" >= DATE_TRUNC('YEAR', CURRENT_DATE()) AND DATE.\"COL_DATE\" <= CURRENT_DATE() THEN SALES.\"AMOUNT\"::FLOAT END)"
+    },
+    "today": {
+      "advisories": [],
+      "errors": [],
+      "sql": "DATEDIFF(DAY, MAX(SALES.\"ORDER_DATE\"), CURRENT_DATE())"
+    },
+    "totalmtd": {
+      "advisories": [
+        "time_intelligence_anchored_to_current_date"
+      ],
+      "errors": [],
+      "sql": "SUM(CASE WHEN COL_DATE.\"COL_DATE\" >= DATE_TRUNC('MONTH', CURRENT_DATE()) AND COL_DATE.\"COL_DATE\" <= CURRENT_DATE() THEN SALES.\"AMOUNT\"::FLOAT END)"
+    },
+    "totalqtd_count": {
+      "advisories": [
+        "time_intelligence_anchored_to_current_date"
+      ],
+      "errors": [],
+      "sql": "COUNT(CASE WHEN COL_DATE.\"COL_DATE\" >= DATE_TRUNC('QUARTER', CURRENT_DATE()) AND COL_DATE.\"COL_DATE\" <= CURRENT_DATE() THEN 1 END)"
+    },
+    "totalytd": {
+      "advisories": [
+        "time_intelligence_anchored_to_current_date"
+      ],
+      "errors": [],
+      "sql": "SUM(CASE WHEN COL_DATE.\"COL_DATE\" >= DATE_TRUNC('YEAR', CURRENT_DATE()) AND COL_DATE.\"COL_DATE\" <= CURRENT_DATE() THEN SALES.\"AMOUNT\"::FLOAT END)"
+    },
+    "totalytd_count_measure_key": {
+      "advisories": [
+        "time_intelligence_anchored_to_current_date"
+      ],
+      "errors": [],
+      "sql": "COUNT(CASE WHEN COL_DATE.\"COL_DATE\" >= DATE_TRUNC('YEAR', CURRENT_DATE()) AND COL_DATE.\"COL_DATE\" <= CURRENT_DATE() THEN SALES.ORDERID END)"
+    },
+    "totalytd_count_measure_odd_key": {
+      "advisories": [
+        "time_intelligence_anchored_to_current_date"
+      ],
+      "errors": [],
+      "sql": "COUNT(CASE WHEN COL_DATE.\"COL_DATE\" >= DATE_TRUNC('YEAR', CURRENT_DATE()) AND COL_DATE.\"COL_DATE\" <= CURRENT_DATE() THEN SALES.KEYDOL1 END)"
+    },
+    "totalytd_filter": {
+      "advisories": [
+        "time_intelligence_anchored_to_current_date"
+      ],
+      "errors": [],
+      "sql": "SUM(CASE WHEN COL_DATE.\"COL_DATE\" >= DATE_TRUNC('YEAR', CURRENT_DATE()) AND COL_DATE.\"COL_DATE\" <= CURRENT_DATE() AND (SALES.\"STATUS\" = 'Won') THEN SALES.\"AMOUNT\"::FLOAT END)"
+    },
+    "totalytd_fiscal": {
+      "advisories": [
+        "time_intelligence_anchored_to_current_date"
+      ],
+      "errors": [],
+      "sql": "SUM(CASE WHEN COL_DATE.\"COL_DATE\" >= DATEADD(MONTH, 6, DATE_TRUNC('YEAR', DATEADD(MONTH, -6, CURRENT_DATE()))) AND COL_DATE.\"COL_DATE\" <= CURRENT_DATE() THEN SALES.\"AMOUNT\"::FLOAT END)"
+    },
+    "totalytd_flag": {
+      "advisories": [],
+      "errors": [],
+      "sql": "SUM(CASE WHEN SALES.\"FLAG_YTD\" THEN SALES.\"AMOUNT\"::FLOAT END)"
+    },
+    "totalytd_measure": {
+      "advisories": [
+        "time_intelligence_anchored_to_current_date"
+      ],
+      "errors": [],
+      "sql": "SUM(CASE WHEN COL_DATE.\"COL_DATE\" >= DATE_TRUNC('YEAR', CURRENT_DATE()) AND COL_DATE.\"COL_DATE\" <= CURRENT_DATE() THEN SALES.\"AMOUNT\"::FLOAT ELSE NULL END)"
+    },
+    "value": {
+      "advisories": [],
+      "errors": [],
+      "sql": "SUM(TRY_TO_NUMBER(SALES.\"CODE\")::FLOAT)"
+    },
+    "yoy_comparison_flags": {
+      "advisories": [],
+      "errors": [],
+      "sql": "CASE WHEN (SUM(CASE WHEN SALES.\"FLAG_CY\" THEN SALES.\"AMOUNT\"::FLOAT ELSE NULL END)) IS NULL AND (SUM(CASE WHEN SALES.\"FLAG_SPLY\" THEN SALES.\"AMOUNT\"::FLOAT ELSE NULL END)) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES.\"FLAG_CY\" THEN SALES.\"AMOUNT\"::FLOAT ELSE NULL END)), 0) - COALESCE(SUM(CASE WHEN SALES.\"FLAG_SPLY\" THEN SALES.\"AMOUNT\"::FLOAT ELSE NULL END), 0) END"
+    },
+    "yoy_growth_flags": {
+      "advisories": [],
+      "errors": [],
+      "sql": "(CASE WHEN (SUM(CASE WHEN SALES.\"FLAG_CY\" THEN SALES.\"AMOUNT\"::FLOAT ELSE NULL END)) IS NULL AND (SUM(CASE WHEN SALES.\"FLAG_SPLY\" THEN SALES.\"AMOUNT\"::FLOAT ELSE NULL END)) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES.\"FLAG_CY\" THEN SALES.\"AMOUNT\"::FLOAT ELSE NULL END)), 0) - COALESCE(SUM(CASE WHEN SALES.\"FLAG_SPLY\" THEN SALES.\"AMOUNT\"::FLOAT ELSE NULL END), 0) END) / NULLIF(SUM(CASE WHEN SALES.\"FLAG_SPLY\" THEN SALES.\"AMOUNT\"::FLOAT ELSE NULL END), 0)"
+    }
+  }
+}
