@@ -95,6 +95,11 @@ def hermetic(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 def _pbix_to_sml(pbix_path: Path):
     """Same calls the engine makes in steps 4 and 6 for a .pbix source
     (core/engine/extraction/pbix.py, core/engine/conversion/pbix.py)."""
+    return _pbix_to_sml_and_converter(pbix_path)[0]
+
+
+def _pbix_to_sml_and_converter(pbix_path: Path):
+    """As _pbix_to_sml, also returning the converter (for its measure_analysis)."""
     from semabridge.connectors.local_pbix_connector import LocalPBIXConnector
     from semabridge.converter.osi_to_sml import OSIToSMLConverter
     from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
@@ -124,7 +129,9 @@ def _pbix_to_sml(pbix_path: Path):
             "infer_relationships": None,
         }
     )
-    return OSIToSMLConverter().from_osi(osi_model, row_counts=source_format.row_counts)
+    converter = OSIToSMLConverter()
+    sml = converter.from_osi(osi_model, row_counts=source_format.row_counts)
+    return sml, converter
 
 
 def _build_emitter():
@@ -158,6 +165,10 @@ def _metric_record(metric: Any) -> Dict[str, Any]:
         "non_additive_dimension": list(non_additive) if non_additive else None,
         "is_placeholder": metric.is_placeholder,
         "advisory_categories": list(metric.advisory_categories or []),
+        # Every field of the SML measure straight after conversion, so a
+        # change to ANY of them (time intelligence, group-by, partition
+        # dimension, advisory notes, synonyms, ...) fails the test.
+        "all_fields_after_convert": metric.model_dump(mode="json"),
     }
 
 
@@ -265,3 +276,51 @@ def test_snowflake_output_matches_golden(model: str, hermetic: None) -> None:
             "If this change is intended, rerun with SEMABRIDGE_UPDATE_GOLDEN=1 and commit the fixture diff.\n\n"
             + "\n\n".join(problems)
         )
+
+
+@pytest.mark.parametrize("model", sorted(MODELS))
+def test_measure_analysis_agrees_with_conversion(model: str, hermetic: None) -> None:
+    """The neutral facts (converter/measure_analysis.py) agree with what the
+    Snowflake conversion decided for every measure of a real model, and the
+    dependency graph is consistent with them."""
+    pbix_path = MODELS[model]
+    if pbix_path is None or not pbix_path.exists():
+        pytest.skip(f"{model}: .pbix not available")
+
+    sml, converter = _pbix_to_sml_and_converter(pbix_path)
+    analysis = converter.measure_analysis
+    assert analysis is not None
+    assert len(analysis.per_metric) == len(sml.metrics)
+
+    for metric, facts in zip(sml.metrics, analysis.per_metric):
+        reason = metric.sync_failure_reason or ""
+        assert facts.name == metric.unique_name
+        assert ("missing from the source model" in reason) == bool(facts.missing_column_refs), metric.unique_name
+        if "compile-time constant" in reason:
+            assert facts.is_constant, metric.unique_name
+        if "root operation produces a" in reason:
+            assert facts.root_is_string_function and not facts.is_constant, metric.unique_name
+        if facts.root_is_string_function:
+            assert facts.is_text_result, metric.unique_name
+        reached_complexity = (
+            facts.complexity is not None
+            and not (facts.is_constant or facts.root_is_string_function or facts.context_transition_reason)
+        )
+        if reached_complexity:
+            c = facts.complexity
+            assert list(metric.depends_on_measures) == list(c["depends_on_measures"]), metric.unique_name
+            assert metric.requires_time_intel == c["requires_time_intel"], metric.unique_name
+            assert list(metric.group_by_dimensions) == list(c["group_by_dimensions"]), metric.unique_name
+        if not facts.sql_sourced:
+            assert (metric.expression or "") == facts.dax, metric.unique_name
+
+    graph = analysis.graph
+    names = [m.unique_name for m in sml.metrics]
+    assert sorted(graph.order) == sorted(dict.fromkeys(names))
+    position = {n: i for i, n in enumerate(graph.order)}
+    for name, facts in analysis.measures.items():
+        for ref in facts.references:
+            if not graph.in_cycle(name):
+                assert position[ref] < position[name], (name, ref)
+            assert name in graph.dependents[ref]
+            assert set(graph.all_tables_used[ref]) <= set(graph.all_tables_used[name])
