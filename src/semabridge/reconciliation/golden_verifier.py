@@ -178,13 +178,14 @@ class VerificationResult(BaseModel):
     mismatched_rows: int
     max_absolute_delta: float
     max_percentage_delta: float
-    status: Literal["CERTIFIED", "FAILED", "WARNING", "ERROR"]
+    status: Literal["CERTIFIED", "FAILED", "WARNING", "ERROR", "SIMULATED", "PBI_VALUES_NEEDED"]
     dax_query_executed: str
     sql_query_executed: str
     certification_badge: str
     sample_mismatches: List[QueryComparisonRow] = Field(default_factory=list)
     comparison_rows: List[QueryComparisonRow] = Field(default_factory=list)
     column_mapping: Dict[str, Any] = Field(default_factory=dict)
+    message: Optional[str] = None
 
 
 class GoldenQueryVerifier:
@@ -335,11 +336,30 @@ FROM {clean_target}{where_clause}{group_by}{order_by};"""
                 mismatched_rows=0,
                 max_absolute_delta=0.0,
                 max_percentage_delta=0.0,
-                status="FAILED",
+                status="PBI_VALUES_NEEDED",
                 dax_query_executed=dax_query,
                 sql_query_executed=sql_query,
-                certification_badge="❌ Reconciliation Failed (0 rows supplied; empty result sets cannot be certified)",
+                certification_badge="Power BI values needed",
                 sample_mismatches=[],
+                message="Power BI values needed: upload a Power BI CSV or connect Power BI Desktop / Fabric to compare slices.",
+            )
+
+        if not dax_rows:
+            return VerificationResult(
+                metric_name=metric_name,
+                dimension_keys=dimension_keys,
+                total_rows_compared=0,
+                total_rows=len(sql_rows),
+                matched_rows=0,
+                mismatched_rows=0,
+                max_absolute_delta=0.0,
+                max_percentage_delta=0.0,
+                status="PBI_VALUES_NEEDED",
+                dax_query_executed=dax_query,
+                sql_query_executed=sql_query,
+                certification_badge="Power BI values needed",
+                sample_mismatches=[],
+                message="Power BI values needed: upload a Power BI CSV or connect Power BI Desktop / Fabric to compare slices.",
             )
 
         _bracket_leaf_re = re.compile(r"^(?:.*\[)([^\[\]]+)\]$")

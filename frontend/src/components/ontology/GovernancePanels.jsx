@@ -17,6 +17,7 @@ import {
   ChevronDown,
   ChevronRight,
   Check,
+  Info,
 } from 'lucide-react';
 import { BTN_SM, BTN_PRIMARY, INPUT_STYLE, SELECT_STYLE, MONO, plural } from './styles';
 import { Pill } from './ui';
@@ -262,11 +263,17 @@ export function WhatIfSimulator({ gov, metricOptions, onOpenParity }) {
               aria-label="Governance scope"
             >
               <option value="">All loaded domains</option>
-              {(projectsList || []).map((p) => (
-                <option key={p.id || p.name} value={p.id || p.name}>
-                  {p.name || p.id}
-                </option>
-              ))}
+              {(projectsList || [])
+                .filter((p) => (p.ontology_domain_count > 0) || (p.domain_names && p.domain_names.length > 0))
+                .map((p) => {
+                  const pid = p.id || p.project_id || p.name;
+                  const domStr = p.domain_names?.length ? ` · ${p.domain_names.join(', ')}` : '';
+                  return (
+                    <option key={pid} value={pid}>
+                      {p.name || pid} ({pid}){domStr}
+                    </option>
+                  );
+                })}
             </select>
           </label>
         )}
@@ -373,12 +380,43 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
   const [showQueries, setShowQueries] = React.useState(true);
   const [showAdvanced, setShowAdvanced] = React.useState(false);
   const [isEditingSql, setIsEditingSql] = React.useState(false);
-  const [editableSql, setEditableSql] = React.useState(reconExpr || '');
-  const [lastReconExpr, setLastReconExpr] = React.useState(reconExpr);
-  if (reconExpr !== lastReconExpr) {
-    setLastReconExpr(reconExpr);
-    setEditableSql(reconExpr || '');
-  }
+
+  const effectiveSqlExpr = React.useMemo(() => {
+    if (reconExpr) {
+      const cleanExpr = String(reconExpr).trim().replace(/["'`]/g, '').toLowerCase();
+      const cleanMetric = String(reconMetric || '').trim().replace(/["'`]/g, '').toLowerCase();
+      const leafMetric = cleanMetric.split('.').pop();
+      if (cleanExpr !== cleanMetric && cleanExpr !== leafMetric) {
+        return reconExpr;
+      }
+    }
+    const match = availableMetrics.find(
+      (m) => m.name === reconMetric || m.logical_name === reconMetric || `${m.concept}.${m.logical_name}` === reconMetric
+    );
+    if (match?.sql_expression) {
+      const cleanMatch = match.sql_expression.trim().replace(/["'`]/g, '').toLowerCase();
+      const cleanMetric = String(reconMetric || '').trim().replace(/["'`]/g, '').toLowerCase();
+      const leafMetric = cleanMetric.split('.').pop();
+      if (cleanMatch !== cleanMetric && cleanMatch !== leafMetric) {
+        return match.sql_expression;
+      }
+    }
+    return '';
+  }, [reconExpr, reconMetric, availableMetrics]);
+
+  const [editableSql, setEditableSql] = React.useState(effectiveSqlExpr || reconExpr || '');
+  React.useEffect(() => {
+    if (effectiveSqlExpr) {
+      setEditableSql(effectiveSqlExpr);
+    }
+  }, [effectiveSqlExpr]);
+
+  const metricSqlDisplay = React.useMemo(() => {
+    if (effectiveSqlExpr) return effectiveSqlExpr;
+    if (reconMetric) return '(No SQL expression in deployed view)';
+    return 'Select a DAX measure from the dropdown above';
+  }, [effectiveSqlExpr, reconMetric]);
+
   const [copiedKey, setCopiedKey] = React.useState(null);
   const [expectedPbiTotal, setExpectedPbiTotal] = React.useState('');
   const [showPbiWebHelp, setShowPbiWebHelp] = React.useState(false);
@@ -394,10 +432,10 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
     if (parityProjectMetrics?.length > 0) return parityProjectMetrics;
     if (allMetrics?.length > 0) {
       if (govProjectId) {
+        const want = String(govProjectId).toLowerCase().replace(/^proj-/, '');
         return allMetrics.filter((m) => {
-          const domStr = String(m.domain || m._domain || '').toLowerCase();
-          const projStr = String(govProjectId).toLowerCase();
-          return domStr.includes(projStr) || m.source_project_id === govProjectId;
+          const mPid = String(m.source_project_id || '').toLowerCase().replace(/^proj-/, '');
+          return mPid === want;
         });
       }
       return allMetrics;
@@ -583,7 +621,30 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
     };
   }, [expectedPbiTotal, sfTotalSum, reconMaxMismatchPct, reconAbsTol]);
 
-  const isMismatch = reconResult && reconResult.status !== 'CERTIFIED';
+  const isSimulated = Boolean(
+    reconResult && (
+      reconResult.status === 'SIMULATED' ||
+      reconResult.certification_badge === 'SIMULATED' ||
+      reconResult.is_simulated
+    )
+  );
+  const isPbiNeeded = Boolean(
+    reconResult && (
+      reconResult.status === 'PBI_VALUES_NEEDED' ||
+      reconResult.certification_badge?.toLowerCase().includes('values needed')
+    )
+  );
+  const totalRows = reconResult
+    ? (reconResult.total_rows ?? reconResult.total_rows_compared ?? ((reconResult.matched_rows || 0) + (reconResult.mismatched_rows || 0)))
+    : 0;
+  const hasMismatches = reconResult ? (reconResult.mismatched_rows || 0) > 0 : false;
+  const isAllMatched = Boolean(
+    reconResult && !isPbiNeeded && (
+      reconResult.status === 'CERTIFIED' ||
+      (totalRows > 0 && reconResult.matched_rows === totalRows && !hasMismatches)
+    )
+  );
+  const isMismatch = Boolean(reconResult && !isSimulated && !isPbiNeeded && (hasMismatches || reconResult.status === 'FAILED'));
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -606,12 +667,18 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
             onChange={(e) => setGovProjectId?.(e.target.value)}
             style={{ ...SELECT_STYLE, width: '100%', fontSize: 12.5 }}
           >
-            <option value="">All Projects / Global</option>
-            {projectsList.map((p) => (
-              <option key={p.id || p.name} value={p.id || p.name}>
-                {p.name || p.id}
-              </option>
-            ))}
+            <option value="">All loaded domains</option>
+            {(projectsList || [])
+              .filter((p) => (p.ontology_domain_count > 0) || (p.domain_names && p.domain_names.length > 0))
+              .map((p) => {
+                const pid = p.id || p.project_id || p.name;
+                const domStr = p.domain_names?.length ? ` · ${p.domain_names.join(', ')}` : '';
+                return (
+                  <option key={pid} value={pid}>
+                    {p.name || pid} ({pid}){domStr}
+                  </option>
+                );
+              })}
           </select>
         </div>
 
@@ -624,7 +691,11 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
             onChange={(e) => handleSelectMetric(e.target.value)}
             style={{ ...SELECT_STYLE, width: '100%', fontSize: 12.5, fontFamily: MONO }}
           >
-            <option value="">-- Choose DAX Measure from Project --</option>
+            <option value="">
+              {availableMetrics.length === 0
+                ? '-- No metrics found for this project --'
+                : '-- Choose DAX Measure from Project --'}
+            </option>
             {availableMetrics.map((m, idx) => {
               const val = m.name || m.logical_name;
               const formulaPreview = m.dax_expression ? ` = ${m.dax_expression.slice(0, 32)}…` : '';
@@ -635,6 +706,11 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
               );
             })}
           </select>
+          {availableMetrics.length === 0 && (
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
+              No metrics found for this project yet. Run sync or generate ontology first.
+            </div>
+          )}
         </div>
       </div>
 
@@ -757,7 +833,7 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
             whiteSpace: 'pre-wrap',
             minHeight: 38,
           }}>
-            {reconExpr || (reconMetric ? reconMetric : 'Select a DAX measure from the dropdown above')}
+            {metricSqlDisplay}
           </div>
 
           {showQueries && reconQueries?.sql_query && (
@@ -835,7 +911,17 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
             <button
               type="button"
               disabled={runningRecon || !editableSql.trim()}
-              onClick={() => onUpdateMetricSql?.(editableSql, true)}
+              onClick={() => {
+                const cleanSql = editableSql.trim().replace(/["'`]/g, '').toLowerCase();
+                const cleanTarget = String(reconMetric || '').trim().replace(/["'`]/g, '').toLowerCase();
+                const leafTarget = cleanTarget.split('.').pop();
+                const hasOperators = /[().+\-*/=<>[\]]|\b(case|when|then|else|end|sum|count|avg|min|max|div0|coalesce|iff)\b/i.test(editableSql);
+                if (!hasOperators && (cleanSql === cleanTarget || cleanSql === leafTarget || cleanSql.endsWith(`.${leafTarget}`))) {
+                  alert(`Self-referencing expression not allowed: '${editableSql.trim()}' only references the metric itself. Provide a real SQL expression (e.g. COUNT(BU.BU)).`);
+                  return;
+                }
+                onUpdateMetricSql?.(editableSql, true);
+              }}
               style={{ ...BTN_PRIMARY, opacity: runningRecon || !editableSql.trim() ? 0.6 : 1 }}
             >
               <CheckCheck size={13} /> {runningRecon ? 'Updating & Verifying…' : 'Update SQL & Re-Check Parity'}
@@ -843,7 +929,17 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
             <button
               type="button"
               disabled={runningRecon || !editableSql.trim()}
-              onClick={() => onUpdateMetricSql?.(editableSql, false)}
+              onClick={() => {
+                const cleanSql = editableSql.trim().replace(/["'`]/g, '').toLowerCase();
+                const cleanTarget = String(reconMetric || '').trim().replace(/["'`]/g, '').toLowerCase();
+                const leafTarget = cleanTarget.split('.').pop();
+                const hasOperators = /[().+\-*/=<>[\]]|\b(case|when|then|else|end|sum|count|avg|min|max|div0|coalesce|iff)\b/i.test(editableSql);
+                if (!hasOperators && (cleanSql === cleanTarget || cleanSql === leafTarget || cleanSql.endsWith(`.${leafTarget}`))) {
+                  alert(`Self-referencing expression not allowed: '${editableSql.trim()}' only references the metric itself. Provide a real SQL expression (e.g. COUNT(BU.BU)).`);
+                  return;
+                }
+                onUpdateMetricSql?.(editableSql, false);
+              }}
               style={BTN_SM}
             >
               Save SQL to Model Only
@@ -1069,14 +1165,16 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
                 style={{ ...INPUT_STYLE, width: 68 }}
               />
             </label>
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--text-secondary)' }}>
-              <input
-                type="checkbox"
-                checked={Boolean(reconRegisterVerified)}
-                onChange={(e) => setReconRegisterVerified?.(e.target.checked)}
-              />
-              Register verified query when certified
-            </label>
+            {!isSimulated && (
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--text-secondary)' }}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(reconRegisterVerified)}
+                  onChange={(e) => setReconRegisterVerified?.(e.target.checked)}
+                />
+                Register verified query when certified
+              </label>
+            )}
           </div>
 
           <div>
@@ -1113,32 +1211,83 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
       )}
 
       {/* ── 7. PARITY & DRIFT KPI SUMMARY BANNER ────────────────────────── */}
-      {reconResult && (
+      {reconResult && isPbiNeeded && (
         <div style={{
           ...PANEL,
           padding: 16,
-          background: reconResult.status === 'CERTIFIED' ? 'rgba(34, 197, 94, 0.05)' : 'rgba(239, 68, 68, 0.05)',
-          border: `1px solid ${reconResult.status === 'CERTIFIED' ? 'rgba(34, 197, 94, 0.35)' : 'rgba(239, 68, 68, 0.35)'}`,
+          background: 'rgba(245, 158, 11, 0.06)',
+          border: '1px solid rgba(245, 158, 11, 0.4)',
           gap: 12,
         }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              {reconResult.status === 'CERTIFIED' ? (
+              <AlertTriangle size={22} style={{ color: 'var(--color-warning, #f59e0b)' }} />
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Pill tone="warning">Power BI values needed</Pill>
+                  <strong style={{ fontSize: 13.5 }}>Power BI Values Required</strong>
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+                  {reconResult.message || 'SemaBridge executed the warehouse query, but Power BI DAX values are needed to verify mathematical parity.'}
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <label
+                style={{ ...BTN_PRIMARY, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4, padding: '6px 12px', fontSize: 12 }}
+                title="Upload CSV exported from Power BI Web"
+              >
+                <Upload size={13} /> <strong>Upload CSV</strong>
+                <input type="file" accept=".json,.csv,.tsv" style={{ display: 'none' }} onChange={(e) => handleDaxFile(e.target.files?.[0])} />
+              </label>
+              <button
+                type="button"
+                style={{ ...BTN_SM, padding: '6px 12px', fontSize: 12 }}
+                onClick={() => setShowPbiWebHelp(true)}
+              >
+                Connect Power BI
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {reconResult && !isPbiNeeded && (
+        <div style={{
+          ...PANEL,
+          padding: 16,
+          background: isSimulated
+            ? 'rgba(59, 130, 246, 0.05)'
+            : (isAllMatched ? 'rgba(34, 197, 94, 0.05)' : 'rgba(239, 68, 68, 0.05)'),
+          border: `1px solid ${isSimulated
+            ? 'rgba(59, 130, 246, 0.35)'
+            : (isAllMatched ? 'rgba(34, 197, 94, 0.35)' : 'rgba(239, 68, 68, 0.35)')}`,
+          gap: 12,
+        }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {isSimulated ? (
+                <Info size={22} style={{ color: 'var(--accent-blue)' }} />
+              ) : isAllMatched ? (
                 <CheckCircle2 size={22} style={{ color: 'var(--color-success)' }} />
               ) : (
                 <AlertTriangle size={22} style={{ color: 'var(--color-error)' }} />
               )}
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Pill tone={reconResult.status === 'CERTIFIED' ? 'ok' : 'bad'}>
-                    {reconResult.status === 'CERTIFIED' ? 'CERTIFIED PARITY' : 'DRIFT DETECTED'}
+                  <Pill tone={isSimulated ? 'info' : (isAllMatched ? 'ok' : 'bad')}>
+                    {isSimulated ? 'SIMULATED' : (isAllMatched ? 'Match' : 'Drift detected')}
                   </Pill>
-                  <strong style={{ fontSize: 13.5 }}>{reconResult.certification_badge}</strong>
+                  <strong style={{ fontSize: 13.5 }}>
+                    {isSimulated ? 'SIMULATED' : (reconResult.certification_badge || (isAllMatched ? 'Certified Match' : 'Drift detected'))}
+                  </strong>
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
-                  {reconResult.status === 'CERTIFIED'
-                    ? 'Values in Snowflake match Power BI within specified tolerances.'
-                    : 'Mathematical discrepancy identified between Power BI and Snowflake.'}
+                  {isSimulated
+                    ? 'Simulated comparative check (SEMABRIDGE_MOCK_PARITY active). Certification is disabled.'
+                    : (isAllMatched
+                        ? 'Values in Snowflake match Power BI within specified tolerances.'
+                        : 'Mathematical discrepancy identified between Power BI and Snowflake.')}
                 </div>
               </div>
             </div>
@@ -1146,20 +1295,14 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
             <div style={{ display: 'flex', gap: 16 }}>
               <div style={{ textAlign: 'right' }}>
                 <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Matched Rows</div>
-                {(() => {
-                  const totalRows = reconResult.total_rows ?? reconResult.total_rows_compared ?? ((reconResult.matched_rows || 0) + (reconResult.mismatched_rows || 0));
-                  const isAllMatched = reconResult.status === 'CERTIFIED' || (totalRows > 0 && reconResult.matched_rows === totalRows);
-                  return (
-                    <div style={{
-                      fontSize: 16,
-                      fontWeight: 700,
-                      fontFamily: MONO,
-                      color: isAllMatched ? 'var(--color-success)' : 'var(--color-error)',
-                    }}>
-                      {reconResult.matched_rows} / {totalRows}
-                    </div>
-                  );
-                })()}
+                <div style={{
+                  fontSize: 16,
+                  fontWeight: 700,
+                  fontFamily: MONO,
+                  color: isAllMatched ? 'var(--color-success)' : 'var(--color-error)',
+                }}>
+                  {reconResult.matched_rows} / {totalRows}
+                </div>
               </div>
               <div style={{ textAlign: 'right' }}>
                 <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Max Drift %</div>
@@ -1606,6 +1749,36 @@ export function QualityIssues({ issues, onOpenMetric, gov }) {
 }
 
 export function CollisionDetail({ collision, onOpenMetric }) {
+  if (collision?.occurrences && Array.isArray(collision.occurrences)) {
+    return (
+      <div style={{ ...PANEL, gap: 12 }}>
+        {collision.occurrences.map((c, idx) => {
+          const doms = c.conflicting_domains || Object.keys(c.expressions || {});
+          return (
+            <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: 6, borderBottom: idx < collision.occurrences.length - 1 ? '1px solid var(--border-main)' : 'none', paddingBottom: 8 }}>
+              <div style={{ fontWeight: 600, fontSize: 12 }}>{c.item_name} ({doms.join(' · ')})</div>
+              {doms.map((d) => (
+                <div key={d} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, fontSize: 12 }}>
+                  <b style={{ minWidth: 140 }}>{d}</b>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <code style={{ fontFamily: MONO, fontSize: 11.5 }}>{c.expressions?.[d] || 'no formula'}</code>
+                    {c.descriptions?.[d] && (
+                      <div style={{ color: 'var(--text-secondary)', marginTop: 2 }}>{c.descriptions[d]}</div>
+                    )}
+                  </div>
+                  {onOpenMetric && (
+                    <button type="button" style={BTN_SM} onClick={() => onOpenMetric(c.item_name, d)}>
+                      Open in {d}
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
   const doms = collision.conflicting_domains || Object.keys(collision.expressions || {});
   return (
     <div style={{ ...PANEL, gap: 8 }}>

@@ -8,10 +8,11 @@ import {
   certifyAnswer,
   ENGINES,
   fetchDynamicSuggestedQuestions,
-  fetchProjects,
   fetchVerifiedQueries,
 } from '../components/ask/askApi';
+import { useProjects } from '../hooks/useProjects';
 import { BTN_PRIMARY } from '../components/ask/askStyles';
+import DeployedViewSelector from '../components/common/DeployedViewSelector';
 
 /**
  * AskAiPage (/ask) — ask a business question in plain language and get an
@@ -60,14 +61,44 @@ let nextId = Date.now();
 export default function AskAiPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const urlQuestion = searchParams.get('q') || '';
-  const projectParam = searchParams.get('project') || '';
+  const selectedView = searchParams.get('view') || '';
+
+  const {
+    projects,
+    selectedProjectId: projectId,
+    setSelectedProjectId: setProjectId,
+  } = useProjects();
+
+  const selectedProject = projects.find(
+    (p) => (p.id || p.project_id || p.name) === projectId
+  );
+  const projectPlatform = (
+    selectedProject?.target_platform ||
+    selectedProject?.platform ||
+    selectedProject?.target?.platform ||
+    selectedProject?.target?.connector_type ||
+    selectedProject?.target_type ||
+    ''
+  ).toLowerCase();
+
+  const availableEngines = ENGINES.filter((e) => {
+    if (projectPlatform === 'databricks' && e.id === 'SNOWFLAKE') return false;
+    if (projectPlatform === 'snowflake' && e.id === 'DATABRICKS') return false;
+    return true;
+  });
 
   const [target, setTarget] = useState(() => {
     const saved = readStore(window.localStorage, TARGET_KEY, 'SNOWFLAKE');
     return ENGINES.some((e) => e.id === saved) ? saved : 'SNOWFLAKE';
   });
-  const [projectId, setProjectId] = useState(projectParam);
-  const [projects, setProjects] = useState([]);
+
+  useEffect(() => {
+    if (projectPlatform === 'databricks' && target === 'SNOWFLAKE') {
+      setTarget('DATABRICKS');
+    } else if (projectPlatform === 'snowflake' && target === 'DATABRICKS') {
+      setTarget('SNOWFLAKE');
+    }
+  }, [projectPlatform, target]);
   const [suggestedQuestions, setSuggestedQuestions] = useState([]);
   const [draft, setDraft] = useState(urlQuestion);
   // Entries that were mid-flight when the page was left come back as errors.
@@ -86,27 +117,6 @@ export default function AskAiPage() {
   useEffect(() => writeStore(window.sessionStorage, THREAD_KEY, thread), [thread]);
   useEffect(() => writeStore(window.sessionStorage, CERTIFIED_KEY, certified), [certified]);
   useEffect(() => writeStore(window.localStorage, TARGET_KEY, target), [target]);
-
-  useEffect(() => {
-    let alive = true;
-    fetchProjects()
-      .then((list) => {
-        if (!alive) return;
-        setProjects(list);
-        if (!projectParam && list.length > 0) {
-          const preferred =
-            list.find((p) => String(p.status || '').toLowerCase() === 'active') || list[0];
-          const firstId = preferred?.id || preferred?.name || '';
-          if (firstId) {
-            setProjectId((cur) => cur || firstId);
-          }
-        }
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, [projectParam]);
 
   useEffect(() => {
     let alive = true;
@@ -157,11 +167,11 @@ export default function AskAiPage() {
       const question = String(text ?? '').trim();
       if (!question) return;
       const id = `q${nextId++}`;
-      setThread((t) => [...t, { id, question, target, projectId, status: 'loading' }]);
+      setThread((t) => [...t, { id, question, target, projectId, status: 'loading', semanticView: selectedView || null }]);
       setDraft('');
-      runEntry(id, question, target, projectId);
+      runEntry(id, question, target, projectId, false, selectedView || null);
     },
-    [target, projectId, runEntry],
+    [target, projectId, selectedView, runEntry],
   );
 
   // /ask?q=… → prefill and ask once, then drop q so a reload does not re-ask.
@@ -226,15 +236,27 @@ export default function AskAiPage() {
               style={{ padding: '5px 8px', borderRadius: 8, border: '1px solid var(--border-main)', background: 'var(--bg-input)', color: 'var(--text-primary)', fontSize: 12, maxWidth: 200 }}
             >
               <option value="">All projects</option>
-              {projects.map((p) => (
-                <option key={p.id || p.name} value={p.id || p.name}>{p.name || p.id}</option>
-              ))}
+              {projects.map((p) => {
+                const pid = p.id || p.project_id || p.name;
+                const domStr = p.domain_names?.length ? ` · ${p.domain_names.join(', ')}` : '';
+                return (
+                  <option key={pid} value={pid}>
+                    {p.name || pid} ({pid}){domStr}
+                  </option>
+                );
+              })}
             </select>
           </label>
         )}
+        {projectId && (
+          <DeployedViewSelector
+            projectId={projectId}
+            projectSchema={selectedProject?.schema}
+          />
+        )}
         <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Run on</span>
         <div className="ask-seg" role="radiogroup" aria-label="Run on" style={{ display: 'inline-flex', padding: 2, borderRadius: 8, border: '1px solid var(--border-main)', background: 'var(--bg-surface)' }}>
-          {ENGINES.map((e) => {
+          {availableEngines.map((e) => {
             const on = e.id === target;
             return (
               <button

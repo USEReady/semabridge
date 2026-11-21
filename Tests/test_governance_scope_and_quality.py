@@ -285,3 +285,187 @@ def test_lint_api_accepts_concept_naming_option():
     assert res.status_code == 200
     assert not [i for i in res.json()["issues"]
                 if i["rule_id"] == "RULE_NAMING_CONVENTION" and i["object_type"] in ("CONCEPT", "ATTRIBUTE")]
+
+
+# ---------------------------------------------------------------------------
+# Scope & Quality Gate Fixes
+# ---------------------------------------------------------------------------
+
+def test_project_with_no_domain_lists_deployed_metrics(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+    from semabridge.api.main import app
+    from semabridge.ontology.store import DomainOntologyStore
+
+    temp_store = DomainOntologyStore(storage_dir=tmp_path)
+    monkeypatch.setattr("semabridge.ontology.store.ontology_store", temp_store)
+    # Mock deployment info to return view with DDL containing metrics
+    fake_dep = {
+        "semantic_view": "DB.SCHEMA.AI_SEMANTIC",
+        "view_name": "AI_SEMANTIC",
+        "ddl": """
+        CREATE OR REPLACE SEMANTIC VIEW DB.SCHEMA.AI_SEMANTIC
+        TABLES ( fact AS DB.SCHEMA.FACT )
+        DIMENSIONS ( fact.CATEGORY AS CATEGORY )
+        METRICS (
+            TOTAL_CALLS AS COUNT(*),
+            AVG_LATENCY AS AVG(fact.LATENCY)
+        );
+        """,
+    }
+    monkeypatch.setattr(
+        "semabridge.repository.model_repository.ModelRepository.get_project_deployment_info",
+        lambda self, pid: fake_dep if pid == "proj-ai" else {},
+    )
+    client = TestClient(app)
+    resp = client.get("/api/reconciliation/project-metrics?project_id=proj-ai")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["count"] == 2
+    names = [m["name"] for m in data["metrics"]]
+    assert "TOTAL_CALLS" in names
+    assert "AVG_LATENCY" in names
+    assert all(m["target_table_or_view"] == "DB.SCHEMA.AI_SEMANTIC" for m in data["metrics"])
+    assert all(any("CATEGORY" in d for d in m["dimensions"]) for m in data["metrics"])
+
+
+def test_selected_project_never_shows_another_project_domain(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+    from semabridge.api.main import app
+    from semabridge.ontology.store import DomainOntologyStore
+    from semabridge.ontology.models import DomainOntology, DomainMetric
+
+    temp_store = DomainOntologyStore(storage_dir=tmp_path)
+    monkeypatch.setattr("semabridge.ontology.store.ontology_store", temp_store)
+
+    # Register domain for proj-comp
+    comp_dom = DomainOntology(
+        domain="Competitive Marketing",
+        source_project_id="proj-comp",
+        metrics=[DomainMetric(name="CompMetric", sql_expression="SUM(units)")],
+    )
+    temp_store.add_or_update_domain(comp_dom)
+
+    # proj-ai has no domain and no snapshot
+    monkeypatch.setattr(
+        "semabridge.repository.model_repository.ModelRepository.get_project_deployment_info",
+        lambda self, pid: {},
+    )
+    client = TestClient(app)
+    resp = client.get("/api/reconciliation/project-metrics?project_id=proj-ai")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["count"] == 0
+    assert data["metrics"] == []
+
+
+def test_lint_with_zero_checked_is_not_passing():
+    empty_fed = FederatedOntologyLoader.merge_domains([])
+    linter = SemanticLinter()
+    report = linter.lint_ontology(empty_fed)
+    assert report.passed is False
+    assert report.metrics_checked == 0
+    assert report.concepts_checked == 0
+    assert "0 metrics" in report.summary
+
+
+def test_demo_data_never_appears_without_flag(monkeypatch):
+    import os
+    from semabridge.governance.drift_service import get_default_mock_drift_events
+
+    monkeypatch.delenv("SEMABRIDGE_MOCK_DRIFT", raising=False)
+    monkeypatch.delenv("SEMABRIDGE_MOCK_PARITY", raising=False)
+
+    # Without explicit flag, default mock events must be empty
+    events = get_default_mock_drift_events("proj-comp")
+    assert events == []
+
+    # With flag, events appear
+    monkeypatch.setenv("SEMABRIDGE_MOCK_DRIFT", "true")
+    events_enabled = get_default_mock_drift_events("proj-comp")
+    assert len(events_enabled) > 0
+    assert any(e["metric_name"] == "PCT_UNITS_MARKET_SHARE" for e in events_enabled)
+
+
+def test_ontology_projects_endpoint_enrichment_and_pagination(monkeypatch):
+    from fastapi.testclient import TestClient
+    from semabridge.api.main import app
+
+    client = TestClient(app)
+    resp = client.get("/api/ontology/projects")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+    # Total workspace projects > 50 are returned without limit=50 truncation
+    assert len(data) > 50
+    # Every project has enriched sync and domain fields
+    for p in data:
+        assert "has_successful_sync" in p
+        assert "last_successful_sync_at" in p
+        assert "ontology_domain_count" in p
+        assert "domain_names" in p
+        assert isinstance(p["has_successful_sync"], bool)
+        assert isinstance(p["domain_names"], list)
+
+
+def test_bootstrap_from_osi_never_synced_returns_clear_message():
+    from fastapi.testclient import TestClient
+    from semabridge.api.main import app
+    from semabridge.repository.orm.session_factory import db_manager
+
+    from semabridge.repository.orm.models import Base
+    Base.metadata.create_all(bind=db_manager.get_engine())
+    client = TestClient(app)
+    resp = client.post("/api/ontology/domains/from-osi", json={"project_id": "proj-never-synced-xyz-123"})
+    assert resp.status_code == 404
+    data = resp.json()
+    assert data["detail"] == "This project has no successful sync yet - run a sync first"
+
+
+def test_bootstrap_from_osi_synced_project_succeeds(monkeypatch, tmp_path):
+    import json
+    from fastapi.testclient import TestClient
+    from semabridge.api.main import app
+    from semabridge.repository.model_repository import ModelRepository
+    from semabridge.repository.orm.session_factory import db_manager
+    from semabridge.ontology.store import DomainOntologyStore
+
+    from semabridge.repository.orm.models import Base
+    Base.metadata.create_all(bind=db_manager.get_engine())
+    temp_store = DomainOntologyStore(storage_dir=tmp_path, seed_demo=False)
+    monkeypatch.setattr("semabridge.ontology.store.ontology_store", temp_store)
+    monkeypatch.setattr("semabridge.api.routers.domain_ontology_router.ontology_store", temp_store)
+
+    pid = "proj-test-sync-success-demo"
+    repo = ModelRepository()
+    dummy_sml = {
+        "unique_name": "TestSyncModel",
+        "label": "Test Sync Model",
+        "datasets": [
+            {
+                "unique_name": "sales",
+                "name": "sales",
+                "source_table": "FACT_SALES",
+                "columns": [
+                    {"unique_name": "sales_id", "name": "sales_id", "data_type": "integer"},
+                    {"unique_name": "revenue", "name": "revenue", "data_type": "decimal"},
+                ],
+                "measures": [
+                    {"unique_name": "total_revenue", "name": "total_revenue", "expression": "SUM(sales[revenue])"},
+                ],
+            }
+        ],
+        "relationships": [],
+    }
+    repo.commit_model(
+        project_id=pid,
+        sml_json=dummy_sml,
+        status="success",
+    )
+
+    client = TestClient(app)
+    resp = client.post("/api/ontology/domains/from-osi", json={"project_id": pid})
+    assert resp.status_code == 200
+    res_data = resp.json()
+    assert res_data["concept_count"] >= 1
+    assert temp_store.get_domain(res_data["domain"]) is not None
+

@@ -2,6 +2,14 @@ import { useState } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import { Box, Layers, AlertCircle } from 'lucide-react';
 
+const handleStyle = {
+    width: 8,
+    height: 8,
+    background: 'var(--accent-blue)',
+    border: '2px solid var(--er-node-bg)',
+    borderRadius: '50%',
+};
+
 /**
  * ModelNode — Blue semantic model node for the dependency graph.
  * Fully theme-adaptive (dark slate & clean modern light).
@@ -174,11 +182,3 @@ export default function ModelNode({ data, selected }) {
         </div>
     );
 }
-
-const handleStyle = {
-    width: 8,
-    height: 8,
-    background: 'var(--accent-blue)',
-    border: '2px solid var(--er-node-bg)',
-    borderRadius: '50%',
-};

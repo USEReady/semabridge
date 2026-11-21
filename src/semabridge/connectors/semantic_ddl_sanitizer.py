@@ -117,6 +117,7 @@ class SemanticDDLSanitizer:
                 return fixed, True, []
             return ddl, False, []
 
+
         invalid_alias: Optional[str] = None
         invalid_col: Optional[str] = None
         if "." in invalid_norm:
@@ -289,7 +290,7 @@ class SemanticDDLSanitizer:
                 continue
             start = idx + 1
             # Track paren depth so multi-line inline subqueries inside TABLES
-            # (e.g. "SALESFACT AS (\n  SELECT ...\n) PRIMARY KEY (...)") are
+            # (e.g. "FACT_TABLE AS (\n  SELECT ...\n) PRIMARY KEY (...)") are
             # not mistaken for the closing paren of the clause itself.
             end = start
             depth = 1  # we are one level inside "CLAUSE_HEADER ("

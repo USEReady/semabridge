@@ -457,12 +457,6 @@ class MetricsClauseBuilder:
         except Exception as exc:
             logger.warning("OpenAI metric prefetch skipped: %s", exc)
 
-        non_additive_metric_names = {
-            self.identifier_sanitizer.sanitize_column(m.unique_name).upper()
-            for m in valid_metrics
-            if getattr(m, "non_additive_dimension", None)
-        }
-
         for metric in valid_metrics:
             raw_name = metric.unique_name
             sanitized_name = self.identifier_sanitizer.to_alias(raw_name)
@@ -473,6 +467,12 @@ class MetricsClauseBuilder:
             for m in valid_metrics
             if getattr(m, "non_additive_dimension", None)
         }
+
+        from semabridge.utils.synonyms import disambiguate_metric_synonyms
+        view_label = getattr(self, "semantic_view_name", None) or getattr(model, "unique_name", None)
+        valid_metrics, syn_colls = disambiguate_metric_synonyms(valid_metrics, view_name=view_label)
+        if syn_colls:
+            self._synonym_collisions = getattr(self, "_synonym_collisions", []) + syn_colls
 
         for metric in valid_metrics:
             if metric.unique_name in skipped_metric_names:
@@ -591,13 +591,18 @@ class MetricsClauseBuilder:
                             expr[:200],
                         )
                 else:
-                    reason = (
-                        self._detect_untranslated_dax_syntax(expr)
-                        or detect_date_numeric_type_mismatch(expr, dataset_aliases, dataset_col_types)
-                        or detect_nested_aggregate(expr)
-                    )
-                    if reason:
-                        failure = (reason, expr[:200])
+                    dax_upper = str(getattr(metric, "expression", "") or "").upper()
+                    has_today_now = bool(re.search(r"\b(TODAY|NOW)\s*\(", dax_upper))
+                    if not has_today_now and re.search(r"\bCURRENT_DATE\b", expr, re.IGNORECASE):
+                        failure = ("no data anchor; would be anchored to today's date", expr[:200])
+                    else:
+                        reason = (
+                            self._detect_untranslated_dax_syntax(expr)
+                            or detect_date_numeric_type_mismatch(expr, dataset_aliases, dataset_col_types)
+                            or detect_nested_aggregate(expr)
+                        )
+                        if reason:
+                            failure = (reason, expr[:200])
 
             metric_entity_alias = self._resolve_metric_emission_alias(
                 alias, expr, dataset_aliases, fact_aliases,
@@ -1655,7 +1660,7 @@ class MetricsClauseBuilder:
                 if alias and col_name:
                     # Skip metrics bound to virtual Power BI measures tables — they have
                     # no real data columns in Snowflake and will always fail.
-                    if not sql_expr and self._is_virtual_measures_table(metric.dataset, dataset_col_lookup):
+                    if not getattr(metric, "sql_expression", None) and self._is_virtual_measures_table(metric.dataset, dataset_col_lookup):
                         logger.warning(
                             "Metric '%s': dataset '%s' appears to be a virtual measures table "
                             "with no physical columns. Skipping to prevent DDL failure.",

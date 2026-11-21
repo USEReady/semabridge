@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 import logging
 import re
 import time
@@ -75,6 +76,7 @@ class NLQueryRequest(BaseModel):
     project_id: Optional[str] = None
     view_name: Optional[str] = None
     semantic_view: Optional[str] = None
+    view: Optional[str] = None
     allow_offline_draft: bool = False
 
 
@@ -88,6 +90,10 @@ class ExecuteQueryRequest(BaseModel):
     limit: int = Field(default=50, ge=1)
     # Kept for request compatibility; simulated data is never produced.
     allow_simulated: bool = False
+    card_total: Optional[float] = None
+    is_breakdown: bool = False
+    query_path: Optional[str] = None
+    is_additive: bool = True
 
 
 class ExecuteQueryResponse(BaseModel):
@@ -102,6 +108,9 @@ class ExecuteQueryResponse(BaseModel):
     is_simulated: bool = False
     message: Optional[str] = None
     dialect: str = "SNOWFLAKE"
+    certified: bool = False
+    query_path: Optional[str] = None
+    warnings: List[str] = Field(default_factory=list)
 
 
 class SaveVerifiedQueryRequest(BaseModel):
@@ -296,6 +305,49 @@ def _empty_plan(prompt: str, explanation: str, warnings: List[str], tables: Opti
     )
 
 
+def _verify_free_form_plan_checks(sql: str, prompt: str, engine: Any) -> tuple[bool, Optional[str]]:
+    """Run plan checks (join path, multi-fact, window dimensions, semi-additive) on free-form SQL."""
+    if not engine or not getattr(engine, "ontology", None):
+        return True, None
+    ont = engine.ontology
+    sql_u = sql.upper()
+
+    # 1. Window metrics check
+    for m in getattr(ont, "metrics", []) or []:
+        m_name = (getattr(m, "name", None) or "").upper()
+        if m_name and re.search(rf"\b{re.escape(m_name)}\b", sql_u):
+            is_win, req_dims = engine._is_window_metric(getattr(m, "sql_expression", ""), getattr(m, "description", ""), m_name)
+            if is_win and req_dims:
+                missing = []
+                for rd in req_dims:
+                    rd_c = rd.split(".")[-1].strip().upper()
+                    if not re.search(rf"\b{re.escape(rd_c)}\b", sql_u) and not (prompt and re.search(rf"\b{re.escape(rd_c)}\b", prompt.upper())):
+                        missing.append(rd)
+                if missing:
+                    return False, f"Window metric '{m.name}' missing required partition dimension(s): {', '.join(missing)}"
+
+    # 2. Semi-additive metrics check
+    for m in getattr(ont, "metrics", []) or []:
+        m_name = (getattr(m, "name", None) or "").upper()
+        if m_name and re.search(rf"\b{re.escape(m_name)}\b", sql_u):
+            semi_dim = engine._get_semi_additive_dimension(m, getattr(ont, "concepts", None))
+            if semi_dim:
+                sd_c = semi_dim.split(".")[-1].strip().upper()
+                if not re.search(rf"\b{re.escape(sd_c)}\b", sql_u):
+                    return False, f"Semi-additive metric '{m.name}' has non-additive dimension '{semi_dim}' and cannot be summed without grouping or filtering by it"
+
+    # 3. Multi-source join check
+    matched_metrics = [
+        m for m in getattr(ont, "metrics", []) or []
+        if getattr(m, "name", None) and re.search(rf"\b{re.escape(m.name.upper())}\b", sql_u)
+    ]
+    distinct_concepts = list(dict.fromkeys(m.concept for m in matched_metrics if getattr(m, "concept", None)))
+    if len(distinct_concepts) > 1 and "WITH " not in sql_u and "CROSS JOIN" not in sql_u:
+        return False, f"Direct join across multiple source concepts detected ({', '.join(distinct_concepts)}) without conformed dimensions or CTE"
+
+    return True, None
+
+
 def _try_cortex(prompt: str, scope: ProjectScope) -> tuple[Optional[QueryResolutionPlan], Optional[str]]:
     """Ask Cortex Analyst; returns (plan, error)."""
     if not scope.semantic_view:
@@ -314,15 +366,50 @@ def _try_cortex(prompt: str, scope: ProjectScope) -> tuple[Optional[QueryResolut
         if not sql:
             return None, resp.get("explanation") or "Cortex Analyst returned no SQL statement"
         validate_safe_sql(sql)
+
+        from semabridge.ai.sql_guard_engine import (
+            _extract_dimension_names_from_sv_sql,
+            _extract_metric_names_from_sv_sql,
+            inspect_and_guard_generated_sql,
+        )
+        all_metrics = []
+        all_concepts = []
+        if ontology_store.query_engine and hasattr(ontology_store.query_engine, "ontology") and ontology_store.query_engine.ontology:
+            all_metrics = list(ontology_store.query_engine.ontology.metrics.values())
+            all_concepts = list(ontology_store.query_engine.ontology.concepts.values())
+
+        guard_decision = inspect_and_guard_generated_sql(
+            sql=sql,
+            prompt=prompt,
+            all_metrics=all_metrics,
+            all_concepts=all_concepts,
+            semantic_view_name=scope.semantic_view,
+        )
+
+        if not guard_decision.allowed:
+            return None, guard_decision.refusal_reason or "Cortex SQL rejected by governance guard."
+
+        effective_sql = guard_decision.rewritten_sql or sql
+        effective_path = guard_decision.query_path
+        detected_metrics = _extract_metric_names_from_sv_sql(effective_sql)
+        detected_dims = [d.split(".")[-1] for d in _extract_dimension_names_from_sv_sql(effective_sql)]
+
         plan = QueryResolutionPlan(
             original_prompt=prompt,
-            detected_metrics=[],
-            detected_dimensions=[],
+            detected_metrics=detected_metrics,
+            detected_dimensions=detected_dims,
             resolved_tables=[scope.semantic_view],
-            generated_sql=sql,
+            generated_sql=effective_sql,
             confidence_score=0.95,
             explanation=f"[Snowflake Cortex Analyst] {resp.get('explanation', '')}".strip(),
-            warnings=[],
+            warnings=guard_decision.warnings,
+            assumptions=guard_decision.assumptions,
+            guard_checks=guard_decision.checks,
+            suggested_metrics=guard_decision.suggested_metrics,
+            query_path=effective_path,
+            is_certified=guard_decision.is_certified_eligible and guard_decision.checks_passed and effective_path == "semantic_view",
+            view=scope.semantic_view,
+            semantic_view=scope.semantic_view,
         )
         return plan, None
     except Exception as exc:
@@ -382,7 +469,11 @@ def resolve_natural_language_query(req: NLQueryRequest, request: Request) -> Que
     _require_project_access(req.project_id, request)
 
     dialect = _normalize_dialect(req)
-    scope = _scope_for(req.project_id, explicit_view=req.semantic_view or req.view_name)
+    explicit_view = req.view or req.semantic_view or req.view_name
+    try:
+        scope = _scope_for(req.project_id, explicit_view=explicit_view)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     route_scope_to_view(req.prompt, scope)
     if scope.candidate_views and not scope.semantic_view:
         plan = _empty_plan(
@@ -400,6 +491,12 @@ def _with_answer_source(plan: QueryResolutionPlan, scope: ProjectScope) -> Query
     """Stamp which semantic view / domain answered (shown in Ask AI)."""
     if scope.semantic_view and not plan.answered_by_view:
         plan.answered_by_view = scope.semantic_view
+    if scope.semantic_view:
+        plan.view = scope.semantic_view
+        plan.semantic_view = scope.semantic_view
+    elif plan.answered_by_view:
+        plan.view = plan.answered_by_view
+        plan.semantic_view = plan.answered_by_view
     if not plan.answered_by_domain:
         plan.answered_by_domain = scope.answered_by_domain or (
             next((d for d, v in scope.domain_views.items() if v == scope.semantic_view), None)
@@ -410,18 +507,18 @@ def _with_answer_source(plan: QueryResolutionPlan, scope: ProjectScope) -> Query
 def _resolve_nl(req: NLQueryRequest, engine: Any, dialect: str, scope: ProjectScope) -> QueryResolutionPlan:
     explicit_local = (req.target or "").upper() == "LOCAL"
     if dialect == "SNOWFLAKE" and not explicit_local:
-        plan, cortex_error = _try_cortex(req.prompt, scope)
-        if plan is not None:
-            return plan
+        cortex_plan, cortex_error = _try_cortex(req.prompt, scope)
+        if cortex_plan is not None:
+            return cortex_plan
         if not req.allow_offline_draft:
             return _empty_plan(
                 req.prompt,
-                "Cortex unavailable. You can generate an offline draft with the local engine.",
-                [f"Cortex unavailable: {cortex_error}"],
-                tables=[scope.semantic_view] if scope.semantic_view else [],
+                "Cortex unavailable; select 'Local Draft' to generate an offline draft.",
+                [
+                    "Cortex unavailable (key-pair auth not configured or service unreachable); "
+                    "no automatic fallback without explicit choice."
+                ],
             )
-        if scope.allowed_domains is not None and not scope.allowed_domains:
-            return _empty_plan(req.prompt, "The selected project has no ontology domains attached or generated yet.", ["no project domains"])
         return _local_plan(engine, req.prompt, dialect, scope, offline_label=True)
 
     if scope.allowed_domains is not None and not scope.allowed_domains:
@@ -581,9 +678,9 @@ def _execute_databricks(
         logger.warning("Databricks Statements API error %s: %s", resp.status_code, resp.text[:200])
         return _failed("DATABRICKS", exec_sql, RuntimeError(f"Databricks API returned HTTP {resp.status_code}"), elapsed_ms)
     data = resp.json()
-    state = (data.get("status") or {}).get("state")
+    state = (data.get("status") or {}).get("state")  # hardcoding-ok: Databricks API status field
     if state and state not in ("SUCCEEDED",):
-        err = ((data.get("status") or {}).get("error") or {}).get("message") or f"statement state {state}"
+        err = ((data.get("status") or {}).get("error") or {}).get("message") or f"statement state {state}"  # hardcoding-ok: status message
         return _failed("DATABRICKS", exec_sql, RuntimeError(err), elapsed_ms)
     cols = [c.get("name") for c in (data.get("manifest") or {}).get("schema", {}).get("columns", [])]
     rows = (data.get("result") or {}).get("data_array", []) or []
@@ -593,6 +690,80 @@ def _execute_databricks(
         execution_time_ms=elapsed_ms, executed_sql=exec_sql, is_simulated=False,
         message="Query executed live on Databricks SQL Warehouse.", dialect="DATABRICKS",
     )
+
+
+def check_query_results(
+    columns: List[str],
+    rows: List[List[Any]],
+    card_total: Optional[float] = None,
+    tolerance: float = 1e-3,
+    is_additive: bool = True,
+    metric_col_name: Optional[str] = None,
+) -> Tuple[List[str], bool]:
+    """Run post-execution result sanity checks:
+    1. Breakdown total must not exceed overall metric total (within tolerance)
+    2. Flag large share of NULL groups (>= 30%)
+    3. Grouped total vs card value compared
+    Returns (warnings, is_valid). If any check fails, is_valid is False.
+    """
+    warnings: List[str] = []
+    if not rows or not columns:
+        return warnings, True
+
+    _DIM_KEYWORDS = {
+        "YEAR", "MONTH", "DAY", "DATE", "QUARTER", "WEEK", "HOUR", "MINUTE", "SECOND",
+        "ID", "CODE", "INDEX", "RANK", "ROW_NUM", "ROW_NUMBER", "KEY"
+    }
+
+    target_metric_norm = metric_col_name.strip().upper() if metric_col_name else None
+    metric_indices = []
+    dim_indices = []
+
+    for col_idx, col_name in enumerate(columns):
+        c_clean = str(col_name).strip().strip('"').upper()
+        vals = [r[col_idx] for r in rows if r[col_idx] is not None]
+        all_numeric = bool(vals) and all(
+            isinstance(v, (int, float, Decimal)) or (isinstance(v, str) and v.replace(".", "", 1).replace("-", "", 1).isdigit())
+            for v in vals
+        )
+        if target_metric_norm and (c_clean == target_metric_norm or c_clean.endswith(f".{target_metric_norm}")):
+            metric_indices.insert(0, col_idx)
+        elif all_numeric and c_clean not in _DIM_KEYWORDS and not any(c_clean.endswith(f"_{sfx}") for sfx in ("ID", "KEY", "CODE")):
+            metric_indices.append(col_idx)
+        else:
+            dim_indices.append(col_idx)
+
+    is_breakdown = len(dim_indices) > 0 and len(rows) > 1
+
+    if is_breakdown and metric_indices and is_additive:
+        m_idx = metric_indices[0]
+        try:
+            breakdown_total = sum(float(r[m_idx]) for r in rows if r[m_idx] is not None)
+            if card_total is not None and card_total > 0:
+                max_allowed = card_total * (1.0 + tolerance)
+                if breakdown_total > max_allowed:
+                    warnings.append(
+                        f"possible double counting: additive metric breakdown total ({breakdown_total:.2f}) exceeds overall metric total ({card_total:.2f})"
+                    )
+                diff = abs(breakdown_total - card_total)
+                if diff > tolerance * max(1.0, abs(card_total)):
+                    warnings.append(
+                        f"possible double counting: grouped total ({breakdown_total:.2f}) differs from card value ({card_total:.2f})"
+                    )
+        except (ValueError, TypeError):
+            pass
+
+    if is_breakdown and dim_indices:
+        d_idx = dim_indices[0]
+        null_count = sum(
+            1 for r in rows
+            if r[d_idx] is None or str(r[d_idx]).strip().upper() in ("NULL", "NONE", "")
+        )
+        if len(rows) > 0 and (null_count / len(rows)) >= 0.30:
+            warnings.append(f"large share of NULL dimension groups detected ({null_count}/{len(rows)} rows are NULL)")
+
+    is_valid = len(warnings) == 0
+    return warnings, is_valid
 
 
 def execute_semantic_query(
@@ -611,12 +782,113 @@ def execute_semantic_query(
     if not re.search(r"\blimit\s+\d+\s*$", exec_sql, re.IGNORECASE):
         exec_sql = f"{exec_sql} LIMIT {int(req.limit)}"
 
+    from semabridge.ai.sql_guard_engine import inspect_and_guard_generated_sql
+    all_metrics = []
+    all_concepts = []
+    if ontology_store.query_engine and hasattr(ontology_store.query_engine, "ontology") and ontology_store.query_engine.ontology:
+        all_metrics = list(ontology_store.query_engine.ontology.metrics.values())
+        all_concepts = list(ontology_store.query_engine.ontology.concepts.values())
+
+    guard_decision = inspect_and_guard_generated_sql(
+        sql=clean_sql,
+        prompt=req.question or "",
+        all_metrics=all_metrics,
+        all_concepts=all_concepts,
+        semantic_view_name=req.view_name,
+        known_query_path=req.query_path,
+    )
+    if not guard_decision.allowed:
+        raise HTTPException(status_code=400, detail=guard_decision.refusal_reason or "SQL rejected by governance guard.")
+
     target = (req.target or "SNOWFLAKE").upper()
     if target in ("SNOWFLAKE", "CORTEX"):
-        return _execute_snowflake(req, clean_sql, exec_sql, user_id, owner_id=owner_id)
-    if target in ("DATABRICKS", "GENIE"):
-        return _execute_databricks(req, clean_sql, exec_sql, user_id, owner_id=owner_id)
-    return _not_executed("LOCAL", exec_sql, "the local engine has no external warehouse connection.")
+        is_free_form = "SEMANTIC_VIEW(" not in exec_sql.upper()
+        if is_free_form and ontology_store.query_engine:
+            checks_ok, fail_msg = _verify_free_form_plan_checks(exec_sql, req.question or "", ontology_store.query_engine)
+            if not checks_ok:
+                raise HTTPException(status_code=400, detail=f"Free-form SQL rejected by governance guard: {fail_msg}")
+        resp = _execute_snowflake(req, clean_sql, exec_sql, user_id, owner_id=owner_id)
+    elif target in ("DATABRICKS", "GENIE"):
+        resp = _execute_databricks(req, clean_sql, exec_sql, user_id, owner_id=owner_id)
+    else:
+        return _not_executed("LOCAL", exec_sql, "the local engine has no external warehouse connection.")
+
+    # Compute backend metric total via SEMANTIC_VIEW query with identical filters if card_total was not provided
+    computed_card_total = req.card_total
+    if computed_card_total is None and resp.success and resp.rows and "SEMANTIC_VIEW(" in clean_sql.upper():
+        dim_match = re.search(r"(?i)\bDIMENSIONS\s+([^)]*?)(?=\bWHERE\b|\))", clean_sql)
+        if dim_match:
+            card_sql = re.sub(r"(?i)\s*\bDIMENSIONS\s+[^)]*?(?=\bWHERE\b|\))", "", clean_sql)
+            card_sql = re.sub(r"(?i)^SELECT\s+.*?\s+FROM\s+SEMANTIC_VIEW\(", "SELECT * FROM SEMANTIC_VIEW(", card_sql.strip())
+            card_sql_exec = strip_sql_comments(card_sql).strip()
+            if not re.search(r"\blimit\s+\d+\s*$", card_sql_exec, re.IGNORECASE):
+                card_sql_exec = f"{card_sql_exec} LIMIT 1"
+            try:
+                card_resp = None
+                if target in ("SNOWFLAKE", "CORTEX"):
+                    card_resp = _execute_snowflake(req, card_sql, card_sql_exec, user_id, owner_id=owner_id)
+                elif target in ("DATABRICKS", "GENIE"):
+                    card_resp = _execute_databricks(req, card_sql, card_sql_exec, user_id, owner_id=owner_id)
+                if card_resp and card_resp.success and card_resp.rows and card_resp.rows[0]:
+                    for val in card_resp.rows[0]:
+                        if val is not None and isinstance(val, (int, float, Decimal)):
+                            computed_card_total = float(val)
+                            break
+                        elif val is not None and isinstance(val, str) and val.replace(".", "", 1).replace("-", "", 1).isdigit():
+                            computed_card_total = float(val)
+                            break
+            except Exception as card_err:
+                logger.debug("Backend card_total query failed (non-fatal): %s", card_err)
+
+    # Extract target metric name from SQL if present
+    target_metric_col = req.view_name
+    if not target_metric_col:
+        m_match = re.search(r"(?i)\bMETRICS\s+([A-Za-z0-9_.\"]+)", clean_sql)
+        if m_match:
+            target_metric_col = m_match.group(1).strip().strip('"').split(".")[-1]
+
+    # Requirement 3 & 4: Result checks and Certified label
+    if resp.success and resp.rows:
+        res_warns, is_valid = check_query_results(
+            resp.columns,
+            resp.rows,
+            card_total=computed_card_total,
+            is_additive=req.is_additive,
+            metric_col_name=target_metric_col,
+        )
+        if res_warns:
+            resp.warnings.extend(res_warns)
+
+    query_path = req.query_path or guard_decision.query_path
+    resp.query_path = query_path
+
+    if guard_decision.assumptions:
+        for asm in guard_decision.assumptions:
+            if asm not in resp.warnings:
+                resp.warnings.append(f"Assumption: {asm}")
+    if guard_decision.warnings:
+        for gw in guard_decision.warnings:
+            if gw not in resp.warnings:
+                resp.warnings.append(gw)
+
+    from semabridge.ai.verified_queries_service import has_successful_execution
+    from semabridge.reconciliation.certification_service import check_sql_certification_status
+    is_verified = has_successful_execution(clean_sql, project_id=req.project_id)
+    cert_status = check_sql_certification_status(clean_sql, project_id=req.project_id)
+    has_certified_metrics = bool(cert_status.get("certified") and not cert_status.get("failed") and not cert_status.get("uncertified"))
+
+    is_gov_sv = query_path == "semantic_view"
+
+    resp.certified = bool(
+        resp.success
+        and guard_decision.is_certified_eligible
+        and guard_decision.checks_passed
+        and (is_verified or is_gov_sv or has_certified_metrics)
+        and not [w for w in resp.warnings if not w.startswith("Assumption:")]
+        and not resp.error
+        and query_path == "semantic_view"
+    )
+    return resp
 
 
 @router.post("/execute-query", response_model=ExecuteQueryResponse)

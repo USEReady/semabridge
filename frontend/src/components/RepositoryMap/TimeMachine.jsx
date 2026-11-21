@@ -9,6 +9,30 @@ function statusTone(status) {
   return { bg: 'rgba(148,163,184,.12)', fg: '#94A3B8', border: 'rgba(148,163,184,.28)' };
 }
 
+const miniBtn = {
+  height: 28,
+  border: '1px solid var(--border-color)',
+  borderRadius: 6,
+  background: 'var(--bg-app)',
+  color: 'var(--text-secondary)',
+  padding: '0 8px',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 5,
+  cursor: 'pointer',
+};
+
+const listBtn = {
+  border: 'none',
+  background: 'transparent',
+  padding: 0,
+  fontSize: 11,
+  cursor: 'pointer',
+  textAlign: 'left',
+  display: 'inline-flex',
+  alignItems: 'center',
+};
+
 export default function TimeMachine({
   modelName,
   onSnapshotSelect,
@@ -210,27 +234,3 @@ export default function TimeMachine({
     </div>
   );
 }
-
-const miniBtn = {
-  height: 28,
-  border: '1px solid var(--border-color)',
-  borderRadius: 6,
-  background: 'var(--bg-app)',
-  color: 'var(--text-secondary)',
-  padding: '0 8px',
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 5,
-  cursor: 'pointer',
-};
-
-const listBtn = {
-  border: 'none',
-  background: 'transparent',
-  padding: 0,
-  fontSize: 11,
-  cursor: 'pointer',
-  textAlign: 'left',
-  display: 'inline-flex',
-  alignItems: 'center',
-};

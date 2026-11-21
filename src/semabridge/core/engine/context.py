@@ -147,3 +147,5 @@ class RunContext:
     # "failed", row_count, reason}.
     data_backfill_results: list[Dict[str, Any]] = _dataclass_field(default_factory=list)
     cortex_validation_results: list[Dict[str, Any]] = _dataclass_field(default_factory=list)
+    ti_anchor_stats: list[Dict[str, Any]] = _dataclass_field(default_factory=list)
+    ti_failed_closed_metrics: list[Dict[str, Any]] = _dataclass_field(default_factory=list)

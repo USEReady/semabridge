@@ -8,6 +8,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
 from semabridge.ai.bi_truth_service import (
+    _sanitize_cell_value,
     add_manual_truth_case,
     clear_truth_cases,
     generate_golden_questions_from_pbix_dir,
@@ -27,7 +28,9 @@ class GenerateTruthRequest(BaseModel):
     project_id: Optional[str] = None
     domain: Optional[str] = None
     pbix_dir: Optional[str] = None
+    view: Optional[str] = None
     limit: int = 50
+    replace_drafts: bool = False
 
 
 class UpdateTruthCaseRequest(BaseModel):
@@ -61,6 +64,7 @@ class ImportDocTextRequest(BaseModel):
 
 class RunTruthSuiteRequest(BaseModel):
     project_id: Optional[str] = None
+    view: Optional[str] = None
 
 
 @router.post("/generate", response_model=Dict[str, Any])
@@ -72,9 +76,26 @@ def generate_cases(req: GenerateTruthRequest) -> Dict[str, Any]:
                 limit=req.limit,
                 project_id=req.project_id,
             )
+            skipped = []
         else:
-            added = generate_truth_cases(project_id=req.project_id, domain=req.domain, limit=req.limit)
-        return {"added_count": len(added), "cases": added}
+            added = generate_truth_cases(
+                project_id=req.project_id,
+                domain=req.domain,
+                limit=req.limit,
+                replace_drafts=req.replace_drafts,
+                view=req.view,
+            )
+            skipped = getattr(added, "skipped", [])
+        return _sanitize_cell_value({
+            "added_count": len(added),
+            "skipped_count": getattr(added, "skipped_count", len(skipped)),
+            "cases": list(added),
+            "skipped": skipped,
+            "view": getattr(added, "view", None),
+            "semantic_view": getattr(added, "semantic_view", None),
+        })
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate test cases: {str(e)}")
 
@@ -82,7 +103,7 @@ def generate_cases(req: GenerateTruthRequest) -> Dict[str, Any]:
 @router.get("/cases", response_model=Dict[str, Any])
 def get_cases(project_id: Optional[str] = None) -> Dict[str, Any]:
     cases = list_truth_cases(project_id=project_id)
-    return {"count": len(cases), "cases": cases}
+    return _sanitize_cell_value({"count": len(cases), "cases": cases})
 
 
 @router.post("/cases", response_model=Dict[str, Any])
@@ -97,7 +118,7 @@ def create_case(req: CreateManualTruthCaseRequest) -> Dict[str, Any]:
             expected_dax=req.expected_dax,
             status=req.status,
         )
-        return {"success": True, "case": new_case}
+        return _sanitize_cell_value({"success": True, "case": new_case})
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -111,7 +132,7 @@ def import_cases_text(req: ImportDocTextRequest) -> Dict[str, Any]:
         domain=req.domain,
         status=req.status,
     )
-    return {"success": True, "added_count": len(added), "cases": added}
+    return _sanitize_cell_value({"success": True, "added_count": len(added), "cases": added})
 
 
 @router.post("/cases/upload", response_model=Dict[str, Any])
@@ -164,11 +185,20 @@ def delete_cases(project_id: Optional[str] = None) -> Dict[str, Any]:
 @router.post("/run", response_model=Dict[str, Any])
 def execute_truth_suite(req: RunTruthSuiteRequest, request: Request) -> Dict[str, Any]:
     uid = getattr(request.state, "user_id", None)
-    return run_truth_suite(project_id=req.project_id, owner_id=str(uid) if uid else None)
+    try:
+        return _sanitize_cell_value(
+            run_truth_suite(
+                project_id=req.project_id,
+                owner_id=str(uid) if uid else None,
+                view=req.view,
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.get("/runs", response_model=Dict[str, Any])
 def get_runs(project_id: Optional[str] = None) -> Dict[str, Any]:
     runs = list_truth_runs(project_id=project_id)
-    return {"count": len(runs), "runs": runs}
+    return _sanitize_cell_value({"count": len(runs), "runs": runs})
 

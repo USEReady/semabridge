@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 import zipfile
 from io import BytesIO
 from pathlib import Path
@@ -280,22 +281,206 @@ def _link_preview_dry_runs(target_project_id: str, fields: Dict[str, Any], user_
         logger.warning("[DryRunMigration] could not link dry run job for %s: %s", target_project_id, exc)
 
 
+def enrich_projects_with_ontology_and_sync_status(projects: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Enrich each project with has_successful_sync, last_successful_sync_at, ontology_domain_count, and domain_names."""
+    if not projects:
+        return projects
+
+    from semabridge.repository.model_repository import ModelRepository
+    from semabridge.repository.orm.snapshot_models import SnapshotRow
+    from semabridge.ontology.store import ontology_store
+    from sqlalchemy import select, func
+
+    sync_map: Dict[str, Optional[str]] = {}
+    try:
+        repo = ModelRepository()
+        with repo._session() as session:
+            rows = session.execute(
+                select(SnapshotRow.project_id, func.max(SnapshotRow.timestamp))
+                .where(SnapshotRow.status == "success", SnapshotRow.deleted_at.is_(None))
+                .group_by(SnapshotRow.project_id)
+            ).all()
+            for r in rows:
+                p_key = str(r[0] or "").strip()
+                ts = r[1]
+                ts_str = ts.isoformat() if hasattr(ts, "isoformat") else (str(ts) if ts else None)
+                if p_key:
+                    sync_map[p_key] = ts_str
+                    sync_map[p_key.lower()] = ts_str
+                    sync_map[p_key.lower().replace("proj-", "")] = ts_str
+    except Exception as exc:
+        logger.debug("Failed batch querying snapshot sync times: %s", exc)
+
+    from collections import Counter
+    name_counts = Counter(str(p.get("name") or "").strip().lower() for p in projects)
+
+    for p in projects:
+        pid = str(p.get("id") or p.get("project_id") or "").strip()
+        clean_pid = pid.lower().replace("proj-", "")
+        last_sync = sync_map.get(pid) or sync_map.get(pid.lower()) or sync_map.get(clean_pid)
+        p["has_successful_sync"] = bool(last_sync)
+        p["last_successful_sync_at"] = last_sync
+
+        try:
+            doms = ontology_store.domains_for(pid)
+            d_names = [d.domain for d in doms if getattr(d, "domain", None)]
+        except Exception:
+            d_names = []
+        p["ontology_domain_count"] = len(d_names)
+        p["domain_names"] = d_names
+
+        p_name = str(p.get("name") or "").strip().lower()
+        p["has_name_collision"] = name_counts[p_name] > 1 if p_name else False
+        src_obj = p.get("source") if isinstance(p.get("source"), dict) else {}
+        cfg_obj = p.get("source_config") if isinstance(p.get("source_config"), dict) else {}
+        p["source_file"] = str(p.get("pbix_file_path") or src_obj.get("pbix_path") or cfg_obj.get("pbix_path") or "")
+
+    return projects
+
+
 @router.get("/api/projects")
 async def list_projects(
     request: Request,
-    limit: int = Query(50, ge=1, le=200, description="Max projects to return"),
+    limit: int = Query(50, ge=1, le=1000, description="Max projects to return"),
     offset: int = Query(0, ge=0, description="Number of projects to skip"),
 ):
     user_id = require_request_user_id(request)
-    projects = await list_projects_compat(limit=limit, offset=offset)
+    limit_val = getattr(limit, "default", limit) if not isinstance(limit, int) else limit
+    offset_val = getattr(offset, "default", offset) if not isinstance(offset, int) else offset
+    projects = await list_projects_compat(limit=limit_val, offset=offset_val)
     if auth_is_enabled():
-        return [
+        projects = [
             project
             for project in projects
             if (project.get("id") or project.get("project_id"))
             and is_project_owned_by_user(project.get("id") or project.get("project_id"), user_id, log_denied=False)
         ]
-    return projects
+    return enrich_projects_with_ontology_and_sync_status(projects)
+
+
+@router.get("/api/projects/duplicates")
+async def list_duplicate_projects(request: Request):
+    """Admin view: group projects by normalized name and by source hash."""
+    user_id = require_request_user_id(request)
+    all_projects = await list_projects_compat(limit=1000, offset=0)
+    enriched = enrich_projects_with_ontology_and_sync_status(all_projects)
+
+    from semabridge.repository.model_repository import ModelRepository
+    repo = ModelRepository()
+
+    by_normalized_name = {}
+    by_source_hash = {}
+
+    for p in enriched:
+        pid = str(p.get("id") or p.get("project_id") or "").strip()
+        name = str(p.get("name") or pid).strip()
+        norm_name = re.sub(r"[^a-zA-Z0-9]+", "", name).lower()
+
+        src_obj = p.get("source") if isinstance(p.get("source"), dict) else {}
+        src_hash = str(p.get("source_content_hash") or src_obj.get("content_hash") or p.get("file_hash") or "").strip()
+
+        dep_info = {}
+        try:
+            dep_info = repo.get_project_deployment_info(pid)
+        except Exception:
+            pass
+
+        summary_item = {
+            "project_id": pid,
+            "name": name,
+            "source_file": p.get("source_file") or "",
+            "created_at": p.get("created_at"),
+            "last_successful_sync_at": p.get("last_successful_sync_at"),
+            "has_successful_sync": p.get("has_successful_sync", False),
+            "ontology_domain_count": p.get("ontology_domain_count", 0),
+            "domain_names": p.get("domain_names") or [],
+            "deployed_view": dep_info.get("semantic_view") or dep_info.get("view_name") or None,
+            "is_archived": False,
+        }
+
+        if norm_name:
+            by_normalized_name.setdefault(norm_name, []).append(summary_item)
+        if src_hash:
+            by_source_hash.setdefault(src_hash, []).append(summary_item)
+
+    duplicate_names = [
+        {"normalized_name": k, "count": len(items), "projects": items}
+        for k, items in by_normalized_name.items()
+        if len(items) > 1
+    ]
+    duplicate_sources = [
+        {"source_hash": k, "count": len(items), "projects": items}
+        for k, items in by_source_hash.items()
+        if len(items) > 1
+    ]
+
+    return {
+        "by_name": duplicate_names,
+        "by_source": duplicate_sources,
+        "total_duplicate_name_groups": len(duplicate_names),
+        "total_duplicate_source_groups": len(duplicate_sources),
+    }
+
+
+@router.post("/api/projects/{project_id}/archive")
+async def archive_project_endpoint(project_id: str, request: Request):
+    """Soft delete a project: marks deleted_at in DB, hides from active lists, preserves data."""
+    user_id = require_request_user_id(request)
+    from semabridge.repository.orm.session_factory import db_manager
+    from semabridge.repository.orm.models import Project
+    from semabridge.api.services.project_shared import (
+        resolve_canonical_project_id,
+        _compat_projects,
+        _compat_deleted_project_ids,
+        _compat_store_lock,
+    )
+    from datetime import datetime, timezone
+
+    pid = resolve_canonical_project_id(project_id) or project_id
+    try:
+        with db_manager.get_session() as session:
+            row = session.get(Project, pid)
+            if row is None:
+                row = Project(project_id=pid, name=pid)
+                session.add(row)
+            row.deleted_at = datetime.now(timezone.utc)
+            session.commit()
+    except Exception as exc:
+        logger.debug("Failed archiving project in DB: %s", exc)
+
+    with _compat_store_lock:
+        _compat_deleted_project_ids.add(pid)
+        _compat_projects.pop(pid, None)
+
+    return {"status": "archived", "project_id": pid}
+
+
+@router.post("/api/projects/{project_id}/restore")
+async def restore_project_endpoint(project_id: str, request: Request):
+    """Restore an archived project intact."""
+    user_id = require_request_user_id(request)
+    from semabridge.repository.orm.session_factory import db_manager
+    from semabridge.repository.orm.models import Project
+    from semabridge.api.services.project_shared import (
+        resolve_canonical_project_id,
+        _compat_deleted_project_ids,
+        _compat_store_lock,
+    )
+
+    pid = resolve_canonical_project_id(project_id) or project_id
+    try:
+        with db_manager.get_session() as session:
+            row = session.get(Project, pid)
+            if row:
+                row.deleted_at = None
+                session.commit()
+    except Exception as exc:
+        logger.debug("Failed restoring project in DB: %s", exc)
+
+    with _compat_store_lock:
+        _compat_deleted_project_ids.discard(pid)
+
+    return {"status": "restored", "project_id": pid}
 
 
 @router.get("/api/portfolio/summary")
@@ -436,6 +621,24 @@ async def delete_snapshots(project_id: str, snapshot_ids: List[str], request: Re
     user_id = require_request_user_id(request)
     await asyncio.to_thread(_assert_project_access, project_id, user_id)
     return await delete_project_snapshots_compat(project_id, snapshot_ids)
+
+
+@router.get("/api/projects/{project_id}/deployed-views")
+async def get_project_deployed_views(
+    project_id: str,
+    request: Request,
+    include_unmanaged: bool = Query(True),
+):
+    user_id = require_request_user_id(request)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
+    from semabridge.repository.model_repository import ModelRepository
+
+    repo = ModelRepository()
+    return await asyncio.to_thread(
+        repo.list_project_deployments,
+        project_id,
+        include_unmanaged=include_unmanaged,
+    )
 
 
 @router.get("/api/projects/{project_id}/snapshot-groups")
@@ -727,6 +930,7 @@ async def export_projects_bulk(project_ids: List[str], request: Request):
 
 
 @router.post("/api/projects/import")
+@router.post("/api/project/import")
 async def import_projects(request: Request, files: List[UploadFile] = File(...)):
     user_id = require_request_user_id(request)
     imported = []

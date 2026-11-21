@@ -29,7 +29,7 @@ through the model's other metrics — including transparently through
 CALCULATE(...) wrappers whose only filter modifiers are FILTER/ALL/
 ALLEXCEPT (which change *what rows* are included, not *what date window*
 the value represents) — so a metric like
-`CALCULATE([TOTAL_UNITS_YTD], FILTER(ALL(Product[isVanArsdel]), ...))`
+`CALCULATE([TOTAL_UNITS_YTD], FILTER(ALL(Product[isBrand]), ...))`
 is correctly recognized as still being YTD-shaped for this purpose, even
 though it has no time-intelligence function call of its own.
 """
@@ -44,6 +44,7 @@ from semabridge.converter.dax_ast_parser import (
     DaxAstParser,
     DaxNode,
     FunctionCallNode,
+    LiteralNode,
     MeasureRefNode,
     UnaryOpNode,
     VarNode,
@@ -73,6 +74,35 @@ LAG_FUNCS: Dict[str, str] = {
     "PREVIOUSMONTH": "PREV_MONTH",
     "PREVIOUSQUARTER": "PREV_QUARTER",
 }
+
+
+def dax_has_lag_period_func(node_or_dax: Any) -> bool:
+    """Check whether a DAX expression or AST node contains a lag-period time-intelligence function."""
+    if isinstance(node_or_dax, str):
+        u = node_or_dax.upper()
+        if any(fn in u for fn in ("SAMEPERIODLASTYEAR", "PREVIOUSYEAR", "PREVIOUSMONTH", "PREVIOUSQUARTER", "PARALLELPERIOD")):
+            return True
+        if "DATEADD" in u and any(neg in u for neg in ("-1", "-2", "-3", "-4", "-5", "-6", "-7", "-8", "-9", "-10", "-11", "-12")):
+            return True
+        return False
+    if node_or_dax is None:
+        return False
+    found = False
+    def _visit(n):
+        nonlocal found
+        if found or n is None:
+            return
+        if getattr(n, "func", None):
+            fn = str(n.func).upper()
+            if fn in LAG_FUNCS or fn in ("PARALLELPERIOD", "DATEADD"):
+                found = True
+                return
+        for child in getattr(n, "args", []) or []:
+            _visit(child)
+        for child in getattr(n, "children", []) or []:
+            _visit(child)
+    _visit(node_or_dax)
+    return found
 
 # Calendar unit each component operates on — shared by the boolean-SQL
 # builder below.
@@ -130,7 +160,7 @@ def flag_column_name(shape: Shape) -> str:
 
 
 # Real incident: dry-run's DDL-emission schema-validation step rejected an
-# already-correctly-translated metric (SUM(CASE WHEN SALESFACT.IS_YTD ...))
+# already-correctly-translated metric (SUM(CASE WHEN FACT_TABLE.IS_YTD ...))
 # because IS_YTD only exists on the enriched view _create_enriched_view
 # builds at real-deploy time -- dry-run's trial DDL-build pass has no live
 # connection, so its dataset_col_lookup is built from the model's own

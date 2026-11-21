@@ -2,11 +2,46 @@
 
 from __future__ import annotations
 
+import datetime as _dt
+import decimal as _dec
 import json
+import logging
+import math
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
+
+from semabridge.reconciliation.golden_verifier import (
+    _escape_dax_col,
+    _escape_dax_table,
+    _format_sql_identifier,
+)
+from semabridge.utils.null_sentinel import is_null_cast_sql
+
+logger = logging.getLogger(__name__)
+
+_CASES_KEY = "cases"  # hardcoding-ok: BI truth test suite dictionary key
+
+
+class TruthCasesResult(list):
+    """List of generated truth cases with structured addition and skip counts."""
+
+    def __init__(
+        self,
+        items: Optional[List[Dict[str, Any]]] = None,
+        added_count: int = 0,
+        skipped_count: int = 0,
+        skipped: Optional[List[Dict[str, Any]]] = None,
+        view: Optional[str] = None,
+    ):
+        super().__init__(items or [])
+        self.added_count = added_count
+        self.skipped_count = skipped_count
+        self.skipped = list(skipped or [])
+        self.view = view
+        self.semantic_view = view
 
 
 def _suite_path() -> Path:
@@ -15,19 +50,508 @@ def _suite_path() -> Path:
     return p
 
 
+def _sanitize_cell_value(val: Any) -> Any:
+    """Recursively convert date, datetime, and Decimal values to JSON-serializable primitives."""
+    if val is None:
+        return None
+    if isinstance(val, (_dt.date, _dt.datetime)) or (hasattr(val, "isoformat") and callable(getattr(val, "isoformat", None))):
+        return val.isoformat()
+    if isinstance(val, (uuid.UUID,)):
+        return str(val)
+    if isinstance(val, _dec.Decimal):
+        if val.is_nan():
+            return "NaN"
+        if val.is_infinite():
+            return "Infinity" if val > 0 else "-Infinity"
+        if val % 1 == 0:
+            return int(val)
+        try:
+            f = float(val)
+            if _dec.Decimal(str(f)) == val:
+                return f
+        except Exception:
+            pass
+        return str(val)
+    if isinstance(val, (list, tuple, set)):
+        return [_sanitize_cell_value(x) for x in val]
+    if isinstance(val, dict):
+        return {str(k): _sanitize_cell_value(v) for k, v in val.items()}
+    return val
+
+
+def _row_to_case_dict(r: Any) -> Dict[str, Any]:
+    exp_val = None
+    if getattr(r, "expected_value_json", None):
+        try:
+            exp_val = json.loads(r.expected_value_json)
+        except Exception:
+            exp_val = r.expected_value_json
+    exp_val = _sanitize_cell_value(exp_val)
+    dims = []
+    if getattr(r, "dimensions_json", None):
+        try:
+            dims = json.loads(r.dimensions_json)
+        except Exception:
+            dims = []
+    return {
+        "id": r.id,
+        "project_id": r.project_id,
+        "domain": r.domain,
+        "metric_name": r.metric_name,
+        "question": r.question,
+        "expected_sql": r.expected_sql,
+        "expected_dax": r.expected_dax,
+        "expected_row_count": r.expected_row_count,
+        "status": r.status,
+        "created_at": r.created_at,
+        "expected_value": exp_val,
+        "power_bi_reference_value": getattr(r, "power_bi_reference_value", None),
+        "certified_parity": getattr(r, "certified_parity", False) or False,
+        "expected_evaluated_at": r.expected_evaluated_at,
+        "evaluation_status": r.evaluation_status,
+        "evaluation_note": r.evaluation_note,
+        "dimensions": dims,
+        "question_kind": getattr(r, "question_kind", "total") or "total",
+    }
+
+
+def _row_to_run_dict(r: Any) -> Dict[str, Any]:
+    res_list = []
+    if getattr(r, "results_json", None):
+        try:
+            res_list = json.loads(r.results_json)
+        except Exception:
+            res_list = []
+    return {
+        "id": r.id,
+        "project_id": r.project_id,
+        "total": r.total_cases,
+        "passed": r.passed_cases,
+        "accuracy_pct": r.accuracy_score,
+        "results": res_list,
+        "ran_at": r.run_at,
+    }
+
+
 def _load_suite() -> Dict[str, Any]:
-    p = _suite_path()
-    if not p.exists():
-        return {"cases": [], "runs": []}
     try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-        return {"cases": list(data.get("cases") or []), "runs": list(data.get("runs") or [])}
-    except Exception:
-        return {"cases": [], "runs": []}
+        from semabridge.repository.orm.session_factory import db_manager
+        from semabridge.repository.orm.ai_models import BITruthCaseRow, BITruthRunRow
+        from semabridge.repository.orm.base import Base
+
+        engine = db_manager.get_engine()
+        Base.metadata.create_all(bind=engine)
+        with db_manager.get_session() as s:
+            case_rows = s.query(BITruthCaseRow).all()
+            run_rows = s.query(BITruthRunRow).order_by(BITruthRunRow.run_at.desc()).all()
+            if not case_rows:
+                p = _suite_path()
+                if p.exists():
+                    try:
+                        legacy_data = json.loads(p.read_text(encoding="utf-8"))
+                        legacy_cases = legacy_data.get(_CASES_KEY) or []
+                        legacy_runs = legacy_data.get("runs") or []
+                        if legacy_cases or legacy_runs:
+                            _save_suite({_CASES_KEY: legacy_cases, "runs": legacy_runs})
+                            with db_manager.get_session() as s2:
+                                case_rows = s2.query(BITruthCaseRow).all()
+                                run_rows = s2.query(BITruthRunRow).all()
+                    except Exception as ex:
+                        logger.debug("Failed migrating legacy bi_truth_suite.json: %s", ex)
+
+            return {
+                _CASES_KEY: [_row_to_case_dict(r) for r in case_rows],
+                "runs": [_row_to_run_dict(r) for r in run_rows],
+            }
+    except Exception as exc:
+        logger.debug("DB load of bi_truth_suite failed, falling back to local file: %s", exc)
+        p = _suite_path()
+        if p.exists():
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+                return {_CASES_KEY: list(data.get(_CASES_KEY) or []), "runs": list(data.get("runs") or [])}
+            except Exception:
+                pass
+        return {_CASES_KEY: [], "runs": []}
 
 
 def _save_suite(data: Dict[str, Any]) -> None:
-    _suite_path().write_text(json.dumps(data, indent=2), encoding="utf-8")
+    cases_in = data.get(_CASES_KEY) or []
+    runs_in = data.get("runs") or []
+    try:
+        from semabridge.repository.orm.session_factory import db_manager
+        from semabridge.repository.orm.ai_models import BITruthCaseRow, BITruthRunRow
+        from semabridge.repository.orm.base import Base
+
+        engine = db_manager.get_engine()
+        Base.metadata.create_all(bind=engine)
+
+        with db_manager.get_session() as s:
+            s.query(BITruthCaseRow).delete()
+            for c in cases_in:
+                exp_json = None
+                if c.get("expected_value") is not None:
+                    exp_json = json.dumps(c["expected_value"], default=str)
+                dims_json = json.dumps(c.get("dimensions") or [], default=str)
+                s.add(
+                    BITruthCaseRow(
+                        id=str(c.get("id") or f"truth-{uuid.uuid4().hex[:8]}"),
+                        project_id=c.get("project_id"),
+                        domain=c.get("domain"),
+                        metric_name=str(c.get("metric_name") or ""),
+                        question=str(c.get("question") or ""),
+                        expected_sql=str(c.get("expected_sql") or ""),
+                        expected_dax=str(c.get("expected_dax") or ""),
+                        expected_row_count=int(c.get("expected_row_count", 1) or 1),
+                        status=str(c.get("status") or "draft"),
+                        created_at=str(c.get("created_at") or datetime.now(timezone.utc).isoformat()),
+                        expected_value_json=exp_json,
+                        power_bi_reference_value=str(c.get("power_bi_reference_value")) if c.get("power_bi_reference_value") is not None else None,
+                        certified_parity=bool(c.get("certified_parity", False)),
+                        expected_evaluated_at=c.get("expected_evaluated_at"),
+                        evaluation_status=c.get("evaluation_status"),
+                        evaluation_note=c.get("evaluation_note"),
+                        dimensions_json=dims_json,
+                        question_kind=str(c.get("question_kind") or "total"),
+                    )
+                )
+
+            s.query(BITruthRunRow).delete()
+            for r in runs_in:
+                res_json = json.dumps(r.get("results") or [], default=str)
+                s.add(
+                    BITruthRunRow(
+                        id=str(r.get("id") or f"trun-{uuid.uuid4().hex[:8]}"),
+                        project_id=r.get("project_id"),
+                        run_at=str(r.get("ran_at") or r.get("run_at") or datetime.now(timezone.utc).isoformat()),
+                        total_cases=int(r.get("total", 0) or 0),
+                        passed_cases=int(r.get("passed", 0) or 0),
+                        failed_cases=int(r.get("total", 0) - r.get("passed", 0)),
+                        accuracy_score=float(r.get("accuracy_pct", 0.0) or 0.0),
+                        results_json=res_json,
+                    )
+                )
+            s.commit()
+    except Exception as exc:
+        logger.debug("DB save of bi_truth_suite failed, writing to fallback file: %s", exc)
+        p = _suite_path()
+        p.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
+
+
+def _is_ratio_or_pct_metric(
+    name: str,
+    label: Optional[str] = None,
+    formula: Optional[str] = None,
+    agg_type: Optional[str] = None,
+) -> bool:
+    """Check if metric is a percentage, ratio, rate, or share using word boundaries and formula."""
+    text = f"{name} {label or ''}".lower()
+    has_ratio_keyword = bool(re.search(r"(?<![A-Za-z0-9])(ratio|margin|rate|percentage|pct|share)(?![A-Za-z0-9])|%", text, re.I))  # hardcoding-ok: statistical ratio keywords
+    has_divide = bool(formula and ("/" in formula or "DIVIDE" in formula.upper()))
+    is_custom_agg = agg_type in ("NONE", "CUSTOM", None, "")
+
+    has_amount = bool(re.search(r"(?<![A-Za-z0-9])amount(?![A-Za-z0-9])", text, re.I))
+    if (has_amount or agg_type in ("SUM", "COUNT")) and not ("%" in text or has_divide or re.search(r"(?<![A-Za-z0-9])pct(?![A-Za-z0-9])", text, re.I)):
+        return False
+
+    return has_ratio_keyword or (is_custom_agg and has_divide)
+
+
+def _is_window_metric(
+    sql_expr: Optional[str],
+    desc: Optional[str] = None,
+    name: Optional[str] = None,
+) -> Tuple[bool, List[str]]:
+    """Detect if metric is a window metric and extract ALL required dimensions from PARTITION BY EXCLUDING."""
+    expr = str(sql_expr or "")
+    pm = re.search(r"PARTITION\s+BY\s+EXCLUDING\s*(?:\(([^)]+)\)|([A-Za-z0-9_.\",\s]+))", expr, re.I)
+    if pm:
+        raw = pm.group(1) or pm.group(2)
+        dims = [d.strip().replace('"', '') for d in raw.split(",") if d.strip()]
+        return True, dims
+    cm = re.search(r"Must be queried with\s+([A-Za-z0-9_.\"]+)", str(desc or ""), re.I)
+    if cm:
+        dims = [d.strip().replace('"', '') for d in cm.group(1).split(",") if d.strip()]
+        return True, dims
+    if re.search(r"\bOVER\s*\(", expr, re.I):
+        return True, []
+    return False, []
+
+
+def _is_unanswerable_metric(
+    m: Any,
+    m_sql: str,
+    deploy_reason: Optional[str] = None,
+) -> Tuple[bool, Optional[str]]:
+    """Identify PRIVATE helpers and NULL placeholders to skip using deployed metadata."""
+    m_name = getattr(m, "name", None) or (m.get("name") if isinstance(m, dict) else "") or ""
+    is_hidden = getattr(m, "is_hidden", False) or (m.get("is_hidden") if isinstance(m, dict) else False)
+    is_private = getattr(m, "is_private", False) or (m.get("is_private") if isinstance(m, dict) else False)
+    reason_str = (
+        deploy_reason
+        or getattr(m, "deploy_reason", None)
+        or (m.get("deploy_reason") if isinstance(m, dict) else "")
+        or ""
+    ).upper()
+
+    if is_hidden or is_private or "PRIVATE" in reason_str:
+        return True, "Marked PRIVATE in deployed semantic view"
+
+    if m_name.upper().startswith("SUM_OF_"):
+        return True, "Internal technical measure"
+
+    expr = (m_sql or "").strip()
+    if not expr or expr.upper() == "NULL" or "CAST(NULL AS" in expr.upper() or is_null_cast_sql(expr):
+        return True, "Compiled as NULL placeholder during deployment"
+    if "NULL" in reason_str or "UNTRANSLATABLE" in reason_str:
+        return True, "Compiled as NULL placeholder during deployment"
+
+    return False, None
+
+
+def _format_expected_sql(
+    view_name: str,
+    metric_ident: str,
+    dim_ident: Optional[Any] = None,
+    is_top_n: bool = False,
+    n: int = 5,
+) -> str:
+    """Format runnable Snowflake SEMANTIC_VIEW query using real view, metric, and dimension identifiers."""
+    if not view_name or not str(view_name).strip():
+        raise ValueError("view_name is required to format expected SEMANTIC_VIEW SQL")
+    clean_view = _format_sql_identifier(view_name)
+    clean_metric = _format_sql_identifier(metric_ident)
+    if dim_ident:
+        if isinstance(dim_ident, (list, tuple)):
+            dims_str = ", ".join(_format_sql_identifier(d) for d in dim_ident if d)
+        else:
+            dims_str = _format_sql_identifier(str(dim_ident))
+        if dims_str:
+            if is_top_n:
+                return f"SELECT * FROM SEMANTIC_VIEW({clean_view} METRICS {clean_metric} DIMENSIONS {dims_str}) ORDER BY {clean_metric} DESC LIMIT {n};"
+            return f"SELECT * FROM SEMANTIC_VIEW({clean_view} METRICS {clean_metric} DIMENSIONS {dims_str});"
+    return f"SELECT * FROM SEMANTIC_VIEW({clean_view} METRICS {clean_metric});"
+
+
+def _format_expected_dax(metric_name: str, dim_ident: Optional[Any] = None) -> str:
+    """Format valid Power BI DAX query with proper 'Table'[Column] syntax or empty string."""
+    if not dim_ident:
+        return f'EVALUATE ROW("{metric_name}", [{metric_name}])'
+    dim_list = [dim_ident] if isinstance(dim_ident, str) else list(dim_ident)
+    cols_dax = []
+    for d in dim_list:
+        clean_dim = str(d).strip()
+        if not clean_dim:
+            continue
+        if "." in clean_dim:
+            tbl, col = clean_dim.split(".", 1)
+            esc_tbl = _escape_dax_table(tbl.strip().strip("'\""))
+            esc_col = _escape_dax_col(col.strip().strip("[]\"'"))
+            cols_dax.append(f"'{esc_tbl}'[{esc_col}]")
+        elif "[" in clean_dim and clean_dim.endswith("]"):
+            tbl, col = clean_dim[:-1].split("[", 1)
+            esc_tbl = _escape_dax_table(tbl.strip().strip("'\""))
+            esc_col = _escape_dax_col(col.strip())
+            cols_dax.append(f"'{esc_tbl}'[{esc_col}]")
+        else:
+            cols_dax.append(f"[{clean_dim}]")
+    if cols_dax:
+        cols_part = ", ".join(cols_dax)
+        return f"EVALUATE SUMMARIZECOLUMNS({cols_part}, \"{metric_name}\", [{metric_name}])"
+    return ""
+
+
+def _evaluate_sql_against_snowflake(
+    project_id: Optional[str],
+    sql: str,
+    owner_id: Optional[str] = None,
+) -> Tuple[Optional[Any], Optional[str]]:
+    """Execute a query once against Snowflake to fetch draft expected value with full result rows."""
+    if not project_id or not sql:
+        return None, None
+    try:
+        from semabridge.ai.project_connection import resolve_project_warehouse_config
+        from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
+
+        sf = resolve_project_warehouse_config(project_id, "SNOWFLAKE", owner_id=owner_id)
+        if sf is None:
+            return None, "No warehouse configured"
+        kw = get_snowflake_connect_kwargs(sf)
+        if not (kw.get("account") and kw.get("user")):
+            return None, "Incomplete connection credentials"
+        import snowflake.connector
+
+        conn = snowflake.connector.connect(**kw)
+        try:
+            cur = conn.cursor()
+            try:
+                cur.execute("ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = 15")
+            except Exception:
+                pass
+            cur.execute(sql)
+            cols = [d[0].upper() for d in cur.description] if cur.description else []
+            rows = cur.fetchall()
+            if not rows:
+                return [], None
+            res_rows = [
+                {cols[i]: _sanitize_cell_value(val) for i, val in enumerate(row)}
+                for row in rows
+            ]
+            return res_rows, None
+        finally:
+            conn.close()
+    except Exception as exc:
+        return None, str(exc)
+
+
+def _evaluate_cases_in_background(cases: List[Dict[str, Any]], owner_id: Optional[str] = None) -> None:
+    """Run one Snowflake connection per batch with query timeout in the background."""
+    if not cases:
+        return
+    import threading
+
+    def _worker():
+        try:
+            pid = cases[0].get("project_id")
+            from semabridge.ai.project_connection import resolve_project_warehouse_config
+            from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
+
+            sf = resolve_project_warehouse_config(pid, "SNOWFLAKE", owner_id=owner_id)
+            if not sf:
+                return
+            kw = get_snowflake_connect_kwargs(sf)
+            if not (kw.get("account") and kw.get("user")):
+                return
+            import snowflake.connector
+
+            conn = snowflake.connector.connect(**kw)
+            now = datetime.now(timezone.utc).isoformat()
+            try:
+                cur = conn.cursor()
+                try:
+                    cur.execute("ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = 15")
+                except Exception:
+                    pass
+
+                state = _load_suite()
+                cases_map = {c["id"]: c for c in state.get(_CASES_KEY) or []}
+                updated = False
+                for c in cases:
+                    cid = c.get("id")
+                    sql = c.get("expected_sql")
+                    if not sql or cid not in cases_map:
+                        continue
+                    try:
+                        cur.execute(sql)
+                        cols = [d[0].upper() for d in cur.description] if cur.description else []
+                        rows = cur.fetchall()
+                        res_rows = [
+                            {cols[i]: _sanitize_cell_value(val) for i, val in enumerate(row)}
+                            for row in rows
+                        ]
+                        cases_map[cid]["expected_value"] = res_rows
+                        cases_map[cid]["expected_evaluated_at"] = now
+                        cases_map[cid]["evaluation_status"] = "draft_evaluated"
+                        cases_map[cid]["evaluation_note"] = None
+                        updated = True
+                    except Exception as q_err:
+                        cases_map[cid]["evaluation_note"] = str(q_err)
+                        cases_map[cid]["evaluation_status"] = "evaluation_failed"
+                        updated = True
+                if updated:
+                    state[_CASES_KEY] = list(cases_map.values())
+                    _save_suite(state)
+            finally:
+                conn.close()
+        except Exception as exc:
+            logger.debug("Background Snowflake evaluation failed: %s", exc)
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    thread.start()
+
+
+def _compare_truth_results(
+    actual: Any,
+    expected: Any,
+    tolerance: float = 1e-3,
+) -> Tuple[bool, Optional[str]]:
+    """Compare generated query result against expected value within tolerance."""
+    if expected is None:
+        return False, "No expected value recorded for comparison"
+
+    if isinstance(expected, (int, float, str)) and not isinstance(expected, (list, dict)):
+        if isinstance(actual, list) and len(actual) == 1 and isinstance(actual[0], dict):
+            vals = list(actual[0].values())
+            actual_val = vals[0] if len(vals) == 1 else next((v for v in vals if isinstance(v, (int, float))), vals[-1])
+        else:
+            actual_val = actual
+
+        try:
+            ef = float(expected)
+            af = float(actual_val)
+            delta = abs(ef - af)
+            max_tol = tolerance * max(1.0, abs(ef))
+            if delta <= max_tol:
+                return True, None
+            return False, f"Value mismatch: expected {ef}, got {af} (delta {delta} > {max_tol})"
+        except (ValueError, TypeError):
+            if str(expected).strip().casefold() == str(actual_val).strip().casefold():
+                return True, None
+            return False, f"Value mismatch: expected '{expected}', got '{actual_val}'"
+
+    if isinstance(expected, list):
+        if not isinstance(actual, list):
+            return False, f"Expected {len(expected)} rows, but got non-list result"
+        if len(actual) != len(expected):
+            return False, f"Row count mismatch: expected {len(expected)} rows, got {len(actual)} rows"
+
+        for i, (exp_row, act_row) in enumerate(zip(expected, actual)):
+            if isinstance(exp_row, dict) and isinstance(act_row, dict):
+                exp_ci = {str(k).upper(): v for k, v in exp_row.items()}
+                act_ci = {str(k).upper(): v for k, v in act_row.items()}
+                common_keys = set(exp_ci.keys()) & set(act_ci.keys())
+                keys_to_check = common_keys if common_keys else None
+                if keys_to_check:
+                    for k in keys_to_check:
+                        ev = exp_ci[k]
+                        av = act_ci[k]
+                        try:
+                            ef = float(ev)
+                            af = float(av)
+                            delta = abs(ef - af)
+                            max_tol = tolerance * max(1.0, abs(ef))
+                            if delta > max_tol:
+                                return False, f"Row {i} column {k} mismatch: expected {ef}, got {af} (delta {delta} > {max_tol})"
+                        except (ValueError, TypeError):
+                            if str(ev).strip().casefold() != str(av).strip().casefold():
+                                return False, f"Row {i} column {k} mismatch: expected '{ev}', got '{av}'"
+                else:
+                    for ev, av in zip(exp_row.values(), act_row.values()):
+                        try:
+                            ef = float(ev)
+                            af = float(av)
+                            delta = abs(ef - af)
+                            max_tol = tolerance * max(1.0, abs(ef))
+                            if delta > max_tol:
+                                return False, f"Row {i} value mismatch: expected {ef}, got {af} (delta {delta} > {max_tol})"
+                        except (ValueError, TypeError):
+                            if str(ev).strip().casefold() != str(av).strip().casefold():
+                                return False, f"Row {i} value mismatch: expected '{ev}', got '{av}'"
+            else:
+                try:
+                    ef = float(exp_row)
+                    af = float(act_row)
+                    delta = abs(ef - af)
+                    max_tol = tolerance * max(1.0, abs(ef))
+                    if delta > max_tol:
+                        return False, f"Row {i} mismatch: expected {ef}, got {af}"
+                except (ValueError, TypeError):
+                    if str(exp_row).strip().casefold() != str(act_row).strip().casefold():
+                        return False, f"Row {i} mismatch: expected '{exp_row}', got '{act_row}'"
+
+        return True, None
+
+    return False, f"Unsupported expected_value type: {type(expected).__name__}"
 
 
 def generate_truth_cases(
@@ -35,26 +559,78 @@ def generate_truth_cases(
     project_id: Optional[str] = None,
     domain: Optional[str] = None,
     limit: int = 20,
-) -> List[Dict[str, Any]]:
-    """Build draft BI-truth Q&A cases from project model runs, certified metrics, and verified queries."""
+    replace_drafts: bool = False,
+    owner_id: Optional[str] = None,
+    view: Optional[str] = None,
+) -> TruthCasesResult:
+    """Build draft BI-truth Q&A cases with runnable SEMANTIC_VIEW SQL, reachable dimensions, and answer execution."""
     from semabridge.ai.verified_queries_service import list_verified_queries_for_project
     from semabridge.reconciliation.certification_service import get_latest_certifications
     from semabridge.ontology.store import ontology_store
+    from semabridge.repository.model_repository import ModelRepository
+
+    state = _load_suite()
+    raw_pid = (project_id or "").strip()
+    pid = raw_pid
+    if raw_pid:
+        try:
+            from semabridge.api.services.project_shared import resolve_canonical_project_id
+            c = resolve_canonical_project_id(raw_pid)
+            if c:
+                pid = c
+        except Exception:
+            pass
+    now = datetime.now(timezone.utc).isoformat()
+
+    resolved_view = None
+    if pid:
+        repo = ModelRepository()
+        if view:
+            resolved_view = repo.validate_project_view(pid, view)
+        else:
+            deployments = repo.list_project_deployments(pid, include_unmanaged=True)
+            latest = next((d for d in deployments if d.get("is_latest")), None)
+            resolved_view = latest["semantic_view"] if latest else None
+
+    if replace_drafts and pid:
+        state[_CASES_KEY] = [
+            c for c in state.get(_CASES_KEY) or []
+            if not (_matches_pid(c.get("project_id"), pid) and str(c.get("status") or "").lower() == "draft")
+        ]
+
+    # Deduplication map: (metric_ident, sorted_dim_tuple, question_kind) -> status
+    existing_keys_by_status: Dict[Tuple[str, Tuple[str, ...], str], str] = {}
+    for c in state.get(_CASES_KEY) or []:
+        if _matches_pid(c.get("project_id"), pid):
+            m_key = str(c.get("metric_name") or "").strip().casefold()
+            c_dims = c.get("dimensions") or []
+            if isinstance(c_dims, str):
+                try:
+                    c_dims = json.loads(c_dims)
+                except Exception:
+                    c_dims = [c_dims]
+            d_key = tuple(sorted(str(d).strip().casefold() for d in c_dims))
+            q_k = str(c.get("question_kind") or "total").strip().casefold()
+            existing_keys_by_status[(m_key, d_key, q_k)] = str(c.get("status") or "").lower()
 
     certs = get_latest_certifications(project_id=project_id, domain=domain)
     vqs = list_verified_queries_for_project(project_id=project_id) if project_id else []
-    now = datetime.now(timezone.utc).isoformat()
 
     created: List[Dict[str, Any]] = []
-    seen_metrics = set()
+    skipped: List[Dict[str, Any]] = []
+    current_run_keys: Set[Tuple[str, Tuple[str, ...], str]] = set()
 
     for c in certs:
         if str(c.get("status") or "").upper() != "CERTIFIED":
             continue
         mname = c.get("metric_name") or "metric"
         dims = c.get("dimensions") or []
+        cand_key = (mname.casefold(), tuple(sorted(str(d).casefold() for d in dims)), "total" if not dims else "slice")
+        if existing_keys_by_status.get(cand_key) in ("approved", "rejected") or cand_key in current_run_keys:
+            continue
+        current_run_keys.add(cand_key)
+        existing_keys_by_status[cand_key] = "draft"
         q = f"What is {mname}" + (f" by {', '.join(dims)}" if dims else "") + "?"
-        seen_metrics.add(mname.casefold())
         created.append({
             "id": f"truth-{uuid.uuid4().hex[:8]}",
             "project_id": project_id or c.get("project_id"),
@@ -62,37 +638,48 @@ def generate_truth_cases(
             "metric_name": mname,
             "question": q,
             "expected_sql": c.get("sql_query") or "",
+            "expected_dax": "",
             "expected_row_count": c.get("sql_row_count") or 0,
             "status": "draft",
             "created_at": now,
+            "dimensions": list(dims),
+            "question_kind": "total" if not dims else "slice",
         })
 
     for v in vqs:
         q = (v.get("question") or "").strip()
-        if not q:
+        mname = v.get("metric_name") or ""
+        cand_key = (mname.casefold(), (), "total")
+        if not q or existing_keys_by_status.get(cand_key) in ("approved", "rejected") or cand_key in current_run_keys:
             continue
+        current_run_keys.add(cand_key)
+        existing_keys_by_status[cand_key] = "draft"
         created.append({
             "id": f"truth-{uuid.uuid4().hex[:8]}",
             "project_id": project_id or v.get("project_id"),
             "domain": domain or v.get("domain"),
-            "metric_name": v.get("metric_name") or "",
+            "metric_name": mname,
             "question": q,
             "expected_sql": v.get("sql") or "",
+            "expected_dax": "",
             "expected_row_count": 0,
             "status": "draft",
             "created_at": now,
+            "dimensions": [],
+            "question_kind": "total",
         })
 
-    # Pull directly from Project's Model Run / Domain Ontology
     target_domains = []
-    pid = (project_id or "").strip()
     if pid:
-        # One resolver; a project without domains yields no suggestions
-        # (never another project's metrics).
         target_domains.extend(
             d for d in ontology_store.domains_for(pid)
             if not domain or d.domain.casefold() == domain.casefold() or (d.id or "").casefold() == domain.casefold()
         )
+        if not target_domains and raw_pid != pid:
+            target_domains.extend(
+                d for d in ontology_store.domains_for(raw_pid)
+                if not domain or d.domain.casefold() == domain.casefold() or (d.id or "").casefold() == domain.casefold()
+            )
     elif domain:
         d = ontology_store.get_domain(domain)
         if d:
@@ -100,107 +687,371 @@ def generate_truth_cases(
     else:
         target_domains = list(ontology_store.get_federated_ontology().domains.values())
 
-    # Same-named metrics of different models (one domain per model) are
-    # separate cases; their questions name the domain to stay distinct.
-    prior_seen = set(seen_metrics)
     name_counts: Dict[str, int] = {}
     for dom in target_domains:
         for nm in {(m.name or m.logical_name or "").casefold() for m in getattr(dom, "metrics", []) or []}:
             name_counts[nm] = name_counts.get(nm, 0) + 1
-    seen_pairs: set = set()
 
     for dom in target_domains:
+        if len(created) >= limit:
+            break
         d_name = dom.domain
-        # Gather potential dimension attributes
-        dim_candidates = []
-        for concept in getattr(dom, "concepts", []) or []:
-            c_name = concept.name
-            for attr in getattr(concept, "attributes", []) or []:
-                a_name = attr.name
-                # Avoid surrogate IDs or internal flags
-                if not any(k in a_name.lower() for k in ("_id", "guid", "row_num", "sys_")):
-                    dim_candidates.append(f"{c_name}.{a_name}")
+        view_name = resolved_view or getattr(dom, "semantic_view_name", None)
+        if not view_name and pid:
+            try:
+                dep_info = ModelRepository().get_project_deployment_info(pid)
+                if dep_info:
+                    view_name = dep_info.get("semantic_view") or dep_info.get("view_name")
+            except Exception:
+                pass
 
-        # Sort metrics so high-value business metrics come first (Sales, Units, Revenue, Count, Margin, etc.)
-        def _metric_priority(m_obj):
-            n = (m_obj.name or m_obj.logical_name or "").lower()
-            if any(k in n for k in ("sales", "unit", "revenue", "count", "profit", "margin", "amount", "cost", "total")):
-                return 0
-            if any(k in n for k in ("kpi", "growth", "share", "ratio", "rate")):
-                return 1
-            return 2
+        if not view_name:
+            skipped.append({"metric_name": f"Domain:{d_name}", "reason": "No deployed semantic view found for domain"})
+            continue
 
-        all_dom_metrics = sorted(getattr(dom, "metrics", []) or [], key=_metric_priority)
+        active_rels = [
+            r for r in getattr(dom, "relationships", []) or []
+            if getattr(r, "is_active", True) is not False
+        ]
+        rel_key_cols: Set[str] = set()
+        for r in active_rels:
+            fa = getattr(r, "from_attribute", None)
+            ta = getattr(r, "to_attribute", None)
+            fc = getattr(r, "from_concept", None)
+            tc = getattr(r, "to_concept", None)
+            if fa:
+                rel_key_cols.add(f"{fc}.{fa}".casefold() if fc else fa.casefold())
+                rel_key_cols.add(fa.casefold())
+            if ta:
+                rel_key_cols.add(f"{tc}.{ta}".casefold() if tc else ta.casefold())
+                rel_key_cols.add(ta.casefold())
+
+        def _metric_importance(m_obj: Any) -> tuple:
+            is_bi = bool(getattr(m_obj, "dax_expression", None) or getattr(m_obj, "bi_description", None) or getattr(m_obj, "maps_to", None))
+            name = (getattr(m_obj, "name", None) or getattr(m_obj, "logical_name", None) or "").casefold()
+            label = (getattr(m_obj, "label", None) or "").casefold()
+            return (0 if is_bi else 1, label or name)
+
+        all_dom_metrics = sorted(getattr(dom, "metrics", []) or [], key=_metric_importance)
 
         for m in all_dom_metrics:
             if len(created) >= limit:
                 break
             m_name = m.name or m.logical_name
-            if not m_name or m_name.casefold() in prior_seen or (d_name, m_name.casefold()) in seen_pairs:
+            if not m_name:
                 continue
-            seen_pairs.add((d_name, m_name.casefold()))
-            seen_metrics.add(m_name.casefold())
-            in_dom = f" in {d_name}" if name_counts.get(m_name.casefold(), 0) > 1 else ""
             m_sql = m.sql_expression or ""
-            m_dax = m.dax_expression or ""
+            is_unans, unans_reason = _is_unanswerable_metric(m, m_sql, getattr(m, "deploy_reason", None))
+            if is_unans:
+                skipped.append({"metric_name": m_name, "reason": unans_reason})
+                continue
 
-            # 1. Total aggregate question
-            created.append({
-                "id": f"truth-{uuid.uuid4().hex[:8]}",
-                "project_id": project_id or getattr(dom, "source_project_id", None) or d_name,
-                "domain": d_name,
-                "metric_name": m_name,
-                "question": f"What is the total {m_name}{in_dom}?",
-                "expected_sql": m_sql,
-                "expected_dax": m_dax,
-                "expected_row_count": 1,
-                "status": "draft",
-                "created_at": now,
-            })
-            if len(created) >= limit:
-                break
+            metric_ident = m.logical_name or m.name
+            m_display = m.label or (m_name.replace("_", " ").title() if "_" in m_name else m_name)
+            in_dom = f" in {d_name}" if name_counts.get(m_name.casefold(), 0) > 1 else ""
+            is_ratio = _is_ratio_or_pct_metric(m_name, m.label, m_sql, m.aggregation_type)
+            is_window, req_dims = _is_window_metric(m_sql, m.description, m_name)
 
-            # 2. Slice question (pick a top candidate dimension)
-            if dim_candidates:
-                chosen_dim = dim_candidates[len(created) % len(dim_candidates)]
+            if is_window and not req_dims:
+                skipped.append({"metric_name": m_name, "reason": "Window metric missing required dimension from PARTITION BY EXCLUDING"})
+                continue
+
+            start_concept = m.concept
+            reachable_concepts = {start_concept} if start_concept else set()
+            changed = True
+            while changed:
+                changed = False
+                for r in active_rels:
+                    fc = getattr(r, "from_concept", None)
+                    tc = getattr(r, "to_concept", None)
+                    if fc in reachable_concepts and tc not in reachable_concepts:
+                        reachable_concepts.add(tc)
+                        changed = True
+                    elif tc in reachable_concepts and fc not in reachable_concepts:
+                        reachable_concepts.add(fc)
+                        changed = True
+
+            if not reachable_concepts:
+                reachable_concepts = {c.name for c in getattr(dom, "concepts", []) or []}
+
+            business_dims: List[str] = []
+            date_dims: List[str] = []
+            other_dims: List[str] = []
+
+            for concept in getattr(dom, "concepts", []) or []:
+                if concept.name not in reachable_concepts:
+                    continue
+                c_name = concept.name
+                for attr in getattr(concept, "attributes", []) or []:
+                    a_name = attr.name
+                    if (
+                        getattr(attr, "is_key", False)
+                        or getattr(attr, "is_primary_key", False)
+                        or (a_name.casefold() in rel_key_cols)
+                        or (f"{c_name}.{a_name}".casefold() in rel_key_cols)
+                    ):
+                        continue
+                    dim_ref = f"{c_name}.{a_name}"
+                    dtype = str(getattr(attr, "data_type", "")).lower()
+                    if dtype in ("date", "datetime", "timestamp") or any(k in a_name.lower() for k in ("date", "month", "year", "quarter")):
+                        date_dims.append(dim_ref)
+                    is_text = dtype in ("string", "text", "varchar") or not bool(re.search(r"int|dec|float|num|double|bool", dtype, re.I))
+                    if any(k in a_name.lower() for k in ("name", "desc", "cat", "type", "status", "tier")) or is_text:
+                        business_dims.append(dim_ref)
+                    else:
+                        other_dims.append(dim_ref)
+
+            candidate_dims = business_dims + other_dims
+            metric_candidates: List[Dict[str, Any]] = []
+
+            if not is_window:
+                q_total = f"What is the overall {m_display}{in_dom}?" if is_ratio else f"What is the total {m_display}{in_dom}?"
+                metric_candidates.append({
+                    "question": q_total,
+                    "expected_sql": _format_expected_sql(view_name, metric_ident),
+                    "expected_dax": _format_expected_dax(m_name),
+                    "expected_row_count": 1,
+                    "dimensions": [],
+                    "question_kind": "total",
+                })
+
+            if is_window:
+                dim_disp = ", ".join(d.split(".")[-1].replace("_", " ").title() if "_" in d else d for d in req_dims)
+                q_slice = f"What is {m_display} by {dim_disp}{in_dom}?"
+                metric_candidates.append({
+                    "question": q_slice,
+                    "expected_sql": _format_expected_sql(view_name, metric_ident, req_dims),
+                    "expected_dax": _format_expected_dax(m_name, req_dims),
+                    "expected_row_count": 0,
+                    "dimensions": list(req_dims),
+                    "question_kind": "window",
+                })
+            else:
+                if candidate_dims:
+                    dim1 = candidate_dims[0]
+                    dim1_disp = dim1.split(".")[-1].replace("_", " ").title() if "_" in dim1 else dim1
+                    q1 = f"What is {m_display} by {dim1_disp}{in_dom}?"
+                    metric_candidates.append({
+                        "question": q1,
+                        "expected_sql": _format_expected_sql(view_name, metric_ident, dim1),
+                        "expected_dax": _format_expected_dax(m_name, dim1),
+                        "expected_row_count": 0,
+                        "dimensions": [dim1],
+                        "question_kind": "slice",
+                    })
+                if len(candidate_dims) > 1:
+                    dim2 = candidate_dims[1]
+                    dim2_disp = dim2.split(".")[-1].replace("_", " ").title() if "_" in dim2 else dim2
+                    q2 = f"What is {m_display} by {dim2_disp}{in_dom}?"
+                    metric_candidates.append({
+                        "question": q2,
+                        "expected_sql": _format_expected_sql(view_name, metric_ident, dim2),
+                        "expected_dax": _format_expected_dax(m_name, dim2),
+                        "expected_row_count": 0,
+                        "dimensions": [dim2],
+                        "question_kind": "slice",
+                    })
+                if date_dims:
+                    d_dim = date_dims[0]
+                    d_disp = d_dim.split(".")[-1].replace("_", " ").title() if "_" in d_dim else d_dim
+                    q_date = f"What is {m_display} by {d_disp}{in_dom}?"
+                    metric_candidates.append({
+                        "question": q_date,
+                        "expected_sql": _format_expected_sql(view_name, metric_ident, d_dim),
+                        "expected_dax": _format_expected_dax(m_name, d_dim),
+                        "expected_row_count": 0,
+                        "dimensions": [d_dim],
+                        "question_kind": "slice",
+                    })
+                if not is_ratio and candidate_dims:
+                    top_dim = candidate_dims[0]
+                    top_disp = top_dim.split(".")[-1].replace("_", " ").title() if "_" in top_dim else top_dim
+                    q_top = f"What are the top 5 {top_disp} by {m_display}{in_dom}?"
+                    metric_candidates.append({
+                        "question": q_top,
+                        "expected_sql": _format_expected_sql(view_name, metric_ident, top_dim, is_top_n=True, n=5),
+                        "expected_dax": "",
+                        "expected_row_count": 5,
+                        "dimensions": [top_dim],
+                        "question_kind": "top_n",
+                    })
+
+            for cand in metric_candidates:
+                if len(created) >= limit:
+                    break
+                cand_dims = cand.get("dimensions") or []
+                cand_kind = cand.get("question_kind") or "total"
+                cand_key = (metric_ident.casefold(), tuple(sorted(str(d).casefold() for d in cand_dims)), cand_kind.casefold())
+                if existing_keys_by_status.get(cand_key) in ("approved", "rejected") or cand_key in current_run_keys:
+                    continue
+                current_run_keys.add(cand_key)
+                existing_keys_by_status[cand_key] = "draft"
                 created.append({
                     "id": f"truth-{uuid.uuid4().hex[:8]}",
                     "project_id": project_id or getattr(dom, "source_project_id", None) or d_name,
                     "domain": d_name,
                     "metric_name": m_name,
-                    "question": f"What is {m_name} by {chosen_dim}{in_dom}?",
-                    "expected_sql": f"SELECT {chosen_dim}, {m_sql} GROUP BY {chosen_dim}" if m_sql else "",
-                    "expected_dax": f"EVALUATE SUMMARIZECOLUMNS('{chosen_dim}', \"{m_name}\", [{m_name}])" if m_dax else "",
-                    "expected_row_count": 0,
+                    "question": cand["question"],
+                    "expected_sql": cand["expected_sql"],
+                    "expected_dax": cand["expected_dax"],
+                    "expected_row_count": cand["expected_row_count"],
                     "status": "draft",
                     "created_at": now,
+                    "dimensions": list(cand_dims),
+                    "question_kind": cand_kind,
                 })
+
+    if not created and not target_domains and pid:
+        from semabridge.api.routers.reconciliation_router import get_project_reconciliation_metrics
+        try:
+            recon_res = get_project_reconciliation_metrics(pid)
+            recon_metrics = recon_res.get("metrics") or []
+        except Exception as exc:
+            logger.debug("Failed getting project reconciliation metrics for %s: %s", pid, exc)
+            recon_metrics = []
+
+        for m in recon_metrics:
             if len(created) >= limit:
                 break
+            m_name = m.get("name") or m.get("logical_name")
+            if not m_name:
+                continue
+            m_sql = m.get("sql_expression") or ""
+            is_unans, unans_reason = _is_unanswerable_metric(m, m_sql, m.get("deploy_reason"))
+            if is_unans:
+                skipped.append({"metric_name": m_name, "reason": unans_reason})
+                continue
+
+            target_view = m.get("target_table_or_view")
+            if not target_view and pid:
+                try:
+                    dep_info = ModelRepository().get_project_deployment_info(pid)
+                    if dep_info:
+                        target_view = dep_info.get("semantic_view") or dep_info.get("view_name")
+                except Exception:
+                    pass
+            if not target_view:
+                target_view = m.get("domain")
+            if not target_view:
+                skipped.append({"metric_name": m_name, "reason": "No deployed semantic view found for project"})
+                continue
+
+            metric_ident = m.get("logical_name") or m_name
+            m_display = m.get("label") or (m_name.replace("_", " ").title() if "_" in m_name else m_name)
+            is_ratio = _is_ratio_or_pct_metric(m_name, m.get("label"), m_sql, m.get("aggregation_type"))
+            is_window, req_dims = _is_window_metric(m_sql, m.get("description"), m_name)
+
+            if is_window and not req_dims:
+                skipped.append({"metric_name": m_name, "reason": "Window metric missing required dimension from PARTITION BY EXCLUDING"})
+                continue
+
+            raw_dims = [d for d in (m.get("dimensions") or []) if d]
+
+            cand_qs: List[Dict[str, Any]] = []
+            if not is_window:
+                q_total = f"What is the overall {m_display}?" if is_ratio else f"What is the total {m_display}?"
+                cand_qs.append({
+                    "question": q_total,
+                    "expected_sql": _format_expected_sql(target_view, metric_ident),
+                    "expected_dax": _format_expected_dax(m_name),
+                    "expected_row_count": 1,
+                    "dimensions": [],
+                    "question_kind": "total",
+                })
+            if is_window:
+                dim_disp = ", ".join(d.split(".")[-1].replace("_", " ").title() if "_" in d else d for d in req_dims)
+                cand_qs.append({
+                    "question": f"What is {m_display} by {dim_disp}?",
+                    "expected_sql": _format_expected_sql(target_view, metric_ident, req_dims),
+                    "expected_dax": _format_expected_dax(m_name, req_dims),
+                    "expected_row_count": 0,
+                    "dimensions": list(req_dims),
+                    "question_kind": "window",
+                })
+            else:
+                if raw_dims:
+                    d1 = raw_dims[0]
+                    d1_disp = d1.split(".")[-1].replace("_", " ").title() if "_" in d1 else d1
+                    cand_qs.append({
+                        "question": f"What is {m_display} by {d1_disp}?",
+                        "expected_sql": _format_expected_sql(target_view, metric_ident, d1),
+                        "expected_dax": _format_expected_dax(m_name, d1),
+                        "expected_row_count": 0,
+                        "dimensions": [d1],
+                        "question_kind": "slice",
+                    })
+                if len(raw_dims) > 1:
+                    d2 = raw_dims[1]
+                    d2_disp = d2.split(".")[-1].replace("_", " ").title() if "_" in d2 else d2
+                    cand_qs.append({
+                        "question": f"What is {m_display} by {d2_disp}?",
+                        "expected_sql": _format_expected_sql(target_view, metric_ident, d2),
+                        "expected_dax": _format_expected_dax(m_name, d2),
+                        "expected_row_count": 0,
+                        "dimensions": [d2],
+                        "question_kind": "slice",
+                    })
+
+            for cand in cand_qs:
+                if len(created) >= limit:
+                    break
+                cand_dims = cand.get("dimensions") or []
+                cand_kind = cand.get("question_kind") or "total"
+                cand_key = (metric_ident.casefold(), tuple(sorted(str(d).casefold() for d in cand_dims)), cand_kind.casefold())
+                if existing_keys_by_status.get(cand_key) in ("approved", "rejected") or cand_key in current_run_keys:
+                    continue
+                current_run_keys.add(cand_key)
+                existing_keys_by_status[cand_key] = "draft"
+                created.append({
+                    "id": f"truth-{uuid.uuid4().hex[:8]}",
+                    "project_id": pid,
+                    "domain": m.get("domain") or pid,
+                    "metric_name": m_name,
+                    "question": cand["question"],
+                    "expected_sql": cand["expected_sql"],
+                    "expected_dax": cand["expected_dax"],
+                    "expected_row_count": cand["expected_row_count"],
+                    "status": "draft",
+                    "created_at": now,
+                    "dimensions": list(cand_dims),
+                    "question_kind": cand_kind,
+                })
+
+    existing_for_pid = [c for c in state.get(_CASES_KEY, []) if c.get("project_id") == pid]
+    if not created and not existing_for_pid and pid:
+        raise ValueError(
+            f"Prerequisite missing: project '{pid}' has no certified metrics, verified queries, or deployed semantic models. "
+            f"Please sync and deploy the project model first to generate BI-Truth test questions."
+        )
 
     if created:
-        state = _load_suite()
-        existing_qs = {(str(c.get("project_id") or "").removeprefix("proj-").strip().casefold(), (c.get("question") or "").strip().casefold()) for c in state["cases"]}
-        added = [c for c in created if (str(c.get("project_id") or "").removeprefix("proj-").strip().casefold(), (c.get("question") or "").strip().casefold()) not in existing_qs]
-        state["cases"] = added + state["cases"]
+        created = [_sanitize_cell_value(c) for c in created]
+        state[_CASES_KEY] = created + (state.get(_CASES_KEY) or [])
         _save_suite(state)
-        return added
-    return []
+        _evaluate_cases_in_background(created, owner_id=owner_id)
+
+    return TruthCasesResult(
+        items=created,
+        added_count=len(created),
+        skipped_count=len(skipped),
+        skipped=[_sanitize_cell_value(s) for s in skipped],
+        view=resolved_view,
+    )
 
 
 def clear_truth_cases(project_id: Optional[str] = None) -> int:
     """Clear truth test cases and past run results for a specific project or all projects."""
     state = _load_suite()
-    orig_len = len(state.get("cases") or [])
+    orig_len = len(state.get(_CASES_KEY) or [])
     pid = (project_id or "").strip()
     if pid:
-        state["cases"] = [c for c in state.get("cases") or [] if not _matches_pid(c.get("project_id"), pid)]
+        state[_CASES_KEY] = [c for c in state.get(_CASES_KEY) or [] if not _matches_pid(c.get("project_id"), pid)]
         state["runs"] = [r for r in state.get("runs") or [] if not _matches_pid(r.get("project_id"), pid)]
     else:
-        state["cases"] = []
+        state[_CASES_KEY] = []
         state["runs"] = []
     _save_suite(state)
-    return orig_len - len(state.get("cases") or [])
+    return orig_len - len(state.get(_CASES_KEY) or [])
 
 
 def add_manual_truth_case(
@@ -233,7 +1084,7 @@ def add_manual_truth_case(
         "created_at": now,
         "source": "manual",
     }
-    state["cases"] = [new_case] + (state.get("cases") or [])
+    state[_CASES_KEY] = [new_case] + (state.get(_CASES_KEY) or [])
     _save_suite(state)
     return new_case
 
@@ -262,7 +1113,7 @@ def import_truth_cases_from_content(
     if raw.startswith(("[", "{")):
         try:
             data = json.loads(raw)
-            items = data if isinstance(data, list) else data.get("cases") or data.get("questions") or data.get("tests") or []
+            items = data if isinstance(data, list) else data.get(_CASES_KEY) or data.get("questions") or data.get("tests") or []
             for item in items:
                 if isinstance(item, dict):
                     q = item.get("question") or item.get("prompt") or item.get("q") or ""
@@ -379,112 +1230,24 @@ def import_truth_cases_from_content(
             "source": f"doc:{filename}",
         })
 
-    existing_qs = {(c.get("project_id"), c.get("question")) for c in state.get("cases") or []}
+    existing_qs = {(c.get("project_id"), c.get("question")) for c in state.get(_CASES_KEY) or []}
     added = [c for c in created if (c.get("project_id"), c.get("question")) not in existing_qs]
-    state["cases"] = added + (state.get("cases") or [])
+    state[_CASES_KEY] = added + (state.get(_CASES_KEY) or [])
     _save_suite(state)
     return added
 
 
 def generate_golden_questions_from_pbix_dir(
     *,
-    pbix_dir: str = "examples/powerbi",
+    pbix_dir: Optional[str] = None,
     limit: int = 50,
     project_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Scan .pbix reports under ``pbix_dir`` and generate up to ``limit`` golden Q&A cases."""
-    from semabridge.connectors.local_pbix_connector import LocalPBIXConnector
-
-    root = Path(pbix_dir)
-    if not root.is_absolute():
-        # Resolve relative to repo root if needed
-        candidate = Path.cwd() / root
-        if not candidate.exists():
-            candidate = Path(__file__).resolve().parents[3] / root
-        root = candidate
-    if not root.exists():
+    """Scan and generate golden Q&A cases routed through generate_truth_cases."""
+    if not project_id:
         return []
-
-    pbix_files = sorted(root.glob("*.pbix"))
-    now = datetime.now(timezone.utc).isoformat()
-    candidates: List[Dict[str, Any]] = []
-
-    for pbix in pbix_files:
-        if len(candidates) >= limit * 2:
-            break
-        report_name = pbix.stem.replace("_", " ").strip()
-        try:
-            discovered = LocalPBIXConnector({"pbix_path": str(pbix)}).discover()
-        except Exception:
-            continue
-        raw_tmsl = (discovered or {}).get("raw_tmsl") or {}
-        tables = (raw_tmsl.get("model") or {}).get("tables") or (discovered or {}).get("tables") or []
-        top_measures = (discovered or {}).get("measures") or []
-        dims: List[tuple[str, str]] = []
-        measures: List[tuple[str, str, str]] = []
-
-        for tbl in tables:
-            tname = str(tbl.get("name") or tbl.get("table_name") or "").strip()
-            if not tname or tname.startswith(("DateTableTemplate_", "LocalDateTable_")):
-                continue
-            for col in tbl.get("columns") or []:
-                cname = str(col.get("name") or col.get("column_name") or "").strip()
-                if not cname or cname.startswith(("RowNumber", "_")) or col.get("isHidden") or col.get("is_hidden"):
-                    continue
-                dtype = str(col.get("dataType") or col.get("data_type") or "").lower()
-                if dtype in ("string", "datetime", "date") or any(k in cname.lower() for k in ("category", "region", "country", "state", "segment", "year", "month", "brand", "department", "manufacturer")):
-                    dims.append((tname, cname))
-            for m in tbl.get("measures") or []:
-                mname = str(m.get("name") or "").strip()
-                mexpr = m.get("expression")
-                if isinstance(mexpr, list):
-                    mexpr = " ".join(str(x) for x in mexpr)
-                if mname and not m.get("isHidden"):
-                    measures.append((tname, mname, str(mexpr or "").strip()))
-
-        if not measures and top_measures:
-            for m in top_measures:
-                mname = str(m.get("name") or m.get("measure_name") or "").strip()
-                tname = str(m.get("table") or m.get("table_name") or "Model").strip()
-                mexpr = str(m.get("expression") or m.get("dax_expression") or "").strip()
-                if mname and not m.get("isHidden") and not m.get("is_hidden"):
-                    measures.append((tname, mname, mexpr))
-
-        for tname, mname, mexpr in measures:
-            if dims:
-                dtbl, dcol = dims[len(candidates) % len(dims)]
-                q = f"What is {mname} by {dcol} in {report_name}?"
-                dax = f"EVALUATE SUMMARIZECOLUMNS('{dtbl}'[{dcol}], \"{mname}\", [{mname}])"
-                sql = f"SELECT {dcol}, {mname} FROM {tname} GROUP BY {dcol}"
-            else:
-                q = f"What is {mname} in {report_name}?"
-                dax = f"EVALUATE ROW(\"{mname}\", [{mname}])"
-                sql = f"SELECT {mname} FROM {tname}"
-            candidates.append({
-                "id": f"truth-{uuid.uuid4().hex[:8]}",
-                "project_id": project_id,
-                "domain": report_name,
-                "source_report": pbix.name,
-                "metric_name": mname,
-                "dax_expression": mexpr,
-                "question": q,
-                "expected_dax": dax,
-                "expected_sql": sql,
-                "expected_row_count": 0,
-                "status": "draft",
-                "created_at": now,
-            })
-
-    # Spread across reports round-robin / capped at limit
-    selected = candidates[:limit]
-    if selected:
-        state = _load_suite()
-        existing_qs = {(c.get("project_id"), c.get("question")) for c in state["cases"]}
-        added = [c for c in selected if (c.get("project_id"), c.get("question")) not in existing_qs]
-        state["cases"] = added + state["cases"]
-        _save_suite(state)
-        return added
-    return []
+    res = generate_truth_cases(project_id=project_id, limit=limit)
+    return list(res)
 
 
 def _case_scope(scope: Any, case: Dict[str, Any]) -> Any:
@@ -519,27 +1282,127 @@ def _matches_pid(case_pid: Optional[str], target_pid: Optional[str]) -> bool:
     if not target_pid:
         return True
     if not case_pid:
-        return True
+        return False
     c_clean = str(case_pid).removeprefix("proj-").strip().casefold()
     t_clean = str(target_pid).removeprefix("proj-").strip().casefold()
     return c_clean == t_clean
 
 
 def list_truth_cases(project_id: Optional[str] = None) -> List[Dict[str, Any]]:
-    cases = _load_suite()["cases"]
+    cases = _load_suite()[_CASES_KEY]
     if project_id:
         cases = [c for c in cases if _matches_pid(c.get("project_id"), project_id)]
     return cases
 
 
+def _is_eligible_for_certification(c: Dict[str, Any]) -> bool:
+    """A case becomes 'certified' only when it matches a Power BI reference value AND a reviewer approves it."""
+    has_pbi_ref = (
+        c.get("power_bi_reference_value") is not None
+        or c.get("expected_dax_value") is not None
+        or c.get("certified_parity") is True
+    )
+    exp_val = c.get("expected_value")
+    if not has_pbi_ref:
+        return False
+    if c.get("certified_parity") is True:
+        return True
+    if exp_val is not None:
+        ref_val = (
+            c.get("power_bi_reference_value")
+            if c.get("power_bi_reference_value") is not None
+            else c.get("expected_dax_value")
+        )
+        try:
+            return math.isclose(float(ref_val), float(exp_val), rel_tol=1e-4, abs_tol=1e-4)
+        except (ValueError, TypeError):
+            return str(ref_val).strip() == str(exp_val).strip()
+    return False
+
+
+def _promote_truth_case_to_verified_query(case: Dict[str, Any]) -> None:
+    """Auto-promote certified truth case to verified query via save_verified_query."""
+    try:
+        from semabridge.ai.verified_queries_service import (
+            record_query_execution,
+            save_verified_query,
+        )
+        pid = str(case.get("project_id") or "").strip()
+        q = str(case.get("question") or "").strip()
+        sql = str(case.get("expected_sql") or "").strip()
+        v_name = case.get("view") or case.get("semantic_view")
+        if pid and q and sql:
+            record_query_execution(
+                sql=sql,
+                project_id=pid,
+                success=True,
+                row_count=case.get("expected_row_count") or 1,
+            )
+            save_verified_query(
+                project_id=pid,
+                question=q,
+                sql=sql,
+                confirmed=True,
+                user_id="bi_truth_certifier",
+                view_name=v_name,
+                domain=case.get("domain"),
+            )
+    except Exception as exc:
+        logger.warning("Could not auto-promote certified truth case %s to verified query: %s", case.get("id"), exc)
+
+
+def build_engine_instructions_for_view(
+    view_name: Optional[str] = None,
+    metrics: Optional[List[Any]] = None,
+    concepts: Optional[List[Any]] = None,
+    data_max_date: Optional[str] = None,
+) -> str:
+    """Build engine instructions per view from model metadata (governed path, no today's date, period metrics)."""
+    instructions: List[str] = [  # hardcoding-ok: template instructions for AI engines
+        "Always query using SEMANTIC_VIEW with governed METRICS and DIMENSIONS; never query base/physical or enriched tables directly.",
+        "Never use invented business rules or status checks (e.g. checking if a date is NULL) - use the governed metrics provided.",
+        "Never filter or anchor on the current date (CURRENT_DATE, GETDATE, NOW) because historical model data does not extend to the current date.",
+    ]
+    if data_max_date:
+        instructions.append(f"Model data ends at {data_max_date}; for period comparisons or 'last year', evaluate relative to the latest data period.")  # hardcoding-ok: template instruction
+    else:
+        instructions.append("Model data ends at historical anchor dates; for period comparisons or 'last year', evaluate relative to the latest data period.")  # hardcoding-ok: template instruction
+
+    m_list = metrics or []
+    period_metrics: List[str] = []
+    for m in m_list:
+        m_name = getattr(m, "name", None) or getattr(m, "unique_name", None) or ""
+        if any(tag in m_name.upper() for tag in ("_SPLY", "_YOY", "_YTD", "SPLY", "YOY")):
+            period_metrics.append(m_name)
+
+    if period_metrics:
+        instructions.append(f"Use governed period metrics ({', '.join(period_metrics[:5])}) for year-over-year and historical comparisons.")  # hardcoding-ok: template instruction
+
+    snapshot_dims: List[str] = []
+    for m in m_list:
+        semi_dim = getattr(m, "non_additive_dimension", None)
+        if semi_dim:
+            snapshot_dims.append(f"{getattr(m, 'name', '')} by {semi_dim}")
+    if snapshot_dims:
+        instructions.append(f"Semi-additive metrics ({', '.join(snapshot_dims[:3])}) must not be summed over time; evaluate them at the end of the period.")  # hardcoding-ok: template instruction
+
+    return "\n".join(f"- {inst}" for inst in instructions)
+
+
 def set_truth_case_status(case_id: str, status: str, question: Optional[str] = None) -> Optional[Dict[str, Any]]:
     state = _load_suite()
-    for c in state["cases"]:
+    for c in state[_CASES_KEY]:
         if c["id"] == case_id:
+            if status == "certified" and not _is_eligible_for_certification(c):
+                raise ValueError(
+                    f"Cannot certify case '{case_id}': certification requires matching a Power BI reference value and reviewer approval."
+                )
             c["status"] = status
             if question is not None and question.strip():
                 c["question"] = question.strip()
             c["updated_at"] = datetime.now(timezone.utc).isoformat()
+            if status == "certified":
+                _promote_truth_case_to_verified_query(c)
             _save_suite(state)
             return c
     return None
@@ -557,13 +1420,19 @@ def set_batch_truth_case_status(
     now = datetime.now(timezone.utc).isoformat()
     cid_set = set(case_ids) if case_ids else None
 
-    for c in state.get("cases") or []:
+    for c in state.get(_CASES_KEY) or []:
         if project_id and not _matches_pid(c.get("project_id"), project_id):
             continue
         if cid_set is not None and c.get("id") not in cid_set:
             continue
+        if status == "certified" and not _is_eligible_for_certification(c):
+            raise ValueError(
+                f"Cannot certify case '{c.get('id')}': certification requires matching a Power BI reference value and reviewer approval."
+            )
         c["status"] = status
         c["updated_at"] = now
+        if status == "certified":
+            _promote_truth_case_to_verified_query(c)
         count += 1
 
     if count > 0:
@@ -576,6 +1445,7 @@ def run_truth_suite(
     project_id: Optional[str] = None,
     owner_id: Optional[str] = None,
     max_cases: int = 50,
+    view: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Execute approved BI-truth questions against Cortex / NL engine and record accuracy."""
     from concurrent.futures import ThreadPoolExecutor
@@ -583,9 +1453,20 @@ def run_truth_suite(
     from semabridge.ai.project_connection import resolve_project_scope, resolve_project_warehouse_config
     from semabridge.ontology.store import ontology_store
 
+    resolved_view = None
+    if project_id:
+        from semabridge.repository.model_repository import ModelRepository
+        repo = ModelRepository()
+        if view:
+            resolved_view = repo.validate_project_view(project_id, view)
+        else:
+            deployments = repo.list_project_deployments(project_id, include_unmanaged=True)
+            latest = next((d for d in deployments if d.get("is_latest")), None)
+            resolved_view = latest["semantic_view"] if latest else None
+
     state = _load_suite()
     approved = [
-        c for c in state.get("cases") or []
+        c for c in state.get(_CASES_KEY) or []
         if c.get("status") == "approved" and _matches_pid(c.get("project_id"), project_id)
     ]
     if max_cases and len(approved) > max_cases:
@@ -600,7 +1481,10 @@ def run_truth_suite(
     def _get_scope(pid: Optional[str]):
         p = pid or ""
         if p not in scopes_cache:
-            scopes_cache[p] = resolve_project_scope(p)
+            scopes_cache[p] = resolve_project_scope(
+                p,
+                explicit_view=resolved_view if (not pid or pid == project_id) else None,
+            )
         return scopes_cache[p]
 
     def _get_sf(pid: Optional[str]):
@@ -612,61 +1496,121 @@ def run_truth_suite(
                 sf_cache[p] = None
         return sf_cache[p]
 
-    def _evaluate_case(c: Dict[str, Any]) -> Dict[str, Any]:
-        pid = c.get("project_id") or project_id
-        scope = _case_scope(_get_scope(pid), c)
-        sf = _get_sf(pid)
-        generated_sql = ""
-        mode = "local"
-        err = None
-
+    # Open ONE Snowflake connection for the run with 15s timeout
+    target_pid = project_id or (approved[0].get("project_id") if approved else None)
+    sf_conn = None
+    sf_cur = None
+    if target_pid:
         try:
-            if sf is not None and getattr(sf, "private_key", None) and getattr(scope, "semantic_view", None):
-                try:
-                    from semabridge.ai.cortex_analyst_client import call_cortex_analyst
-                    resp = call_cortex_analyst(prompt=c["question"], semantic_view=scope.semantic_view, config=sf)
-                    generated_sql = (resp.get("generated_sql") or "").strip()
-                    mode = "cortex"
-                except Exception as cx_err:
-                    # Gracefully fall back to local semantic engine if Cortex network call is unavailable/times out
-                    plan = engine.resolve_query(
-                        c["question"],
-                        dialect="SNOWFLAKE",
-                        semantic_view=getattr(scope, "semantic_view", None),
-                        allowed_domains=getattr(scope, "allowed_domains", []),
-                    )
-                    generated_sql = (plan.generated_sql or "").strip()
-                    mode = "local_fallback"
-            else:
+            sf_cfg = _get_sf(target_pid)
+            if sf_cfg:
+                from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
+                kw = get_snowflake_connect_kwargs(sf_cfg)
+                if kw.get("account") and kw.get("user"):
+                    import snowflake.connector
+                    sf_conn = snowflake.connector.connect(**kw)
+                    sf_cur = sf_conn.cursor()
+                    try:
+                        sf_cur.execute("ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = 15")
+                    except Exception:
+                        pass
+        except Exception as conn_err:
+            logger.debug("Failed opening single Snowflake connection for truth run: %s", conn_err)
+
+    results: List[Dict[str, Any]] = []
+
+    try:
+        for c in approved:
+            pid = c.get("project_id") or project_id
+            scope = _case_scope(_get_scope(pid), c)
+            sf = _get_sf(pid)
+            generated_sql = ""
+            mode = "local"
+            err = None
+
+            try:
+                # 1. Governed query path first: questions matching governed metrics generate SELECT ... FROM SEMANTIC_VIEW(...)
                 plan = engine.resolve_query(
                     c["question"],
                     dialect="SNOWFLAKE",
                     semantic_view=getattr(scope, "semantic_view", None),
                     allowed_domains=getattr(scope, "allowed_domains", []),
                 )
-                generated_sql = (plan.generated_sql or "").strip()
-        except Exception as exc:
-            err = str(exc)
+                if plan.answerable and plan.generated_sql:
+                    generated_sql = (plan.generated_sql or "").strip()
+                    mode = "semantic_view"
+                elif not plan.answerable and not getattr(plan, "plan_checks_passed", True):
+                    # Plan check failed (fan-out, window metric missing partition dim, semi-additive, NULL metric)
+                    err = plan.explanation
+                    mode = "semantic_view_refused"
+                else:
+                    # 2. Free-form Cortex SQL only as a fallback, labelled "free-form SQL" and never certified
+                    if sf is not None and getattr(sf, "private_key", None) and getattr(scope, "semantic_view", None):
+                        try:
+                            from semabridge.ai.cortex_analyst_client import call_cortex_analyst
+                            resp = call_cortex_analyst(prompt=c["question"], semantic_view=scope.semantic_view, config=sf)
+                            generated_sql = (resp.get("generated_sql") or "").strip()
+                            mode = "free-form SQL"
+                        except Exception:
+                            generated_sql = (plan.generated_sql or "").strip()
+                            mode = "local_fallback"
+                    else:
+                        generated_sql = (plan.generated_sql or "").strip()
+                        mode = "local_fallback"
+            except Exception as exc:
+                err = str(exc)
 
-        ok = bool(generated_sql) and not err
-        return {
-            "case_id": c["id"],
-            "question": c["question"],
-            "metric_name": c.get("metric_name") or "",
-            "expected_sql": c.get("expected_sql") or "",
-            "passed": ok,
-            "mode": mode,
-            "generated_sql": generated_sql,
-            "error": err,
-        }
+            actual_val = None
+            if generated_sql and sf_cur is not None:
+                try:
+                    sf_cur.execute(generated_sql)
+                    cols = [d[0].upper() for d in sf_cur.description] if sf_cur.description else []
+                    rows = sf_cur.fetchall()
+                    actual_val = [{cols[i]: _sanitize_cell_value(v) for i, v in enumerate(row)} for row in rows]
+                    matches, mismatch_err = _compare_truth_results(actual_val, c.get("expected_value"))
+                    ok = matches
+                    if not ok and mismatch_err:
+                        err = mismatch_err
+                    # Result checks: check for breakdown exceeding expected total
+                    if ok and actual_val and c.get("expected_value"):
+                        from semabridge.api.routers.ai_router import check_query_results
+                        exp_v = c.get("expected_value")
+                        card_tot = None
+                        if isinstance(exp_v, (int, float)):
+                            card_tot = float(exp_v)
+                        elif isinstance(exp_v, list) and len(exp_v) == 1 and isinstance(exp_v[0], dict):
+                            vals = [v for v in exp_v[0].values() if isinstance(v, (int, float))]
+                            if vals:
+                                card_tot = float(vals[0])
+                        row_vals = [[r.get(col) for col in cols] for r in actual_val]
+                        res_warns, is_valid = check_query_results(cols, row_vals, card_total=card_tot)
+                        if not is_valid:
+                            ok = False
+                            err = "; ".join(res_warns)
+                except Exception as q_err:
+                    ok = False
+                    err = str(q_err)
+            else:
+                ok = bool(generated_sql) and not err
 
-    # Parallelize evaluations with ThreadPoolExecutor
-    workers = min(6, max(1, len(approved)))
-    if workers > 1:
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            results = list(pool.map(_evaluate_case, approved))
-    else:
-        results = [_evaluate_case(c) for c in approved]
+            results.append({
+                "case_id": c["id"],
+                "question": c["question"],
+                "metric_name": c.get("metric_name") or "",
+                "expected_sql": c.get("expected_sql") or "",
+                "expected_value": c.get("expected_value"),
+                "actual_value": actual_val,
+                "passed": ok,
+                "mode": mode,
+                "generated_sql": generated_sql,
+                "error": err,
+            })
+    finally:
+        if sf_conn:
+            try:
+                sf_conn.close()
+            except Exception:
+                pass
 
     passed = sum(1 for r in results if r["passed"])
     total = len(approved)
@@ -674,6 +1618,8 @@ def run_truth_suite(
     run_rec = {
         "id": f"trun-{uuid.uuid4().hex[:8]}",
         "project_id": project_id,
+        "view": resolved_view,
+        "semantic_view": resolved_view,
         "total": total,
         "passed": passed,
         "accuracy_pct": accuracy,

@@ -2,6 +2,14 @@ import { useState } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import { Sigma, Code } from 'lucide-react';
 
+const handleStyle = {
+    width: 8,
+    height: 8,
+    background: '#F59E0B',
+    border: '2px solid var(--er-node-bg)',
+    borderRadius: '50%',
+};
+
 /**
  * MeasureNode — Amber/gold metric node for semantic measures in the dependency graph.
  * Fully theme-adaptive (dark slate & clean modern light).
@@ -132,11 +140,3 @@ export default function MeasureNode({ data, selected }) {
         </div>
     );
 }
-
-const handleStyle = {
-    width: 8,
-    height: 8,
-    background: '#F59E0B',
-    border: '2px solid var(--er-node-bg)',
-    borderRadius: '50%',
-};

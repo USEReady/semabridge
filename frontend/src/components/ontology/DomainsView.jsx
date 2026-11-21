@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { RefreshCw, Search } from 'lucide-react';
+import { RefreshCw, Search, Sparkles } from 'lucide-react';
 import { BTN, BTN_SM, BTN_PRIMARY, CARD, INPUT_STYLE, MONO, plural } from './styles';
 import { Pill, Segmented } from './ui';
 import { groupDomainsByProject, viewTail } from './domainGroups';
@@ -121,11 +121,40 @@ export default function DomainsView({
   onSync,
   yaml,
   drawer,
+  onGenerate,
+  onRunSync,
 }) {
   if (domains.length === 0) {
     return (
-      <div style={CARD}>
-        <Empty>No models yet. Use Generate from OSI or Import YAML above to add one.</Empty>
+      <div style={{ ...CARD, padding: 48, textAlign: 'center' }}>
+        <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-main)', marginBottom: 8 }}>
+          No metrics found for this project yet
+        </div>
+        <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 24, maxWidth: 460, margin: '0 auto 24px' }}>
+          This project has no deployed semantic models or ontology domains yet. Sync a model from Power BI or generate an ontology domain to inspect and govern metrics.
+        </div>
+        <div style={{ display: 'flex', gap: 12, justifyContent: 'center', alignItems: 'center' }}>
+          {onRunSync && (
+            <button
+              type="button"
+              onClick={onRunSync}
+              style={{ ...BTN_PRIMARY, display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 16px', fontSize: 13 }}
+            >
+              <RefreshCw size={14} />
+              Run sync
+            </button>
+          )}
+          {onGenerate && (
+            <button
+              type="button"
+              onClick={onGenerate}
+              style={{ ...BTN, display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 16px', fontSize: 13 }}
+            >
+              <Sparkles size={14} />
+              Generate ontology
+            </button>
+          )}
+        </div>
       </div>
     );
   }

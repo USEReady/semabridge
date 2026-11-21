@@ -4,21 +4,26 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from semabridge.governance.drift_service import (
     clear_drift_events,
     create_schedule,
     delete_schedule,
+    get_project_drift_target_info,
     list_drift_events,
     list_schedules,
-    reset_simulated_metric_drift,
     resolve_drift_event,
     run_drift_check,
-    seed_mock_drift_events,
-    simulate_metric_drift,
 )
+from semabridge.reconciliation.mock_parity import is_mock_drift_enabled
+
+
+def _require_mock_drift() -> None:
+    if not is_mock_drift_enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
+
 
 router = APIRouter(prefix="/api/drift", tags=["drift_monitoring"])
 
@@ -27,6 +32,7 @@ class DriftCheckRequest(BaseModel):
     project_id: Optional[str] = None
     domain: Optional[str] = None
     webhook_url: Optional[str] = None
+    view: Optional[str] = None
 
 
 class DriftResolutionRequest(BaseModel):
@@ -55,18 +61,68 @@ class CreateScheduleRequest(BaseModel):
 @router.post("/check", response_model=Dict[str, Any])
 def trigger_drift_check(req: DriftCheckRequest, request: Request) -> Dict[str, Any]:
     uid = getattr(request.state, "user_id", None)
-    return run_drift_check(
-        project_id=req.project_id,
-        domain=req.domain,
-        webhook_url=req.webhook_url,
-        owner_id=str(uid) if uid else None,
-    )
+    try:
+        return run_drift_check(
+            project_id=req.project_id,
+            domain=req.domain,
+            webhook_url=req.webhook_url,
+            owner_id=str(uid) if uid else None,
+            view=req.view,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.get("/events", response_model=Dict[str, Any])
-def get_drift_events(project_id: Optional[str] = None, status: Optional[str] = None) -> Dict[str, Any]:
+def get_drift_events(
+    project_id: Optional[str] = None,
+    status: Optional[str] = None,
+    view: Optional[str] = None,
+) -> Dict[str, Any]:
+    resolved_view = None
+    if project_id:
+        from semabridge.repository.model_repository import ModelRepository
+        repo = ModelRepository()
+        try:
+            if view:
+                resolved_view = repo.validate_project_view(project_id, view)
+            else:
+                deployments = repo.list_project_deployments(project_id, include_unmanaged=True)
+                latest = next((d for d in deployments if d.get("is_latest")), None)
+                resolved_view = latest["semantic_view"] if latest else None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
     events = list_drift_events(project_id=project_id, status=status)
-    return {"count": len(events), "events": events}
+    if not is_mock_drift_enabled():
+        events = [e for e in events if not e.get("mock")]
+
+    if resolved_view:
+        v_tail = resolved_view.strip().split(".")[-1].strip('"').lower()
+        events = [
+            e for e in events
+            if not e.get("semantic_view") or str(e["semantic_view"]).strip().split(".")[-1].strip('"').lower() == v_tail
+        ]
+
+    target_info = get_project_drift_target_info(project_id, view=resolved_view) if project_id else {}
+    from semabridge.governance.drift_service import _load_state
+    state = _load_state()
+    last_checks = dict(state.get("last_checks") or {})
+    return {
+        "count": len(events),
+        "events": events,
+        "views_checked": target_info.get("views_checked", []),
+        "checked_at": target_info.get("checked_at"),
+        "status": target_info.get("status"),
+        "reason": target_info.get("reason"),
+        "not_checked_reason": target_info.get("not_checked_reason"),
+        "baseline_source": target_info.get("baseline_source"),
+        "baseline_at": target_info.get("baseline_at"),
+        "metrics_compared": target_info.get("metrics_compared", 0),
+        "last_checks": last_checks,
+        "view": resolved_view,
+        "semantic_view": resolved_view,
+    }
 
 
 @router.delete("/events", response_model=Dict[str, Any])
@@ -75,31 +131,49 @@ def delete_drift_events(project_id: Optional[str] = None) -> Dict[str, Any]:
     return {"success": True, "cleared_count": cleared}
 
 
-@router.post("/events/seed-mock", response_model=Dict[str, Any])
-def seed_mock_events(request: Request, project_id: Optional[str] = "proj-comp") -> Dict[str, Any]:
-    """"Refresh drift logs": always runs real drift detection for the
-    project; demo events are layered on top only when demo/mock-drift mode
-    is enabled (SEMABRIDGE_DEMO_MODE / SEMABRIDGE_MOCK_DRIFT). Demo events
-    never replace or delete real ones."""
-    from semabridge.core.demo_mode import demo_mode_globally_armed as is_demo_mode_enabled
-    from semabridge.reconciliation.mock_parity import is_mock_drift_enabled
+@router.post("/events/seed-mock", dependencies=[Depends(_require_mock_drift)], response_model=Dict[str, Any])
+def seed_mock_events(request: Request, project_id: Optional[str] = None) -> Dict[str, Any]:
+    """"Refresh drift logs": runs real drift detection and seeds demo events
+    only into the configured demo project when mock drift is enabled."""
+    from semabridge.demo.drift_fixtures import (
+        get_configured_demo_project_id,
+        seed_mock_drift_events,
+    )
 
-    pid = project_id or "proj-comp"
+    pid = (project_id or "").strip() or None
     uid = getattr(request.state, "user_id", None)
     check: Dict[str, Any] = {}
     try:
         check = run_drift_check(project_id=pid, owner_id=str(uid) if uid else None)
     except Exception as exc:
         check = {"error": str(exc)}
-    demo = is_mock_drift_enabled() or is_demo_mode_enabled()
-    if demo:
-        seed_mock_drift_events(pid)
+    demo = is_mock_drift_enabled()
+    demo_pid = get_configured_demo_project_id()
+    if demo and demo_pid:
+        seed_mock_drift_events(demo_pid)
     events = list_drift_events(project_id=pid)
-    return {"success": True, "count": len(events), "events": events, "demo_events": demo, "check": check}
+    target_info = get_project_drift_target_info(pid) if pid else {}
+    return {
+        "success": True,
+        "count": len(events),
+        "events": events,
+        "demo_events": demo,
+        "check": check,
+        "views_checked": target_info.get("views_checked", []) or check.get("views_checked", []),
+        "checked_at": target_info.get("checked_at") or check.get("checked_at"),
+    }
 
 
-@router.post("/simulate-change", response_model=Dict[str, Any])
+@router.post("/events/cleanup-mock", dependencies=[Depends(_require_mock_drift)], response_model=Dict[str, Any])
+def cleanup_mock_events_endpoint(demo_project_id: Optional[str] = None) -> Dict[str, Any]:
+    from semabridge.demo.drift_fixtures import cleanup_mock_drift_events
+    removed = cleanup_mock_drift_events(demo_project_id=demo_project_id)
+    return {"success": True, "removed_per_project": removed}
+
+
+@router.post("/simulate-change", dependencies=[Depends(_require_mock_drift)], response_model=Dict[str, Any])
 def simulate_change(req: SimulateMetricChangeRequest) -> Dict[str, Any]:
+    from semabridge.demo.drift_fixtures import simulate_metric_drift
     try:
         res = simulate_metric_drift(
             project_id=req.project_id,
@@ -111,8 +185,9 @@ def simulate_change(req: SimulateMetricChangeRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc))
 
 
-@router.post("/reset-change", response_model=Dict[str, Any])
+@router.post("/reset-change", dependencies=[Depends(_require_mock_drift)], response_model=Dict[str, Any])
 def reset_change(req: ResetMetricChangeRequest) -> Dict[str, Any]:
+    from semabridge.demo.drift_fixtures import reset_simulated_metric_drift
     try:
         res = reset_simulated_metric_drift(
             project_id=req.project_id,
@@ -128,8 +203,21 @@ def approve_drift(event_id: str, req: DriftResolutionRequest) -> Dict[str, Any]:
     ev = resolve_drift_event(event_id, "approve", req.reason)
     if not ev:
         raise HTTPException(status_code=404, detail="Drift event not found.")
+    # For mock events, return success without triggering a sync
+    if ev.get("mock"):
+        return {"success": True, "event": ev}
     pid = ev.get("project_id")
     if pid:
+        try:
+            from semabridge.ontology.store import ontology_store
+            from semabridge.api.services.project_shared import resolve_canonical_project_id
+            from semabridge.governance.drift_service import sync_domain_baselines
+            c_pid = resolve_canonical_project_id(pid) or pid
+            doms = ontology_store.domains_for(c_pid) or ontology_store.domains_for(pid)
+            if doms:
+                sync_domain_baselines(doms[0])
+        except Exception:
+            pass
         try:
             import asyncio
             import logging

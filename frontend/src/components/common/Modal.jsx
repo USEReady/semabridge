@@ -24,6 +24,8 @@ export default function Modal({
   allowMaximize = false,
   isMaximized = false,
   onToggleMaximize,
+  width,
+  style: customStyle,
 }) {
   // Close on Escape key
   useEffect(() => {
@@ -35,8 +37,8 @@ export default function Modal({
 
   if (!open) return null;
 
-  const maxWidths = { sm: 400, md: 520, lg: 680, xl: 860 };
-  const maxW = maxWidths[size] ?? 520;
+  const maxWidths = { sm: 400, md: 520, lg: 680, xl: 860, '2xl': 960 };
+  const maxW = width ?? (maxWidths[size] ?? 520);
 
   return (
     <div
@@ -55,6 +57,7 @@ export default function Modal({
           border: '1px solid var(--border-main)',
           boxShadow: 'var(--shadow-lg)',
           maxHeight: isMaximized ? '95vh' : 'min(90vh, 800px)',
+          ...customStyle,
         }}
       >
         {/* Header */}

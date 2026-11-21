@@ -62,7 +62,7 @@ export default function StatusBar({ variant = 'bar', collapsed = false }) {
         };
 
         checkHealth();
-        const interval = setInterval(checkHealth, 5000);
+        const interval = setInterval(checkHealth, 10000);
         return () => clearInterval(interval);
     }, []);
 

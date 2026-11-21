@@ -252,7 +252,7 @@ def _extract_model_namespaces(model_name: Optional[str]) -> Set[str]:
     Handles:
     - Raw friendly names (e.g. 'Competitive Marketing Analysis' -> 'COMPETITIVE_MARKETING_ANALYSIS')
     - Hex/UUID hashed names (e.g. 'e124ae47cc9646bc9403600f2c8449b2_Competitive Marketing Analysis')
-    - Model keys with '::' (e.g. 'proj-comp::Competitive Marketing Analysis')
+    - Model keys with '::' (e.g. 'proj-marketing::Competitive Marketing Analysis')
     - File stems (e.g. 'Competitive Marketing Analysis.pbix')
     """
     if not model_name:

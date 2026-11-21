@@ -968,6 +968,15 @@ class ModelRepository:
         if not project_id:
             return info
 
+        pids = [project_id]
+        try:
+            from semabridge.api.services.project_shared import resolve_canonical_project_id
+            c_pid = resolve_canonical_project_id(project_id)
+            if c_pid and c_pid not in pids:
+                pids.append(c_pid)
+        except Exception:
+            pass
+
         def _q_part(part: str) -> str:
             p = str(part or "").strip().strip('"')
             return f'"{p}"' if re.search(r"[^A-Za-z0-9_]", p) else p
@@ -978,7 +987,7 @@ class ModelRepository:
                 .outerjoin(Project, Project.project_id == SnapshotRow.project_id)
                 .where(
                     and_(
-                        SnapshotRow.project_id == project_id,
+                        SnapshotRow.project_id.in_(pids),
                         SnapshotRow.deleted_at.is_(None),
                     )
                 )
@@ -1009,39 +1018,297 @@ class ModelRepository:
                     break
 
             try:
-                rmr = session.execute(
-                    text(
-                        "SELECT status, view_name, physical_namespace, error_message, model "
-                        "FROM run_model_results WHERE project_id = :pid "
-                        "ORDER BY created_at DESC LIMIT 1"
-                    ),
-                    {"pid": project_id},
-                ).fetchone()
-                if rmr:
-                    r_status, r_view, r_ns, r_err, r_model = rmr
-                    if not info["model_name"] and r_model:
-                        info["model_name"] = r_model
-                    if not info["deploy_error"] and str(r_status or "").lower() == "failed" and r_err:
-                        info["deploy_error"] = r_err
-                    if not info["semantic_view"] and str(r_status or "").lower() == "success" and r_view:
-                        ns_parts = [p.strip().strip('"') for p in str(r_ns or "").split(".") if p.strip()]
-                        parts = [_q_part(p) for p in (*ns_parts, r_view) if p]
-                        info["semantic_view"] = ".".join(parts) if parts else None
+                for candidate_pid in pids:
+                    rmr = session.execute(
+                        text(
+                            "SELECT status, view_name, physical_namespace, error_message, model "
+                            "FROM run_model_results WHERE project_id = :pid "
+                            "ORDER BY created_at DESC LIMIT 1"
+                        ),
+                        {"pid": candidate_pid},
+                    ).fetchone()
+                    if rmr:
+                        r_status, r_view, r_ns, r_err, r_model = rmr
+                        if not info["model_name"] and r_model:
+                            info["model_name"] = r_model
+                        if not info["deploy_error"] and str(r_status or "").lower() == "failed" and r_err:
+                            info["deploy_error"] = r_err
+                        if not info["semantic_view"] and str(r_status or "").lower() == "success" and r_view:
+                            ns_parts = [p.strip().strip('"') for p in str(r_ns or "").split(".") if p.strip()]
+                            parts = [_q_part(p) for p in (*ns_parts, r_view) if p]
+                            info["semantic_view"] = ".".join(parts) if parts else None
+                        if info["semantic_view"]:
+                            break
             except Exception:
                 pass
 
-        for candidate in (
-            Path("output") / "reverse" / project_id / "semantic_view.sql",
-            Path("output") / "reverse" / ".staging" / project_id / "semantic_view.sql",
-        ):
-            if candidate.is_file():
-                try:
-                    info["ddl"] = candidate.read_text(encoding="utf-8")
+        # Only load DDL and consider semantic view valid if it was confirmed in Snowflake
+        if info["semantic_view"]:
+            for candidate_pid in pids:
+                for candidate in (
+                    Path("output") / "reverse" / candidate_pid / "semantic_view.sql",
+                    Path("output") / "reverse" / ".staging" / candidate_pid / "semantic_view.sql",
+                ):
+                    if candidate.is_file():
+                        try:
+                            info["ddl"] = candidate.read_text(encoding="utf-8")
+                            break
+                        except Exception:
+                            pass
+                if info["ddl"]:
                     break
-                except Exception:
-                    pass
 
         return info
+
+    def list_project_deployments(
+        self,
+        project_id: str,
+        include_unmanaged: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """List all deployed views for a project (newest first).
+
+        Each entry returns:
+            - database: target database
+            - schema: target schema
+            - view: base view name
+            - semantic_view: fully-qualified name (e.g. '"DB"."SCHEMA"."VIEW"')
+            - platform: 'snowflake' | 'databricks'
+            - deployed_at: ISO string or None
+            - run_id: snapshot run id
+            - snapshot_id: snapshot id
+            - is_latest: True for the newest deployed view
+            - managed: True for views deployed by this project; False for unmanaged views in same schema
+        """
+        import re
+        from sqlalchemy import text, func, or_
+        from semabridge.repository.orm.run_models import Run
+
+        if not project_id:
+            return []
+
+        pids = [project_id]
+        try:
+            from semabridge.api.services.project_shared import resolve_canonical_project_id
+            c_pid = resolve_canonical_project_id(project_id)
+            if c_pid and c_pid not in pids:
+                pids.append(c_pid)
+        except Exception:
+            pass
+
+        def _q_part(part: str) -> str:
+            p = str(part or "").strip().strip('"')
+            return f'"{p}"' if re.search(r"[^A-Za-z0-9_]", p) else p
+
+        deployments: List[Dict[str, Any]] = []
+        seen_views: Set[str] = set()
+
+        proj_db_default: Optional[str] = None
+        proj_schema_default: Optional[str] = None
+        proj_platform_default = "snowflake"
+
+        with self._session() as session:
+            proj_row = session.execute(
+                select(Project.database, Project.schema, Project.adapter)
+                .where(Project.project_id.in_(pids))
+            ).first()
+            if proj_row:
+                proj_db_default, proj_schema_default, proj_adapter = proj_row
+                if proj_adapter:
+                    proj_platform_default = str(proj_adapter).lower()
+
+            rows = session.execute(
+                select(
+                    SnapshotRow,
+                    Project.database,
+                    Project.schema,
+                    Project.adapter,
+                    Run.target_type,
+                    Run.run_type,
+                )
+                .outerjoin(Project, Project.project_id == SnapshotRow.project_id)
+                .outerjoin(Run, Run.run_id == SnapshotRow.run_id)
+                .where(
+                    and_(
+                        SnapshotRow.project_id.in_(pids),
+                        SnapshotRow.deleted_at.is_(None),
+                        SnapshotRow.status == "success",
+                        or_(Run.run_type.is_(None), func.upper(Run.run_type) != "DRY_RUN"),
+                    )
+                )
+                .order_by(
+                    func.coalesce(SnapshotRow.deployed_at, SnapshotRow.timestamp).desc()
+                )
+                .limit(100)
+            ).all()
+
+            for row, proj_db, proj_schema, proj_adapter, run_target, run_type in rows:
+                if str(run_type or "").upper() == "DRY_RUN":
+                    continue
+                view_name = (row.view_name or "").strip().strip('"')
+                if not view_name and row.sml_blob:
+                    blob = _deserialize_sml_blob(row.sml_blob)
+                    if isinstance(blob, dict):
+                        m_label = blob.get("unique_name") or blob.get("label")
+                        if m_label:
+                            from semabridge.converter.model_to_snowflake_semantic_view import get_target_deployment_name
+                            view_name = get_target_deployment_name(m_label, "snowflake").strip().strip('"')
+                if not view_name:
+                    continue
+
+                db = row.target_database or proj_db or proj_db_default or ""
+                schema = row.target_schema or proj_schema or proj_schema_default or ""
+                parts = [_q_part(p) for p in (db, schema, view_name) if p]
+                semantic_view = ".".join(parts) if parts else view_name
+
+                norm_key = f"{db}.{schema}.{view_name}".upper()
+                if norm_key in seen_views:
+                    continue
+                seen_views.add(norm_key)
+
+                platform = (run_target or proj_adapter or proj_platform_default or "snowflake").lower()
+                dep_at = row.deployed_at or row.timestamp
+                dep_at_str = dep_at.isoformat() if hasattr(dep_at, "isoformat") else str(dep_at) if dep_at else None
+
+                deployments.append({
+                    "database": db,
+                    "schema": schema,
+                    "view": view_name,
+                    "semantic_view": semantic_view,
+                    "platform": platform,
+                    "deployed_at": dep_at_str,
+                    "run_id": row.run_id,
+                    "snapshot_id": row.snapshot_id,
+                    "is_latest": False,
+                    "managed": True,
+                })
+
+            try:
+                for candidate_pid in pids:
+                    rmr_rows = session.execute(
+                        text(
+                            "SELECT status, view_name, physical_namespace, run_id, created_at "
+                            "FROM run_model_results WHERE project_id = :pid AND LOWER(status) = 'success' "
+                            "AND view_name IS NOT NULL ORDER BY created_at DESC"
+                        ),
+                        {"pid": candidate_pid},
+                    ).fetchall()
+                    for r_status, r_view, r_ns, r_run_id, r_created in rmr_rows:
+                        view_name = str(r_view or "").strip().strip('"')
+                        if not view_name:
+                            continue
+                        ns_parts = [p.strip().strip('"') for p in str(r_ns or "").split(".") if p.strip()]
+                        db = ns_parts[0] if len(ns_parts) > 1 else (proj_db_default or "")
+                        schema = ns_parts[1] if len(ns_parts) > 1 else (ns_parts[0] if ns_parts else (proj_schema_default or ""))
+                        parts = [_q_part(p) for p in (db, schema, view_name) if p]
+                        semantic_view = ".".join(parts) if parts else view_name
+                        norm_key = f"{db}.{schema}.{view_name}".upper()
+                        if norm_key in seen_views:
+                            continue
+                        seen_views.add(norm_key)
+                        dep_at_str = r_created.isoformat() if hasattr(r_created, "isoformat") else str(r_created) if r_created else None
+                        deployments.append({
+                            "database": db,
+                            "schema": schema,
+                            "view": view_name,
+                            "semantic_view": semantic_view,
+                            "platform": proj_platform_default,
+                            "deployed_at": dep_at_str,
+                            "run_id": r_run_id,
+                            "snapshot_id": None,
+                            "is_latest": False,
+                            "managed": True,
+                        })
+            except Exception:
+                pass
+
+        deployments.sort(
+            key=lambda d: str(d.get("deployed_at") or ""),
+            reverse=True,
+        )
+
+        if deployments:
+            deployments[0]["is_latest"] = True
+
+        if include_unmanaged and (proj_db_default or proj_schema_default):
+            try:
+                from semabridge.sync.reverse_sync import list_snowflake_semantic_views
+                sf_res = list_snowflake_semantic_views(project_id=project_id)
+                if sf_res and sf_res.get("snowflake_connected") and sf_res.get("views"):
+                    for sv_info in sf_res["views"]:
+                        v_name = sv_info.get("name") or ""
+                        v_db = sv_info.get("database_name") or proj_db_default or ""
+                        v_sch = sv_info.get("schema_name") or proj_schema_default or ""
+                        norm_key = f"{v_db}.{v_sch}.{v_name}".upper()
+                        if norm_key in seen_views:
+                            continue
+                        seen_views.add(norm_key)
+                        parts = [_q_part(p) for p in (v_db, v_sch, v_name) if p]
+                        semantic_view = ".".join(parts) if parts else v_name
+                        deployments.append({
+                            "database": v_db,
+                            "schema": v_sch,
+                            "view": v_name,
+                            "semantic_view": semantic_view,
+                            "platform": "snowflake",
+                            "deployed_at": None,
+                            "run_id": None,
+                            "snapshot_id": None,
+                            "is_latest": False,
+                            "managed": False,
+                        })
+            except Exception as ex:
+                logger.debug("Failed checking unmanaged semantic views for %s: %s", project_id, ex)
+
+        return deployments
+
+    def validate_project_view(self, project_id: str, view: str) -> str:
+        """Validate that a view belongs to project deployments or target schema.
+
+        Returns the normalized semantic_view if valid.
+        Raises ValueError if neither deployed by project nor found in its schema.
+        """
+        if not view or not str(view).strip():
+            raise ValueError("View name cannot be empty.")
+
+        target = str(view).strip()
+        deployments = self.list_project_deployments(project_id, include_unmanaged=True)
+
+        def _clean_parts(s: str) -> List[str]:
+            return [p.strip().strip('"').upper() for p in s.split(".") if p.strip()]
+
+        t_parts = _clean_parts(target)
+
+        for dep in deployments:
+            sv = dep.get("semantic_view") or ""
+            d_parts = _clean_parts(sv)
+            v_name = (dep.get("view") or "").strip().strip('"').upper()
+            d_schema = (dep.get("schema") or "").strip().strip('"').upper()
+            d_db = (dep.get("database") or "").strip().strip('"').upper()
+
+            if target.upper() == sv.upper() or target.replace('"', '').upper() == sv.replace('"', '').upper():
+                return dep["semantic_view"]
+            if len(t_parts) == 1 and t_parts[0] == v_name:
+                return dep["semantic_view"]
+            if len(t_parts) == 2 and t_parts[0] == d_schema and t_parts[1] == v_name:
+                return dep["semantic_view"]
+            if len(t_parts) == 3 and t_parts == d_parts:
+                return dep["semantic_view"]
+
+        with self._session() as session:
+            proj = session.execute(
+                select(Project.database, Project.schema).where(Project.project_id == project_id)
+            ).first()
+            if proj:
+                p_db = (proj[0] or "").strip().strip('"').upper()
+                p_sch = (proj[1] or "").strip().strip('"').upper()
+                if len(t_parts) == 3 and p_db and p_sch and t_parts[0] == p_db and t_parts[1] == p_sch:
+                    return target
+                if len(t_parts) == 2 and p_sch and t_parts[0] == p_sch:
+                    return f'"{proj[0]}"."{proj[1]}"."{t_parts[1]}"' if proj[0] else target
+
+        raise ValueError(
+            f"View '{view}' is neither deployed by project '{project_id}' nor found in its schema."
+        )
 
     def rollback(
         self,

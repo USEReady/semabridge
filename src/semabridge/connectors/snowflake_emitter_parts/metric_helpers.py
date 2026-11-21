@@ -531,14 +531,5 @@ def normalize_date_part_arguments(metric_sql: str) -> str:
 
 
 def normalize_rolling_monthindex_max_predicates(metric_sql: str) -> str:
-    normalized = metric_sql
-    pattern = (
-        r'(?P<id>[A-Z_][A-Z0-9_\.]+)\s*<=\s*MAX\(\s*(?P=id)\s*\)\s*'
-        r'AND\s*(?P=id)\s*>\s*MAX\(\s*(?P=id)\s*\)\s*-\s*12'
-    )
-
-    def _replace(match: re.Match) -> str:
-        month_index_id = match.group('id')
-        return f"{month_index_id} > ((YEAR(CURRENT_DATE()) * 12) + MONTH(CURRENT_DATE()) - 12)"
-
-    return re.sub(pattern, _replace, normalized, flags=re.IGNORECASE)
+    # Do not rewrite MAX(MonthIndex)-12 to CURRENT_DATE(); preserved as-is.
+    return metric_sql

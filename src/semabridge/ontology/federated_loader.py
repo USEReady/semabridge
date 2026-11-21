@@ -636,6 +636,7 @@ class FederatedOntologyLoader:
                             conflicting_domains=[d_name],
                             expressions={m.name: m.sql_expression for m in dom_mets},
                             severity="ERROR" if is_conflict else "WARNING",
+                            identical=not is_conflict,
                             message=(
                                 f"Intra-domain duplicate metric in '{d_name}': {names_str} "
                                 f"({ 'conflicting formulas' if is_conflict else 'same normalized name' })."
@@ -670,6 +671,7 @@ class FederatedOntologyLoader:
                         descriptions=descs,
                         expressions=exprs,
                         severity="ERROR",
+                        identical=False,
                         message=(
                             f"Metric collision: '{metrics[0].name}' defined with conflicting "
                             f"formulas across domains ({'; '.join(diff_parts)})."
@@ -685,6 +687,7 @@ class FederatedOntologyLoader:
                         descriptions=descs,
                         expressions=exprs,
                         severity="WARNING",
+                        identical=False,
                         message=(
                             f"Metric partial definition: '{metrics[0].name}' has a formula in some "
                             f"domains ({', '.join(domains)}) and binding-only in others."
@@ -699,7 +702,8 @@ class FederatedOntologyLoader:
                         conflicting_domains=domains,
                         descriptions=descs,
                         expressions=exprs,
-                        severity="WARNING",
+                        severity="INFO",
+                        identical=True,
                         message=(
                             f"Metric '{metrics[0].name}' is shared across domains "
                             f"({', '.join(domains)}) with identical formula."
@@ -1208,11 +1212,13 @@ class FederatedOntologyLoader:
             elif re.match(r"^(?:CAST\s*\(\s*NULL\b|NULL\b)", rhs, re.I):
                 cm = re.search(r"\bCOMMENT\s*=\s*'((?:[^']|'')*)'", rhs, re.I)
                 null_reason = (cm.group(1).replace("''", "'") if cm else "Compiled as NULL placeholder during deployment")
-            meta["metrics"][_norm(logical_m)] = (t_alias, logical_m, null_reason)
+            from semabridge.ontology.models import strip_ddl_clauses
+            clean_rhs = strip_ddl_clauses(rhs)
+            meta["metrics"][_norm(logical_m)] = (t_alias, logical_m, null_reason, clean_rhs)
             syn_m = re.search(r"WITH\s+SYNONYMS\s*=\s*\(([^)]+)\)", line, re.I)
             if syn_m:
                 for s in re.findall(r"'((?:[^']|'')*)'", syn_m.group(1)):
-                    meta["metrics"].setdefault(_norm(s.replace("''", "'")), (t_alias, logical_m, null_reason))
+                    meta["metrics"].setdefault(_norm(s.replace("''", "'")), (t_alias, logical_m, null_reason, clean_rhs))
 
         return meta
 
@@ -1252,6 +1258,10 @@ class FederatedOntologyLoader:
             or sv_meta.get("view_name")
             or (existing_ontology.semantic_view_name if existing_ontology else None)
         )
+        if resolved_sv_name:
+            _double_q = re.search(r'(\b[\w$]+\.[\w$]+)\.(?:")?\1\b', resolved_sv_name, re.I)
+            if _double_q:
+                resolved_sv_name = re.sub(r'(\b[\w$]+\.[\w$]+)\.(?:")?\1\b', r'\1', resolved_sv_name, flags=re.I).replace('"', '')
 
         def _norm_key(val: str) -> str:
             return re.sub(r"[^a-z0-9]+", "", str(val or "").casefold())
@@ -1579,6 +1589,11 @@ class FederatedOntologyLoader:
                 rep["kept_user"].append(f"metric {exist_m.name}")
                 metrics.append(exist_m)
         metrics.extend(new_metrics.values())
+
+        from semabridge.utils.synonyms import disambiguate_metric_synonyms
+        metrics, syn_colls = disambiguate_metric_synonyms(metrics, view_name=domain)
+        if syn_colls:
+            rep.setdefault("synonym_collisions", []).extend(syn_colls)
 
         # A metric concept must stay resolvable inside the domain (validation rule).
         concept_names = {c.name.casefold() for c in concepts}

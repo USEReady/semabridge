@@ -353,6 +353,22 @@ def validate_read_only_sql(sql: str, *, warn_only: Optional[bool] = None) -> boo
         )
 
     clean = non_empty[0]
+
+    # Strip comments and string literals to inspect query structure for mutations
+    code_no_strings = re.sub(r"'(?:''|[^'])*'", "''", strip_sql_comments(clean))
+    code_no_strings = re.sub(r'"(?:""|[^"])*"', '""', code_no_strings)
+    code_no_strings = re.sub(r"\$\$.*?\$\$", "$$$$", code_no_strings, flags=re.DOTALL)
+
+    mutation_match = re.search(
+        r"\b(DELETE|INSERT|UPDATE|DROP|ALTER|TRUNCATE|MERGE|CREATE|GRANT|REVOKE|CALL|EXECUTE|COPY|PUT|GET|USE|UNDROP|COMMENT|BEGIN|COMMIT|ROLLBACK|SET|UNSET|REMOVE|LIST)\b",
+        code_no_strings,
+        re.IGNORECASE,
+    )
+    if mutation_match:
+        kw = mutation_match.group(1).upper()
+        preview = clean[:120].replace("\n", " ")
+        return _reject(f"Read-only SQL guard blocked forbidden operation '{kw}': {preview!r}.")
+
     for pattern, op_name in _EXPLICIT_FORBIDDEN_PATTERNS:
         if pattern.search(clean):
             preview = clean[:120].replace("\n", " ")
@@ -373,8 +389,12 @@ def validate_read_only_sql(sql: str, *, warn_only: Optional[bool] = None) -> boo
                 f"Read-only SQL guard blocked potentially side-effecting system function '{sys_func}': {preview!r}."
             )
 
+    clean_unwrapped = clean.strip()
+    while clean_unwrapped.startswith("(") and clean_unwrapped.endswith(")"):
+        clean_unwrapped = clean_unwrapped[1:-1].strip()
+
     for pattern, action_name in _ALLOWLIST_PATTERNS:
-        if action_name in _READ_ONLY_ALLOWED_ACTIONS and pattern.search(clean):
+        if action_name in _READ_ONLY_ALLOWED_ACTIONS and (pattern.search(clean) or pattern.search(clean_unwrapped)):
             return True
 
     preview = clean[:120].replace("\n", " ")

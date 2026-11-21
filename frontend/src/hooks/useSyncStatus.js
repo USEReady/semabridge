@@ -126,7 +126,7 @@ export default function useSyncStatus(projectId, initialStatus = 'draft') {
     };
 
     poll();
-    const timer = setInterval(poll, 3000);
+    const timer = setInterval(poll, 10000);
 
     return () => {
       disposed = true;

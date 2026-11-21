@@ -321,9 +321,9 @@ export function SyncStatusProvider({ children }) {
         const floor = realProgressRef.current;
         if (prev < floor) return floor;
         if (prev >= 90) return prev;
-        return prev + 1;
+        return prev + 5;
       });
-    }, 1000);
+    }, 10000);
 
     return () => clearInterval(crawl);
   }, [currentSyncStatus]);
