@@ -18,6 +18,7 @@ import pytest
 
 from semabridge.target_rules import (
     SNOWFLAKE_RULES,
+    ReasonCode,
     UnsupportedTargetError,
     get_target_rules,
 )
@@ -159,12 +160,12 @@ def _golden_reasons() -> dict:
 
 def test_text_measure_reason_matches_golden_output() -> None:
     # KPI01 is a text measure in the Competitive Marketing model.
-    assert _golden_reasons()["KPI01"] == POLICIES.by_design_reason(POLICIES.text_measure_reason)
+    assert _golden_reasons()["KPI01"] == POLICIES.decide(ReasonCode.STRING_FUNCTION_ROOT).reason
 
 
 def test_constant_measure_reason_matches_golden_output() -> None:
     # #Space01 is a constant measure in the Competitive Marketing model.
-    assert _golden_reasons()["#Space01"] == POLICIES.by_design_reason(POLICIES.constant_measure_reason)
+    assert _golden_reasons()["#Space01"] == POLICIES.decide(ReasonCode.CONSTANT_EXPRESSION).reason
 
 
 def test_snowflake_policy_choices() -> None:

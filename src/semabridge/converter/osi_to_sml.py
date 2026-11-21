@@ -44,6 +44,7 @@ from semabridge.sml.models import (
     SourcePlatform,
 )
 from semabridge.converter.dax_translator import DAXTranslator
+from semabridge.target_rules import ReasonCode, TargetRules, get_target_rules
 from semabridge.converter.measure_analysis import (
     MeasureAnalysis,
     ModelMeasureAnalysis,
@@ -96,9 +97,13 @@ class OSIToSMLConverter(BaseConverter):
     Transforms OSI Model into SML Model with semantic enrichment.
     """
 
-    def __init__(self, drop_ledger: Optional["DropLedger"] = None):
+    def __init__(self, drop_ledger: Optional["DropLedger"] = None, rules: Optional[TargetRules] = None):
         from semabridge.core.drop_ledger import DropLedger
 
+        # The target platform's rules decide keep/decline and word the
+        # reasons (and give the placeholder SQL). Default: Snowflake, which
+        # every existing caller expects.
+        self.rules: TargetRules = rules or get_target_rules("snowflake")
         self.dax_translator = DAXTranslator()
         self.drop_ledger = drop_ledger if drop_ledger is not None else DropLedger()
         # Facts about every measure of the last converted model (step 3);
@@ -560,15 +565,14 @@ class OSIToSMLConverter(BaseConverter):
             description=osi_metric.description or "",
             dataset=osi_metric.dataset,
             expression=osi_metric.expression or "",
-            sql_expression="CAST(NULL AS DOUBLE)",
+            sql_expression=self.rules.policies.placeholder_sql,
             aggregation=sml_agg,
             format_string=osi_metric.format_string,
             is_hidden=osi_metric.is_hidden,
             complexity_tier=1,
             sync_enabled=False,
-            sync_failure_reason=(
-                "not applicable: the Power BI measure refers to column(s) missing from the "
-                f"source model, so it is broken in Power BI too: {', '.join(missing_refs[:5])}"
+            sync_failure_reason=self.rules.policies.reason_text(
+                ReasonCode.MISSING_COLUMNS, ", ".join(missing_refs[:5])
             ),
             access_modifier=osi_metric.access_modifier,
             synonyms=list(osi_metric.synonyms),
@@ -644,13 +648,13 @@ class OSIToSMLConverter(BaseConverter):
                 description=osi_metric.description or "",
                 dataset=osi_metric.dataset,
                 expression="",
-                sql_expression="CAST(NULL AS DOUBLE)",
+                sql_expression=self.rules.policies.placeholder_sql,
                 aggregation=sml_agg,
                 format_string=osi_metric.format_string,
                 is_hidden=osi_metric.is_hidden,
                 complexity_tier=1,
                 sync_enabled=False,
-                sync_failure_reason="not applicable: no expression",
+                sync_failure_reason=self.rules.policies.reason_text(ReasonCode.EMPTY_EXPRESSION),
                 access_modifier=osi_metric.access_modifier,
                 synonyms=list(osi_metric.synonyms),
                 synonym_sources=dict(osi_metric.synonym_sources),
@@ -658,33 +662,28 @@ class OSIToSMLConverter(BaseConverter):
                 source_file=osi_metric.source_file,
             )
 
-        # Constant expressions and string-producing root expressions are a
-        # modeling-classification mismatch, not a DAX translation gap — a
-        # Snowflake semantic-view metric must be an aggregate expression.
-        # Detected purely from AST shape (no field/model names involved).
-        # The shape facts come from the analysis; the Snowflake decision and
-        # its wording are made here (the order constant -> string function ->
-        # context transition, first match wins, is unchanged).
+        # Constant expressions, string-producing roots and inexpressible
+        # context transitions: the measure's facts (analysis) name the case
+        # as a neutral ReasonCode, and the target platform's rules decide
+        # keep/decline and word the reason (Snowflake: a by-design decline,
+        # since a semantic-view metric must be an aggregate). The order
+        # constant -> string function -> context transition, first match
+        # wins, is unchanged.
         if expression:
-            from semabridge.converter.dax_ast_parser import BY_DESIGN_EXCLUDED_PREFIX
-            by_design_reason = None
+            code: Optional[ReasonCode] = None
+            detail: Optional[str] = None
             if analysis.is_constant:
-                by_design_reason = (
-                    f"{BY_DESIGN_EXCLUDED_PREFIX}: expression has no column/measure/table "
-                    "reference (a compile-time constant) — there is nothing to "
-                    "aggregate, so this is not a DAX translation failure."
-                )
+                code = ReasonCode.CONSTANT_EXPRESSION
             elif analysis.root_is_string_function:
-                by_design_reason = (
-                    f"{BY_DESIGN_EXCLUDED_PREFIX}: expression's root operation produces a "
-                    "string value, not a numeric aggregate — Snowflake "
-                    "semantic-view metrics must be aggregate expressions. This "
-                    "field should be modeled as a dimension attribute instead."
-                )
+                code = ReasonCode.STRING_FUNCTION_ROOT
             elif analysis.context_transition_reason:
-                by_design_reason = (
-                    f"{BY_DESIGN_EXCLUDED_PREFIX}: {analysis.context_transition_reason}"
-                )
+                code = ReasonCode.CONTEXT_TRANSITION
+                detail = analysis.context_transition_reason
+            by_design_reason = None
+            if code is not None:
+                decision = self.rules.policies.decide(code, detail)
+                if not decision.keep:
+                    by_design_reason = decision.reason
             if by_design_reason:
                 sml_agg = getattr(SMLAggregationType, osi_metric.aggregation.name, SMLAggregationType.SUM)
                 metric = SMLMetric(
@@ -1000,11 +999,15 @@ class OSIToSMLConverter(BaseConverter):
                         classify_dax_ast_not_applicable,
                     )
                     ast_node = DaxAstParser().parse(metric.expression)
-                    classified_reason = classify_dax_ast_not_applicable(ast_node) if ast_node else None
+                    classified_reason = (
+                        classify_dax_ast_not_applicable(ast_node, rules=self.rules) if ast_node else None
+                    )
                     if classified_reason:
                         metric.sync_failure_reason = classified_reason
                     elif ast_node and _calculate_has_direct_all_or_allexcept_modifier(ast_node):
-                        metric.sync_failure_reason = "BY_DESIGN_EXCLUDED: not applicable: not decomposable for a window"
+                        metric.sync_failure_reason = self.rules.policies.reason_text(
+                            ReasonCode.NOT_DECOMPOSABLE_WINDOW, by_design=True
+                        )
                     elif self._STALE_TIER5_DEFERRED_MARKER in reason or "tier-5" in reason.lower() or not reason:
                         # Nothing structural explains the miss: say what
                         # actually happened rather than asserting a
