@@ -10,21 +10,41 @@ def preview_cross_platform_definitions(
     *,
     project_id: Optional[str] = None,
     domain: Optional[str] = None,
+    metric: Optional[str] = None,
     targets: Optional[List[str]] = None,
     version_tag: str = "v1.0.0",
 ) -> Dict[str, Any]:
     """Generate platform-specific semantic definitions and flag gaps for Snowflake, Databricks, and Fabric."""
-    from semabridge.ontology.store import ontology_store
+    from semabridge.ontology.store import ontology_store, project_key
 
     selected = [t.lower().strip() for t in (targets or ["snowflake", "databricks", "fabric"])]
     fed = ontology_store.get_federated_ontology()
+
+    pkey = project_key(project_id) if project_id else None
     doms = [
         d for d in fed.domains.values()
         if (not domain or d.domain == domain)
-        and (not project_id or getattr(d, "source_project_id", None) == project_id)
+        and (not pkey or project_key(getattr(d, "source_project_id", None)) == pkey or getattr(d, "source_project_id", None) == project_id)
     ]
+    if not doms and project_id:
+        try:
+            doms = ontology_store.domains_for(project_id) or []
+        except Exception:
+            doms = []
 
-    metrics = [m for d in doms for m in d.metrics]
+    all_metrics = [m for d in doms for m in d.metrics]
+    if metric:
+        target_name = metric.strip().casefold()
+        filtered = [
+            m for m in all_metrics
+            if m.name.casefold() == target_name
+            or (getattr(m, "logical_name", None) or "").casefold() == target_name
+            or (getattr(m, "label", None) or "").casefold() == target_name
+        ]
+        metrics = filtered if filtered else all_metrics
+    else:
+        metrics = all_metrics
+
     previews: Dict[str, Dict[str, Any]] = {}
 
     if "snowflake" in selected:
@@ -75,8 +95,19 @@ def preview_cross_platform_definitions(
     return {
         "project_id": project_id,
         "domain": domain,
+        "metric": metric,
         "version_tag": version_tag,
         "targets": selected,
+        "metrics": [
+            {
+                "name": m.name,
+                "label": getattr(m, "label", m.name) or m.name,
+                "sql_expression": m.sql_expression,
+                "dax_expression": getattr(m, "dax_expression", None),
+                "concept": getattr(m, "concept", None),
+            }
+            for m in all_metrics
+        ],
         "previews": previews,
     }
 
@@ -95,8 +126,27 @@ def check_cross_platform_parity(
     from semabridge.ai.project_connection import _build_from_account
     from semabridge.core.settings import reload_settings
 
-    sf_sql = sql_snowflake.strip().rstrip(";")
-    db_sql = (sql_databricks or sql_snowflake).strip().rstrip(";")
+    sf_sql = (sql_snowflake or "").strip().rstrip(";")
+    db_sql = ((sql_databricks or sql_snowflake) or "").strip().rstrip(";")
+
+    if not sf_sql:
+        return {
+            "parity_passed": False,
+            "snowflake": {
+                "success": False,
+                "target": "SNOWFLAKE",
+                "error": "No SQL statement provided for Snowflake. Please select a metric or enter a query.",
+                "rows": [],
+                "row_count": 0,
+            },
+            "databricks": {
+                "success": False,
+                "target": "DATABRICKS",
+                "error": "No SQL statement provided for Databricks. Please select a metric or enter a query.",
+                "rows": [],
+                "row_count": 0,
+            },
+        }
 
     if snowflake_account_id:
         sf_cfg = _build_from_account(snowflake_account_id, "SNOWFLAKE", reload_settings().snowflake, {})
@@ -111,8 +161,18 @@ def check_cross_platform_parity(
                     cur = conn.cursor()
                     cur.execute(sf_sql)
                     cols = [d[0] for d in cur.description] if cur.description else []
-                    rows = [[v if v is None or isinstance(v, (int, float, bool, str)) else str(v) for v in r] for r in cur.fetchall()]
-                    sf_data = {"success": True, "target": "SNOWFLAKE", "columns": cols, "rows": rows, "row_count": len(rows)}
+                    raw_rows = cur.fetchall() if cur.description else []
+                    rows = [
+                        [v if v is None or isinstance(v, (int, float, bool, str)) else str(v) for v in r]
+                        for r in (raw_rows or [])
+                    ]
+                    sf_data = {
+                        "success": True,
+                        "target": "SNOWFLAKE",
+                        "columns": cols,
+                        "rows": rows,
+                        "row_count": len(rows),
+                    }
                 finally:
                     conn.close()
             except Exception as exc:
@@ -129,18 +189,48 @@ def check_cross_platform_parity(
             from semabridge.connectors.factory import make_target_emitter
 
             try:
-                token = make_target_emitter("databricks", db_cfg)._resolve_token()
-                resp = _requests.post(
-                    f"https://{db_cfg.host}/api/2.0/sql/statements",
-                    json={"statement": db_sql, "warehouse_id": db_cfg.warehouse_id, "wait_timeout": "15s"},
-                    headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-                    timeout=20,
-                )
-                body = resp.json() if resp.status_code == 200 else {}
-                cols = [c.get("name") for c in (body.get("manifest") or {}).get("schema", {}).get("columns", [])]
-                rows = (body.get("result") or {}).get("data_array", []) or []
-                ok = resp.status_code == 200 and (body.get("status") or {}).get("state") == "SUCCEEDED"
-                db_data = {"success": ok, "target": "DATABRICKS", "columns": cols, "rows": rows, "row_count": len(rows), "error": None if ok else resp.text[:200]}
+                try:
+                    token = make_target_emitter("databricks", db_cfg)._resolve_token()
+                except Exception as tok_err:
+                    token = None
+                    tok_msg = str(tok_err)
+
+                if not token:
+                    db_data = {
+                        "success": False,
+                        "target": "DATABRICKS",
+                        "error": f"Databricks token unavailable: {locals().get('tok_msg', 'No valid token found in account credentials.')}",
+                        "rows": [],
+                        "row_count": 0,
+                    }
+                else:
+                    resp = _requests.post(
+                        f"https://{db_cfg.host}/api/2.0/sql/statements",
+                        json={"statement": db_sql, "warehouse_id": db_cfg.warehouse_id, "wait_timeout": "15s"},
+                        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                        timeout=20,
+                    )
+                    try:
+                        body = resp.json()
+                    except Exception:
+                        body = {}
+                    ok = resp.status_code == 200 and (body.get("status") or {}).get("state") == "SUCCEEDED"
+                    cols = [c.get("name") for c in (body.get("manifest") or {}).get("schema", {}).get("columns", [])]
+                    rows = (body.get("result") or {}).get("data_array", []) or []
+                    err_msg = None
+                    if not ok:
+                        if resp.status_code == 401:
+                            err_msg = "Databricks authentication failed (401): Credential missing or invalid for this account. Please update credentials in Connections."
+                        else:
+                            err_msg = body.get("message") or (body.get("status") or {}).get("error", {}).get("message") or resp.text[:200]
+                    db_data = {
+                        "success": ok,
+                        "target": "DATABRICKS",
+                        "columns": cols,
+                        "rows": rows,
+                        "row_count": len(rows),
+                        "error": err_msg,
+                    }
             except Exception as exc:
                 db_data = {"success": False, "target": "DATABRICKS", "error": str(exc), "rows": [], "row_count": 0}
         else:

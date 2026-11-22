@@ -18,6 +18,7 @@ router = APIRouter(prefix="/api/cross-platform", tags=["cross_platform"])
 class CrossPlatformPreviewRequest(BaseModel):
     project_id: Optional[str] = None
     domain: Optional[str] = None
+    metric: Optional[str] = None
     targets: List[str] = Field(default_factory=lambda: ["snowflake", "databricks", "fabric"])
     version_tag: str = "v1.0.0"
 
@@ -35,6 +36,7 @@ def preview_targets(req: CrossPlatformPreviewRequest) -> Dict[str, Any]:
     return preview_cross_platform_definitions(
         project_id=req.project_id,
         domain=req.domain,
+        metric=req.metric,
         targets=req.targets,
         version_tag=req.version_tag,
     )

@@ -1681,6 +1681,7 @@ A: SELECT (SUM(margin) / NULLIF(SUM(revenue), 0)) * 100 FROM sales_fact;`
 function CrossPlatformView({ projectId }) {
   const [versionTag, setVersionTag] = useState('v1.0.0');
   const [preview, setPreview] = useState(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
   const [accounts, setAccounts] = useState([]);
   const [sfAccountId, setSfAccountId] = useState('');
   const [dbAccountId, setDbAccountId] = useState('');
@@ -1688,6 +1689,9 @@ function CrossPlatformView({ projectId }) {
   const [dbSql, setDbSql] = useState('');
   const [parity, setParity] = useState(null);
   const [checking, setChecking] = useState(false);
+  const [metrics, setMetrics] = useState([]);
+  const [selectedMetric, setSelectedMetric] = useState('');
+  const [loadingMetrics, setLoadingMetrics] = useState(false);
 
   useEffect(() => {
     authFetch('/api/accounts')
@@ -1703,16 +1707,92 @@ function CrossPlatformView({ projectId }) {
       .catch(() => { });
   }, []);
 
+  const handleMetricSelect = useCallback((metricName, metricList = metrics) => {
+    setSelectedMetric(metricName);
+    const m = (metricList || []).find((x) => x.name === metricName);
+    if (m) {
+      const expr = m.sql_expression || 'COUNT(*)';
+      const tbl = m.table || m.concept;
+      const query = tbl ? `SELECT ${expr} AS ${m.name} FROM ${tbl}` : `SELECT ${expr} AS ${m.name}`;
+      setSfSql(query);
+      setDbSql(query);
+    }
+  }, [metrics]);
+
+  useEffect(() => {
+    if (!projectId) {
+      setMetrics([]);
+      setSelectedMetric('');
+      return;
+    }
+    setLoadingMetrics(true);
+    authFetch(`/api/reconciliation/project-metrics?project_id=${encodeURIComponent(projectId)}`)
+      .then((r) => (r.ok ? r.json() : { metrics: [] }))
+      .then((data) => {
+        const list = data.metrics || [];
+        setMetrics(list);
+        if (list.length > 0) {
+          const first = list[0];
+          handleMetricSelect(first.name, list);
+        }
+      })
+      .catch(() => { })
+      .finally(() => setLoadingMetrics(false));
+  }, [projectId, handleMetricSelect]);
+
   const loadPreview = async () => {
-    const res = await authFetch('/api/cross-platform/preview', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project_id: projectId || undefined, version_tag: versionTag }),
-    });
-    if (res.ok) setPreview(await res.json());
+    setLoadingPreview(true);
+    try {
+      const res = await authFetch('/api/cross-platform/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: projectId || undefined,
+          metric: selectedMetric || undefined,
+          version_tag: versionTag,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPreview(data);
+        if ((!metrics || metrics.length === 0) && data.metrics?.length > 0) {
+          setMetrics(data.metrics);
+          if (!selectedMetric) {
+            handleMetricSelect(data.metrics[0].name, data.metrics);
+          }
+        }
+      }
+    } finally {
+      setLoadingPreview(false);
+    }
   };
 
   const runParity = async () => {
+    let querySf = sfSql.trim();
+    let queryDb = dbSql.trim();
+
+    if (!querySf && selectedMetric) {
+      const m = metrics.find((x) => x.name === selectedMetric);
+      if (m) {
+        const expr = m.sql_expression || 'COUNT(*)';
+        const tbl = m.table || m.concept;
+        querySf = tbl ? `SELECT ${expr} AS ${m.name} FROM ${tbl}` : `SELECT ${expr} AS ${m.name}`;
+        setSfSql(querySf);
+      }
+    }
+    if (!queryDb && querySf) {
+      queryDb = querySf;
+      setDbSql(queryDb);
+    }
+
+    if (!querySf) {
+      setParity({
+        parity_passed: false,
+        error: 'Please select a metric or enter a Snowflake SQL query before running parity.',
+      });
+      return;
+    }
+
     setChecking(true);
     try {
       const res = await authFetch('/api/cross-platform/parity-check', {
@@ -1720,13 +1800,26 @@ function CrossPlatformView({ projectId }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           project_id: projectId || undefined,
-          sql_snowflake: sfSql,
-          sql_databricks: dbSql,
+          sql_snowflake: querySf,
+          sql_databricks: queryDb || undefined,
           snowflake_account_id: sfAccountId || undefined,
           databricks_account_id: dbAccountId || undefined,
         }),
       });
-      if (res.ok) setParity(await res.json());
+      if (res.ok) {
+        setParity(await res.json());
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setParity({
+          parity_passed: false,
+          error: err.detail || 'Parity check request failed',
+        });
+      }
+    } catch (exc) {
+      setParity({
+        parity_passed: false,
+        error: String(exc?.message || exc),
+      });
     } finally {
       setChecking(false);
     }
@@ -1738,7 +1831,7 @@ function CrossPlatformView({ projectId }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={CARD}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10 }}>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11.5, color: 'var(--text-secondary)' }}>
             Snowflake Account
             <select style={INPUT} value={sfAccountId} onChange={(e) => setSfAccountId(e.target.value)}>
@@ -1754,25 +1847,87 @@ function CrossPlatformView({ projectId }) {
             </select>
           </label>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11.5, color: 'var(--text-secondary)' }}>
+            Metric to Verify
+            <select
+              style={INPUT}
+              value={selectedMetric}
+              onChange={(e) => handleMetricSelect(e.target.value)}
+              aria-label="Metric to verify"
+            >
+              <option value="">{metrics.length ? 'Select metric to compile…' : (loadingMetrics ? 'Loading metrics…' : 'No metrics in project')}</option>
+              {metrics.map((m) => (
+                <option key={m.name} value={m.name}>
+                  {m.label ? `${m.label} (${m.name})` : m.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11.5, color: 'var(--text-secondary)' }}>
             Version Tag
             <input style={INPUT} value={versionTag} onChange={(e) => setVersionTag(e.target.value)} placeholder="Version tag" />
           </label>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button type="button" style={BTN_PRIMARY} onClick={loadPreview}><Layers size={13} /> Preview Snowflake · Databricks · Fabric</button>
-          <button type="button" style={BTN} disabled={checking} onClick={runParity}><Play size={13} /> {checking ? 'Running…' : 'Run Side-by-Side Parity'}</button>
+          <button type="button" style={BTN_PRIMARY} disabled={loadingPreview} onClick={loadPreview}>
+            <Layers size={13} /> {loadingPreview ? 'Compiling…' : 'Preview Snowflake · Databricks · Fabric'}
+          </button>
+          <button type="button" style={BTN} disabled={checking} onClick={runParity}>
+            <Play size={13} /> {checking ? 'Running Parity…' : 'Run Side-by-Side Parity'}
+          </button>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 8 }}>
-          <input style={INPUT} value={sfSql} onChange={(e) => setSfSql(e.target.value)} placeholder="Snowflake SQL" />
-          <input style={INPUT} value={dbSql} onChange={(e) => setDbSql(e.target.value)} placeholder="Databricks SQL" />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 10 }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11.5, color: 'var(--text-secondary)' }}>
+            Snowflake Query
+            <textarea
+              style={{ ...INPUT, height: 72, fontFamily: 'monospace', resize: 'vertical' }}
+              value={sfSql}
+              onChange={(e) => setSfSql(e.target.value)}
+              placeholder="Snowflake SQL (e.g. SELECT COUNT(*) AS Case_Count)"
+            />
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11.5, color: 'var(--text-secondary)' }}>
+            Databricks Query
+            <textarea
+              style={{ ...INPUT, height: 72, fontFamily: 'monospace', resize: 'vertical' }}
+              value={dbSql}
+              onChange={(e) => setDbSql(e.target.value)}
+              placeholder="Databricks SQL (e.g. SELECT COUNT(*) AS Case_Count)"
+            />
+          </label>
         </div>
         {parity && (
-          <div style={{ fontSize: 12, padding: 10, borderRadius: 8, background: 'var(--bg-app)', border: '1px solid var(--border-main)' }}>
-            <strong style={{ color: parity.parity_passed ? 'var(--color-success)' : 'var(--color-warning)' }}>
-              {parity.parity_passed ? 'PARITY PASSED' : 'PARITY MISMATCH / NOT EXECUTED'}
-            </strong>
-            <div>Snowflake: {parity.snowflake?.success ? `${parity.snowflake.row_count} row(s)` : (parity.snowflake?.error || 'failed')}</div>
-            <div>Databricks: {parity.databricks?.success ? `${parity.databricks.row_count} row(s)` : (parity.databricks?.error || 'failed')}</div>
+          <div style={{ fontSize: 12, padding: 12, borderRadius: 8, background: 'var(--bg-app)', border: '1px solid var(--border-main)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              {parity.parity_passed ? <CheckCircle2 size={15} color="var(--color-success)" /> : <AlertTriangle size={15} color="var(--color-warning)" />}
+              <strong style={{ color: parity.parity_passed ? 'var(--color-success)' : 'var(--color-warning)' }}>
+                {parity.parity_passed ? 'PARITY PASSED — RESULTS MATCH' : 'PARITY MISMATCH / NOT EXECUTED'}
+              </strong>
+            </div>
+            {parity.error && <div style={{ color: 'var(--color-warning)', fontSize: 11.5 }}>{parity.error}</div>}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
+              <div style={{ padding: 10, borderRadius: 6, background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+                <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>Snowflake Result</div>
+                <div style={{ fontSize: 11, color: parity.snowflake?.success ? 'var(--color-success)' : 'var(--text-secondary)' }}>
+                  {parity.snowflake?.success ? `${parity.snowflake.row_count} row(s) returned` : (parity.snowflake?.error || 'Execution failed')}
+                </div>
+                {parity.snowflake?.success && parity.snowflake.rows?.length > 0 && (
+                  <pre style={{ margin: '6px 0 0', fontSize: 10.5, maxHeight: 110, overflow: 'auto', color: 'var(--text-secondary)' }}>
+                    {JSON.stringify(parity.snowflake.rows.slice(0, 5), null, 2)}
+                  </pre>
+                )}
+              </div>
+              <div style={{ padding: 10, borderRadius: 6, background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+                <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>Databricks Result</div>
+                <div style={{ fontSize: 11, color: parity.databricks?.success ? 'var(--color-success)' : 'var(--text-secondary)' }}>
+                  {parity.databricks?.success ? `${parity.databricks.row_count} row(s) returned` : (parity.databricks?.error || 'Execution failed')}
+                </div>
+                {parity.databricks?.success && parity.databricks.rows?.length > 0 && (
+                  <pre style={{ margin: '6px 0 0', fontSize: 10.5, maxHeight: 110, overflow: 'auto', color: 'var(--text-secondary)' }}>
+                    {JSON.stringify(parity.databricks.rows.slice(0, 5), null, 2)}
+                  </pre>
+                )}
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -1780,7 +1935,7 @@ function CrossPlatformView({ projectId }) {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
           {Object.entries(preview.previews || {}).map(([platform, info]) => (
             <div key={platform} style={CARD}>
-              <strong style={{ textTransform: 'uppercase', fontSize: 12 }}>{platform} ({info.metric_count} metrics)</strong>
+              <strong style={{ textTransform: 'uppercase', fontSize: 12 }}>{platform} ({info.metric_count} metric{info.metric_count === 1 ? '' : 's'})</strong>
               {info.gaps?.length > 0 && <div style={{ fontSize: 11, color: 'var(--color-warning)' }}>{info.gaps.join(' · ')}</div>}
               <pre style={{ margin: 0, fontSize: 11, maxHeight: 260, overflow: 'auto', background: 'var(--bg-app)', padding: 10, borderRadius: 8 }}>{info.definition}</pre>
             </div>
