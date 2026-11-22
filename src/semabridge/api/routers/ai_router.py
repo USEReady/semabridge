@@ -680,11 +680,25 @@ def _execute_databricks(
         if not db_cfg or not db_cfg.host or not db_cfg.warehouse_id:
             return _not_executed("DATABRICKS", exec_sql, "missing Databricks host or warehouse.")
         token = make_target_emitter("databricks", db_cfg)._resolve_token()
+        if token and isinstance(token, str) and token.strip().startswith("{"):
+            try:
+                import json as _json
+                _b = _json.loads(token)
+                if isinstance(_b, dict):
+                    token = _b.get("token") or _b.get("access_token") or token
+            except Exception:
+                pass
         if not token:
             return _not_executed("DATABRICKS", exec_sql, "missing Databricks token.")
+        clean_host = str(db_cfg.host).replace("https://", "").replace("http://", "").rstrip("/")
+        db_payload = {"statement": exec_sql, "warehouse_id": db_cfg.warehouse_id, "wait_timeout": "15s"}
+        if getattr(db_cfg, "catalog", None):
+            db_payload["catalog"] = db_cfg.catalog
+        if getattr(db_cfg, "schema_name", None):
+            db_payload["schema"] = db_cfg.schema_name
         resp = _requests.post(
-            f"https://{db_cfg.host}/api/2.0/sql/statements",
-            json={"statement": exec_sql, "warehouse_id": db_cfg.warehouse_id, "wait_timeout": "15s"},
+            f"https://{clean_host}/api/2.0/sql/statements",
+            json=db_payload,
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
             timeout=20,
         )

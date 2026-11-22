@@ -467,8 +467,10 @@ def ensure_valid_token(account: Account, db: Session) -> str:
         try:
             import json
             bundle = json.loads(decrypted)
-            if isinstance(bundle, dict) and "access_token" in bundle:
-                return bundle["access_token"]
+            if isinstance(bundle, dict):
+                token_val = bundle.get("access_token") or bundle.get("token")
+                if token_val:
+                    return str(token_val)
         except (json.JSONDecodeError, TypeError):
             pass
         

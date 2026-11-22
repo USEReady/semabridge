@@ -195,6 +195,15 @@ def check_cross_platform_parity(
                     token = None
                     tok_msg = str(tok_err)
 
+                if token and isinstance(token, str) and token.strip().startswith("{"):
+                    try:
+                        import json as _json
+                        _b = _json.loads(token)
+                        if isinstance(_b, dict):
+                            token = _b.get("token") or _b.get("access_token") or token
+                    except Exception:
+                        pass
+
                 if not token:
                     db_data = {
                         "success": False,
@@ -204,9 +213,16 @@ def check_cross_platform_parity(
                         "row_count": 0,
                     }
                 else:
+                    clean_host = str(db_cfg.host).replace("https://", "").replace("http://", "").rstrip("/")
+                    db_payload = {"statement": db_sql, "warehouse_id": db_cfg.warehouse_id, "wait_timeout": "15s"}
+                    if getattr(db_cfg, "catalog", None):
+                        db_payload["catalog"] = db_cfg.catalog
+                    if getattr(db_cfg, "schema_name", None):
+                        db_payload["schema"] = db_cfg.schema_name
+
                     resp = _requests.post(
-                        f"https://{db_cfg.host}/api/2.0/sql/statements",
-                        json={"statement": db_sql, "warehouse_id": db_cfg.warehouse_id, "wait_timeout": "15s"},
+                        f"https://{clean_host}/api/2.0/sql/statements",
+                        json=db_payload,
                         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
                         timeout=20,
                     )
@@ -238,11 +254,31 @@ def check_cross_platform_parity(
     else:
         db_data = _execute_databricks(ExecuteQueryRequest(sql=db_sql, target="DATABRICKS", project_id=project_id, limit=100), db_sql, db_sql, None, owner_id=owner_id).model_dump()
 
+    def _val_eq(v1: Any, v2: Any) -> bool:
+        if v1 == v2:
+            return True
+        try:
+            if v1 is not None and v2 is not None:
+                return float(v1) == float(v2)
+        except (ValueError, TypeError):
+            pass
+        return str(v1 or "").strip().casefold() == str(v2 or "").strip().casefold()
+
+    def _rows_eq(r1: List[List[Any]], r2: List[List[Any]]) -> bool:
+        if len(r1) != len(r2):
+            return False
+        for row1, row2 in zip(r1, r2):
+            if len(row1) != len(row2):
+                return False
+            if not all(_val_eq(a, b) for a, b in zip(row1, row2)):
+                return False
+        return True
+
     parity_ok = bool(
         sf_data.get("success")
         and db_data.get("success")
         and sf_data.get("row_count") == db_data.get("row_count")
-        and sf_data.get("rows") == db_data.get("rows")
+        and _rows_eq(sf_data.get("rows") or [], db_data.get("rows") or [])
     )
     return {
         "parity_passed": parity_ok,
