@@ -1809,6 +1809,142 @@ class DatabricksPublisher:
         used_names.add(unique_name.upper())
         return unique_name
 
+    # ── Metric View public field names & business metadata ───────────────────
+    #
+    # ``MetricViewColumnBinding.projected_name`` (``sale_customerkey``) is an
+    # INTERNAL alias of the inline source query; measure expressions and the
+    # schema-first stub depend on it. What users, Genie and the catalog see is
+    # the dimension ``name:``. That public name follows the same single rule the
+    # dry run shows (``databricks_target_name``), so a reviewed/edited name is
+    # exactly what lands in Unity Catalog. A metric view is one flat namespace,
+    # so a name already taken gets the ``<Table>_<Column>`` form (the same
+    # TABLE_COL rule as collision resolution), then a numeric suffix.
+
+    _MAX_METRIC_VIEW_SYNONYMS = 10
+
+    @staticmethod
+    def shared_column_names(sml_model: SMLModel) -> set[str]:
+        """Column names (upper-cased Databricks names) found in more than one table.
+
+        Every such column is published as ``<Table>_<Column>`` -- all of them,
+        not "first one wins" -- so the name never depends on which table the
+        view is rooted at, and the dry run can show it up front.
+        """
+        from semabridge.utils.identifiers import databricks_target_name
+
+        tables_by_name: dict[str, set[str]] = {}
+        for ds in sml_model.datasets or []:
+            for col in ds.columns or []:
+                name = databricks_target_name(col.unique_name, entity_kind="column").upper()
+                tables_by_name.setdefault(name, set()).add(str(ds.unique_name))
+        return {name for name, tables in tables_by_name.items() if len(tables) > 1}
+
+    def _public_field_name(
+        self,
+        dataset: Optional[SMLDataset],
+        semantic_name: str,
+        used_names: set[str],
+        *,
+        kind: str = "column",
+    ) -> str:
+        from semabridge.utils.identifiers import databricks_target_name
+
+        base = databricks_target_name(semantic_name, entity_kind=kind)
+        if kind != "column":
+            # Measures usually live in a measures-only table ("Project
+            # Measures"), so a table prefix reads badly; a clash with a
+            # dimension takes the MSR_ prefix (same vocabulary as collision
+            # resolution). display_name keeps the business label.
+            dataset = None
+            if base.upper() in used_names:
+                base = f"MSR_{base}"
+        table = self._sanitize_identifier(getattr(dataset, "unique_name", "") or "")
+        shared = kind == "column" and base.upper() in getattr(self, "_shared_column_names", set())
+        if not shared and base.upper() not in used_names:
+            used_names.add(base.upper())
+            return base
+        if table and base.upper().startswith(f"{table.upper()}_"):
+            # Already table-qualified (Customer.customer_key): keep it if free.
+            if base.upper() not in used_names:
+                used_names.add(base.upper())
+                return base
+        elif table:
+            qualified = f"{table}_{base}"
+            if qualified.upper() not in used_names:
+                used_names.add(qualified.upper())
+                return qualified
+            base = qualified
+        counter = 2
+        while f"{base}_{counter}".upper() in used_names:
+            counter += 1
+        used_names.add(f"{base}_{counter}".upper())
+        return f"{base}_{counter}"
+
+    def _append_metric_view_field_metadata(
+        self,
+        lines: list[str],
+        name: str,
+        element: Any,
+    ) -> None:
+        """Append spec-1.1 ``display_name`` / ``comment`` / ``synonyms`` for one field.
+
+        Mirrors Snowflake: a comment only when the source has a real
+        description (nothing invented), synonyms when present, and both obey
+        the same emit_ddl_comments / emit_ddl_synonyms switches. The display
+        name is the business label from the BI model (e.g. "Order Quantity").
+        """
+        if element is None:
+            return
+        from semabridge.connectors.synonym_clause import (
+            clean_synonyms,
+            ddl_comments_enabled,
+            ddl_synonyms_enabled,
+        )
+
+        yaml_quote = self._yaml_quote
+        label = re.sub(r"\s+", " ", str(getattr(element, "label", "") or "")).strip()
+        if label and label != name:
+            lines.append(f"    display_name: {yaml_quote(label[:255])}")
+        description = re.sub(r"\s+", " ", str(getattr(element, "description", "") or "")).strip()
+        if description and ddl_comments_enabled():
+            lines.append(f"    comment: {yaml_quote(description[:1000])}")
+        if ddl_synonyms_enabled():
+            taken = {name.casefold(), label.casefold()}
+            synonyms = [
+                s[:255] for s in clean_synonyms(getattr(element, "synonyms", None) or [])
+                if s.casefold() not in taken
+            ][: self._MAX_METRIC_VIEW_SYNONYMS]
+            if synonyms:
+                lines.append("    synonyms:")
+                for syn in synonyms:
+                    lines.append(f"      - {yaml_quote(syn)}")
+
+    @staticmethod
+    def _window_order_targets(resolved_measures: list[ResolvedMeasure]) -> set[str]:
+        """Lower-cased columns a window measure orders by (must stay dimensions)."""
+        targets: set[str] = set()
+        for rm in resolved_measures:
+            for spec in rm.window or []:
+                raw = str((spec or {}).get("order") or "").strip().strip("`")
+                if raw:
+                    targets.add(re.sub(r"[^0-9a-z_]", "_", raw.lower()))
+        return targets
+
+    def _binding_is_dimension(
+        self,
+        binding: MetricViewColumnBinding,
+        forced: Optional[set[str]] = None,
+    ) -> bool:
+        if binding.include_as_dimension:
+            return True
+        if not forced:
+            return False
+        names = {
+            re.sub(r"[^0-9a-z_]", "_", str(n or "").lower())
+            for n in (binding.semantic_name, binding.source_column, binding.projected_name)
+        }
+        return bool(names & forced)
+
     # ── Metric View Probe ────────────────────────────────────────────────────
 
     def _probe_metric_view_support(self) -> bool:
@@ -2155,7 +2291,6 @@ class DatabricksPublisher:
         sml_model: SMLModel,
     ) -> list[MetricViewColumnBinding]:
         """Build a stable source/projection mapping for metric-view generation."""
-        relationship_cols = self._get_relationship_columns_for_dataset(dataset, sml_model)
         used_projection_names: set[str] = set()
         bindings: list[MetricViewColumnBinding] = []
         projection_prefix = self._metric_view_projection_prefix(dataset)
@@ -2173,9 +2308,11 @@ class DatabricksPublisher:
             )
             if not source_column:
                 continue
-            include_as_dimension = not (
-                col.is_hidden and col.unique_name not in relationship_cols and not col.is_key
-            )
+            # Hidden in the BI model => not a user-facing dimension (this is
+            # where surrogate keys like CustomerKey live). Joins use source
+            # columns, not dimensions, so relationship keys need not be
+            # dimensions; window ``order`` columns are re-added by the caller.
+            include_as_dimension = not col.is_hidden
             bindings.append(
                 MetricViewColumnBinding(
                     semantic_name=col.unique_name,
@@ -2608,6 +2745,7 @@ class DatabricksPublisher:
         Returns:
             YAML string for the metric view body.
         """
+        self._shared_column_names = self.shared_column_names(sml_model)
         model_label = self._escape_literal(sml_model.label or sml_model.unique_name)
         ds_label = self._escape_literal(dataset.label or dataset.unique_name)
         yaml_quote = self._yaml_quote
@@ -2713,30 +2851,30 @@ class DatabricksPublisher:
         used_dimension_names: set[str] = set()
         emitted_dimensions: list[tuple[str, str, str]] = []
         
-        # First, emit explicit dimensions from dataset.columns
+        # First, emit explicit dimensions from dataset.columns (public names:
+        # see _public_field_name; the expr keeps the internal source alias).
+        forced = self._window_order_targets(resolved_measures)
         for binding in bindings:
-            if not binding.include_as_dimension:
+            if not self._binding_is_dimension(binding, forced):
                 continue
-            lines.append(f"  - name: {yaml_quote(binding.projected_name)}")
+            public_name = self._public_field_name(dataset, binding.semantic_name, used_dimension_names)
+            lines.append(f"  - name: {yaml_quote(public_name)}")
             lines.append(f"    expr: {yaml_quote(f'`{binding.projected_name}`')}")
-            used_dimension_names.add(binding.projected_name.upper())
-            emitted_dimensions.append((binding.projected_name, binding.semantic_name, binding.source_column))
+            self._append_metric_view_field_metadata(lines, public_name, dataset.get_column(binding.semantic_name))
+            emitted_dimensions.append((public_name, binding.semantic_name, binding.source_column))
             dimensions_added += 1
-        
+
         # Then, emit auto-discovered dimensions from inline source columns when dataset.columns is empty
         # or when bindings didn't resolve all columns but measures reference them
         if inline_source_columns:
-            projection_prefix = self._metric_view_projection_prefix(dataset)
             for col_name in sorted(inline_source_columns):
-                projected_name = self._make_unique_projected_name(
-                    f"{projection_prefix}_{self._sanitize_identifier(col_name).lower()}",
-                    used_dimension_names,
-                    suffix="dim",
-                )
-                lines.append(f"  - name: {yaml_quote(projected_name)}")
-                lines.append(f"    expr: {yaml_quote(f'`{projected_name}`')}")
-                used_dimension_names.add(projected_name.upper())
-                emitted_dimensions.append((projected_name, col_name, col_name))
+                # The inline source projects these under their own name
+                # (``CAST(NULL AS ..) AS `col```), so the expr must use it --
+                # a ``<prefix>_col`` alias here does not exist in the source.
+                public_name = self._public_field_name(dataset, col_name, used_dimension_names)
+                lines.append(f"  - name: {yaml_quote(public_name)}")
+                lines.append(f"    expr: {yaml_quote(f'`{col_name}`')}")
+                emitted_dimensions.append((public_name, col_name, col_name))
                 dimensions_added += 1
         
         if dimensions_added == 0:
@@ -2745,6 +2883,7 @@ class DatabricksPublisher:
         lines.append("")
         lines.append("measures:")
         measures_added = 0
+        metrics_by_name = self._metrics_by_measure_name(sml_model)
         emitted_measure_names: list[str] = []
         for rm in resolved_measures:
             if not rm.sql_expression:
@@ -2759,22 +2898,12 @@ class DatabricksPublisher:
                 )
                 continue
 
-            # Determine if the measure name needs prefixing
-            # Prefix if measure name matches a column name (from dataset.columns or inline_source_columns)
-            measure_normalized = self._sanitize_identifier(rm.name).upper()
-            column_names_upper = {col.unique_name.upper() for col in (dataset.columns or [])}
-            # Also include columns extracted from inline sources
-            column_names_upper.update({col.upper() for col in inline_source_columns})
-            measure_name_matches_column = measure_normalized in column_names_upper
-            
-            if measure_name_matches_column:
-                # Add table alias prefix to match dimension naming convention
-                prefixed_measure_name = self._prefix_metric_view_measure_name(
-                    dataset, rm.name, used_dimension_names
-                )
-            else:
-                # Use measure name as-is when it doesn't match any column
-                prefixed_measure_name = self._sanitize_identifier(rm.name)
+            # Same flat namespace as the dimensions: a measure keeps its name
+            # unless a dimension (or earlier measure) already holds it, then
+            # gets the <Table>_<Name> form -- never a truncated alias.
+            prefixed_measure_name = self._public_field_name(
+                dataset, rm.name, used_dimension_names, kind="metric"
+            )
 
             if rm.confidence == CONFIDENCE_LOW and self._dbx_behavior.enable_low_confidence_drafts:
                 warning = " ".join(rm.warnings).replace('"', "'") if rm.warnings else "LOW CONFIDENCE"
@@ -2790,6 +2919,9 @@ class DatabricksPublisher:
             safe_expr = self._ensure_aggregate_measure_expr(dbx_expr)
             lines.append(f"  - name: {yaml_quote(prefixed_measure_name)}")
             lines.append(f"    expr: {yaml_quote(safe_expr)}")
+            self._append_metric_view_field_metadata(
+                lines, prefixed_measure_name, metrics_by_name.get(rm.name)
+            )
             if rm.window:
                 self._append_window_measure_yaml(lines, rm.window, emitted_dimensions)
             emitted_measure_names.append(prefixed_measure_name)
@@ -4809,6 +4941,16 @@ class DatabricksPublisher:
 
         return names_by_metric_id
 
+    def _metrics_by_measure_name(self, sml_model: SMLModel) -> dict[str, SMLMetric]:
+        """Measure name (as emitted by ``_build_metric_name_index``) -> its SML metric."""
+        index = self._build_metric_name_index(sml_model)
+        out: dict[str, SMLMetric] = {}
+        for metric in sml_model.metrics:
+            name = index.get(id(metric))
+            if name and name not in out:
+                out[name] = metric
+        return out
+
     def _build_llm_schema_context(self, sml_model: SMLModel) -> dict[str, list[str]]:
         """Build a lightweight schema context for LLM-based DAX translation."""
         context: dict[str, list[str]] = {}
@@ -6560,7 +6702,8 @@ class DatabricksPublisher:
         resolved_measures: list[ResolvedMeasure],
         root_bindings: list[MetricViewColumnBinding],
     ) -> str:
-        """Build YAML for model-level metric view with TPC-H-style dimensions when available."""
+        """Build YAML for one model-level metric view (root table + joined dimensions)."""
+        self._shared_column_names = self.shared_column_names(sml_model)
         yaml_quote = self._yaml_quote
         model_label = self._escape_literal(sml_model.label or sml_model.unique_name)
 
@@ -6608,52 +6751,20 @@ class DatabricksPublisher:
         lines.append("")
         lines.append("dimensions:")
 
-        root_name = self._sanitize_identifier(root_dataset.unique_name).lower()
-        has_tpch_shape = root_name == "orders"
         dimensions_added = 0
         used_dimension_names: set[str] = set()
-        if has_tpch_shape:
-            tpch_dimension_lines = [
-                "  - name: order_date",
-                "    expr: o_orderdate",
-                "  - name: order_month",
-                "    expr: \"DATE_TRUNC('MONTH', o_orderdate)\"",
-                "  - name: order_year",
-                "    expr: YEAR(o_orderdate)",
-                "  - name: order_status",
-                "    expr: |-",
-                "      CASE o_orderstatus",
-                "        WHEN 'O' THEN 'Open'",
-                "        WHEN 'P' THEN 'Processing'",
-                "        WHEN 'F' THEN 'Fulfilled'",
-                "      END",
-                "  - name: order_priority",
-                "    expr: \"SPLIT(o_orderpriority, '-')[0]\"",
-                "  - name: customer_name",
-                "    expr: customer.c_name",
-                "  - name: market_segment",
-                "    expr: customer.c_mktsegment",
-                "  - name: customer_nation",
-                "    expr: customer.nation.n_name",
-            ]
-            lines.extend(tpch_dimension_lines)
-            dimensions_added += len(tpch_dimension_lines) // 2
-            used_dimension_names.update({
-                "ORDER_DATE",
-                "ORDER_MONTH",
-                "ORDER_YEAR",
-                "ORDER_STATUS",
-                "ORDER_PRIORITY",
-                "CUSTOMER_NAME",
-                "MARKET_SEGMENT",
-                "CUSTOMER_NATION",
-            })
-        else:
-            dimensions_added += self._append_model_level_dimension_bindings(
-                lines,
-                root_bindings,
-                used_dimension_names,
-            )
+        # (public name, semantic name, source column) of every emitted
+        # dimension -- window ``order`` and materialization reference these.
+        emitted_dimensions: list[tuple[str, str, str]] = []
+        forced = self._window_order_targets(resolved_measures)
+        dimensions_added += self._append_model_level_dimension_bindings(
+            lines,
+            root_bindings,
+            used_dimension_names,
+            dataset=root_dataset,
+            emitted=emitted_dimensions,
+            forced=forced,
+        )
 
         if self._dbx_behavior.enable_metric_view_joins and self._dbx_behavior.enable_cross_table_joins:
             join_builder = JoinTreeBuilder(sml_model)
@@ -6666,6 +6777,8 @@ class DatabricksPublisher:
                 join_tree,
                 used_dimension_names,
                 lines,
+                emitted=emitted_dimensions,
+                forced=forced,
             )
 
         if dimensions_added == 0:
@@ -6673,19 +6786,23 @@ class DatabricksPublisher:
 
         lines.append("")
         lines.append("measures:")
-        emitted_dimensions: list[tuple[str, str, str]] = [
-            (b.projected_name, b.semantic_name, b.source_column)
-            for b in root_bindings
-            if b.include_as_dimension
-        ]
+        metrics_by_name = self._metrics_by_measure_name(sml_model)
         emitted_measure_names: list[str] = []
         for rm in resolved_measures:
             expr = self._normalize_metric_view_sql_expression(rm.sql_expression)
-            lines.append(f"  - name: {yaml_quote(rm.name)}")
+            metric = metrics_by_name.get(rm.name)
+            measure_name = self._public_field_name(
+                sml_model.get_dataset(metric.dataset) if metric is not None else None,
+                rm.name,
+                used_dimension_names,
+                kind="metric",
+            )
+            lines.append(f"  - name: {yaml_quote(measure_name)}")
             lines.append(f"    expr: {yaml_quote(expr)}")
+            self._append_metric_view_field_metadata(lines, measure_name, metric)
             if rm.window:
                 self._append_window_measure_yaml(lines, rm.window, emitted_dimensions)
-            emitted_measure_names.append(rm.name)
+            emitted_measure_names.append(measure_name)
 
         self._append_metric_view_materialization_yaml(
             lines,
@@ -6701,22 +6818,25 @@ class DatabricksPublisher:
         lines: list[str],
         bindings: list[MetricViewColumnBinding],
         used_dimension_names: set[str],
+        *,
+        dataset: Optional[SMLDataset] = None,
+        emitted: Optional[list[tuple[str, str, str]]] = None,
+        forced: Optional[set[str]] = None,
     ) -> int:
         """Append metric-view dimension bindings for the root dataset."""
         yaml_quote = self._yaml_quote
         dimensions_added = 0
 
         for binding in bindings:
-            if not binding.include_as_dimension:
+            if not self._binding_is_dimension(binding, forced):
                 continue
-            unique_name = self._make_unique_projected_name(
-                binding.projected_name,
-                used_dimension_names,
-                suffix="dim",
-            )
-            lines.append(f"  - name: {yaml_quote(unique_name)}")
+            public_name = self._public_field_name(dataset, binding.semantic_name, used_dimension_names)
+            lines.append(f"  - name: {yaml_quote(public_name)}")
             lines.append(f"    expr: {yaml_quote(f'`{binding.projected_name}`')}")
-            used_dimension_names.add(unique_name.upper())
+            column = dataset.get_column(binding.semantic_name) if dataset is not None else None
+            self._append_metric_view_field_metadata(lines, public_name, column)
+            if emitted is not None:
+                emitted.append((public_name, binding.semantic_name, binding.source_column))
             dimensions_added += 1
 
         return dimensions_added
@@ -6728,6 +6848,9 @@ class DatabricksPublisher:
         used_dimension_names: set[str],
         lines: list[str],
         path_prefix: str = "",
+        *,
+        emitted: Optional[list[tuple[str, str, str]]] = None,
+        forced: Optional[set[str]] = None,
     ) -> int:
         """Append dimensions for joined datasets into a single model-level metric view.
 
@@ -6797,7 +6920,7 @@ class DatabricksPublisher:
 
             pruned_count = 0
             for binding in bindings:
-                if not binding.include_as_dimension:
+                if not self._binding_is_dimension(binding, forced):
                     continue
 
                 col_lower = binding.source_column.strip().lower()
@@ -6823,15 +6946,15 @@ class DatabricksPublisher:
                     )
                     continue
 
-                unique_name = self._make_unique_projected_name(
-                    binding.projected_name,
-                    used_dimension_names,
-                    suffix="dim",
-                )
+                public_name = self._public_field_name(dataset, binding.semantic_name, used_dimension_names)
                 expr = f"{join_path}.{binding.source_column}"
-                lines.append(f"  - name: {self._yaml_quote(unique_name)}")
+                lines.append(f"  - name: {self._yaml_quote(public_name)}")
                 lines.append(f"    expr: {self._yaml_quote(expr)}")
-                used_dimension_names.add(unique_name.upper())
+                self._append_metric_view_field_metadata(
+                    lines, public_name, dataset.get_column(binding.semantic_name)
+                )
+                if emitted is not None:
+                    emitted.append((public_name, binding.semantic_name, binding.source_column))
                 dimensions_added += 1
 
             if pruned_count:
@@ -6848,6 +6971,8 @@ class DatabricksPublisher:
                     used_dimension_names,
                     lines,
                     path_prefix=join_path,
+                    emitted=emitted,
+                    forced=forced,
                 )
 
         return dimensions_added

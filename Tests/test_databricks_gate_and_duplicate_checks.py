@@ -398,3 +398,53 @@ def test_find_removed_fields_matches_databricks_deployed_view_name(monkeypatch):
     assert findings[0]["count"] == 2
     removed_names = {r["name"] for r in findings[0]["removed"]}
     assert removed_names == {"Sales.LegacyCol", "Old Metric"}
+
+
+def test_build_config_yaml_from_request_preserves_databricks_catalog_for_config_hash():
+    """Wizard multi-model dry run must preserve Databricks target.catalog (and options) so
+    dry-run config_hash matches the saved project YAML's config_hash at sync time."""
+    import yaml as _yaml
+    from semabridge.api.controllers.mappings_controller import _build_config_yaml_from_request
+
+    dry_run_yaml = _build_config_yaml_from_request(
+        source_config={"type": "pbix"},
+        target_config={
+            "type": "databricks",
+            "catalog": "workspace",
+            "schema": "default",
+            "warehouse_id": "wh-123",
+            "identity_id": "acct-1",
+            "view_prefix": "mv",
+            "multi_fact_mode": "separate_views",
+            "enable_materialization": True,
+            "materialization_schedule": "every 1 day",
+        },
+        selected_sources=["/tmp/Adventure Works DW 2020 1.pbix"],
+        project_name="dry-run-preview",
+    )
+    dry_run_cfg = _yaml.safe_load(dry_run_yaml)
+    assert dry_run_cfg["targets"][0]["catalog"] == "workspace"
+    assert dry_run_cfg["targets"][0]["schema"] == "default"
+    assert dry_run_cfg["targets"][0]["warehouse_id"] == "wh-123"
+    assert dry_run_cfg["targets"][0]["multi_fact_mode"] == "separate_views"
+    assert dry_run_cfg["targets"][0]["enable_materialization"] is True
+
+    saved_project_cfg = {
+        "project_name": "dbt5",
+        "source": {"type": "pbix", "mode": "multiple", "models": ["/tmp/Adventure Works DW 2020 1.pbix"]},
+        "targets": [{
+            "type": "databricks",
+            "catalog": "workspace",
+            "schema": "default",
+            "identity_id": "acct-1",
+        }],
+    }
+    job = {
+        "model_label": "Adventure Works DW 2020 1",
+        "resolved_display_name": "ADVENTURE_WORKS_DW_2020_1",
+        "multi_mode": True,
+        "physical_namespace": "ADVENTURE_WORKS_DW_2020_1",
+    }
+    assert model_config_fingerprint(dry_run_cfg, job, "databricks") == model_config_fingerprint(
+        saved_project_cfg, job, "databricks"
+    )

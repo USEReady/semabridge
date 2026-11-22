@@ -161,7 +161,7 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
   const selfReportedEstimateText = getSelfReportedEstimateText(row);
   const enrichmentUnverifiableCaveat = getEnrichmentUnverifiableCaveat(row);
   const sharedNameNote = Array.isArray(row.shared_name_tables) && row.shared_name_tables.length > 1
-    ? ((row.advisory_notes || []).find(n => String(n).includes('ambiguous')) || `Also named this in: ${row.shared_name_tables.join(', ')}`)
+    ? ((row.advisory_notes || []).find(n => /ambiguous|published as/.test(String(n))) || `Also named this in: ${row.shared_name_tables.join(', ')}`)
     : '';
   const isMeasure = String(row.field_type || row.entity_kind || '').toLowerCase() === 'measure';
   const allSynonyms = Array.isArray(row.synonyms) ? row.synonyms : [];
@@ -483,7 +483,9 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
               cursor: 'help',
             }}
           >
-            Also in {row.shared_name_tables.length - 1} other table{row.shared_name_tables.length > 2 ? 's' : ''}
+            {row.databricks_deployed_name
+              ? `Publishes as ${row.databricks_deployed_name}`
+              : `Also in ${row.shared_name_tables.length - 1} other table${row.shared_name_tables.length > 2 ? 's' : ''}`}
             <Info size={10} style={{ flexShrink: 0 }} />
           </span>
         )}
@@ -1233,7 +1235,7 @@ function NameChangesPanel({ rows, onEdit, deployedNamesKnown = false, targetPlat
 }
 
 /** One line for the cross-table shared names (never blocking). */
-function SharedNamesNote({ rows }) {
+function SharedNamesNote({ rows, targetPlatform = 'snowflake' }) {
   const names = useMemo(() => {
     const seen = new Map();
     (rows || []).forEach((row) => {
@@ -1250,8 +1252,10 @@ function SharedNamesNote({ rows }) {
       <Info size={14} style={{ flexShrink: 0, marginTop: 1, color: 'var(--text-tertiary)' }} />
       <span>
         {names.length} column name{names.length > 1 ? 's are' : ' is'} used in more than one table: {sample}
-        {names.length > 3 ? ` and ${names.length - 3} more` : ''}. They deploy fine as TABLE.NAME; rename one
-        (Edit) only if people query the view by the bare name.
+        {names.length > 3 ? ` and ${names.length - 3} more` : ''}.{' '}
+        {String(targetPlatform).toLowerCase().startsWith('databricks')
+          ? 'A Databricks metric view has one flat list of fields, so each copy is published as Table_Column. Rename one (Edit) to choose a different name.'
+          : 'They deploy fine as TABLE.NAME; rename one (Edit) only if people query the view by the bare name.'}
       </span>
     </div>
   );
@@ -1807,7 +1811,7 @@ export default function DryRunMappingTable({
       <NameChangesPanel rows={mappings} onEdit={onEdit} deployedNamesKnown={deployedNamesKnown} targetPlatform={targetPlatform} />
 
       {/* ── Same column name in several tables (info only). ── */}
-      <SharedNamesNote rows={mappings} />
+      <SharedNamesNote rows={mappings} targetPlatform={targetPlatform} />
 
       {/* ── Columns table ────────────────────────────────────────────────────── */}
       {mappings.length === 0 ? (

@@ -171,6 +171,9 @@ export function normalizeRows(data) {
         // Tables that have a column with this same name (info only; see
         // project_mapping_engine._flag_hidden_collisions).
         shared_name_tables: Array.isArray(row?.shared_name_tables) ? row.shared_name_tables : [],
+        // Databricks only: the name a shared column is published under
+        // (<Table>_<Column>; a metric view has one flat list of fields).
+        databricks_deployed_name: row?.databricks_deployed_name ? String(row.databricks_deployed_name) : '',
         // Original source name when conversion renamed the column because
         // another column of its table becomes the same Snowflake name.
         renamed_from: row?.renamed_from ? String(row.renamed_from) : '',

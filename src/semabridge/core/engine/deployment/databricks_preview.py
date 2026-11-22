@@ -37,6 +37,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
 
 from semabridge.core.engine.context import RunContext
+from semabridge.core.engine.exceptions import DeploymentError
 from semabridge.utils.identifiers import (
     databricks_sanitize_identifier,
     databricks_target_name,
@@ -422,6 +423,32 @@ def preview_databricks_plan(
                 from semabridge.connectors.databricks_publisher import DatabricksPublisher
 
                 active_publisher = DatabricksPublisher(dbx_cfg, behavior=context.behavior)
+                if lookup:
+                    from semabridge.core.engine.deployment.databricks import (
+                        ensure_databricks_target_namespace,
+                    )
+
+                    try:
+                        resolved = ensure_databricks_target_namespace(
+                            context, dbx_cfg, publisher=active_publisher
+                        )
+                    except DeploymentError as ns_exc:
+                        # Same check the sync runs: surface it in the dry run
+                        # instead of a plan that can never deploy.
+                        return {
+                            "target": default_target,
+                            "source": "publisher",
+                            "views": [],
+                            "missing_tables": [],
+                            "blocked": [str(ns_exc)],
+                            "warnings": [],
+                            "error": str(ns_exc),
+                        }
+                    if resolved is not dbx_cfg:
+                        dbx_cfg = resolved
+                        catalog, schema = _catalog_and_schema(dbx_cfg)
+                        default_target = f"{catalog}.{schema}"
+                        active_publisher = DatabricksPublisher(dbx_cfg, behavior=context.behavior)
             except Exception as init_exc:
                 logger.warning(
                     "Databricks dry-run preview: could not initialize DatabricksPublisher (%s); "

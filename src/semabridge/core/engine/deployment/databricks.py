@@ -52,9 +52,26 @@ def _extract_databricks_target_dict(context: RunContext) -> Dict[str, Any]:
     target_dict: Dict[str, Any] = {}
     target_configs = getattr(context.config, "targets", None) or []
     for tc in target_configs:
-        if isinstance(tc, dict) and str(tc.get("type") or "").strip().lower() == "databricks":
-            target_dict.update(tc)
-            break
+        if isinstance(tc, dict):
+            if str(tc.get("type") or "").strip().lower() == "databricks":
+                target_dict.update(tc)
+                break
+        else:
+            tc_type = str(getattr(getattr(tc, "type", None), "value", getattr(tc, "type", "")) or "").strip().lower()
+            if tc_type == "databricks":
+                for attr, key in (
+                    ("identity_id", "identity_id"),
+                    ("catalog", "catalog"),
+                    ("database", "database"),
+                    ("schema_name", "schema"),
+                    ("schema", "schema"),
+                    ("warehouse_id", "warehouse_id"),
+                    ("warehouse", "warehouse"),
+                ):
+                    val = getattr(tc, attr, None)
+                    if val and not target_dict.get(key):
+                        target_dict[key] = str(val).strip()
+                break
     target_cfg = getattr(context.config, "target", None)
     if target_cfg is not None:
         for attr, key in (
@@ -299,6 +316,98 @@ def _auto_discover_warehouse_id(cfg) -> str:
     return ""
 
 
+def _first_column(rows: Any) -> list[str]:
+    """First column of every row returned by ``publisher.execute_statements``."""
+    values: list[str] = []
+    for payload in rows or []:
+        result = payload.get("result") if isinstance(payload, dict) else None
+        data = result.get("data_array") if isinstance(result, dict) else None
+        for row in data or []:
+            if isinstance(row, (list, tuple)) and row and row[0] is not None:
+                values.append(str(row[0]).strip())
+    return [v for v in values if v]
+
+
+def _project_chose(context: RunContext, *keys: str) -> bool:
+    target = _extract_databricks_target_dict(context)
+    return any(str(target.get(k) or "").strip() for k in keys)
+
+
+def ensure_databricks_target_namespace(
+    context: RunContext,
+    cfg: Any,
+    *,
+    publisher: Any,
+) -> Any:
+    """Verify the target catalog.schema exists before anything is deployed.
+
+    A catalog/schema the project never chose (the old hard-coded ``main`` /
+    ``semabridge`` defaults) falls back to the workspace's default catalog
+    (``current_catalog()``) and its ``default`` schema. A catalog/schema the
+    project *did* choose is never silently replaced: a missing one fails fast
+    with the names that do exist, instead of every metric view failing later
+    with NO_SUCH_CATALOG_EXCEPTION. Nothing is ever created.
+
+    Returns ``cfg`` unchanged, or a copy pointing at the resolved namespace.
+    """
+    catalog = str(getattr(cfg, "catalog", "") or "").strip()
+    schema = str(getattr(cfg, "schema_name", "") or "").strip()
+
+    catalogs = _first_column(publisher.execute_statements(["SHOW CATALOGS"]))
+    if not catalogs:
+        # The lookup itself returned nothing we can trust; let deploy proceed
+        # and report the real error rather than guessing.
+        logger.warning("Databricks SHOW CATALOGS returned no rows; skipping namespace check")
+        return cfg
+    by_lower = {c.lower(): c for c in catalogs}
+
+    if catalog.lower() not in by_lower:
+        if _project_chose(context, "catalog", "database"):
+            raise DeploymentError(
+                f"Databricks catalog '{catalog}' was not found in this workspace (or this "
+                f"identity cannot see it). Available catalogs: {', '.join(sorted(catalogs))}. "
+                "Set 'Target Unity Catalog' in the project settings to one of these."
+            )
+        default_catalog = (_first_column(publisher.execute_statements(["SELECT current_catalog()"])) or [""])[0]
+        if default_catalog.lower() not in by_lower:
+            raise DeploymentError(
+                f"No target catalog is set for this project and the default '{catalog}' does not "
+                f"exist. Available catalogs: {', '.join(sorted(catalogs))}. "
+                "Set 'Target Unity Catalog' in the project settings."
+            )
+        logger.warning(
+            "Databricks catalog '%s' does not exist; using the workspace default catalog '%s'. "
+            "Set 'Target Unity Catalog' on the project to make this explicit.",
+            catalog,
+            default_catalog,
+        )
+        catalog = by_lower[default_catalog.lower()]
+    else:
+        catalog = by_lower[catalog.lower()]
+
+    schemas = _first_column(publisher.execute_statements([f"SHOW SCHEMAS IN `{catalog.replace('`', '')}`"]))
+    schemas_lower = {s.lower(): s for s in schemas}
+    if schemas and schema.lower() not in schemas_lower:
+        if _project_chose(context, "schema", "schema_name") or "default" not in schemas_lower:
+            raise DeploymentError(
+                f"Databricks schema '{catalog}.{schema}' does not exist. SemaBridge never creates "
+                f"schemas. Create it in Databricks, or pick one of: {', '.join(sorted(schemas))}."
+            )
+        logger.warning(
+            "Databricks schema '%s.%s' does not exist; using '%s.default'.", catalog, schema, catalog
+        )
+        schema = schemas_lower["default"]
+    elif schemas:
+        schema = schemas_lower[schema.lower()]
+
+    updates: Dict[str, Any] = {}
+    if catalog != getattr(cfg, "catalog", None):
+        updates["catalog"] = catalog
+    if schema != getattr(cfg, "schema_name", None):
+        updates["schema_name"] = schema
+    return cfg.model_copy(update=updates) if updates else cfg
+
+
 def _deploy_to_databricks(self, context: RunContext) -> None:
     """Deploy SML metadata projection and measure views to Databricks.
 
@@ -318,6 +427,10 @@ def _deploy_to_databricks(self, context: RunContext) -> None:
                 "Create a SQL Warehouse in Databricks or set SQL Warehouse ID in Settings > Connections."
             )
     publisher = DatabricksPublisher(databricks_cfg, behavior=context.behavior)
+    resolved_cfg = ensure_databricks_target_namespace(context, databricks_cfg, publisher=publisher)
+    if resolved_cfg is not databricks_cfg:
+        databricks_cfg = resolved_cfg
+        publisher = DatabricksPublisher(databricks_cfg, behavior=context.behavior)
     context.target_artifact_path = publisher.publish(context.sml_model)
     persist_deploy_events(
         list(getattr(publisher, "deploy_events", None) or []),

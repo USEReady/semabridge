@@ -320,8 +320,13 @@ class ExecutionEngine:
                                 from semabridge.auth.credential_builder import build_databricks_config
 
                                 context.config = context.config.model_copy()
+                                # Use the already-built config only: the lazy
+                                # ``config.databricks`` property reads DATABRICKS_*
+                                # from the environment and fails validation
+                                # (host required) when the credentials live in
+                                # the Account, which is the normal case.
                                 context.config._databricks = build_databricks_config(
-                                    account, session, context.config.databricks
+                                    account, session, getattr(context.config, "_databricks", None)
                                 )
                             else:
                                 logger.warning(

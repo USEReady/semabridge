@@ -1027,8 +1027,8 @@ export default function ProjectConfigPage({ embedded = false } = {}) {
         workspace_id: String(source.workspace_id || ''),
         database: String(source.database || ''),
         schema: String(source.schema || ''),
-        target_database: String(target.database || ''),
-        target_schema: String(target.schema || ''),
+        target_database: String(target.catalog || target.database || ''),
+        target_schema: String(target.schema || target.schema_name || ''),
         target_identity_id: String(target.identity_id || ''),
         target_workspace_id: String(target.workspace_id || ''),
         allow_models: allowModels.join(', '),
@@ -1165,6 +1165,15 @@ export default function ProjectConfigPage({ embedded = false } = {}) {
       if (formToUse.target_schema) nextTree.target.schema = formToUse.target_schema;
       else delete nextTree.target.schema;
       delete nextTree.target.identity_id;
+      delete nextTree.target.workspace_id;
+    } else if (formToUse.target_type === 'databricks') {
+      if (formToUse.target_database) nextTree.target.catalog = formToUse.target_database;
+      else delete nextTree.target.catalog;
+      if (formToUse.target_schema) nextTree.target.schema = formToUse.target_schema;
+      else delete nextTree.target.schema;
+      if (formToUse.target_identity_id) nextTree.target.identity_id = formToUse.target_identity_id;
+      else delete nextTree.target.identity_id;
+      delete nextTree.target.database;
       delete nextTree.target.workspace_id;
     } else if (formToUse.target_type === 'fabric') {
       if (formToUse.target_identity_id) nextTree.target.identity_id = formToUse.target_identity_id;
@@ -1339,11 +1348,19 @@ export default function ProjectConfigPage({ embedded = false } = {}) {
       pbix_folder: configForm.pbix_folder || undefined,
     };
 
-    const target = {
-      type: configForm.target_type || 'snowflake',
-      database: configForm.target_database || undefined,
-      schema: configForm.target_schema || undefined,
-    };
+    const targetType = configForm.target_type || 'snowflake';
+    const target = targetType === 'databricks'
+      ? {
+          type: 'databricks',
+          catalog: configForm.target_database || undefined,
+          schema: configForm.target_schema || undefined,
+          identity_id: configForm.target_identity_id || undefined,
+        }
+      : {
+          type: targetType,
+          database: configForm.target_database || undefined,
+          schema: configForm.target_schema || undefined,
+        };
 
     return {
       source,
@@ -3019,6 +3036,19 @@ function FormEditor({
             <div>
               <label style={LABEL}>Target Schema</label>
               <input value={value.target_schema} onChange={e => patch('target_schema', e.target.value)} style={INPUT} placeholder="PUBLIC" />
+            </div>
+          </div>
+        )}
+
+        {value.target_type === 'databricks' && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <label style={LABEL}>Target Unity Catalog</label>
+              <input value={value.target_database} onChange={e => patch('target_database', e.target.value)} style={INPUT} placeholder="workspace" />
+            </div>
+            <div>
+              <label style={LABEL}>Target Schema</label>
+              <input value={value.target_schema} onChange={e => patch('target_schema', e.target.value)} style={INPUT} placeholder="default" />
             </div>
           </div>
         )}

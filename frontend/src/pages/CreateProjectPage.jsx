@@ -520,13 +520,27 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       if (initialData.identity_id != null) setFabricAccountId(initialData.identity_id);
       if (initialData.database != null) setSnowflakeDatabase(initialData.database);
       if (initialData.schema != null) setSnowflakeSchema(initialData.schema);
-      if (initialData.target_database != null) setTargetDatabase(initialData.target_database);
-      if (initialData.target_schema != null) setTargetSchema(initialData.target_schema);
-      if (initialData.target_identity_id != null) setFabricAccountId(initialData.target_identity_id);
-      if (initialData.target_workspace_id != null) setFabricWorkspaceId(initialData.target_workspace_id);
       const savedDbxTarget = initialData.target?.type === 'databricks'
         ? initialData.target
         : (Array.isArray(initialData.targets) ? initialData.targets.find((t) => t?.type === 'databricks') : null);
+      const effectiveTargetCatalogOrDb =
+        savedDbxTarget?.catalog ?? initialData.target_catalog ?? initialData.target_database;
+      if (effectiveTargetCatalogOrDb != null && effectiveTargetCatalogOrDb !== '') {
+        setTargetDatabase(effectiveTargetCatalogOrDb);
+      }
+      const effectiveTargetSchema = savedDbxTarget?.schema ?? initialData.target_schema;
+      if (effectiveTargetSchema != null && effectiveTargetSchema !== '') {
+        setTargetSchema(effectiveTargetSchema);
+      }
+      if (initialData.target_type === 'databricks' || savedDbxTarget) {
+        const dbxAcct = savedDbxTarget?.identity_id ?? initialData.target_identity_id;
+        if (dbxAcct != null && dbxAcct !== '') setDatabricksAccountId(dbxAcct);
+        const dbxWh = savedDbxTarget?.warehouse_id ?? initialData.target_warehouse;
+        if (dbxWh != null && dbxWh !== '') setTargetWarehouse(dbxWh);
+      } else {
+        if (initialData.target_identity_id != null) setFabricAccountId(initialData.target_identity_id);
+        if (initialData.target_workspace_id != null) setFabricWorkspaceId(initialData.target_workspace_id);
+      }
       if (savedDbxTarget || initialData.multi_fact_mode != null || initialData.enable_materialization != null) {
         const dbxSrc = savedDbxTarget || initialData;
         setDatabricksOptions({

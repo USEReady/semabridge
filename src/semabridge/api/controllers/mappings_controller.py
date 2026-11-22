@@ -248,6 +248,8 @@ def _build_config_yaml_from_request(
     target_section: Dict[str, Any] = {"type": target_type}
     if target_config.get("database"):
         target_section["database"] = target_config["database"]
+    if target_config.get("catalog"):
+        target_section["catalog"] = target_config["catalog"]
     target_schema = target_config.get("schema") or target_config.get("schema_name")
     if target_schema:
         target_section["schema"] = target_schema
@@ -255,12 +257,23 @@ def _build_config_yaml_from_request(
         target_section["account"] = target_config["account"]
     if target_config.get("warehouse"):
         target_section["warehouse"] = target_config["warehouse"]
+    if target_config.get("warehouse_id"):
+        target_section["warehouse_id"] = target_config["warehouse_id"]
     if target_config.get("role"):
         target_section["role"] = target_config["role"]
     if target_config.get("identity_id"):
         target_section["identity_id"] = target_config["identity_id"]
     if target_config.get("workspace_id"):
         target_section["workspace_id"] = target_config["workspace_id"]
+    for dbx_opt in (
+        "view_prefix",
+        "multi_fact_mode",
+        "selected_facts",
+        "enable_materialization",
+        "materialization_schedule",
+    ):
+        if target_config.get(dbx_opt) is not None and target_config.get(dbx_opt) != "":
+            target_section[dbx_opt] = target_config[dbx_opt]
 
     config = {
         "project_name": project_name,

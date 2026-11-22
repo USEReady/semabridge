@@ -578,6 +578,9 @@ def _is_column_kind(entity_kind: Optional[str]) -> bool:
     return str(entity_kind or "").strip().lower() == "column"
 
 
+_DATABRICKS_CONNECTORS = ("databricks", "databricks_sql", "dbx", "databricks_metric_view")
+
+
 def _default_target_identifier(
     source_name: str, target_connector: Optional[str], entity_kind: Optional[str] = None,
 ) -> str:
@@ -589,7 +592,7 @@ def _default_target_identifier(
     if connector == "snowflake":
         # The one naming rule (utils/identifiers.snowflake_target_name).
         return snowflake_target_name(source_name, entity_kind="column" if _is_column_kind(entity_kind) else "metric")
-    if connector in ("databricks", "databricks_sql", "dbx", "databricks_metric_view"):
+    if connector in _DATABRICKS_CONNECTORS:
         return databricks_target_name(source_name, entity_kind="column" if _is_column_kind(entity_kind) else "metric")
     return sanitize_identifier(source_name)
 
@@ -899,6 +902,7 @@ def _flag_hidden_collisions(rows: List[Dict[str, Any]], target_connector: Option
     Rows the user already named (a saved override) are left alone: their
     target name no longer equals the automatic one.
     """
+    platform = "Databricks" if _normalize_connector_name(target_connector) in _DATABRICKS_CONNECTORS else "Snowflake"
     columns_by_table: Dict[Tuple[str, str], Set[str]] = {}
     for row in rows:
         if str(row.get("entity_kind") or "").lower() == "column":
@@ -921,7 +925,7 @@ def _flag_hidden_collisions(rows: List[Dict[str, Any]], target_connector: Option
             _mark_collision(
                 row,
                 f"'{original}' and another column of {_table_label(row.get('parent_source_path'))} both become "
-                f"{clean} in Snowflake, so this one was renamed to {target} automatically. "
+                f"{clean} in {platform}, so this one was renamed to {target} automatically. "
                 "Pick a name (or Resolve All).",
             )
             continue
@@ -932,7 +936,7 @@ def _flag_hidden_collisions(rows: List[Dict[str, Any]], target_connector: Option
             if target in columns_by_table.get(home, set()):
                 _mark_collision(
                     row,
-                    f"Metric and column of {row['home_dataset']} are both named {target} in Snowflake; "
+                    f"Metric and column of {row['home_dataset']} are both named {target} in {platform}; "
                     "the column would be left out of the semantic view. Rename the metric (or Resolve All).",
                 )
 
@@ -949,11 +953,26 @@ def _flag_hidden_collisions(rows: List[Dict[str, Any]], target_connector: Option
         tables = sorted(tables_by_name.get((str(row.get("model_name") or ""), name), set()))
         if len(tables) > 1:
             row["shared_name_tables"] = tables
-            note = (
-                f"{name} also exists in {', '.join(t for t in tables if t != _table_label(row.get('parent_source_path')))}. "
-                f"It deploys fine as {_table_label(row.get('parent_source_path')).upper()}.{name}, but a bare {name} "
-                "is ambiguous when the view is queried without the table name."
-            )
+            others = ', '.join(t for t in tables if t != _table_label(row.get('parent_source_path')))
+            if _normalize_connector_name(target_connector) in _DATABRICKS_CONNECTORS:
+                # A metric view is one flat list of fields: every table's copy
+                # is published as <Table>_<Column> (DatabricksPublisher.
+                # shared_column_names), so this is a real deployed name.
+                deployed = (
+                    f"{databricks_sanitize_identifier(_table_label(row.get('parent_source_path')))}_"
+                    f"{databricks_target_name(row.get('target_name'), entity_kind='column')}"
+                )
+                row["databricks_deployed_name"] = deployed
+                note = (
+                    f"{name} also exists in {others}. A Databricks metric view has one flat list of "
+                    f"fields, so it is published as {deployed}. Rename it here to choose another name."
+                )
+            else:
+                note = (
+                    f"{name} also exists in {others}. "
+                    f"It deploys fine as {_table_label(row.get('parent_source_path')).upper()}.{name}, but a bare {name} "
+                    "is ambiguous when the view is queried without the table name."
+                )
             notes = row.setdefault("advisory_notes", [])
             if note not in notes:
                 notes.append(note)

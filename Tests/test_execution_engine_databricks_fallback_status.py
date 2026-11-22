@@ -21,13 +21,20 @@ class _PublisherStub:
     def get_last_publish_summary(self):
         return self._summary
 
+    def execute_statements(self, _statements):
+        return []  # namespace check: no rows -> config left as-is
+
 
 def test_deploy_to_databricks_raises_when_sql_fallback_failed():
     engine = ExecutionEngine()
     context = RunContext(
         project_id="TestModel",
         run_id="run-1",
-        config=SimpleNamespace(databricks=object(), targets=[], target=None),
+        config=SimpleNamespace(
+            databricks=SimpleNamespace(warehouse_id="wh-1", catalog="main", schema_name="public"),
+            targets=[],
+            target=None,
+        ),
         start_time=0.0,
         source_type="fabric",
         target_type="databricks",

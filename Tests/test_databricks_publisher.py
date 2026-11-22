@@ -2127,7 +2127,7 @@ class TestCombinedViewMode:
         assert "`revenue` AS `cust_revenue`" in stmts[0]
 
     def test_metric_view_measure_collision_with_dimension(self):
-        """Metric-view measures that collide with dimension names should use _m suffix."""
+        """A measure named like a dimension gets MSR_ (one flat field namespace)."""
         behavior = ConnectorBehavior(
             databricks=DatabricksBehavior(
                 measure_view_type="metric_view",
@@ -2171,10 +2171,11 @@ class TestCombinedViewMode:
 
         assert created == 1
         assert skipped == 0
-        # Dimension name: prod_revenue
-        # Measure name collision: prod_revenue (collides), so becomes prod_revenue_m
-        assert "`revenue` AS `prod_revenue`" in stmts[0]  # Dimension
-        assert "- name: \"prod_revenue_m\"" in stmts[0]  # Measure with _m suffix
+        # prod_revenue stays the INTERNAL source alias; the public dimension
+        # keeps the dry-run name and the clashing measure takes MSR_.
+        assert "`revenue` AS `prod_revenue`" in stmts[0]
+        assert "- name: \"revenue\"\n    expr: \"`prod_revenue`\"" in stmts[0]
+        assert "- name: \"MSR_revenue\"" in stmts[0]
 
     def test_metric_view_empty_dataset_with_measures_creates_dimensions_from_source(self):
         """Metric views should emit dimensions even when dataset.columns is empty if source columns exist."""
@@ -2221,11 +2222,13 @@ class TestCombinedViewMode:
         assert skipped == 0
         # YAML should have dimensions from extracted column and measures 
         assert "dimensions:" in stmts[0]
-        assert "- name: \"proj_gl_refresh_datetime\"" in stmts[0]  # Dimension from extracted column
+        # The dimension must reference the column the inline source projects.
+        assert "- name: \"gl_refresh_datetime\"\n    expr: \"`gl_refresh_datetime`\"" in stmts[0]
         # Source should have the column
         assert "CAST(NULL AS TIMESTAMP) AS `gl_refresh_datetime`" in stmts[0]
-        # Measure should be prefixed AND collide with dimension (gets _m suffix)
-        assert "- name: \"proj_gl_refresh_datetime_m\"" in stmts[0]
+        # Measure clashes with that dimension -> MSR_, business label kept.
+        assert "- name: \"MSR_GL_Refresh_DateTime\"" in stmts[0]
+        assert "display_name: \"GL Refresh DateTime\"" in stmts[0]
 
     def test_combined_metric_view_rewrites_alias_qualified_measure_references(self):
         """Combined mode should rewrite f/d1-qualified measure expressions to projected columns."""
@@ -2836,7 +2839,8 @@ class TestCombinedViewMode:
         assert not details
         assert 'using:' in stmts[0].lower()
         assert '"business_unit"' in stmts[0].lower()
-        assert '"business unit"' not in stmts[0].lower()
+        # The spaced label may only appear as display_name, never as a field name.
+        assert '- name: "business unit"' not in stmts[0].lower()
 
 
 def test_find_dataset_by_metric_view_alias_matches_compact_alias_form():
@@ -5114,8 +5118,8 @@ class TestPerModelArtifactMode:
         assert skipped == 0
         assert not details
         assert any("`main`.`public`.`CoverageModel_metric_view`" in stmt for stmt in stmts)
-        assert "cust_customer_key" in stmts[0]
-        assert "cust_region" in stmts[0]
+        assert '- name: "Customer_Key"\n    expr: "customer.customer_key"' in stmts[0]
+        assert '- name: "Region"\n    expr: "customer.region"' in stmts[0]
         assert "Customer_dimensions" not in stmts[0]
 
     def test_per_model_mode_uses_fact_root_when_configured(self):
@@ -5205,7 +5209,7 @@ class TestPerModelArtifactMode:
         assert "Nation_Count" in stmts[0]
         assert "main`.`public`.`nation".lower() in stmts[0].lower()
 
-    def test_per_model_metric_view_emits_tpch_style_dimensions_yaml(self):
+    def test_per_model_metric_view_orders_root_uses_its_own_columns(self):
         behavior = ConnectorBehavior(
             databricks=DatabricksBehavior(
                 model_artifact_mode="per_model",
@@ -5287,8 +5291,12 @@ class TestPerModelArtifactMode:
         assert skipped == 0
         assert not details
         assert "WITH METRICS LANGUAGE YAML" in stmts[0]
-        assert "order_date" in stmts[0]
-        assert "DATE_TRUNC('MONTH', o_orderdate)" in stmts[0]
+        # A root table named "orders" used to get 8 hard-coded TPC-H sample
+        # dimensions; it now gets its own columns like any other model.
+        assert "order_date" not in stmts[0]
+        assert "DATE_TRUNC" not in stmts[0]
+        assert "market_segment" not in stmts[0]
+        assert '- name: "o_orderdate"' in stmts[0]
         assert "customer.c_name" in stmts[0]
         assert "customer.nation.n_name" in stmts[0]
         assert "mv_tpch_customer_dimensions" not in stmts[0]
@@ -5465,7 +5473,7 @@ class TestPerModelArtifactMode:
         assert not details
         assert "source: |" in stmts[0]
         assert "FROM main.public.Fact" in stmts[0]
-        assert "cust_region" in stmts[0]
+        assert '- name: "region"\n    expr: "customer.region"' in stmts[0]
         assert "expr: \"current_date()\"" in stmts[0]
         assert "(select current_date() from main.public.project_measures)" not in stmts[0]
 
