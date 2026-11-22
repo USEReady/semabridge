@@ -124,18 +124,26 @@ function HowAnswered({ plan, result, target }) {
           )}
           {guardChecks.length > 0 && (
             <Step label="Checks">
-              {guardChecks.map((chk, i) => (
-                <span
-                  key={`chk-${i}`}
-                  style={{
-                    ...CHIP,
-                    color: chk.passed ? 'var(--color-success, #10b981)' : 'var(--color-warning, #f59e0b)',
-                  }}
-                  title={chk.message}
-                >
-                  {chk.passed ? '✓ ' : '✗ '}{chk.check}
-                </span>
-              ))}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
+                {guardChecks.map((chk, i) => (
+                  <div key={`chk-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span
+                      style={{
+                        ...CHIP,
+                        color: chk.passed ? 'var(--color-success, #10b981)' : 'var(--color-warning, #f59e0b)',
+                        fontWeight: 600,
+                      }}
+                    >
+                      {chk.passed ? '✓ ' : '✗ '}{chk.check}
+                    </span>
+                    {chk.message && (
+                      <span style={{ fontSize: 12, color: chk.passed ? 'var(--text-secondary)' : 'var(--color-warning, #f59e0b)' }}>
+                        {chk.message}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
             </Step>
           )}
           <Step label="Policies">
@@ -281,13 +289,18 @@ export default function AnswerCard({ entry, onCertify, onRetry, onOfflineDraft, 
     ...(plan?.warnings || []),
     ...(result?.warnings || []),
   ];
-  const hasCertifiedSource = Boolean(plan?.is_verified_query || plan?.has_certified_metric || plan?.certified_source || result?.certified_source);
+  const rawPath = result?.query_path || plan?.query_path || (usesCertified ? 'semantic_view' : (plan?.route === 'cortex' ? 'free-form (not governed)' : 'semantic_view'));
+  const isGoverned = rawPath === 'semantic_view' || rawPath === 'rewritten to governed' || (!rawPath.includes('free-form') && !rawPath.includes('not governed'));
+  const allChecksPassed = (plan?.guard_checks || []).length === 0 || (plan?.guard_checks || []).every((c) => c.passed !== false);
+  const hasCertifiedSource = Boolean(plan?.is_verified_query || plan?.has_certified_metric || plan?.certified_source || result?.certified_source || result?.certified);
   const isCertifiedAnswer = Boolean(
-    (result?.certified || hasCertifiedSource) &&
-    allWarnings.length === 0 &&
+    isGoverned &&
+    allChecksPassed &&
+    hasCertifiedSource &&
+    allWarnings.filter((w) => !w.startsWith('Assumption:')).length === 0 &&
     result && result.success !== false
   );
-  const queryPath = result?.query_path || (usesCertified ? 'semantic view' : (plan?.route === 'cortex' ? 'free-form SQL' : 'semantic view'));
+  const displayPath = rawPath === 'rewritten to governed' ? 'rewritten to governed' : rawPath.includes('free-form') ? 'free-form (not governed)' : 'governed';
   const certified = certifyState === 'done' || isCertifiedAnswer;
   // Only answers computed by a live warehouse can be certified, never preview rows.
   // (0 rows is a valid answer; the backend also requires a recorded real run.)
@@ -301,8 +314,8 @@ export default function AnswerCard({ entry, onCertify, onRetry, onOfflineDraft, 
           <span style={pill('ok')}><ShieldCheck size={12} /> Certified</span>
         ) : (
           <>
-            <span style={pill(queryPath === 'free-form SQL' ? 'warn' : 'neutral')}>
-              {queryPath}
+            <span style={pill(displayPath.includes('free-form') ? 'warn' : displayPath === 'rewritten to governed' ? 'ok' : 'neutral')}>
+              {displayPath}
             </span>
             {allWarnings.map((w, idx) => (
               <span key={idx} style={pill('warn')} title={w}>

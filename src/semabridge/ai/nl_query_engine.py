@@ -367,15 +367,15 @@ class NLQueryEngine:
         for r in relationships or []:
             if getattr(r, "is_active", True) is False:
                 continue
-            c1 = (getattr(r, "from_concept", None) or "").strip()
-            c2 = (getattr(r, "to_concept", None) or "").strip()
+            c1 = (getattr(r, "from_concept", None) or getattr(r, "from_dataset", None) or "").strip()
+            c2 = (getattr(r, "to_concept", None) or getattr(r, "to_dataset", None) or "").strip()
             if not c1 or not c2:
                 continue
             c1_cf = c1.casefold()
             c2_cf = c2.casefold()
             raw_card = getattr(r, "cardinality", None)
             val = getattr(raw_card, "value", str(raw_card or ""))
-            card = str(val or "N:1").upper().replace(" ", "").replace("CARDINALITYTYPE.", "")
+            card = str(val or "N:1").upper().replace(" ", "").replace("-", "_").replace("CARDINALITYTYPE.", "")
 
             if card in ("N:1", "MANY_TO_ONE", "MANYTOONE"):
                 c1_to_c2 = "MANY_TO_ONE"

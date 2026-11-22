@@ -1593,6 +1593,30 @@ def run_truth_suite(
             else:
                 ok = bool(generated_sql) and not err
 
+            if ok and generated_sql and pid:
+                try:
+                    from semabridge.ai.verified_queries_service import record_query_execution, save_verified_query
+                    target_view = getattr(scope, "semantic_view", None) or c.get("view_name") or resolved_view
+                    record_query_execution(
+                        project_id=pid,
+                        sql=generated_sql,
+                        success=True,
+                        execution_type="bi_truth",
+                        view_name=target_view,
+                        target="SNOWFLAKE",
+                    )
+                    save_verified_query(
+                        project_id=pid,
+                        question=c["question"],
+                        sql=generated_sql,
+                        confirmed=True,
+                        user_id=owner_id,
+                        view_name=target_view,
+                        target="SNOWFLAKE",
+                    )
+                except Exception as save_err:
+                    logger.debug("Learning loop: saving verified query for case %s skipped: %s", c.get("id"), save_err)
+
             results.append({
                 "case_id": c["id"],
                 "question": c["question"],
