@@ -251,6 +251,8 @@ def resolve_project_scope(project_id: Optional[str], explicit_view: Optional[str
         if hasattr(repo, "validate_project_view"):
             try:
                 scope.semantic_view = repo.validate_project_view(pid, scope.semantic_view)
+            except ValueError:
+                raise
             except Exception:
                 pass
         # Restrict the ontology to the named view's domains (+ view-less shared ones).

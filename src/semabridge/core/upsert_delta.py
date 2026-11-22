@@ -549,6 +549,11 @@ def merge_upsert(new_model: SMLModel, baseline: Optional[Dict[str, Any]]) -> SML
                 # one of them would be a second name for (or a duplicate of) a
                 # source field.
                 deployed_names = {_deployed_column_name(c) for c in children}
+                override_deployed_names = {
+                    _deployed_column_name(c)
+                    for c in children
+                    if str(_get(c, "label") or "").strip() and normalize_name(_get(c, "label")) != normalize_name(_get(c, "unique_name"))
+                }
                 for old_child in (_get(old_item, child_attr) or []):
                     child_key = normalize_name(_get(old_child, "unique_name"))
                     if not child_key or child_key in child_keys:
@@ -557,7 +562,9 @@ def merge_upsert(new_model: SMLModel, baseline: Optional[Dict[str, Any]]) -> SML
                     if renamed_from and renamed_from in child_keys:
                         continue
                     old_dep_name = _deployed_column_name(old_child)
-                    if old_dep_name and old_dep_name in deployed_names:
+                    old_label = str(_get(old_child, "label") or "").strip()
+                    has_override = bool(old_label and normalize_name(old_label) != child_key)
+                    if (has_override or old_dep_name in override_deployed_names) and old_dep_name and old_dep_name in deployed_names:
                         continue
                     children.append(child_cls.model_validate(old_child))
                     child_keys.add(child_key)
