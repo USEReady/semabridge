@@ -452,6 +452,11 @@ class NLQueryEngine:
         phrase_set = set(combined_toks)
         total_w = sum(lexicon.weight(t) for t in combined_toks) or 1.0
         raw_cf = phrase.raw_text.strip().casefold()
+        # Status phrases (e.g. 'those still active', 'who separated', 'still active', 'separated', 'current')
+        # describe status filters/dimensions, never an aggregate metric whose label happens to contain the word.
+        if re.search(r"\b(who|those|that\s+are)\s+(?:still\s+)?(active|separated|terminated|current)\b", raw_cf) or \
+           re.search(r"^(still\s+active|who\s+separated|those\s+still\s+active)$", raw_cf):  # hardcoding-ok: status phrase detection
+            return [], "not found"
         by_lemmas = {tok for bp in parsed.by_phrases for tok in content_lemmas(bp)}
 
         deriv_cache: Dict[str, frozenset[str]] = {t: wordnet_related_lemmas(t) for t in combined_toks}
@@ -656,13 +661,26 @@ class NLQueryEngine:
         exact_hits: List[LexiconDimensionEntry] = []
         scored: List[Tuple[float, LexiconDimensionEntry]] = []
 
+        bt_initials = "".join(w[0] for w in re.findall(r"[a-z0-9]+", sbt_cf))
+
         for de in lexicon.dimensions:
             a_cf = de.attribute.name.casefold()
             a_ns = re.sub(r"[^a-z0-9]+", "", a_cf)
             c_cf = de.concept.name.casefold()
             syns_cf = {s.casefold() for s in (de.attribute.synonyms or [])}
+            attr_label = (getattr(de.attribute, "label", None) or "").casefold()
+            concept_label = (getattr(de.concept, "label", None) or "").casefold()
 
-            if sbt_cf == a_cf or sbt_nospace == a_ns or sbt_cf in syns_cf or sbt_cf == f"{c_cf} {a_cf}":
+            if (
+                sbt_cf == a_cf
+                or sbt_nospace == a_ns
+                or sbt_cf in syns_cf
+                or sbt_cf == f"{c_cf} {a_cf}"
+                or (attr_label and (sbt_cf == attr_label or sbt_nospace == re.sub(r"[^a-z0-9]+", "", attr_label)))
+                or (concept_label and (sbt_cf == concept_label or sbt_nospace == re.sub(r"[^a-z0-9]+", "", concept_label)))
+                or (bt_initials and (bt_initials == a_cf or bt_initials == c_cf or bt_initials in syns_cf))
+                or (len(sbt_cf.split()) == 1 and (a_cf.startswith(sbt_cf) or c_cf.startswith(sbt_cf)) and (len(a_cf) <= 4 or len(c_cf) <= 4))
+            ):
                 exact_hits.append(de)
                 continue
 
@@ -777,6 +795,16 @@ class NLQueryEngine:
 
             if outcome == "ambiguous":
                 opt_names = [item[2].display_name for item in candidates[:4] if (candidates[0][0] - item[0]) <= 0.15]
+                base_cand = [c for c in candidates if not getattr(c[2], "has_filter_clause", False)]
+                if len(opt_names) > 1 and not base_cand:
+                    clarification = f"Measure phrase '{m_phrase.raw_text}' is ambiguous between: {', '.join(opt_names)}. Which metric would you like to use?"
+                    return QueryResolutionPlan(
+                        original_prompt=prompt,
+                        answerable=False,
+                        explanation=clarification,
+                        warnings=[clarification],
+                        query_path="refused",
+                    )
                 measure_trace.append(
                     {"phrase": m_phrase.raw_text, "status": f"ambiguous ({', '.join(opt_names)})", "selected": opt_names[0]}
                 )
@@ -931,9 +959,14 @@ class NLQueryEngine:
                 if not close_dims:
                     close_dims = difflib.get_close_matches(bp, all_dim_labels, n=2, cutoff=0.55)
                 sug_part = f" Did you mean: {', '.join(close_dims[:2])}?" if close_dims else ""
-                by_trace.append({"phrase": bp, "status": "not found", "selected": None})
-                warnings.append(f"Dimension '{bp}' not found in domain.{sug_part}")
-                continue
+                clarification = f"Dimension '{bp}' not found in domain.{sug_part}"
+                return QueryResolutionPlan(
+                    original_prompt=prompt,
+                    answerable=False,
+                    explanation=clarification,
+                    warnings=[clarification],
+                    query_path="refused",
+                )
             if outcome == "ambiguous":
                 opts = [f"{d.concept.name}.{d.attribute.name}" for d in all_matches[:4]]
                 by_trace.append({"phrase": bp, "status": f"ambiguous ({', '.join(opts)})", "selected": chosen_de.attribute.name})

@@ -348,6 +348,28 @@ def _verify_free_form_plan_checks(sql: str, prompt: str, engine: Any) -> tuple[b
     return True, None
 
 
+def _resolve_project_grain_and_keys(project_id: Optional[str]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    table_grain: Dict[str, Any] = {}
+    key_uniqueness: Dict[str, Any] = {}
+    if not project_id:
+        return table_grain, key_uniqueness
+    try:
+        from semabridge.api.services.core_domain_service import get_project_snapshot
+        snap = get_project_snapshot(project_id)
+        if snap:
+            if hasattr(snap, "key_uniqueness"):
+                key_uniqueness.update(getattr(snap, "key_uniqueness", {}) or {})
+            elif isinstance(snap, dict) and "key_uniqueness" in snap:
+                key_uniqueness.update(snap.get("key_uniqueness") or {})
+            if hasattr(snap, "table_grain"):
+                table_grain.update(getattr(snap, "table_grain", {}) or {})
+            elif isinstance(snap, dict) and "table_grain" in snap:
+                table_grain.update(snap.get("table_grain") or {})
+    except Exception:
+        pass
+    return table_grain, key_uniqueness
+
+
 def _try_cortex(prompt: str, scope: ProjectScope) -> tuple[Optional[QueryResolutionPlan], Optional[str]]:
     """Ask Cortex Analyst; returns (plan, error)."""
     if not scope.semantic_view:
@@ -373,12 +395,15 @@ def _try_cortex(prompt: str, scope: ProjectScope) -> tuple[Optional[QueryResolut
             _extract_metric_names_from_sv_sql,
         )
         model_meta = getattr(ontology_store.query_engine, "ontology", None)
+        tg, ku = _resolve_project_grain_and_keys(scope.project_id)
         validation = validate_and_rewrite_generated_sql(
             sql=sql,
             prompt=prompt,
             dialect="snowflake",
             model_metadata=model_meta,
             semantic_view_name=scope.semantic_view,
+            table_grain=tg,
+            key_uniqueness=ku,
         )
 
         if not validation.allowed:
@@ -426,17 +451,21 @@ def _local_plan(engine, prompt: str, dialect: str, scope: ProjectScope, offline_
     )
     if plan.generated_sql:
         from semabridge.ai.sql_validator import validate_and_rewrite_generated_sql
+        tg, ku = _resolve_project_grain_and_keys(scope.project_id)
         validation = validate_and_rewrite_generated_sql(
             sql=plan.generated_sql,
             prompt=prompt,
             dialect=dialect,
             model_metadata=getattr(engine, "ontology", None),
             semantic_view_name=scope.semantic_view,
+            table_grain=tg,
+            key_uniqueness=ku,
         )
         if not validation.allowed:
             plan.answerable = False
             plan.explanation = validation.refusal_reason or "Query rejected by governance guard."
             plan.plan_checks_passed = False
+            plan.guard_checks.extend(validation.checks)
         else:
             if validation.rewritten_sql:
                 plan.generated_sql = validation.rewritten_sql
@@ -817,12 +846,15 @@ def execute_semantic_query(
 
     from semabridge.ai.sql_validator import validate_and_rewrite_generated_sql
     model_meta = getattr(ontology_store.query_engine, "ontology", None)
+    tg, ku = _resolve_project_grain_and_keys(req.project_id)
     validation = validate_and_rewrite_generated_sql(
         sql=clean_sql,
         prompt=req.question or "",
         dialect=req.target or "SNOWFLAKE",
         model_metadata=model_meta,
         semantic_view_name=req.view_name,
+        table_grain=tg,
+        key_uniqueness=ku,
     )
     if not validation.allowed:
         raise HTTPException(status_code=400, detail=validation.refusal_reason or "SQL rejected by governance guard.")

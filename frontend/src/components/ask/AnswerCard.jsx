@@ -213,13 +213,22 @@ function HowAnswered({ plan, result, target }) {
 
 const viewTail = (v) => String(v || '').split('.').pop().replace(/"/g, '');
 
-/** Which deployed semantic view (one per model in multi-model projects) answered. */
-function AnsweredBy({ plan }) {
-  const view = plan?.answered_by_view;
-  if (!view) return null;
+/** Which deployed semantic view or base table path answered. */
+function AnsweredBy({ plan, result }) {
+  const view = plan?.answered_by_view || plan?.view || plan?.semantic_view;
+  const path = result?.query_path || plan?.query_path || (plan?.is_draft ? 'free-form' : '');
+  const isFreeForm = path.includes('free-form') || path.includes('not governed') || plan?.is_draft;
+  const isRewritten = path === 'rewritten to governed' || path === 'rewritten';
+  if (!view && !isFreeForm) return null;
   return (
     <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }} title={view}>
-      Answered from semantic view <b style={{ fontFamily: 'var(--font-mono, monospace)', color: 'var(--text-secondary)' }}>{viewTail(view)}</b>
+      {isFreeForm ? (
+        <>Answered from <b style={{ fontFamily: 'var(--font-mono, monospace)', color: 'var(--text-secondary)' }}>base tables (free-form SQL)</b></>
+      ) : isRewritten ? (
+        <>Rewritten to semantic view <b style={{ fontFamily: 'var(--font-mono, monospace)', color: 'var(--text-secondary)' }}>{viewTail(view)}</b></>
+      ) : (
+        <>Answered from semantic view <b style={{ fontFamily: 'var(--font-mono, monospace)', color: 'var(--text-secondary)' }}>{viewTail(view)}</b></>
+      )}
       {plan?.answered_by_domain ? <> · domain {plan.answered_by_domain}</> : null}
     </div>
   );
@@ -278,33 +287,39 @@ export default function AnswerCard({ entry, onCertify, onRetry, onOfflineDraft, 
             ))}
           </div>
         )}
-        <AnsweredBy plan={plan} />
-        {plan?.generated_sql && <HowAnswered plan={plan} result={null} target={target} />}
+        <AnsweredBy plan={plan} result={result} />
+        {plan && (plan.generated_sql || (plan.guard_checks || []).length > 0) && (
+          <HowAnswered plan={plan} result={null} target={target} />
+        )}
       </div>
     );
   }
 
   const usesCertified = (plan?.detected_metrics || []).length > 0;
-  const allWarnings = [
+  const allWarnings = Array.from(new Set([
     ...(plan?.warnings || []),
     ...(result?.warnings || []),
-  ];
+  ]));
   const rawPath = result?.query_path || plan?.query_path || (usesCertified ? 'semantic_view' : (plan?.route === 'cortex' ? 'free-form (not governed)' : 'semantic_view'));
   const isGoverned = rawPath === 'semantic_view' || rawPath === 'rewritten to governed' || (!rawPath.includes('free-form') && !rawPath.includes('not governed'));
   const allChecksPassed = (plan?.guard_checks || []).length === 0 || (plan?.guard_checks || []).every((c) => c.passed !== false);
+  const isCertifiable = Boolean(
+    isGoverned &&
+    (plan?.is_certified_eligible ?? true) &&
+    (result?.is_certified_eligible ?? true) &&
+    allChecksPassed
+  );
   const hasCertifiedSource = Boolean(plan?.is_verified_query || plan?.has_certified_metric || plan?.certified_source || result?.certified_source || result?.certified);
   const isCertifiedAnswer = Boolean(
-    isGoverned &&
-    allChecksPassed &&
+    isCertifiable &&
     hasCertifiedSource &&
     allWarnings.filter((w) => !w.startsWith('Assumption:')).length === 0 &&
     result && result.success !== false
   );
   const displayPath = rawPath === 'rewritten to governed' ? 'rewritten to governed' : rawPath.includes('free-form') ? 'free-form (not governed)' : 'governed';
   const certified = certifyState === 'done' || isCertifiedAnswer;
-  // Only answers computed by a live warehouse can be certified, never preview rows.
-  // (0 rows is a valid answer; the backend also requires a recorded real run.)
-  const canCertify = Boolean(result && result.success !== false && !result.is_simulated);
+  // Only answers computed by a live warehouse that are certifiable can be certified, never preview rows or free-form unverified SQL.
+  const canCertify = Boolean(isCertifiable && result && result.success !== false && !result.is_simulated);
 
   return (
     <div style={CARD}>
@@ -325,18 +340,20 @@ export default function AnswerCard({ entry, onCertify, onRetry, onOfflineDraft, 
           </>
         )}
         <span style={{ flex: 1 }} />
-        <button
-          type="button"
-          style={{ ...BTN, ...(certified ? { color: 'var(--color-success)', cursor: 'default' } : {}) }}
-          disabled={certified || certifyState === 'saving' || !canCertify || confirming}
-          onClick={() => setConfirming(true)}
-          title={canCertify
-            ? 'Save this question and its SQL as a verified query so AI engines reuse it'
-            : 'Run the question against a live warehouse (not a preview) before certifying it'}
-        >
-          {certified ? <Check size={13} /> : <ShieldCheck size={13} />}
-          {certified ? 'Certified' : certifyState === 'saving' ? 'Certifying…' : 'Certify answer'}
-        </button>
+        {(canCertify || certified) && (
+          <button
+            type="button"
+            style={{ ...BTN, ...(certified ? { color: 'var(--color-success)', cursor: 'default' } : {}) }}
+            disabled={certified || certifyState === 'saving' || !canCertify || confirming}
+            onClick={() => setConfirming(true)}
+            title={canCertify
+              ? 'Save this question and its SQL as a verified query so AI engines reuse it'
+              : 'Run the question against a live warehouse (not a preview) before certifying it'}
+          >
+            {certified ? <Check size={13} /> : <ShieldCheck size={13} />}
+            {certified ? 'Certified' : certifyState === 'saving' ? 'Certifying…' : 'Certify answer'}
+          </button>
+        )}
       </div>
       {confirming && !certified && (
         <div role="alertdialog" aria-label="Confirm certification" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border-main)', background: 'var(--bg-surface-raised)', fontSize: 12.5 }}>
@@ -353,7 +370,7 @@ export default function AnswerCard({ entry, onCertify, onRetry, onOfflineDraft, 
       )}
       {certifyError && <div style={{ fontSize: 12, color: 'var(--color-error)' }}>{certifyError}</div>}
 
-      <AnsweredBy plan={plan} />
+      <AnsweredBy plan={plan} result={result} />
 
       <AnswerResult columns={result?.columns} rows={result?.rows} />
 
