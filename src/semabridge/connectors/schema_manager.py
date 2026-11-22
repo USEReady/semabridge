@@ -2654,7 +2654,16 @@ class SnowflakeSchemaManager:
             )
             row = cur.fetchone() or (0, 0)
             total, distinct = int(row[0] or 0), int(row[1] or 0)
-            return (distinct == total) if total > 0 else True
+            is_u = (distinct == total) if total > 0 else True
+            if not hasattr(self, "recorded_key_uniqueness"):
+                self.recorded_key_uniqueness = {}
+            self.recorded_key_uniqueness[table_upper] = {
+                "columns": cols,
+                "rows": total,
+                "distinct": distinct,
+                "is_unique": is_u,
+            }
+            return is_u
         except Exception as exc:
             logger.debug("Key uniqueness check skipped for %s: %s", table_upper, exc)
             return None

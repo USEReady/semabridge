@@ -452,6 +452,27 @@ def verify_metric_results(req: ReconcileDataRequest) -> VerificationResult:
             max_mismatch_percentage=tol.max_mismatch_percentage,
             certified_by=req.certified_by,
         )
+        if req.project_id and req.sql_query:
+            try:
+                from semabridge.ai.verified_queries_service import record_query_execution, save_verified_query
+                record_query_execution(
+                    project_id=req.project_id,
+                    sql=req.sql_query,
+                    success=True,
+                    execution_type="reconciliation",
+                    view_name=req.view_metric or "SEMANTIC_VIEW",
+                    target="SNOWFLAKE",
+                )
+                save_verified_query(
+                    project_id=req.project_id,
+                    question=f"Verified {req.metric_name}",
+                    sql=req.sql_query,
+                    confirmed=True,
+                    view_name=req.view_metric,
+                    target="SNOWFLAKE",
+                )
+            except Exception as vq_err:
+                logger.debug("Failed registering verified query from reconciliation: %s", vq_err)
     return result
 
 

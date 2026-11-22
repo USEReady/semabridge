@@ -110,6 +110,21 @@ class OSIToSMLConverter(BaseConverter):
         from semabridge.converter.sml_to_osi import SMLToOSIConverter
         return SMLToOSIConverter().to_osi(sml_model)
 
+    def convert(
+        self,
+        osi_model: OSIModel,
+        row_counts: Optional[Dict[str, int]] = None,
+    ) -> SMLModel:
+        """Alias for from_osi to provide uniform convert interface."""
+        return self.from_osi(osi_model, row_counts=row_counts)
+
+    def to_sml(
+        self,
+        osi_model: OSIModel,
+        row_counts: Optional[Dict[str, int]] = None,
+    ) -> SMLModel:
+        """Alias for from_osi to provide explicit to_sml interface."""
+        return self.from_osi(osi_model, row_counts=row_counts)
 
     def from_osi(
         self,
@@ -356,6 +371,11 @@ class OSIToSMLConverter(BaseConverter):
             # sync_failure_reason/sql_expression — this changes only what
             # a user sees at mapping/dry-run time, never what deploys.
             self._flag_unreachable_dimension_calculates(sml)
+
+            # 4a3. Governed splits at sync time: for each measure whose DAX is
+            # CALCULATE(<agg>, <row-level predicate on one table>), emit a boolean
+            # dimension on that table named from the measure (IS_<MEASURE>).
+            self._emit_governed_splits(sml)
 
             # 4a2. Disconnected selector decomposition disabled — keep metrics single as built.
             # self._decompose_disconnected_selector_metrics(
@@ -1322,6 +1342,110 @@ class OSIToSMLConverter(BaseConverter):
             if hit:
                 metric.advisory_notes.append(hit.reason)
                 metric.advisory_categories.append(hit.category)
+
+    def _emit_governed_splits(self, sml: SMLModel) -> None:
+        """For each measure whose DAX is CALCULATE(<agg>, <row-level predicate on one table>),
+        emit a boolean dimension on that table named from the measure (IS_<MEASURE>), with the same predicate."""
+        from semabridge.converter.dax_ast_parser import (
+            DaxAstParser,
+            DaxSqlRenderer,
+            _collect_column_ref_tables,
+            FunctionCallNode,
+        )
+        from semabridge.sml.models import SMLColumn, DataType as SMLDataType, SMLDimension, SMLAttribute
+
+        parser = DaxAstParser()
+        renderer = DaxSqlRenderer()
+
+        for metric in sml.metrics:
+            dax = (metric.expression or "").strip()
+            if not dax or not dax.upper().startswith("CALCULATE"):
+                continue
+
+            try:
+                node = parser.parse(dax)
+            except Exception:
+                continue
+
+            if not (isinstance(node, FunctionCallNode) and node.func.upper() == "CALCULATE" and len(node.args) >= 2):
+                continue
+
+            filter_args = node.args[1:]
+            all_tables: Set[str] = set()
+            for f_arg in filter_args:
+                all_tables |= _collect_column_ref_tables(f_arg)
+
+            if len(all_tables) != 1:
+                logger.debug(
+                    "Skipping governed split for '%s': predicate references %d tables (%s)",
+                    metric.unique_name,
+                    len(all_tables),
+                    all_tables,
+                )
+                continue
+
+            target_table = next(iter(all_tables))
+            ds = next(
+                (d for d in sml.datasets if d.unique_name.casefold() == target_table.casefold()),
+                None,
+            )
+            if not ds:
+                continue
+
+            rendered_preds = []
+            skip = False
+            for f_arg in filter_args:
+                try:
+                    p_sql = renderer._render_calc_filter_predicate(f_arg)
+                    if p_sql:
+                        rendered_preds.append(p_sql)
+                except Exception as ex:
+                    logger.debug("Skipping governed split for '%s': predicate is not row-level: %s", metric.unique_name, ex)
+                    skip = True
+                    break
+
+            if skip or not rendered_preds:
+                continue
+
+            combined_sql = " AND ".join(rendered_preds)
+            metric.filter_predicate = combined_sql
+
+            clean_m_name = re.sub(r"[^A-Za-z0-9_]", "_", metric.unique_name).strip("_").upper()
+            split_col_name = f"IS_{clean_m_name}"
+
+            existing_cols = {c.unique_name.upper() for c in ds.columns}
+            if split_col_name in existing_cols:
+                continue
+
+            split_col = SMLColumn(
+                unique_name=split_col_name,
+                label=split_col_name,
+                data_type=SMLDataType.BOOLEAN,
+                is_calculated=True,
+                is_split_dimension=True,
+                expression=combined_sql,
+            )
+            ds.columns.append(split_col)
+
+            existing_dim = next((d for d in sml.dimensions if d.dataset.casefold() == ds.unique_name.casefold()), None)
+            new_attr = SMLAttribute(
+                unique_name=split_col_name,
+                label=split_col_name,
+                dataset=ds.unique_name,
+                dataset_column=split_col_name,
+            )
+            if existing_dim:
+                existing_dim.attributes.append(new_attr)
+            else:
+                sml.dimensions.append(
+                    SMLDimension(
+                        unique_name=f"{ds.unique_name}_{split_col_name}",
+                        label=split_col_name,
+                        dataset=ds.unique_name,
+                        attributes=[new_attr],
+                    )
+                )
+            logger.info("Emitted governed split dimension '%s' on dataset '%s' with predicate '%s'", split_col_name, ds.unique_name, combined_sql)
 
     def _convert_relationship(self, osi_rel: OSIRelationship) -> Optional[SMLRelationship]:
         try:

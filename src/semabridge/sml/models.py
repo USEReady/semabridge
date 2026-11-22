@@ -192,6 +192,10 @@ class SMLColumn(BaseModel):
             "synonym_sources above uses for synonyms."
         ),
     )
+    is_split_dimension: bool = Field(
+        default=False,
+        description="Whether this column represents a governed status split dimension (IS_<MEASURE>)",
+    )
     
     def model_post_init(self, __context: Any) -> None:
         """Set label from unique_name if not provided."""
@@ -435,6 +439,10 @@ class SMLMetric(BaseModel):
         description="Full path to the source .pbix file this metric was extracted from — "
         "disambiguates rows across a multi-PBIX project. Propagated from OSIMetric.source_file.",
     )
+    filter_predicate: Optional[str] = Field(
+        default=None,
+        description="Row-level filter predicate defined in DAX CALCULATE",
+    )
 
     def model_post_init(self, __context: Any) -> None:
         """Set label and generate expression if not provided."""
@@ -495,6 +503,16 @@ class SMLRelationship(BaseModel):
         """Get the first (or only) to column."""
         return self.to_columns[0] if self.to_columns else ""
 
+    @property
+    def from_concept(self) -> str:
+        """Get the from concept / dataset name."""
+        return self.from_dataset
+
+    @property
+    def to_concept(self) -> str:
+        """Get the to concept / dataset name."""
+        return self.to_dataset
+
 
 class SMLJoin(BaseModel):
     """
@@ -543,6 +561,8 @@ class SMLModel(BaseModel):
     metrics: list[SMLMetric] = Field(default_factory=list, description="Metrics (measures)")
     relationships: list[SMLRelationship] = Field(default_factory=list, description="Relationships")
     verified_queries: list[dict[str, Any]] = Field(default_factory=list, description="Verified queries for AI accuracy")
+    key_uniqueness: dict[str, Any] = Field(default_factory=dict, description="Persisted key-uniqueness results per table")
+    profiling: dict[str, Any] = Field(default_factory=dict, description="Persisted table profiling data")
     
     # Metadata
     source_system: str = Field(default="snowflake", description="Source system identifier")

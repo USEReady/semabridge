@@ -1386,6 +1386,21 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
 
     def emit(self, sml: Any) -> Dict[str, Any]:
         """Emit SML model to Snowflake."""
+        if hasattr(self.schema_manager, "recorded_key_uniqueness") and hasattr(sml, "key_uniqueness"):
+            sml.key_uniqueness.update(getattr(self.schema_manager, "recorded_key_uniqueness", {}) or {})
+        if hasattr(sml, "datasets") and hasattr(sml, "key_uniqueness"):
+            for ds in sml.datasets:
+                ds_name = getattr(ds, "unique_name", "").upper()
+                if ds_name and ds_name not in sml.key_uniqueness:
+                    key_cols = [c.unique_name for c in getattr(ds, "columns", []) if getattr(c, "is_key", False)]
+                    row_ct = getattr(ds, "row_count", None)
+                    if key_cols:
+                        sml.key_uniqueness[ds_name] = {
+                            "columns": key_cols,
+                            "rows": row_ct,
+                            "distinct": row_ct,
+                            "is_unique": True,
+                        }
         success = self.deploy(sml)
         missing = dict(getattr(self.semantic_view_builder, "missing_dims", {}) or {})
         return {"success": success, "missing_dims": missing}
