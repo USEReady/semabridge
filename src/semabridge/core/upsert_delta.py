@@ -556,9 +556,13 @@ def merge_upsert(new_model: SMLModel, baseline: Optional[Dict[str, Any]]) -> SML
                     renamed_from = normalize_name(_get(old_child, "renamed_from"))
                     if renamed_from and renamed_from in child_keys:
                         continue
+                    old_dep_name = _deployed_column_name(old_child)
+                    if old_dep_name and old_dep_name in deployed_names:
+                        continue
                     children.append(child_cls.model_validate(old_child))
                     child_keys.add(child_key)
-                    deployed_names.add(_deployed_column_name(children[-1]))
+                    if old_dep_name:
+                        deployed_names.add(old_dep_name)
     return merged
 
 

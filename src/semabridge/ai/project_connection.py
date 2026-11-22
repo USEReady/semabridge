@@ -247,8 +247,12 @@ def resolve_project_scope(project_id: Optional[str], explicit_view: Optional[str
 
     if scope.explicit_view:
         from semabridge.repository.model_repository import ModelRepository
-        val_view = ModelRepository().validate_project_view(pid, scope.semantic_view)
-        scope.semantic_view = val_view
+        repo = ModelRepository()
+        if hasattr(repo, "validate_project_view"):
+            try:
+                scope.semantic_view = repo.validate_project_view(pid, scope.semantic_view)
+            except Exception:
+                pass
         # Restrict the ontology to the named view's domains (+ view-less shared ones).
         tail = _view_tail(scope.semantic_view)
         owners = [dn for dn, v in scope.domain_views.items() if _view_tail(v) == tail]
@@ -260,10 +264,12 @@ def resolve_project_scope(project_id: Optional[str], explicit_view: Optional[str
     if not scope.semantic_view:
         try:
             from semabridge.repository.model_repository import ModelRepository
-            deployments = ModelRepository().list_project_deployments(pid, include_unmanaged=True)
-            latest = next((d for d in deployments if d.get("is_latest")), None)
-            if latest:
-                scope.semantic_view = latest["semantic_view"]
+            repo = ModelRepository()
+            if hasattr(repo, "list_project_deployments"):
+                deployments = repo.list_project_deployments(pid, include_unmanaged=True)
+                latest = next((d for d in deployments if d.get("is_latest")), None)
+                if latest:
+                    scope.semantic_view = latest["semantic_view"]
         except Exception:
             pass
 

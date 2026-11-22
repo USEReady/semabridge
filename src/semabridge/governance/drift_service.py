@@ -547,10 +547,13 @@ def _build_baseline_from_deployment(project_id: str, view_name: str, domain: Any
         for pid in p_candidates:
             if pid and pid not in seen_pids:
                 seen_pids.add(pid)
-                d = repo.get_project_deployment_info(pid)
-                if isinstance(d, dict) and d.get("ddl"):
-                    dep_info = d
-                    break
+                try:
+                    d = repo.get_project_deployment_info(pid)
+                    if isinstance(d, dict) and d.get("ddl"):
+                        dep_info = d
+                        break
+                except Exception:
+                    pass
 
         ddl = dep_info.get("ddl") if isinstance(dep_info, dict) else None
 
@@ -594,6 +597,13 @@ def _build_baseline_from_deployment(project_id: str, view_name: str, domain: Any
                         break
                 except Exception:
                     pass
+
+        if not ddl and not snap:
+            logger.info(
+                "Could not build baseline from deployment for project %s (view %s): no deployed DDL or snapshot found",
+                project_id, view_name,
+            )
+            return None
 
         base_metrics: Dict[str, str] = {}
         src_defs: Dict[str, str] = {}

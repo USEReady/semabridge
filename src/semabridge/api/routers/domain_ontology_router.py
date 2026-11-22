@@ -699,6 +699,15 @@ async def list_ontology_projects(request: Request) -> List[Dict[str, Any]]:
     )
     user_id = require_request_user_id(request)
     projects = await list_projects_compat(limit=1000, offset=0)
+    if len(projects) < 50:
+        from semabridge.api.controllers.projects_controller import list_project_discovery_compat
+        disc = await list_project_discovery_compat()
+        known = {str(p.get("id") or p.get("project_id") or "") for p in projects}
+        for d in disc:
+            pid = str(d.get("id") or d.get("project_id") or "")
+            if pid and pid not in known:
+                projects.append(d)
+                known.add(pid)
     if auth_is_enabled():
         projects = [
             project

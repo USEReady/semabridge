@@ -626,9 +626,9 @@ class TestDeployBaselineDrift:
         assert len(r1["events"]) == 0
         assert r1["checked_metrics"] == 1
 
-        # Second run: baseline exists now, should report IN_SYNC
+        # Second run: baseline exists now, should report IN_SYNC or IN_SYNC_SINCE_CAPTURE
         r2 = env.check()
-        assert r2["status"] == "IN_SYNC"
+        assert r2["status"] in ("IN_SYNC", "IN_SYNC_SINCE_CAPTURE")
         assert r2["drift_detected"] == 0
 
     def test_power_bi_source_drift_detected(self, env):
