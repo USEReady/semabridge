@@ -381,6 +381,21 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
   const [showAdvanced, setShowAdvanced] = React.useState(false);
   const [isEditingSql, setIsEditingSql] = React.useState(false);
 
+  const availableMetrics = React.useMemo(() => {
+    if (parityProjectMetrics?.length > 0) return parityProjectMetrics;
+    if (allMetrics?.length > 0) {
+      if (govProjectId) {
+        const want = String(govProjectId).toLowerCase().replace(/^proj-/, '');
+        return allMetrics.filter((m) => {
+          const mPid = String(m.source_project_id || '').toLowerCase().replace(/^proj-/, '');
+          return mPid === want;
+        });
+      }
+      return allMetrics;
+    }
+    return (metricOptions || []).map((name) => ({ name, logical_name: name }));
+  }, [parityProjectMetrics, allMetrics, govProjectId, metricOptions]);
+
   const effectiveSqlExpr = React.useMemo(() => {
     if (reconExpr) {
       const cleanExpr = String(reconExpr).trim().replace(/["'`]/g, '').toLowerCase();
@@ -427,21 +442,6 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
     setCopiedKey(key);
     setTimeout(() => setCopiedKey(null), 2000);
   };
-
-  const availableMetrics = React.useMemo(() => {
-    if (parityProjectMetrics?.length > 0) return parityProjectMetrics;
-    if (allMetrics?.length > 0) {
-      if (govProjectId) {
-        const want = String(govProjectId).toLowerCase().replace(/^proj-/, '');
-        return allMetrics.filter((m) => {
-          const mPid = String(m.source_project_id || '').toLowerCase().replace(/^proj-/, '');
-          return mPid === want;
-        });
-      }
-      return allMetrics;
-    }
-    return (metricOptions || []).map((name) => ({ name, logical_name: name }));
-  }, [parityProjectMetrics, allMetrics, govProjectId, metricOptions]);
 
   const handleSelectMetric = (val) => {
     if (!val) return;
@@ -1286,8 +1286,8 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
                   {isSimulated
                     ? 'Simulated comparative check (SEMABRIDGE_MOCK_PARITY active). Certification is disabled.'
                     : (isAllMatched
-                        ? 'Values in Snowflake match Power BI within specified tolerances.'
-                        : 'Mathematical discrepancy identified between Power BI and Snowflake.')}
+                      ? 'Values in Snowflake match Power BI within specified tolerances.'
+                      : 'Mathematical discrepancy identified between Power BI and Snowflake.')}
                 </div>
               </div>
             </div>
