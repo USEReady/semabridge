@@ -19,7 +19,8 @@ Model metadata shape (see metadata_from_domain for building it from an ontology 
    "dimensions": [{"name", "table", "column"}]}
 
 Result flags: CURRENT_DATE_ANCHOR, FREE_FORM, ENRICHED_TABLE, SNAPSHOT_GRAIN, NON_UNIQUE_JOIN, FAN_OUT,
-GUESSED_RULE, HELPER_METRIC, UNKNOWN_METRIC, WRITE_STATEMENT, MULTI_STATEMENT, EMPTY_SQL, UNPARSEABLE.
+GUESSED_RULE, HELPER_METRIC, UNKNOWN_METRIC, WRITE_STATEMENT, MULTI_STATEMENT, EMPTY_SQL, UNPARSEABLE,
+NOT_VALIDATED (no metadata available; never certifiable).
 """
 from __future__ import annotations
 
@@ -114,11 +115,29 @@ def _strip_literals(sql: str) -> str:
     return sql
 
 
+def _ident(value: Any) -> str:
+    """Comparable identity of a metric name: last dotted part, quotes removed, spaces/punctuation as _."""
+    v = str(value or "").strip().strip('"').split(".")[-1].strip('"')
+    return re.sub(r"[^0-9a-z]+", "_", v.lower()).strip("_")
+
+
 def _metric(model: Dict[str, Any], name: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Find a metric by its deployed identifier, name, logical name or label (qualified or not)."""
+    key = _ident(name)
+    if not key:
+        return None
     for m in model.get("metrics", []) or []:
-        if m["name"].lower() == (name or "").lower():
+        forms = [m.get("name"), m.get("logical_name"), m.get("label"), m.get("deployed_name")]
+        forms += list(m.get("identifiers") or [])
+        if any(_ident(f) == key for f in forms if f):
             return m
-    return None
+    # Last resort: ignore separators, but only when exactly one metric matches (never guess between two).
+    compact = key.replace("_", "")
+    hits = [m for m in model.get("metrics", []) or []
+            if any(_ident(f).replace("_", "") == compact
+                   for f in [m.get("name"), m.get("logical_name"), m.get("label"), m.get("deployed_name"),
+                             *(m.get("identifiers") or [])] if f)]
+    return hits[0] if len(hits) == 1 else None
 
 
 def _governed_parts(sql: str):
@@ -220,6 +239,10 @@ def _validate(sql: str, model: Dict[str, Any], question: str = "") -> Dict[str, 
     if re.search(r"\bSEMANTIC_VIEW\s*\(", text, re.I):
         metrics, dims = _governed_parts(text)
         flags = []
+        if not model.get("metrics"):
+            # No metadata to check against: let the warehouse validate names, but never certify.
+            return _result("execute", "governed", text, ["NOT_VALIDATED"],
+                           suggestion="Model metadata unavailable; answer not validated")  # hardcoding-ok: validator suggestion
         unknown = [m for m in metrics if not _metric(model, m)]
         if unknown:
             return _result("refuse", "governed", text, ["UNKNOWN_METRIC"], unmapped=unknown)
@@ -466,6 +489,8 @@ def metadata_from_domain(domain: Any, *, view: Optional[str] = None, platform: s
         kind = "helper" if re.match(r"^(SUM|AVG|COUNT|MIN|MAX)_OF_", name, re.I) or "auto_generated" in tags else "base"
         metrics.append({
             "name": name, "label": getattr(m, "label", None) or name, "table": table,
+            "logical_name": getattr(m, "logical_name", None),
+            "identifiers": [x for x in (getattr(m, "maps_to", None) or [])],
             "agg": (mt.group(1).upper() if mt else str(getattr(m, "aggregation_type", "") or "").upper()),
             "column": (mt.group(4).upper() if mt and mt.group(4) != "*" else None),
             "filter": getattr(m, "filter_expression", None),
@@ -526,6 +551,35 @@ def _sml_to_dict_model(
 ) -> Dict[str, Any]:
     if isinstance(model_metadata, dict) and "metrics" in model_metadata and "tables" in model_metadata:
         return model_metadata
+
+    if hasattr(model_metadata, "domains") and isinstance(model_metadata.domains, dict):
+        target_domain = None
+        if semantic_view_name:
+            view_tail = str(semantic_view_name).strip().split(".")[-1].strip('"').casefold()
+            for d in model_metadata.domains.values():
+                d_view = str(getattr(d, "semantic_view_name", "") or "").strip().split(".")[-1].strip('"').casefold()
+                if d_view and (d_view == view_tail or view_tail.endswith(d_view) or d_view.endswith(view_tail)):
+                    target_domain = d
+                    break
+        if target_domain:
+            return metadata_from_domain(target_domain, view=semantic_view_name, key_uniqueness=key_uniqueness_data)
+
+        # Merge all domains across the federation
+        all_metrics = []
+        all_concepts = []
+        all_rels = []
+        for d in model_metadata.domains.values():
+            all_metrics.extend(getattr(d, "metrics", []) or [])
+            all_concepts.extend(getattr(d, "concepts", []) or [])
+            all_rels.extend(getattr(d, "relationships", []) or [])
+
+        class _FedAdapter:
+            concepts = all_concepts
+            metrics = all_metrics
+            relationships = all_rels
+            semantic_view_name = semantic_view_name
+
+        return metadata_from_domain(_FedAdapter(), view=semantic_view_name, key_uniqueness=key_uniqueness_data)
 
     if hasattr(model_metadata, "concepts") and hasattr(model_metadata, "metrics"):
         return metadata_from_domain(
@@ -682,6 +736,11 @@ def validate_and_rewrite_generated_sql(
         res.refusal_reason = "Empty SQL statement."
         res.checks_passed = False
         return res
+
+    if not semantic_view_name and sql:
+        m_view = re.search(r"\bSEMANTIC_VIEW\s*\(\s*([^\s,\(\)]+)", sql, re.I)
+        if m_view:
+            semantic_view_name = m_view.group(1).strip().strip('"')
 
     guard_model = _sml_to_dict_model(
         model_metadata=model_metadata or {},
