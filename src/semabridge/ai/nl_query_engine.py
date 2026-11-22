@@ -54,16 +54,16 @@ _DAX_INVALID_RE = re.compile(
 class QueryResolutionPlan(BaseModel):
     """Execution plan generated from a natural language query."""
     original_prompt: str
-    detected_metrics: List[str]
-    detected_dimensions: List[str]
+    detected_metrics: List[str] = Field(default_factory=list)
+    detected_dimensions: List[str] = Field(default_factory=list)
     filters: List[str] = Field(default_factory=list)
     applied_policies: List[str] = Field(default_factory=list)
     derived_from_metrics: List[str] = Field(default_factory=list)
-    resolved_tables: List[str]
+    resolved_tables: List[str] = Field(default_factory=list)
     join_clauses: List[str] = Field(default_factory=list)
-    generated_sql: str
-    confidence_score: float
-    explanation: str
+    generated_sql: str = ""
+    confidence_score: float = 0.0
+    explanation: str = ""
     warnings: List[str] = Field(default_factory=list)
     answerable: bool = True
     parsed_phrases: Dict[str, Any] = Field(default_factory=dict)
@@ -679,7 +679,7 @@ class NLQueryEngine:
                 or (attr_label and (sbt_cf == attr_label or sbt_nospace == re.sub(r"[^a-z0-9]+", "", attr_label)))
                 or (concept_label and (sbt_cf == concept_label or sbt_nospace == re.sub(r"[^a-z0-9]+", "", concept_label)))
                 or (bt_initials and (bt_initials == a_cf or bt_initials == c_cf or bt_initials in syns_cf))
-                or (len(sbt_cf.split()) == 1 and (a_cf.startswith(sbt_cf) or c_cf.startswith(sbt_cf)) and (len(a_cf) <= 4 or len(c_cf) <= 4))
+                or (len(sbt_cf.split()) == 1 and (sbt_cf.startswith(a_cf) or sbt_cf.startswith(c_cf)) and (len(a_cf) <= 4 or len(c_cf) <= 4))
             ):
                 exact_hits.append(de)
                 continue
@@ -708,8 +708,20 @@ class NLQueryEngine:
         if len(exact_hits) == 1:
             return exact_hits[0], exact_hits, "resolved"
         if len(exact_hits) > 1:
-            # Deduplicate only distinct physical concepts if same attr exists across multiple tables
-            return exact_hits[0], exact_hits, "ambiguous"
+            # If multiple attributes from the same concept matched via concept label, prefer descriptive/name attribute over ID/key
+            def _exact_priority(e: LexiconDimensionEntry) -> int:
+                attr_nm = e.attribute.name.casefold()
+                if not re.search(r"(seq|key|id)\b", sbt_cf) and (getattr(e.attribute, "is_primary_key", False) or re.search(r"(seq|key|id)$", attr_nm)):
+                    return 2
+                if "name" in attr_nm or "label" in attr_nm or "desc" in attr_nm:
+                    return 0
+                return 1
+
+            exact_hits.sort(key=_exact_priority)
+            p0 = _exact_priority(exact_hits[0])
+            p1 = _exact_priority(exact_hits[1])
+            is_resolved = (p0 < p1)
+            return exact_hits[0], exact_hits, "resolved" if is_resolved else "ambiguous"
 
         scored.sort(key=lambda x: x[0], reverse=True)
         if not scored or scored[0][0] < 0.75:
@@ -800,6 +812,11 @@ class NLQueryEngine:
                     clarification = f"Measure phrase '{m_phrase.raw_text}' is ambiguous between: {', '.join(opt_names)}. Which metric would you like to use?"
                     return QueryResolutionPlan(
                         original_prompt=prompt,
+                        detected_metrics=[],
+                        detected_dimensions=[],
+                        resolved_tables=[],
+                        generated_sql="",
+                        confidence_score=0.0,
                         answerable=False,
                         explanation=clarification,
                         warnings=[clarification],
@@ -959,14 +976,23 @@ class NLQueryEngine:
                 if not close_dims:
                     close_dims = difflib.get_close_matches(bp, all_dim_labels, n=2, cutoff=0.55)
                 sug_part = f" Did you mean: {', '.join(close_dims[:2])}?" if close_dims else ""
-                clarification = f"Dimension '{bp}' not found in domain.{sug_part}"
-                return QueryResolutionPlan(
-                    original_prompt=prompt,
-                    answerable=False,
-                    explanation=clarification,
-                    warnings=[clarification],
-                    query_path="refused",
-                )
+                by_trace.append({"phrase": bp, "status": "not found", "selected": None})
+                warnings.append(f"Dimension '{bp}' not found in domain.{sug_part}")
+                if offline_draft is False:
+                    clarification = f"Dimension '{bp}' not found in domain.{sug_part}"
+                    return QueryResolutionPlan(
+                        original_prompt=prompt,
+                        detected_metrics=[],
+                        detected_dimensions=[],
+                        resolved_tables=[],
+                        generated_sql="",
+                        confidence_score=0.0,
+                        answerable=False,
+                        explanation=clarification,
+                        warnings=[clarification],
+                        query_path="refused",
+                    )
+                continue
             if outcome == "ambiguous":
                 opts = [f"{d.concept.name}.{d.attribute.name}" for d in all_matches[:4]]
                 by_trace.append({"phrase": bp, "status": f"ambiguous ({', '.join(opts)})", "selected": chosen_de.attribute.name})

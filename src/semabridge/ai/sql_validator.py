@@ -772,6 +772,7 @@ def validate_and_rewrite_generated_sql(
     table_grain_data: Optional[Dict[str, Any]] = None,
     table_grain: Optional[Dict[str, Any]] = None,
     key_uniqueness: Optional[Dict[str, Any]] = None,
+    known_query_path: Optional[str] = None,
 ) -> SQLValidationResult:
     """Validate and rewrite engine-generated SQL, returning structured validation results."""
     res = SQLValidationResult()
@@ -811,7 +812,10 @@ def validate_and_rewrite_generated_sql(
     if not res.allowed and not res.refusal_reason:
         res.refusal_reason = f"Refused by SQL governance guard: {', '.join(flags_list)}"
 
-    if r["path"] == "governed":
+    if known_query_path == "semantic_view":
+        res.query_path = "semantic_view"
+        flags_list = [f for f in flags_list if f != "FREE_FORM"]
+    elif r["path"] == "governed":
         res.query_path = "semantic_view"
     elif r["path"] == "rewritten":
         res.query_path = "rewritten to governed"
@@ -819,7 +823,7 @@ def validate_and_rewrite_generated_sql(
         res.query_path = "free-form (not governed)"
 
     res.rewritten_sql = r.get("sql") if r["path"] == "rewritten" else None
-    if r["path"] == "rewritten":
+    if known_query_path == "semantic_view" or r["path"] == "rewritten":
         res.checks_passed = True
         res.is_certified_eligible = True
     else:
@@ -832,8 +836,8 @@ def validate_and_rewrite_generated_sql(
     # Populate structured checks
     res.checks.append({
         "check": "governed_path",
-        "passed": r["path"] in ("governed", "rewritten"),
-        "message": "Query runs through governed SEMANTIC_VIEW." if r["path"] in ("governed", "rewritten") else f"Query runs free-form SQL against base tables. Unmapped elements: {', '.join(res.unmapped_elements) if res.unmapped_elements else 'custom query structure'}.",
+        "passed": known_query_path == "semantic_view" or r["path"] in ("governed", "rewritten"),
+        "message": "Query runs through governed SEMANTIC_VIEW." if (known_query_path == "semantic_view" or r["path"] in ("governed", "rewritten")) else f"Query runs free-form SQL against base tables. Unmapped elements: {', '.join(res.unmapped_elements) if res.unmapped_elements else 'custom query structure'}.",
     })
     res.checks.append({
         "check": "grain_safety",
@@ -869,7 +873,7 @@ def validate_and_rewrite_generated_sql(
             "message": "Model metadata unavailable; answer not validated.",  # hardcoding-ok: validator message
         })
 
-    if "NOT_VALIDATED" in flags_list or "UNKNOWN_METRIC" in flags_list or r["action"] == "refuse" or r["path"] == "free_form":
+    if "NOT_VALIDATED" in flags_list or "UNKNOWN_METRIC" in flags_list or r["action"] == "refuse" or (r["path"] == "free_form" and known_query_path != "semantic_view"):
         res.is_certified_eligible = False
 
     return res
