@@ -401,6 +401,8 @@ def generate_reconciliation_queries(req: GenerateQueriesRequest) -> Dict[str, st
 @router.post("/verify", response_model=VerificationResult)
 def verify_metric_results(req: ReconcileDataRequest) -> VerificationResult:
     """Compare DAX vs SQL result sets, compute parity metrics, and persist project certifications."""
+    from semabridge.reconciliation.mock_parity import is_mock_parity_enabled
+    mock_active = is_mock_parity_enabled()
     if not req.dax_results:
         return VerificationResult(
             metric_name=req.metric_name,
@@ -429,7 +431,9 @@ def verify_metric_results(req: ReconcileDataRequest) -> VerificationResult:
         sql_query=req.sql_query,
         custom_tolerance=req.tolerance,
     )
-    if req.persist_certification and (req.project_id or req.domain or req.view_metric) and result.status == "CERTIFIED":
+    if mock_active:
+        result = result.model_copy(update={"status": "SIMULATED", "certification_badge": "SIMULATED"})
+    elif req.persist_certification and (req.project_id or req.domain or req.view_metric) and result.status == "CERTIFIED":
         tol = req.tolerance or verifier.tolerance
         save_certification_record(
             metric_name=req.metric_name,

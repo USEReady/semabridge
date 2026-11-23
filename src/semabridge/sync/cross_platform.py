@@ -255,14 +255,17 @@ def check_cross_platform_parity(
         db_data = _execute_databricks(ExecuteQueryRequest(sql=db_sql, target="DATABRICKS", project_id=project_id, limit=100), db_sql, db_sql, None, owner_id=owner_id).model_dump()
 
     def _val_eq(v1: Any, v2: Any) -> bool:
+        if v1 is None and v2 is None:
+            return True
+        if v1 is None or v2 is None:
+            return False
         if v1 == v2:
             return True
         try:
-            if v1 is not None and v2 is not None:
-                return float(v1) == float(v2)
+            return float(v1) == float(v2)
         except (ValueError, TypeError):
             pass
-        return str(v1 or "").strip().casefold() == str(v2 or "").strip().casefold()
+        return str(v1).strip().casefold() == str(v2).strip().casefold()
 
     def _rows_eq(r1: List[List[Any]], r2: List[List[Any]]) -> bool:
         if len(r1) != len(r2):
@@ -274,14 +277,27 @@ def check_cross_platform_parity(
                 return False
         return True
 
-    parity_ok = bool(
-        sf_data.get("success")
-        and db_data.get("success")
-        and sf_data.get("row_count") == db_data.get("row_count")
-        and _rows_eq(sf_data.get("rows") or [], db_data.get("rows") or [])
-    )
+    sf_rows = sf_data.get("rows") or []
+    db_rows = db_data.get("rows") or []
+    sf_cnt = sf_data.get("row_count", len(sf_rows))
+    db_cnt = db_data.get("row_count", len(db_rows))
+
+    if not sf_data.get("success") or not db_data.get("success"):
+        parity_status = "failed"
+        parity_ok = False
+    elif sf_cnt == 0 or db_cnt == 0 or not sf_rows or not db_rows:
+        parity_status = "not compared"
+        parity_ok = False
+    elif sf_cnt != db_cnt or not _rows_eq(sf_rows, db_rows):
+        parity_status = "failed"
+        parity_ok = False
+    else:
+        parity_status = "passed"
+        parity_ok = True
+
     return {
         "parity_passed": parity_ok,
+        "status": parity_status,
         "snowflake": sf_data,
         "databricks": db_data,
     }
