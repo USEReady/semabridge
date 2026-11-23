@@ -38,8 +38,8 @@ def test_lookup_is_case_insensitive() -> None:
 
 
 def test_unknown_target_fails_clearly() -> None:
-    with pytest.raises(UnsupportedTargetError, match="databricks"):
-        get_target_rules("databricks")
+    with pytest.raises(UnsupportedTargetError, match="no-such-platform"):
+        get_target_rules("no-such-platform")
 
 
 def test_rules_are_read_only() -> None:

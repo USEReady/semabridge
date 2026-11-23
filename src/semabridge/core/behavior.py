@@ -118,6 +118,14 @@ class CompatibilityBehavior(BaseModel):
 
 class DatabricksBehavior(BaseModel):
     """Databricks-specific deployment behavior controls."""
+    use_planner_path: bool = Field(
+        default=False,
+        description=(
+            "Use the new metric-view planner path (shared DAX translator with Databricks "
+            "rules, planner, YAML writer, guarded deploy). False keeps the existing "
+            "DatabricksPublisher path unchanged."
+        ),
+    )
     create_metadata_table: bool = Field(
         default=True,
         description="Create Semabridge metadata Delta table (set false for metric-view-only deployment)"
