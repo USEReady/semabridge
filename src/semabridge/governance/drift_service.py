@@ -193,6 +193,8 @@ def _read_json_file() -> Dict[str, Any]:
 
 
 def _write_json_file(data: Dict[str, Any]) -> None:
+    if "PYTEST_CURRENT_TEST" not in os.environ and not os.environ.get("SEMABRIDGE_DRIFT_STATE_PATH"):
+        return  # Do not write to ~/.semabridge/drift_state.json
     _state_path().write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
 
 
@@ -205,7 +207,9 @@ def _db_load_events() -> Optional[List[Dict[str, Any]]]:
         _ensure_drift_table()
         with _drift_session() as session:
             rows = session.execute(
-                select(DriftEventRow.payload_json).order_by(DriftEventRow.position, DriftEventRow.updated_at)
+                select(DriftEventRow.payload_json)
+                .where((DriftEventRow.status.notin_(["BASELINE", "LAST_CHECK", "SCHEDULE"])) | (DriftEventRow.status.is_(None)))
+                .order_by(DriftEventRow.position, DriftEventRow.updated_at)
             ).all()
     except Exception as exc:  # noqa: BLE001 -- the JSON file is the fallback
         logger.warning("Drift events could not be read from the database (using the local file): %s", exc)
@@ -220,6 +224,102 @@ def _db_load_events() -> Optional[List[Dict[str, Any]]]:
         if isinstance(ev, dict):
             events.append(ev)
     return events
+
+
+def _db_save_state_metadata(data: Dict[str, Any]) -> None:
+    try:
+        from semabridge.repository.orm.models import DriftEventRow
+
+        _ensure_drift_table()
+        now = datetime.now(timezone.utc)
+        with _drift_session() as session:
+            baselines = data.get("baselines") or {}
+            for p_clean, views in baselines.items():
+                if isinstance(views, dict):
+                    for v_name, b_entry in views.items():
+                        if isinstance(b_entry, dict):
+                            full_v = _full_view_key(b_entry.get("view_name") or v_name)
+                            row_id = f"baseline:{p_clean}:{full_v}"
+                            row = session.get(DriftEventRow, row_id)
+                            if row is None:
+                                row = DriftEventRow(id=row_id)
+                                session.add(row)
+                            row.project_id = str(p_clean)
+                            row.status = "BASELINE"
+                            row.position = 0
+                            row.payload_json = json.dumps(b_entry, default=str)
+                            row.updated_at = now
+
+            last_checks = data.get("last_checks") or {}
+            for p_clean, lc_entry in last_checks.items():
+                if isinstance(lc_entry, dict):
+                    row_id = f"last_check:{p_clean}"
+                    row = session.get(DriftEventRow, row_id)
+                    if row is None:
+                        row = DriftEventRow(id=row_id)
+                        session.add(row)
+                    row.project_id = str(p_clean).split(":")[0]
+                    row.status = "LAST_CHECK"
+                    row.position = 0
+                    row.payload_json = json.dumps(lc_entry, default=str)
+                    row.updated_at = now
+
+            schedules = data.get("schedules") or []
+            for s_entry in schedules:
+                if isinstance(s_entry, dict) and s_entry.get("id"):
+                    row_id = f"schedule:{s_entry['id']}"
+                    row = session.get(DriftEventRow, row_id)
+                    if row is None:
+                        row = DriftEventRow(id=row_id)
+                        session.add(row)
+                    row.project_id = str(s_entry.get("project_id") or "") or None
+                    row.status = "SCHEDULE"
+                    row.position = 0
+                    row.payload_json = json.dumps(s_entry, default=str)
+                    row.updated_at = now
+
+            session.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Drift metadata could not be saved to database: %s", exc)
+
+
+def _db_load_state_metadata() -> Tuple[Dict[str, Any], Dict[str, Any], List[Dict[str, Any]]]:
+    baselines: Dict[str, Dict[str, Any]] = {}
+    last_checks: Dict[str, Dict[str, Any]] = {}
+    schedules: List[Dict[str, Any]] = []
+    try:
+        from sqlalchemy import select
+        from semabridge.repository.orm.models import DriftEventRow
+
+        _ensure_drift_table()
+        with _drift_session() as session:
+            rows = session.execute(
+                select(DriftEventRow).where(
+                    DriftEventRow.status.in_(["BASELINE", "LAST_CHECK", "SCHEDULE"])
+                )
+            ).scalars().all()
+            for r in rows:
+                try:
+                    payload = json.loads(r.payload_json)
+                except Exception:
+                    continue
+                if not isinstance(payload, dict):
+                    continue
+                if r.status == "BASELINE":
+                    p = _pkey(payload.get("project_id") or r.project_id)
+                    fv = _full_view_key(payload.get("view_name") or payload.get("semantic_view"))
+                    baselines.setdefault(p, {})[fv] = payload
+                    vk = _view_key(payload.get("view_name") or payload.get("semantic_view"))
+                    if vk and vk != fv:
+                        baselines[p][vk] = payload
+                elif r.status == "LAST_CHECK":
+                    p = _pkey(payload.get("project_id") or r.project_id)
+                    last_checks[p] = payload
+                elif r.status == "SCHEDULE":
+                    schedules.append(payload)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Drift metadata could not be loaded from database: %s", exc)
+    return baselines, last_checks, schedules
 
 
 def _db_save_events(events: List[Dict[str, Any]], loaded_ids: Optional[set]) -> bool:
@@ -298,21 +398,40 @@ def _load_state() -> Dict[str, Any]:
         state["baselines"] = data["baselines"]
     if isinstance(data.get("last_checks"), dict):
         state["last_checks"] = data["last_checks"]
+
+    if db_events is not None:
+        db_bases, db_lcs, db_scheds = _db_load_state_metadata()
+        if db_bases:
+            for p, views in db_bases.items():
+                state.setdefault("baselines", {}).setdefault(p, {}).update(views)
+        if db_lcs:
+            state.setdefault("last_checks", {}).update(db_lcs)
+        if db_scheds:
+            existing_ids = {s.get("id") for s in state["schedules"] if isinstance(s, dict)}
+            for s in db_scheds:
+                if s.get("id") not in existing_ids:
+                    state["schedules"].append(s)
+                    existing_ids.add(s.get("id"))
+
     return state
 
 
 def _save_state(data: Dict[str, Any]) -> None:
     events = list(data.get("events") or [])
     in_db = _db_save_events(events, data.get(_LOADED_IDS_KEY))
+    if in_db:
+        _db_save_state_metadata(data)
     file_data: Dict[str, Any] = {
         k: v for k, v in data.items() if k not in (_LOADED_IDS_KEY, "events")
     }
     if in_db:
         file_data[_IMPORTED_MARKER] = True
         data[_LOADED_IDS_KEY] = {str(e.get("id")) for e in events if isinstance(e, dict) and e.get("id")}
+        if "PYTEST_CURRENT_TEST" in os.environ or os.environ.get("SEMABRIDGE_DRIFT_STATE_PATH"):
+            _write_json_file(file_data)
     else:
         file_data["events"] = events
-    _write_json_file(file_data)
+        _write_json_file(file_data)
 
 
 def _update_event_row(ev: Dict[str, Any]) -> bool:
