@@ -293,6 +293,22 @@ class ExecutionEngine:
                         repo = AccountRepository(session)
                         account = repo.get_account_by_id(account_id)
                         if not account:
+                            from sqlalchemy import select
+                            from semabridge.repository.orm.models import Account
+                            account = session.execute(
+                                select(Account).where(
+                                    Account.connector_type == "SNOWFLAKE",
+                                    Account.is_default == True,
+                                )
+                            ).scalars().first()
+                            if not account:
+                                account = session.execute(
+                                    select(Account).where(
+                                        Account.connector_type == "SNOWFLAKE",
+                                        Account.status == "Active",
+                                    )
+                                ).scalars().first()
+                        if not account:
                             logger.warning("Account credential injection: no account found for %s", account_id)
                         else:
                             connector = account.connector_type.upper()

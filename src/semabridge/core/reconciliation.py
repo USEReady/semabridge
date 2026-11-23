@@ -411,6 +411,14 @@ def _fetch_live_deployed_ddl(project_id: str, view_name: str) -> str:
             select(Account).where(Account.connector_type == "SNOWFLAKE", Account.id == identity_id)
         ).scalars().first()
         if not account:
+            account = session.execute(
+                select(Account).where(Account.connector_type == "SNOWFLAKE", Account.is_default == True)
+            ).scalars().first()
+        if not account:
+            account = session.execute(
+                select(Account).where(Account.connector_type == "SNOWFLAKE", Account.status == "Active")
+            ).scalars().first()
+        if not account:
             raise ValueError(f"No linked Snowflake account found for identity_id={identity_id!r}")
 
         # Thread-safe: builds an isolated SnowflakeConfig object rather than
