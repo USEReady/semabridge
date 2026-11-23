@@ -1179,8 +1179,8 @@ class NLQueryEngine:
                             cand_d = f"{de.concept.name}.{de.attribute.name}"
                             if cand_d not in close_dims:
                                 close_dims.append(cand_d)
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logger.debug("Dimension concept lemma lookup failed: %s", ex)
                 if not close_dims:
                     close_dims = difflib.get_close_matches(bp, all_dim_labels, n=2, cutoff=0.55)
                 sug_part = f" Did you mean: {', '.join(close_dims[:2])}?" if close_dims else ""

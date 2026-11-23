@@ -69,8 +69,8 @@ def _sanitize_cell_value(val: Any) -> Any:
             f = float(val)
             if _dec.Decimal(str(f)) == val:
                 return f
-        except Exception:
-            pass
+        except Exception as ex:
+            logger.debug("Decimal conversion fallback: %s", ex)
         return str(val)
     if isinstance(val, (list, tuple, set)):
         return [_sanitize_cell_value(x) for x in val]
@@ -170,8 +170,8 @@ def _load_suite() -> Dict[str, Any]:
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
                 return {_CASES_KEY: list(data.get(_CASES_KEY) or []), "runs": list(data.get("runs") or [])}
-            except Exception:
-                pass
+            except Exception as ex:
+                logger.debug("Reading local suite JSON failed: %s", ex)
         return {_CASES_KEY: [], "runs": []}
 
 
@@ -386,8 +386,8 @@ def _evaluate_sql_against_snowflake(
             cur = conn.cursor()
             try:
                 cur.execute("ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = 15")
-            except Exception:
-                pass
+            except Exception as ex:
+                logger.debug("Failed setting statement timeout: %s", ex)
             cur.execute(sql)
             cols = [d[0].upper() for d in cur.description] if cur.description else []
             rows = cur.fetchall()
@@ -430,8 +430,8 @@ def _evaluate_cases_in_background(cases: List[Dict[str, Any]], owner_id: Optiona
                 cur = conn.cursor()
                 try:
                     cur.execute("ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = 15")
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logger.debug("Failed setting statement timeout: %s", ex)
 
                 state = _load_suite()
                 cases_map = {c["id"]: c for c in state.get(_CASES_KEY) or []}
@@ -578,8 +578,8 @@ def generate_truth_cases(
             c = resolve_canonical_project_id(raw_pid)
             if c:
                 pid = c
-        except Exception:
-            pass
+        except Exception as ex:
+            logger.debug("Failed resolving canonical project id for %s: %s", raw_pid, ex)
     now = datetime.now(timezone.utc).isoformat()
 
     resolved_view = None
@@ -702,8 +702,8 @@ def generate_truth_cases(
                 dep_info = ModelRepository().get_project_deployment_info(pid)
                 if dep_info:
                     view_name = dep_info.get("semantic_view") or dep_info.get("view_name")
-            except Exception:
-                pass
+            except Exception as ex:
+                logger.debug("Failed getting project deployment info for %s: %s", pid, ex)
 
         if not view_name:
             skipped.append({"metric_name": f"Domain:{d_name}", "reason": "No deployed semantic view found for domain"})
@@ -928,8 +928,8 @@ def generate_truth_cases(
                     dep_info = ModelRepository().get_project_deployment_info(pid)
                     if dep_info:
                         target_view = dep_info.get("semantic_view") or dep_info.get("view_name")
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logger.debug("Failed getting project deployment info for %s: %s", pid, ex)
             if not target_view:
                 target_view = m.get("domain")
             if not target_view:
@@ -1127,8 +1127,8 @@ def import_truth_cases_from_content(
                             "expected_dax": str(dax).strip(),
                             "metric_name": str(m).strip(),
                         })
-        except Exception:
-            pass
+        except Exception as ex:
+            logger.debug("Parsing golden SQL CSV failed: %s", ex)
 
     # 2. Try CSV / TSV if JSON didn't yield items
     if not parsed_pairs and ("," in raw or "\t" in raw or "\n" in raw):
@@ -1179,8 +1179,8 @@ def import_truth_cases_from_content(
                                 "expected_dax": "",
                                 "metric_name": "",
                             })
-        except Exception:
-            pass
+        except Exception as ex:
+            logger.debug("Parsing golden SQL CSV failed: %s", ex)
 
     # 3. Try Q: / A: Text or Markdown patterns
     if not parsed_pairs:
@@ -1512,8 +1512,8 @@ def run_truth_suite(
                     sf_cur = sf_conn.cursor()
                     try:
                         sf_cur.execute("ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = 15")
-                    except Exception:
-                        pass
+                    except Exception as ex:
+                        logger.debug("Failed setting statement timeout: %s", ex)
         except Exception as conn_err:
             logger.debug("Failed opening single Snowflake connection for truth run: %s", conn_err)
 
@@ -1633,8 +1633,8 @@ def run_truth_suite(
         if sf_conn:
             try:
                 sf_conn.close()
-            except Exception:
-                pass
+            except Exception as ex:
+                logger.debug("Closing Snowflake connection failed: %s", ex)
 
     passed = sum(1 for r in results if r["passed"])
     total = len(approved)

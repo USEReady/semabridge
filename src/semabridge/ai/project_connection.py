@@ -212,8 +212,8 @@ def resolve_project_scope(project_id: Optional[str], explicit_view: Optional[str
         if c_pid:
             pid = c_pid
             scope.project_id = pid
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Resolving canonical project id failed for %s: %s", raw_pid, exc)
 
     info: Dict[str, Any] = {}
     try:
@@ -235,8 +235,8 @@ def resolve_project_scope(project_id: Optional[str], explicit_view: Optional[str
             from semabridge.ontology.per_model import sync_project_model_domains
             sync_project_model_domains(pid, ontology_store)
             domains = list(ontology_store.domains_for(pid))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Syncing project model domains failed for %s: %s", pid, exc)
 
     scope.domain_names = [d.domain for d in domains]
     scope.allowed_domains = [d.domain for d in domains] + [d.id for d in domains if getattr(d, "id", None)]
@@ -253,8 +253,8 @@ def resolve_project_scope(project_id: Optional[str], explicit_view: Optional[str
                 scope.semantic_view = repo.validate_project_view(pid, scope.semantic_view)
             except ValueError:
                 raise
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Validating project view failed for %s: %s", pid, exc)
         # Restrict the ontology to the named view's domains (+ view-less shared ones).
         tail = _view_tail(scope.semantic_view)
         owners = [dn for dn, v in scope.domain_views.items() if _view_tail(v) == tail]
@@ -272,8 +272,8 @@ def resolve_project_scope(project_id: Optional[str], explicit_view: Optional[str
                 latest = next((d for d in deployments if d.get("is_latest")), None)
                 if latest:
                     scope.semantic_view = latest["semantic_view"]
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Listing project deployments failed for %s: %s", pid, exc)
 
     if len(distinct) >= 2 and not scope.semantic_view:
         # Several models -> several views: pick per question (route_scope_to_view).
