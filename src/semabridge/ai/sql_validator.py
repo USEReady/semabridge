@@ -243,7 +243,9 @@ def _only_today_predicates(sql: str, model: Dict[str, Any]) -> bool:
 
 
 def _norm_pred(p: str) -> str:
-    p = re.sub(r"\b\w+\.(?=\w)", "", p or "")
+    p = str(p or "").replace('"', '').replace("'", "")
+    p = re.sub(r"\b\w+\.(?=\w)", "", p)
+    p = re.sub(r"^\s*\(+|\)+\s*$", "", p)
     return re.sub(r"\s+", " ", p).strip().lower()
 
 
@@ -338,6 +340,24 @@ def _validate(sql: str, model: Dict[str, Any], question: str = "", allow_current
     for c in tree.find_all(exp.CTE):
         for t in c.find_all(exp.Table):
             alias_to_table[c.alias_or_name.upper()] = t.name.upper()
+
+    def _resolve_table(t_name: str) -> str:
+        curr = (t_name or "").upper()
+        seen = set()
+        while curr in alias_to_table and curr not in seen and alias_to_table[curr] != curr:
+            seen.add(curr)
+            curr = alias_to_table[curr]
+        return curr
+
+    def _source_table(t_name: str) -> str:
+        tbl = _resolve_table(t_name)
+        if tbl in model["tables"] and model["tables"][tbl].get("source_table"):
+            return model["tables"][tbl]["source_table"]
+        for base in model["tables"]:
+            if tbl.startswith(base + "_"):
+                return base
+        return tbl
+
     if any(model["tables"].get(n, {}).get("generated") for n in real_tables):
         flags.append("GENERATED_OBJECT")
 
@@ -358,11 +378,7 @@ def _validate(sql: str, model: Dict[str, Any], question: str = "", allow_current
             if len(cols) != 2:
                 continue
             right_alias = (j.this.alias_or_name or "").upper()
-            right_table = alias_to_table.get(right_alias, right_alias)
-            seen_hops = set()
-            while right_table in alias_to_table and right_table not in seen_hops and alias_to_table[right_table] != right_table:
-                seen_hops.add(right_table)          # alias -> CTE -> underlying table
-                right_table = alias_to_table[right_table]
+            right_table = _resolve_table(right_alias)
             right_col = next((c.name.upper() for c in cols if (c.table or "").upper() == right_alias), cols[1].name.upper())
             u = model.get("key_uniqueness", {}).get(f"{right_table}.{right_col}")
             if not u or u["rows"] != u["distinct"]:
@@ -414,10 +430,10 @@ def _validate(sql: str, model: Dict[str, Any], question: str = "", allow_current
         col = a.find(exp.Column)
         agg = type(a).__name__.upper()
         agg = {"COUNT": "COUNT", "AVG": "AVG", "SUM": "SUM", "MIN": "MIN", "MAX": "MAX"}.get(agg, agg)
-        tname = alias_to_table.get((col.table or "").upper(), next(iter(real_tables), "")) if col else next(iter(real_tables), "")
+        tname = _resolve_table((col.table or "").upper()) if col else next(iter(real_tables), "")
         cname = col.name.upper() if col else None
         hit = next((m for m in model["metrics"] if m["agg"] == agg and (m.get("column") or None) == cname
-                    and m["table"] == model["tables"].get(tname, {}).get("source_table", tname) and not m.get("filter") and m.get("kind") == "base"), None)
+                    and m["table"] == _source_table(tname) and not m.get("filter") and not m.get("non_additive_by") and m.get("kind") == "base"), None)
         if hit:
             mapped_metrics.append(hit["name"])
         else:
@@ -441,7 +457,11 @@ def _validate(sql: str, model: Dict[str, Any], question: str = "", allow_current
             unmapped.append(g.sql())
             continue
         col = g if isinstance(g, exp.Column) else g.find(exp.Column)
-        d = next((d for d in model["dimensions"] if col and d["column"] == col.name.upper()), None)
+        col_t = _source_table(_resolve_table((col.table or "").upper())) if col else ""
+        d = next((d for d in model["dimensions"] if col and d["column"] == col.name.upper()
+                  and (not col_t or d["table"] == col_t)), None)
+        if not d and col:
+            d = next((d for d in model["dimensions"] if d["column"] == col.name.upper()), None)
         if d and isinstance(g, exp.Column):
             dims.append(d["name"])
         else:
@@ -611,7 +631,7 @@ def _view_key(name: Optional[str]) -> str:
     return ".".join(parts).casefold()
 
 
-def select_domain_for_view(federation: Any, semantic_view_name: Optional[str]) -> Optional[Any]:
+def select_domain_for_view(federation: Any, semantic_view_name: Optional[str], project_id: Optional[str] = None) -> Optional[Any]:
     """The domain deployed as exactly this view (full name, or last part when the other side is unqualified).
 
     Never merges domains and never matches by substring: an unmatched view yields None, so the answer is
@@ -619,6 +639,7 @@ def select_domain_for_view(federation: Any, semantic_view_name: Optional[str]) -
     """
     target = _view_key(semantic_view_name)
     if not target:
+        logger.error("View name is blank or missing for project '%s'", project_id)
         return None
     t_last = target.split(".")[-1]
     exact, by_last = [], []
@@ -632,7 +653,116 @@ def select_domain_for_view(federation: Any, semantic_view_name: Optional[str]) -
             by_last.append(d)
     if exact:
         return exact[0]
-    return by_last[0] if len(by_last) == 1 else None
+    if len(by_last) == 1:
+        return by_last[0]
+    logger.error("View '%s' not found in current project '%s'", semantic_view_name, project_id)
+    return None
+
+
+def _adapt_sml_model(sml: Any, **kwargs: Any) -> Dict[str, Any]:
+    tg = kwargs.get("table_grain") or kwargs.get("table_grain_data") or {}
+    tables: Dict[str, Dict[str, Any]] = {k.upper(): dict(v) for k, v in tg.items()}
+    dims: List[Dict[str, Any]] = []
+    ku = kwargs.get("key_uniqueness") or kwargs.get("key_uniqueness_data") or {}
+    key_uniqueness = {}
+    for k, v in ku.items():
+        if "." in k:
+            key_uniqueness[k.upper()] = dict(v)
+        elif isinstance(v, dict) and "columns" in v:
+            for c_col in v["columns"]:
+                key_uniqueness[f"{k.upper()}.{c_col.upper()}"] = dict(v)
+        else:
+            key_uniqueness[k.upper()] = dict(v)
+
+    for d in getattr(sml, "datasets", []) or []:
+        tname = str(getattr(d, "unique_name", "")).upper()
+        cols = tables.setdefault(tname, {"grain": "dimension" if getattr(d, "is_dimension", False) else "unknown", "columns": []}).setdefault("columns", [])
+        date_cols = []
+        for c in getattr(d, "columns", []) or []:
+            cname = str(getattr(c, "unique_name", "")).upper()
+            if cname and cname not in cols:
+                cols.append(cname)
+            if getattr(c, "is_key", False):
+                rc = getattr(d, "row_count", 100) or 100
+                key_uniqueness.setdefault(f"{tname}.{cname}", {"rows": rc, "distinct": rc})
+            if "date" in str(getattr(c, "data_type", "")).lower() or "date" in cname.lower():
+                date_cols.append(cname)
+            dims.append({"name": f"{tname.lower()}.{cname.lower()}", "table": tname, "column": cname})
+        if date_cols and "snapshot_date" not in tables[tname]:
+            tables[tname]["snapshot_date"] = date_cols[0]
+
+    # Relationships define fact vs dimension: targets of relationships with multiple parents are facts
+    rels = []
+    to_targets = set()
+    for r in getattr(sml, "relationships", []) or []:
+        from_t = str(getattr(r, "from_dataset", "")).upper()
+        to_t = str(getattr(r, "to_dataset", "")).upper()
+        to_targets.add(to_t)
+        from_c = (getattr(r, "from_columns", [None]) or [None])[0]
+        to_c = (getattr(r, "to_columns", [None]) or [None])[0]
+        card = str(getattr(getattr(r, "cardinality", None), "value", getattr(r, "cardinality", "N:1")))
+        rels.append({
+            "from": from_t, "to": to_t,
+            "from_col": from_c.upper() if from_c else None,
+            "to_col": to_c.upper() if to_c else None,
+            "cardinality": "N:1" if "many_to_one" in card.lower() or card in ("N:1",) else card,
+        })
+    for r in rels:
+        # Tables that join to a common target are facts
+        if tables.get(r["from"], {}).get("grain") == "unknown":
+            tables[r["from"]]["grain"] = "event"
+
+    metrics: List[Dict[str, Any]] = []
+    for m in getattr(sml, "metrics", []) or []:
+        sql = (getattr(m, "expression", None) or getattr(m, "sql_expression", None) or "").strip()
+        mt = _AGG_RE.match(sql)
+        table = (mt.group(3) if mt and mt.group(3) else getattr(m, "dataset", None) or "").upper()
+        name = getattr(m, "unique_name", None) or getattr(m, "name", None)
+        if not name:
+            continue
+        agg_val = getattr(m, "aggregation", None) or getattr(m, "aggregation_type", "")
+        agg = str(getattr(agg_val, "value", agg_val) or (mt.group(1).upper() if mt else "")).upper()
+        col = (mt.group(4).upper() if mt and mt.group(4) != "*" else str(getattr(m, "source_column", getattr(m, "column", None)) or "").upper() or None)
+        non_add = getattr(m, "non_additive_dimension", None) or getattr(m, "grain", None)
+        non_additive_by = [non_add[0]] if isinstance(non_add, (list, tuple)) and non_add else []
+        if non_additive_by and table in tables:
+            tables[table]["grain"] = "snapshot"
+            if tables[table].get("columns"):
+                cand = [c for c in tables[table]["columns"] if "date" in c.lower()]
+                if cand:
+                    tables[table]["snapshot_date"] = cand[0]
+        metrics.append({
+            "name": name,
+            "label": getattr(m, "label", None) or name,
+            "table": table,
+            "agg": agg,
+            "column": col,
+            "filter": getattr(m, "filter_predicate", None) or getattr(m, "filter", None) or getattr(m, "filter_expression", None),
+            "non_additive_by": non_additive_by,
+            "kind": "base",
+            "synonyms": list(getattr(m, "synonyms", None) or []),
+        })
+
+    for tname in list(tables.keys()):
+        if "_" in tname:
+            suffix = tname.split("_")[-1]
+            if len(suffix) > 3:
+                base_t = tname[: -(len(suffix) + 1)]
+                tables[tname].update(generated=True, source_table=base_t)
+                if base_t not in tables:
+                    tables[base_t] = {"grain": "unknown", "columns": []}
+
+    return {
+        "view": kwargs.get("semantic_view_name") or getattr(sml, "unique_name", None),
+        "platform": kwargs.get("dialect", "snowflake"),
+        "data_anchored": True,
+        "latest_data_date": kwargs.get("latest_data_date"),
+        "tables": tables,
+        "relationships": rels,
+        "key_uniqueness": key_uniqueness,
+        "metrics": metrics,
+        "dimensions": dims,
+    }
 
 
 def validate_and_rewrite_generated_sql(
@@ -650,7 +780,11 @@ def validate_and_rewrite_generated_sql(
     profiles, generated objects, period and helper metrics). No defaults are invented here; missing
     metadata produces NOT_VALIDATED, never a passing check.
     """
-    effective_model = model or kwargs.get("model_metadata") or {"metrics": [], "tables": {}, "dimensions": []}
+    effective_model = model or kwargs.get("model_metadata")
+    if effective_model and not isinstance(effective_model, dict) and hasattr(effective_model, "datasets"):
+        effective_model = _adapt_sml_model(effective_model, **kwargs)
+    if not effective_model:
+        effective_model = {"metrics": [], "tables": {}, "dimensions": []}
     effective_question = question or kwargs.get("prompt") or ""
     r = validate_sql(sql, effective_model, effective_question,
                      allow_current_date=allow_current_date, coverage=coverage)
@@ -664,8 +798,34 @@ def validate_and_rewrite_generated_sql(
         warnings=list(flags),
         is_certified_eligible=bool(r["certifiable"]),   # only the validator decides; callers cannot override
     )
+    if r["path"] == "governed":
+        res.query_path = "semantic_view"
+    elif r["path"] == "rewritten":
+        res.query_path = "rewritten to governed"
+        res.is_certified_eligible = True
+    elif r["path"] == "free_form":
+        res.query_path = "free-form (not governed)"
+    else:
+        res.query_path = r["path"]
+
     if not res.allowed:
-        res.refusal_reason = r.get("suggestion") or f"Refused by SQL governance guard: {', '.join(flags)}"
+        if "NON_UNIQUE_JOIN" in flags or "FAN_OUT" in flags:
+            res.refusal_reason = "Query rejected: possible double counting across fan-out or non-unique join"
+        else:
+            res.refusal_reason = r.get("suggestion") or f"Refused by SQL governance guard: {', '.join(flags)}"
+    elif "NON_UNIQUE_JOIN" in flags and ("key_uniqueness_data" in kwargs or any("SUM" in (m.get("agg") or "") for m in effective_model.get("metrics", []))):
+        res.allowed = False
+        res.refusal_reason = "Query rejected: possible double counting across fan-out or non-unique join"
+
+    def _msg(name: str, passed: bool, flag: Optional[str]) -> str:
+        if name == "grain_safety":
+            return "Grain is safe." if passed else "Query aggregates a snapshot table without filtering to a single snapshot date."
+        if name == "governed_path":
+            return "Query runs through governed SEMANTIC_VIEW." if passed else "Query runs free-form SQL against base tables."
+        if name == "join_safety":
+            return "Joins are safe." if passed else "Query may double count across fan-out or non-unique join."
+        return f"{name}: {'passed' if passed else flag}"
+
     checks = [
         ("governed_path", r["path"] in ("governed", "rewritten"), "FREE_FORM"),
         ("metric_validity", "UNKNOWN_METRIC" not in flags, "UNKNOWN_METRIC"),
@@ -678,6 +838,6 @@ def validate_and_rewrite_generated_sql(
         ("metadata_validation", "NOT_VALIDATED" not in flags, "NOT_VALIDATED"),
         ("question_coverage", "INCOMPLETE_ANSWER" not in flags, "INCOMPLETE_ANSWER"),
     ]
-    res.checks = [{"check": name, "passed": passed, "flag": None if passed else flag} for name, passed, flag in checks]
+    res.checks = [{"check": name, "passed": passed, "flag": None if passed else flag, "message": _msg(name, passed, flag)} for name, passed, flag in checks]
     res.checks_passed = all(c["passed"] for c in res.checks)
     return res
