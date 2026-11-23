@@ -1252,12 +1252,14 @@ async def test_connection(service: str, user_id: int = 0):
     Args:
         user_id: Authenticated user ID.  ``0`` uses global/system credentials.
     """
-    from semabridge.repository.credential_manager import CredentialManager
+    from semabridge.repository.credential_manager import CredentialManager, CredentialDecryptionError
 
     cm = CredentialManager()
 
     try:
         cm.inject_credentials_to_env(service, user_id=user_id)
+    except CredentialDecryptionError as e:
+        return {"status": "failed", "message": str(e)}
     except Exception as e:
         raise ValidationError(f"No credentials stored: {e}")
 
