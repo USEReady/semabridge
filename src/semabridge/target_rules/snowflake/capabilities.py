@@ -9,4 +9,5 @@ SNOWFLAKE_CAPABILITIES = TargetCapabilities(
     window_metrics=True,
     nested_joins=True,
     bridge_views=False,
+    enriched_helper_columns=True,
 )

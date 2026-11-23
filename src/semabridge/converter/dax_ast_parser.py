@@ -2365,6 +2365,12 @@ class DaxSqlRenderer:
             sql = self._render_node(node)
             if not validate_emitted_sql(sql):
                 raise self.DaxRenderError(f"Emitted SQL contains un-translated DAX syntax: {sql}")
+            # Window metrics (OVER ..., precomputed window columns) are a
+            # platform capability; a platform without them declines.
+            if not self.rules.capabilities.window_metrics and (
+                self.window_precompute_columns or re.search(r"\bOVER\s*\(", sql, re.IGNORECASE)
+            ):
+                raise self.DaxRenderError(self.rules.policies.reason_text(ReasonCode.NEEDS_WINDOW))
             if self.dialect.current_date().upper() in sql.upper() and not _ast_contains_func(node, {"TODAY", "NOW"}):
                 if ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE not in self._advisory_categories:
                     self._advisory_categories.append(ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE)
@@ -5036,6 +5042,12 @@ class DaxSqlRenderer:
             calc_node = FunctionCallNode(func="CALCULATE", args=args)
             pat = match_whole_table_all_ast(calc_node, fact_table=self.primary_table_name or self.table_alias)
             if pat:
+                # Both forms below are platform capabilities: a leave-one-out
+                # window total, or a helper column precomputed on an
+                # enriched view. A platform without them declines here.
+                caps = self.rules.capabilities
+                if not (caps.window_metrics if getattr(self, "_current_loo_info", None) else caps.enriched_helper_columns):
+                    raise self.DaxRenderError(self.rules.policies.reason_text(ReasonCode.NEEDS_WINDOW))
                 # Leave-One-Out (LOO) total expression substitution:
                 # When CALCULATE(..., ALL(FactTable)) is evaluated inside a leave-one-out context (e.g. CSAT Impact),
                 # directly use the precomputed total calculation expression rather than referencing an external helper column.

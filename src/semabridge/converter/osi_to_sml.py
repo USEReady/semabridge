@@ -8,6 +8,7 @@ intermediate representation, applying semantic enrichment like DAX translation.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Set
 from semabridge.core.interfaces import BaseConverter
 from semabridge.core.exceptions import ConversionError
@@ -92,6 +93,22 @@ def _apply_translation_advisories(metric: SMLMetric, translation: DAXTranslation
         metric.advisory_notes.append(_TRANSLATION_ADVISORY_NOTES.get(category, category))
 
 
+@dataclass
+class NeutralConversion:
+    """The platform-neutral result of OSIToSMLConverter.convert_neutral():
+    the model (measures carry DAX and facts, no SQL), the measure analysis,
+    and the lookups the render stage needs."""
+
+    sml: SMLModel
+    osi_model: OSIModel
+    analysis: ModelMeasureAnalysis
+    dataset_col_lookup: Dict[str, set]
+    dataset_aliases: Dict[str, str]
+    table_key_map: Dict[str, str]
+    column_renames: Dict[str, Dict[str, str]]
+    known_measure_names: Set[str]
+
+
 class OSIToSMLConverter(BaseConverter):
     """
     Transforms OSI Model into SML Model with semantic enrichment.
@@ -133,7 +150,15 @@ class OSIToSMLConverter(BaseConverter):
         row_counts: Optional[Dict[str, int]] = None,
     ) -> SMLModel:
         """
-        Convert OSIModel object to SMLModel object.
+        Convert OSIModel object to SMLModel object, with every measure
+        decided and translated for this converter's target platform
+        (self.rules; default Snowflake).
+
+        Two stages, also callable on their own:
+          convert_neutral()  -- the model and the measures' facts, DAX only:
+                                no SQL, no platform decisions;
+          render_measures()  -- the platform step: keep/decline each measure
+                                and translate it with the platform's rules.
 
         Args:
             osi_model: OSIModel object
@@ -141,6 +166,19 @@ class OSIToSMLConverter(BaseConverter):
         Returns:
             SMLModel object
         """
+        conversion = self.convert_neutral(osi_model, row_counts=row_counts)
+        return self.render_measures(conversion)
+
+    def convert_neutral(
+        self,
+        osi_model: OSIModel,
+        row_counts: Optional[Dict[str, int]] = None,
+    ) -> "NeutralConversion":
+        """The platform-neutral half of from_osi: datasets, dimensions,
+        relationships and every measure with its DAX and facts (step 3,
+        measure_analysis) -- no SQL, no keep/decline decision. The result's
+        .sml is what a planner (e.g. Databricks) starts from; pass the
+        whole result to render_measures() for a platform's SQL."""
         try:
             sml = SMLModel(
                 unique_name=osi_model.unique_name,
@@ -213,33 +251,85 @@ class OSIToSMLConverter(BaseConverter):
                     table_key_map[to_alias(d.unique_name).casefold()] = key_col
                     table_key_map[IdentifierSanitizer().sanitize_table_name(d.unique_name).casefold()] = key_col
 
-            # 3. Convert Metrics with automated translation pipeline
-            # Step 3a: Convert all metrics individually for Tier 1-4 translations
-
             known_measure_names = {m.unique_name for m in osi_model.metrics}
             # Step 3 (understand measures): platform-neutral facts for every
-            # measure + the dependency graph, worked out once. The decisions
-            # and translation below read these facts; the Databricks planner
-            # reads the same object (self.measure_analysis).
+            # measure + the dependency graph, worked out once. The render
+            # stage and the Databricks planner read the same object.
             measure_analysis = analyze_measures(osi_model, translator=self.dax_translator)
             self.measure_analysis = measure_analysis
             for osi_metric, analysis in zip(osi_model.metrics, measure_analysis.per_metric):
+                sml_metric = self._neutral_metric(osi_metric, analysis)
+                metric_renames = column_renames.get(sml_metric.dataset) or {}
+                if metric_renames and sml_metric.source_column in metric_renames:
+                    sml_metric.source_column = metric_renames[sml_metric.source_column]
+                sml.metrics.append(sml_metric)
+
+            # 4. Convert Relationships
+            for osi_rel in osi_model.relationships:
+                sml_rel = self._convert_relationship(osi_rel)
+                if sml_rel:
+                    from_renames = column_renames.get(sml_rel.from_dataset) or {}
+                    to_renames = column_renames.get(sml_rel.to_dataset) or {}
+                    if from_renames:
+                        sml_rel.from_columns = [from_renames.get(c, c) for c in sml_rel.from_columns]
+                    if to_renames:
+                        sml_rel.to_columns = [to_renames.get(c, c) for c in sml_rel.to_columns]
+                    sml.relationships.append(sml_rel)
+
+            return NeutralConversion(
+                sml=sml,
+                osi_model=osi_model,
+                analysis=measure_analysis,
+                dataset_col_lookup=dax_dataset_col_lookup,
+                dataset_aliases=dax_dataset_aliases,
+                table_key_map=table_key_map,
+                column_renames=column_renames,
+                known_measure_names=known_measure_names,
+            )
+
+        except Exception as e:
+            logger.error(f"OSI to SML conversion failed: {e}")
+            raise ConversionError(
+                f"Failed to convert OSI to SML: {e}",
+                source_format="osi",
+                target_format="sml",
+                details={"error": str(e)}
+            )
+
+    def render_measures(
+        self,
+        conversion: "NeutralConversion",
+        rules: Optional[TargetRules] = None,
+    ) -> SMLModel:
+        """The platform half of from_osi: keep/decline every measure and
+        translate it with the platform's rules (`rules`, default
+        self.rules). Replaces the neutral measures of conversion.sml with
+        the decided, translated ones and returns that model."""
+        previous = self.rules
+        if rules is not None:
+            self.rules = rules
+        try:
+            sml = conversion.sml
+            # 3. Convert Metrics with automated translation pipeline
+            # Step 3a: decide + translate every metric individually (Tiers 1-4)
+            sml.metrics = []
+            for osi_metric, analysis in zip(conversion.osi_model.metrics, conversion.analysis.per_metric):
                 missing_refs = list(analysis.missing_column_refs)
                 if missing_refs:
                     sml_metric = self._source_broken_metric(osi_metric, missing_refs)
                 else:
                     sml_metric = self._convert_metric(
                         osi_metric,
-                        dataset_col_lookup=dax_dataset_col_lookup,
-                        dataset_aliases=dax_dataset_aliases,
-                        relationships=osi_model.relationships,
-                        table_key_map=table_key_map,
-                        known_measure_names=known_measure_names,
+                        dataset_col_lookup=conversion.dataset_col_lookup,
+                        dataset_aliases=conversion.dataset_aliases,
+                        relationships=conversion.osi_model.relationships,
+                        table_key_map=conversion.table_key_map,
+                        known_measure_names=conversion.known_measure_names,
                         analysis=analysis,
                     )
                 if getattr(osi_metric, "folder", None) and not getattr(sml_metric, "folder", None):
                     sml_metric.folder = osi_metric.folder
-                metric_renames = column_renames.get(sml_metric.dataset) or {}
+                metric_renames = conversion.column_renames.get(sml_metric.dataset) or {}
                 if metric_renames and sml_metric.source_column in metric_renames:
                     sml_metric.source_column = metric_renames[sml_metric.source_column]
                 sml.metrics.append(sml_metric)
@@ -255,11 +345,11 @@ class OSIToSMLConverter(BaseConverter):
             # metric (the dry-run-timeout root cause this fixes).
             self._resolve_metric_dependencies(
                 sml,
-                dataset_col_lookup=dax_dataset_col_lookup,
-                dataset_aliases=dax_dataset_aliases,
-                relationships=osi_model.relationships,
+                dataset_col_lookup=conversion.dataset_col_lookup,
+                dataset_aliases=conversion.dataset_aliases,
+                relationships=conversion.osi_model.relationships,
                 skip_tier5=True,
-                table_key_map=table_key_map,
+                table_key_map=conversion.table_key_map,
             )
 
             # Step 3c: Collect unresolved metrics for Tier-5 batch fallback.
@@ -281,16 +371,17 @@ class OSIToSMLConverter(BaseConverter):
                 logger.info(f"📦 Batch translating {len(tier5_candidates)} Tier 5 metrics...")
                 batch_results = self.dax_translator.batch_translate_tier5(
                     tier5_candidates,
-                    dataset_col_lookup=dax_dataset_col_lookup,
-                    dataset_aliases=dax_dataset_aliases,
-                    # osi_model.relationships (not sml.relationships) --
+                    dataset_col_lookup=conversion.dataset_col_lookup,
+                    dataset_aliases=conversion.dataset_aliases,
+                    # conversion.osi_model.relationships (not sml.relationships) --
                     # available from the start, before "4. Convert
                     # Relationships" below runs. Lets Tier 5 legally
                     # reference a relationship-reachable dimension's
                     # column directly instead of always declining
                     # cross-table filters (see batch_translate_tier5's
                     # docstring).
-                    relationships=osi_model.relationships,
+                    relationships=conversion.osi_model.relationships,
+                    rules=self.rules,
                 )
                 
                 # Apply batch translation results back to metrics
@@ -327,11 +418,11 @@ class OSIToSMLConverter(BaseConverter):
                 # attempt for whatever the batch still left unresolved.
                 self._resolve_metric_dependencies(
                     sml,
-                    dataset_col_lookup=dax_dataset_col_lookup,
-                    dataset_aliases=dax_dataset_aliases,
-                    relationships=osi_model.relationships,
+                    dataset_col_lookup=conversion.dataset_col_lookup,
+                    dataset_aliases=conversion.dataset_aliases,
+                    relationships=conversion.osi_model.relationships,
                     skip_tier5=True,
-                    table_key_map=table_key_map,
+                    table_key_map=conversion.table_key_map,
                 )
 
                 # Step 3f: real incident -- '% Unit Market Share YOY Change'
@@ -352,45 +443,36 @@ class OSIToSMLConverter(BaseConverter):
                 # produced nothing usable.
                 self._replace_stale_tier5_deferred_reason(sml)
 
-            # 4. Convert Relationships
-            for osi_rel in osi_model.relationships:
-                sml_rel = self._convert_relationship(osi_rel)
-                if sml_rel:
-                    from_renames = column_renames.get(sml_rel.from_dataset) or {}
-                    to_renames = column_renames.get(sml_rel.to_dataset) or {}
-                    if from_renames:
-                        sml_rel.from_columns = [from_renames.get(c, c) for c in sml_rel.from_columns]
-                    if to_renames:
-                        sml_rel.to_columns = [to_renames.get(c, c) for c in sml_rel.to_columns]
-                    sml.relationships.append(sml_rel)
+            # 4a/4b run only where the target's policies ask for them
+            # (Snowflake: they predict semantic-view compile errors).
+            if self.rules.policies.relationship_advisories:
+                # 4a. Advisory-only: flag metrics whose DAX will fail Snowflake's
+                # semantic-view compiler for a relationship-graph reason, even
+                # though translation itself succeeds — see
+                # _flag_unreachable_dimension_calculates' docstring. Must run
+                # AFTER relationships are converted (immediately above) since
+                # the check needs sml.relationships, and after all metrics
+                # exist (Step 3 above) since it needs every metric's own
+                # dataset for the optional "does the referenced measure reach
+                # it instead" enrichment. Never touches sync_enabled/
+                # sync_failure_reason/sql_expression — this changes only what
+                # a user sees at mapping/dry-run time, never what deploys.
+                self._flag_unreachable_dimension_calculates(sml)
 
-            # 4a. Advisory-only: flag metrics whose DAX will fail Snowflake's
-            # semantic-view compiler for a relationship-graph reason, even
-            # though translation itself succeeds — see
-            # _flag_unreachable_dimension_calculates' docstring. Must run
-            # AFTER relationships are converted (immediately above) since
-            # the check needs sml.relationships, and after all metrics
-            # exist (Step 3 above) since it needs every metric's own
-            # dataset for the optional "does the referenced measure reach
-            # it instead" enrichment. Never touches sync_enabled/
-            # sync_failure_reason/sql_expression — this changes only what
-            # a user sees at mapping/dry-run time, never what deploys.
-            self._flag_unreachable_dimension_calculates(sml)
+                # 4a2. Disconnected selector decomposition disabled — keep metrics single as built.
+                # self._decompose_disconnected_selector_metrics(
+                #     sml,
+                #     dataset_col_lookup=dax_dataset_col_lookup,
+                #     dataset_aliases=dax_dataset_aliases,
+                # )
 
-            # 4a2. Disconnected selector decomposition disabled — keep metrics single as built.
-            # self._decompose_disconnected_selector_metrics(
-            #     sml,
-            #     dataset_col_lookup=dax_dataset_col_lookup,
-            #     dataset_aliases=dax_dataset_aliases,
-            # )
-
-            # 4b. Advisory-only, opposite outcome of 4a: a metric whose
-            # CALCULATE(...) filters a table that DOES have a relationship
-            # path, but whose translation still failed today because
-            # dry-run has no live connection to exploit that path (see
-            # _flag_reachable_dimension_filters_pending_enrichment). Must
-            # run after 4a and after Step 3 for the same reasons.
-            self._flag_reachable_dimension_filters_pending_enrichment(sml)
+                # 4b. Advisory-only, opposite outcome of 4a: a metric whose
+                # CALCULATE(...) filters a table that DOES have a relationship
+                # path, but whose translation still failed today because
+                # dry-run has no live connection to exploit that path (see
+                # _flag_reachable_dimension_filters_pending_enrichment). Must
+                # run after 4a and after Step 3 for the same reasons.
+                self._flag_reachable_dimension_filters_pending_enrichment(sml)
 
             # 6. Ensure status consistency: any metric with a source expression but no
             # sql_expression must never be left as sync_enabled=True.
@@ -412,6 +494,36 @@ class OSIToSMLConverter(BaseConverter):
                 target_format="sml",
                 details={"error": str(e)}
             )
+        finally:
+            self.rules = previous
+
+    def _neutral_metric(self, osi_metric: OSIMetric, analysis: MeasureAnalysis) -> SMLMetric:
+        """A measure as the neutral model holds it: its DAX and facts, no
+        SQL and no platform decision (sync fields left at their defaults)."""
+        sml_agg = getattr(SMLAggregationType, osi_metric.aggregation.name, SMLAggregationType.SUM)
+        complexity = analysis.complexity_copy() or {}
+        return SMLMetric(
+            unique_name=osi_metric.unique_name,
+            original_name=getattr(osi_metric, "original_name", None) or osi_metric.unique_name,
+            label=osi_metric.label,
+            description=osi_metric.description or "",
+            dataset=osi_metric.dataset,
+            expression=analysis.dax if not analysis.sql_sourced else (osi_metric.expression or ""),
+            aggregation=sml_agg,
+            source_column=getattr(osi_metric, "source_column", None),
+            format_string=osi_metric.format_string,
+            folder=getattr(osi_metric, "folder", None),
+            is_hidden=osi_metric.is_hidden,
+            complexity_tier=complexity.get("tier") or 1,
+            requires_time_intel=bool(complexity.get("requires_time_intel", False)),
+            group_by_dimensions=list(complexity.get("group_by_dimensions") or []),
+            depends_on_measures=list(complexity.get("depends_on_measures") or analysis.references),
+            access_modifier=osi_metric.access_modifier,
+            synonyms=list(osi_metric.synonyms),
+            synonym_sources=dict(osi_metric.synonym_sources),
+            has_report_alias=osi_metric.has_report_alias,
+            source_file=osi_metric.source_file,
+        )
 
     def _convert_dataset(self, osi_ds: OSIDataset) -> SMLDataset:
         return self._convert_dataset_with_renames(osi_ds)[0]
@@ -749,6 +861,7 @@ class OSIToSMLConverter(BaseConverter):
                 safe_alias,
                 osi_metric.dataset,
                 metric_name=metric.unique_name,
+                rules=self.rules,
                 dataset_col_lookup=dataset_col_lookup,
                 dataset_aliases=dataset_aliases,
                 skip_tier5=True,
@@ -843,6 +956,7 @@ class OSIToSMLConverter(BaseConverter):
                     safe_alias,
                     metric.dataset,
                     metric_name=metric.unique_name,
+                    rules=self.rules,
                     metrics_context=sml.metrics,
                     dataset_col_lookup=dataset_col_lookup,
                     dataset_aliases=dataset_aliases,

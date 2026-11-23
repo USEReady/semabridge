@@ -100,8 +100,17 @@ def _pbix_to_sml(pbix_path: Path):
 
 def _pbix_to_sml_and_converter(pbix_path: Path):
     """As _pbix_to_sml, also returning the converter (for its measure_analysis)."""
-    from semabridge.connectors.local_pbix_connector import LocalPBIXConnector
     from semabridge.converter.osi_to_sml import OSIToSMLConverter
+
+    osi_model, row_counts = _pbix_to_osi(pbix_path)
+    converter = OSIToSMLConverter()
+    sml = converter.from_osi(osi_model, row_counts=row_counts)
+    return sml, converter
+
+
+def _pbix_to_osi(pbix_path: Path):
+    """Engine step 4 + the TMSL -> OSI half of step 6; returns (osi, row_counts)."""
+    from semabridge.connectors.local_pbix_connector import LocalPBIXConnector
     from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
     from semabridge.core.source_format import from_pbix_tmsl
 
@@ -129,9 +138,7 @@ def _pbix_to_sml_and_converter(pbix_path: Path):
             "infer_relationships": None,
         }
     )
-    converter = OSIToSMLConverter()
-    sml = converter.from_osi(osi_model, row_counts=source_format.row_counts)
-    return sml, converter
+    return osi_model, source_format.row_counts
 
 
 def _build_emitter():
@@ -324,3 +331,79 @@ def test_measure_analysis_agrees_with_conversion(model: str, hermetic: None) -> 
                 assert position[ref] < position[name], (name, ref)
             assert name in graph.dependents[ref]
             assert set(graph.all_tables_used[ref]) <= set(graph.all_tables_used[name])
+
+
+@pytest.mark.parametrize("model", sorted(MODELS))
+def test_neutral_conversion_then_render(model: str, hermetic: None) -> None:
+    """Phase 2e: OSI -> SML in two stages. The neutral stage holds DAX and
+    facts only (no SQL, no decision); rendering it with the Snowflake rules
+    gives exactly what from_osi gives; rendering with another platform's
+    rules uses that platform's dialect and skips Snowflake-only advisories."""
+    import dataclasses
+
+    from semabridge.converter.osi_to_sml import OSIToSMLConverter
+    from semabridge.target_rules import SNOWFLAKE_RULES, DecisionRule, ReasonCode, TargetRules
+    from semabridge.target_rules.snowflake.dialect import SnowflakeDialect
+
+    pbix_path = MODELS[model]
+    if pbix_path is None or not pbix_path.exists():
+        pytest.skip(f"{model}: .pbix not available")
+    osi_model, row_counts = _pbix_to_osi(pbix_path)
+
+    # 1. Neutral: DAX and facts, no platform SQL or decision.
+    neutral = OSIToSMLConverter().convert_neutral(osi_model, row_counts=row_counts)
+    assert neutral.sml.metrics, "neutral model has its measures"
+    for metric, facts in zip(neutral.sml.metrics, neutral.analysis.per_metric):
+        assert metric.sql_expression is None, metric.unique_name
+        assert metric.sync_failure_reason is None, metric.unique_name
+        if not facts.sql_sourced:
+            assert metric.expression == facts.dax, metric.unique_name
+
+    # 2. Neutral + Snowflake render == from_osi (every field of every measure).
+    rendered = OSIToSMLConverter().render_measures(
+        OSIToSMLConverter().convert_neutral(osi_model, row_counts=row_counts)
+    )
+    direct = OSIToSMLConverter().from_osi(osi_model, row_counts=row_counts)
+    assert [m.model_dump(mode="json") for m in rendered.metrics] == [m.model_dump(mode="json") for m in direct.metrics]
+    volatile = {"created_at", "updated_at"}  # set at conversion time
+    assert rendered.model_dump(mode="json", exclude=volatile) == direct.model_dump(mode="json", exclude=volatile)
+
+    # 3. Another platform: its dialect, its decisions, no Snowflake advisories.
+    class Backticks(SnowflakeDialect):
+        name = "databricks"
+        identifier_quote = "`"
+        float_cast_suffix = "::DOUBLE"
+
+        def quote_identifier(self, name: str) -> str:
+            return f"`{name}`"
+
+    decisions = dict(SNOWFLAKE_RULES.policies.rules)
+    decisions[ReasonCode.STRING_FUNCTION_ROOT] = DecisionRule(keep=True)
+    other = TargetRules(
+        target="golden-other-platform",
+        policies=dataclasses.replace(
+            SNOWFLAKE_RULES.policies, rules=decisions, relationship_advisories=False
+        ),
+        # No Snowflake window metrics or enriched-view helper columns.
+        capabilities=dataclasses.replace(
+            SNOWFLAKE_RULES.capabilities, window_metrics=False, enriched_helper_columns=False
+        ),
+        dialect=Backticks(),
+    )
+    converter = OSIToSMLConverter()
+    other_sml = converter.render_measures(converter.convert_neutral(osi_model, row_counts=row_counts), rules=other)
+    assert converter.rules is SNOWFLAKE_RULES, "rules restored after the call"
+    sql = [m.sql_expression for m in other_sml.metrics if m.sql_expression and m.sync_enabled]
+    assert sql, "some measures translate for the other platform"
+    leaked = [
+        (m.unique_name, m.sql_expression)
+        for m in other_sml.metrics
+        if m.sql_expression and m.sync_enabled and '."' in m.sql_expression
+    ]
+    assert not leaked, f"Snowflake quoting leaked into another platform: {leaked}"
+    snowflake_only = {"unreachable_dimension", "pending_live_schema_enrichment"}
+    for m in other_sml.metrics:
+        assert not snowflake_only.intersection(m.advisory_categories), m.unique_name
+        assert not (m.sync_failure_reason or "").startswith(
+            "BY_DESIGN_EXCLUDED: expression's root operation produces a string"
+        ), m.unique_name

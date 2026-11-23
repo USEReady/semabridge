@@ -90,4 +90,5 @@ SNOWFLAKE_POLICIES = TargetPolicies(
     by_design_prefix=BY_DESIGN_PREFIX,
     decline_two_table_measures=True,
     rules=_SNOWFLAKE_DECISIONS,
+    relationship_advisories=True,
 )
