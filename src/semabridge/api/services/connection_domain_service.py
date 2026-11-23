@@ -1275,6 +1275,36 @@ async def delete_connection(service: str, user_id: int = 0):
         raise InternalError(str(e))
 
 
+def _databricks_connection_info():
+    """Databricks connection details after inject_credentials_to_env: the
+    injected DATABRICKS_* variables (warehouse ID optional, so it can be
+    auto-discovered), else the settings (which also read .env)."""
+    from semabridge.target_backends.databricks.auth import DatabricksAuthError, DatabricksConnectionInfo
+
+    try:
+        return DatabricksConnectionInfo.from_env()
+    except DatabricksAuthError:
+        return DatabricksConnectionInfo.from_config(reload_settings().databricks)
+
+
+async def audit_databricks_permissions(user_id: int = 0, catalog: Optional[str] = None, schema: Optional[str] = None):
+    """Permission audit for the Databricks target (CS-10): can the stored
+    identity create metric views in catalog.schema? REST metadata only; the
+    remediation SQL is returned as text and never executed."""
+    from semabridge.repository.credential_manager import CredentialManager
+    from semabridge.target_backends.databricks.connection import audit_databricks_permissions as _audit
+
+    try:
+        CredentialManager().inject_credentials_to_env("databricks", user_id=user_id)
+    except Exception as e:
+        raise ValidationError(f"No credentials stored: {e}")
+    try:
+        info = _databricks_connection_info()
+        return await asyncio.to_thread(_audit, info, catalog, schema)
+    except Exception as e:
+        return {"status": "failed", "message": str(e)}
+
+
 async def test_connection(service: str, user_id: int = 0):
     """Test the stored credentials for a service by attempting authentication.
 
@@ -1314,29 +1344,16 @@ async def test_connection(service: str, user_id: int = 0):
             return {"status": "failed", "message": str(e)}
 
     if service == "databricks":
+        # Non-waking test (CS-10): token -> identity -> warehouse via REST
+        # metadata only; never runs SQL, so a stopped warehouse stays stopped.
+        # A missing warehouse ID is auto-discovered.
         try:
-            cfg = reload_settings()
-            publisher = make_target_emitter("databricks", cfg.databricks)
-            token = publisher._resolve_token()
-            # Fire a lightweight query to validate warehouse access
-            import requests as _requests
+            import asyncio
 
-            resp = _requests.post(
-                f"https://{cfg.databricks.host}/api/2.0/sql/statements",
-                json={
-                    "statement": "SHOW CATALOGS",
-                    "warehouse_id": cfg.databricks.warehouse_id,
-                    "wait_timeout": "10s",
-                },
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json",
-                },
-                timeout=15,
-            )
-            if resp.status_code == 200:
-                return {"status": "success", "message": "Databricks connection successful"}
-            return {"status": "failed", "message": f"Databricks API returned {resp.status_code}: {resp.text[:200]}"}
+            from semabridge.target_backends.databricks.connection import check_databricks_connection
+
+            info = _databricks_connection_info()
+            return await asyncio.to_thread(check_databricks_connection, info)
         except Exception as e:
             return {"status": "failed", "message": str(e)}
 
