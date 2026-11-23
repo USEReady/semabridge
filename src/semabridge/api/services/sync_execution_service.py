@@ -1476,10 +1476,7 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
         pass  # Fabric not configured in .env — credentials come from Account table via identity_id
 
     if source_type == "fabric":
-        if payload.get("dry_run"):
-            resolved_workspace_id = str(source_cfg.get("workspace_id") or _fabric_env_workspace_id or "default")
-        else:
-            resolved_workspace_id = _fabric_source_workspace(config, source_cfg, _fabric_env_workspace_id)
+        resolved_workspace_id = _fabric_source_workspace(config, source_cfg, _fabric_env_workspace_id)
     else:
         resolved_workspace_id = str(
             source_cfg.get("workspace_id")
