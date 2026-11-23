@@ -984,6 +984,14 @@ def execute_semantic_query(
 
     if validation.rewritten_sql:
         clean_sql = validation.rewritten_sql
+        # Re-verify rewritten SQL through the validator before execution
+        reval = validate_and_rewrite_generated_sql(
+            sql=clean_sql,
+            model=model_meta,
+            question=req.question or "",
+        )
+        if not reval.allowed:
+            raise HTTPException(status_code=400, detail=reval.refusal_reason or "Rewritten SQL rejected by governance guard.")
         exec_sql = strip_sql_comments(clean_sql).strip()
         if not re.search(r"\blimit\s+\d+\s*$", exec_sql, re.IGNORECASE):
             exec_sql = f"{exec_sql} LIMIT {int(req.limit)}"

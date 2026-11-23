@@ -44,7 +44,7 @@ logger = logging.getLogger("semabridge.ai.nl_query_engine")
 
 _DAX_INVALID_RE = re.compile(
     r"\b(CALCULATE|CALCULATETABLE|COUNTROWS|DIVIDE|SUMX|AVERAGEX|MINX|MAXX|"
-    r"SELECTEDVALUE|ALLEXCEPT|ALLSELECTED|DATEADD|SAMEPERIODLASTYEAR|"
+    r"SELECTEDVALUE|ALLEXCEPT|ALLSELECTED|SAMEPERIODLASTYEAR|"
     r"DATESYTD|TOTALYTD|RELATED|USERELATIONSHIP|HASONEVALUE)\s*\("
     r"|\bVAR\s+\w+\s*=|\bRETURN\b|'[^']+'\[[^\]]+\]|#\s*Measures\b",
     re.I,
@@ -225,23 +225,23 @@ class NLQueryEngine:
     @staticmethod
     def _is_sql_count_metric(m: DomainMetric) -> bool:
         """Return True when the metric's own aggregation or SQL defines a count."""
-        m_text = f"{m.name} {m.label or ''}"
-        if re.search(r"(%|_pct|\bpct\b|percent|ratio|share|\brate\b|\bmom|\byoy|\bqoq)", m_text, re.I):
+        kind = getattr(m, "kind", None)
+        shape = getattr(m, "shape", None)
+        if kind in ("period", "growth", "ratio") or shape in ("ratio", "percent"):
             return False
         agg = NLQueryEngine._effective_aggregation(m)
+        sx = (m.sql_expression or "").strip()
+        dax = (getattr(m, "dax_expression", None) or "").strip()
+        # If the metric formula divides by another expression, it's a ratio or rate, not a plain count
+        if (sx and "/" in sx) or (dax and ("/" in dax or "DIVIDE" in dax.upper())):
+            return False
         if agg in {"COUNT", "COUNT_DISTINCT", "DISTINCTCOUNT", "DISTINCT_COUNT"}:
             return True
-        sx = (m.sql_expression or "").strip()
-        if sx:
-            if re.search(r"/\s*(?:NULLIF|COALESCE|IFF|\()?\s*(?:[A-Za-z0-9_.\"]*\s*)*\b(?:SUM|COUNT|AVG)\b", sx, re.I):
-                return False
-            if re.search(r"\b(?:COUNT|COUNT_IF|APPROX_COUNT_DISTINCT|DISTINCTCOUNT|COUNTROWS|COUNTA|COUNTX)\s*\(", sx, re.I):
-                return True
-        dax = (getattr(m, "dax_expression", None) or "").strip()
-        dr = (getattr(m, "deploy_reason", None) or "").strip()
-        if dax and ("non-additive" in dr.lower() or "non additive" in dr.lower()):
-            if "/" not in dax and re.search(r"\b(?:COUNT|COUNTA|COUNTX|DISTINCTCOUNT|COUNTROWS)\s*\(", dax, re.I):
-                return True
+        if sx and re.search(r"\b(?:COUNT|COUNT_IF|APPROX_COUNT_DISTINCT|DISTINCTCOUNT|COUNTROWS|COUNTA|COUNTX)\s*\(", sx, re.I):
+            return True
+        is_non_add = bool(getattr(m, "non_additive_by", None) or agg in ("NON_ADDITIVE", "NONADDITIVE", "SNAPSHOT"))
+        if is_non_add and dax and re.search(r"\b(?:COUNT|COUNTA|COUNTX|DISTINCTCOUNT|COUNTROWS)\s*\(", dax, re.I):
+            return True
         return False
 
     @classmethod
@@ -335,28 +335,24 @@ class NLQueryEngine:
                 for c in target_concepts:
                     for a in (c.attributes or []):
                         dt = str(getattr(a, "data_type", "") or "").upper()
-                        an = str(getattr(a, "name", "") or "").lower()
-                        if dt in ("DATE", "DATETIME", "TIMESTAMP", "TIMESTAMP_NTZ", "TIMESTAMP_LTZ", "TIMESTAMP_TZ") or "date" in an:
+                        if dt in ("DATE", "DATETIME", "TIMESTAMP", "TIMESTAMP_NTZ", "TIMESTAMP_LTZ", "TIMESTAMP_TZ"):
                             return a.name
                 return None
-            return "date"
+            return None
         return None
 
     @staticmethod
     def _is_unanswerable_or_null(m: DomainMetric) -> Tuple[bool, Optional[str]]:
-        """Check if metric is deployed as a NULL placeholder or marked unanswerable/private."""
+        """Check if metric is deployed as a NULL placeholder or marked unanswerable/hidden."""
         expr = (m.sql_expression or "").strip()
         if not expr:
             return True, "no compiled SQL expression in the ontology"
         if is_null_cast_sql(expr) or re.match(r"^(?:CAST\s*\(\s*NULL\b|NULL\b)", expr, re.I):
             return True, "compiled as a NULL placeholder during deployment"
         if getattr(m, "is_unanswerable", False):
-            return True, "marked unanswerable"
-        dr = (getattr(m, "deploy_reason", None) or "").strip()
-        if dr and any(k in dr.lower() for k in ("unanswerable", "private", "not deployed", "unsupported", "cannot be")):
-            return True, dr
-        if getattr(m, "is_hidden", False) and "PRIVATE" in dr.upper():
-            return True, "marked PRIVATE in deployed semantic view"
+            return True, getattr(m, "deploy_reason", None) or "marked unanswerable"
+        if getattr(m, "is_hidden", False):
+            return True, getattr(m, "deploy_reason", None) or "marked hidden in semantic model"
         return False, None
 
     @staticmethod
@@ -558,65 +554,6 @@ class NLQueryEngine:
 
         return alternatives
 
-    @staticmethod
-    def _reaches_via_many_to_one(
-        start_concept: str,
-        target_concept: str,
-        relationships: List[Any],
-    ) -> bool:
-        """Check if start_concept reaches target_concept through many-to-one or one-to-one relationships only."""
-        if not start_concept or not target_concept:
-            return False
-        if start_concept.casefold() == target_concept.casefold():
-            return True
-
-        adj: Dict[str, List[Tuple[str, str]]] = {}
-        for r in relationships or []:
-            if getattr(r, "is_active", True) is False:
-                continue
-            c1 = (getattr(r, "from_concept", None) or getattr(r, "from_dataset", None) or "").strip()
-            c2 = (getattr(r, "to_concept", None) or getattr(r, "to_dataset", None) or "").strip()
-            if not c1 or not c2:
-                continue
-            c1_cf = c1.casefold()
-            c2_cf = c2.casefold()
-            raw_card = getattr(r, "cardinality", None)
-            val = getattr(raw_card, "value", str(raw_card or ""))
-            card = str(val or "N:1").upper().replace(" ", "").replace("-", "_").replace("CARDINALITYTYPE.", "")
-
-            if card in ("N:1", "MANY_TO_ONE", "MANYTOONE"):
-                c1_to_c2 = "MANY_TO_ONE"
-                c2_to_c1 = "ONE_TO_MANY"
-            elif card in ("1:N", "ONE_TO_MANY", "ONETOMANY"):
-                c1_to_c2 = "ONE_TO_MANY"
-                c2_to_c1 = "MANY_TO_ONE"
-            elif card in ("N:N", "MANY_TO_MANY", "MANYTOMANY"):
-                c1_to_c2 = "MANY_TO_MANY"
-                c2_to_c1 = "MANY_TO_MANY"
-            else:
-                c1_to_c2 = "ONE_TO_ONE"
-                c2_to_c1 = "ONE_TO_ONE"
-
-            if c1_to_c2 in ("MANY_TO_ONE", "ONE_TO_ONE"):
-                adj.setdefault(c1_cf, []).append((c2_cf, c1_to_c2))
-            if c2_to_c1 in ("MANY_TO_ONE", "ONE_TO_ONE"):
-                adj.setdefault(c2_cf, []).append((c1_cf, c2_to_c1))
-
-        queue = [start_concept.casefold()]
-        visited = {start_concept.casefold()}
-        target = target_concept.casefold()
-
-        while queue:
-            curr = queue.pop(0)
-            if curr == target:
-                return True
-            for nxt, _ in adj.get(curr, []):
-                if nxt not in visited:
-                    visited.add(nxt)
-                    queue.append(nxt)
-
-        return False
-
     # ------------------------------------------------------------------
     # Generic Phrase Scoring Helpers
     # ------------------------------------------------------------------
@@ -654,11 +591,25 @@ class NLQueryEngine:
         phrase_set = set(combined_toks)
         total_w = sum(lexicon.weight(t) for t in combined_toks) or 1.0
         raw_cf = phrase.raw_text.strip().casefold()
-        # Status phrases (e.g. 'those still active', 'who separated', 'still active', 'separated', 'current')
-        # describe status filters/dimensions, never an aggregate metric whose label happens to contain the word.
-        if re.search(r"\b(who|those|that\s+are)\s+(?:still\s+)?(active|separated|terminated|current)\b", raw_cf) or \
-           re.search(r"^(still\s+active|who\s+separated|those\s+still\s+active)$", raw_cf):  # hardcoding-ok: status phrase detection
-            return [], "not found"
+        # Dynamically detect filter/status qualifier phrases from metric filter literals and dimension sample values
+        qualifier_prefix = bool(re.search(r"\b(who|those|that|which|still|currently)\b", raw_cf))
+        if qualifier_prefix:
+            filter_words: Set[str] = set()
+            for me in lexicon.metrics:
+                for vals in me.filter_literals.values():
+                    for v in vals:
+                        filter_words.update(re.findall(r"[a-z0-9]+", str(v).casefold()))
+            for val_k in lexicon.sample_value_index.keys():
+                filter_words.update(re.findall(r"[a-z0-9]+", str(val_k).casefold()))
+            for de in lexicon.dimensions:
+                for sv in (getattr(de.attribute, "sample_values", None) or []):
+                    filter_words.update(re.findall(r"[a-z0-9]+", str(sv).casefold()))
+
+            phrase_words = set(re.findall(r"[a-z0-9]+", raw_cf))
+            meaningful_words = [w for w in phrase_words if w not in {"who", "those", "that", "are", "is", "were", "was", "still", "currently"}]
+            is_metric_name = any(raw_cf == me.metric.name.casefold() or raw_cf == (me.metric.label or "").casefold() for me in lexicon.metrics)
+            if meaningful_words and all(w in filter_words for w in meaningful_words) and not is_metric_name:
+                return [], "not found"
         by_lemmas = {tok for bp in parsed.by_phrases for tok in content_lemmas(bp)}
 
         deriv_cache: Dict[str, frozenset[str]] = {t: wordnet_related_lemmas(t) for t in combined_toks}
@@ -897,8 +848,12 @@ class NLQueryEngine:
                         score += lexicon.weight(bt_lemmas[-1]) * 1.5
                     if bt_set.issubset(de.lemmas | de.concept_lemmas):
                         score += 1.5
-                    is_key_attr = bool(getattr(de.attribute, "is_primary_key", False) or re.search(r"(seq|key|id)$", a_cf))
-                    if is_key_attr and not re.search(r"(seq|key|id)\b", sbt_cf):
+                    is_key_attr = bool(
+                        getattr(de.attribute, "is_primary_key", False)
+                        or getattr(de.attribute, "is_foreign_key", False)
+                        or getattr(de.attribute, "is_key", False)
+                    )
+                    if is_key_attr and "key" not in bt_lemmas:
                         score *= 0.45
                     if concept_overlap:
                         score += 0.6 * len(concept_overlap)
@@ -913,7 +868,12 @@ class NLQueryEngine:
             # If multiple attributes from the same concept matched via concept label, prefer descriptive/name attribute over ID/key
             def _exact_priority(e: LexiconDimensionEntry) -> int:
                 attr_nm = e.attribute.name.casefold()
-                if not re.search(r"(seq|key|id)\b", sbt_cf) and (getattr(e.attribute, "is_primary_key", False) or re.search(r"(seq|key|id)$", attr_nm)):
+                is_k = bool(
+                    getattr(e.attribute, "is_primary_key", False)
+                    or getattr(e.attribute, "is_foreign_key", False)
+                    or getattr(e.attribute, "is_key", False)
+                )
+                if ("key" not in bt_lemmas) and is_k:
                     return 2
                 if "name" in attr_nm or "label" in attr_nm or "desc" in attr_nm:
                     return 0
@@ -1022,7 +982,7 @@ class NLQueryEngine:
                         confidence_score=0.0,
                         answerable=False,
                         refused=True,
-                        reason_code="UNKNOWN_METRIC",
+                        reason_code="AMBIGUOUS_METRIC",
                         reason_text=clarification,
                         engine="local",
                         explanation=clarification,
@@ -1198,7 +1158,7 @@ class NLQueryEngine:
                         confidence_score=0.0,
                         answerable=False,
                         refused=True,
-                        reason_code="UNKNOWN_METRIC",
+                        reason_code="UNKNOWN_DIMENSION",
                         reason_text=clarification,
                         engine="local",
                         explanation=clarification,
@@ -1280,7 +1240,7 @@ class NLQueryEngine:
             if effective_semantic_view:
                 pred_sql = f"{self._sv_dim_ref(f_de.concept, f_de.attribute, lexicon)} = '{escaped_val}'"
             else:
-                pred_sql = f"{self._q_ident(f_de.attribute.name)} = '{escaped_val}'"
+                pred_sql = f"{self._q_ident(f_de.concept.name)}.{self._q_ident(f_de.attribute.name)} = '{escaped_val}'"
             if pred_sql not in filters:
                 filters.append(pred_sql)
             filter_trace.append({"phrase": fp.raw_text, "status": "resolved", "predicate": pred_sql})
@@ -1315,7 +1275,7 @@ class NLQueryEngine:
                 if effective_semantic_view:
                     date_ref = self._sv_dim_ref(date_c, date_a, lexicon)
                 else:
-                    date_ref = self._q_ident(date_a.name)
+                    date_ref = f"{self._q_ident(date_c.name)}.{self._q_ident(date_a.name)}"
                 if parsed.year_filters:
                     filters.append(f"YEAR({date_ref}) = {parsed.year_filters[0]}")
                 if parsed.quarter_filters:
@@ -1365,37 +1325,38 @@ class NLQueryEngine:
                         fan_out_reasons.append(msg)
                         failed_check_reasons.append(msg)
 
-        # 2c (Part 1): Window metrics include their PARTITION BY EXCLUDING dimensions
-        for m in detected_metrics:
-            is_win, req_dims = self._is_window_metric(m.sql_expression, m.description, m.name)
-            if is_win and req_dims:
-                missing_dims = []
-                for rd in req_dims:
-                    rd_clean = rd.split(".")[-1].strip().casefold()
-                    in_dims = any(d.split(".")[-1].strip().casefold() == rd_clean for d in dim_names)
-                    in_prompt = bool(re.search(rf"\b{re.escape(rd_clean)}\b", prompt, re.I))
-                    if not (in_dims or in_prompt):
-                        missing_dims.append(rd)
-                if missing_dims:
-                    plan_checks_failed = True
-                    failed_check_reasons.append(
-                        f"Window metric '{m.label or m.name}' requires excluded partition dimension(s) "
-                        f"({', '.join(missing_dims)}) from PARTITION BY EXCLUDING clause."
-                    )
+        # 2c (Part 1): Window metrics include their PARTITION BY EXCLUDING dimensions (physical draft path only)
+        if not effective_semantic_view:
+            for m in detected_metrics:
+                is_win, req_dims = self._is_window_metric(m.sql_expression, m.description, m.name)
+                if is_win and req_dims:
+                    missing_dims = []
+                    for rd in req_dims:
+                        rd_clean = rd.split(".")[-1].strip().casefold()
+                        in_dims = any(d.split(".")[-1].strip().casefold() == rd_clean for d in dim_names)
+                        if not in_dims:
+                            missing_dims.append(rd)
+                    if missing_dims:
+                        plan_checks_failed = True
+                        failed_check_reasons.append(
+                            f"Window metric '{m.label or m.name}' requires excluded partition dimension(s) "
+                            f"({', '.join(missing_dims)}) from PARTITION BY EXCLUDING clause."
+                        )
 
-        # 2d: Semi-additive (NON ADDITIVE BY) metrics never summed over their non-additive dimension
-        for m in detected_metrics:
-            semi_dim = self._get_semi_additive_dimension(m, self.ontology.concepts if hasattr(self, "ontology") and self.ontology else None)
-            if semi_dim:
-                semi_clean = semi_dim.split(".")[-1].strip().casefold()
-                grouped_by_semi = any(d.split(".")[-1].strip().casefold() == semi_clean for d in dim_names)
-                filtered_semi = any(semi_clean in f.casefold() for f in filters)
-                if not grouped_by_semi and not filtered_semi:
-                    plan_checks_failed = True
-                    failed_check_reasons.append(
-                        f"Semi-additive metric '{m.label or m.name}' has non-additive dimension '{semi_dim}' "
-                        f"(NON ADDITIVE BY) and cannot be summed over it without grouping or filtering by that dimension."
-                    )
+        # 2d: Semi-additive (NON ADDITIVE BY) metrics never summed over their non-additive dimension (physical draft path only)
+        if not effective_semantic_view:
+            for m in detected_metrics:
+                semi_dim = self._get_semi_additive_dimension(m, self.ontology.concepts if hasattr(self, "ontology") and self.ontology else None)
+                if semi_dim:
+                    semi_clean = semi_dim.split(".")[-1].strip().casefold()
+                    grouped_by_semi = any(d.split(".")[-1].strip().casefold() == semi_clean for d in dim_names)
+                    filtered_semi = any(semi_clean in f.casefold() for f in filters)
+                    if not grouped_by_semi and not filtered_semi:
+                        plan_checks_failed = True
+                        failed_check_reasons.append(
+                            f"Semi-additive metric '{m.label or m.name}' has non-additive dimension '{semi_dim}' "
+                            f"(NON ADDITIVE BY) and cannot be summed over it without grouping or filtering by that dimension."
+                        )
 
         if plan_checks_failed:
             warnings.extend(failed_check_reasons)
@@ -1435,9 +1396,9 @@ class NLQueryEngine:
             elif fan_out_detected:
                 reason_code = "FAN_OUT"
                 reason_text = fan_out_reasons[0] if fan_out_reasons else "The metric's table cannot be grouped by the requested dimension because the join path contains a one-to-many relationship (fan-out trap), which risks multiplying or double counting metric values."
-            elif any("today" in str(w).lower() or "current_date" in str(w).lower() or "current date" in str(w).lower() for w in warnings):  # hardcoding-ok: temporal anchor check
+            elif "CURRENT_DATE_ANCHOR" in warnings or "CURRENT_DATE_ANCHOR" in failed_check_reasons:
                 reason_code = "CURRENT_DATE_ANCHOR"
-                reason_text = "Query contains current date or today's date anchoring on historical data without a corresponding period metric."  # hardcoding-ok: date anchor reason
+                reason_text = "Query contains current date anchoring on historical data without a corresponding period metric."
             elif not detected_metrics and not is_distinct_dim_query:
                 reason_code = "UNKNOWN_METRIC"
                 reason_text = "No matching governed metric was found in the model for this question."
@@ -1543,30 +1504,13 @@ class NLQueryEngine:
                 c_obj, a_obj = dim_to_pair[d]
                 sv_dims.append(self._sv_dim_ref(c_obj, a_obj, lexicon))
 
-            # 2c (Part 2): Period filters on LAG/window metrics are applied after the window (outer WHERE), not inside SEMANTIC_VIEW
-            has_window_or_lag = any(
-                self._is_window_metric(m.sql_expression, m.description, m.name)[0]
-                or bool(re.search(r"\b(LAG|LEAD|OVER)\b", m.sql_expression or "", re.I))
-                for m in detected_metrics
-            )
-            inner_filters: List[str] = []
-            outer_filters: List[str] = []
-            for f in filters:
-                is_period_filter = bool(re.search(r"\b(YEAR|QUARTER|MONTH|DATE|DAY)\s*\(", f, re.I)) or any(
-                    k in f.lower() for k in ("year", "quarter", "month", "date")
-                )
-                if has_window_or_lag and is_period_filter:
-                    outer_filters.append(f)
-                else:
-                    inner_filters.append(f)
-
             sv_clauses: List[str] = [effective_semantic_view]
             if sv_metrics:
                 sv_clauses.append(f"METRICS {', '.join(sv_metrics)}")
             if sv_dims:
                 sv_clauses.append(f"DIMENSIONS {', '.join(sv_dims)}")
-            if inner_filters and (sv_metrics or sv_dims):
-                sv_clauses.append(f"WHERE {' AND '.join(inner_filters)}")
+            if filters and (sv_metrics or sv_dims):
+                sv_clauses.append(f"WHERE {' AND '.join(filters)}")
 
             select_parts = ["    *"]
             from_target: Optional[str] = "SEMANTIC_VIEW(" + " ".join(sv_clauses) + ")"
@@ -1650,11 +1594,15 @@ class NLQueryEngine:
             if dim_names:
                 coalesce_dims = [f"COALESCE({', '.join(f'{cn}.{self._q_ident(d)}' for cn in cte_names)}) AS {self._q_ident(d)}" for d in dim_names]
                 all_m_cols = [f"{cn}.{self._q_ident(m.name)}" for cn, f_c in zip(cte_names, distinct_fact_concepts) for m in detected_metrics if m.concept == f_c]
-                join_cond = " AND ".join(f"{cte_names[0]}.{self._q_ident(d)} = {cte_names[1]}.{self._q_ident(d)}" for d in dim_names)
-                combine_sql = f"{with_clause}\nSELECT {', '.join(coalesce_dims + all_m_cols)}\nFROM {cte_names[0]} FULL OUTER JOIN {cte_names[1]} ON {join_cond}"
+                from_join = cte_names[0]
+                for next_cn in cte_names[1:]:
+                    join_cond = " AND ".join(f"{cte_names[0]}.{self._q_ident(d)} = {next_cn}.{self._q_ident(d)}" for d in dim_names)
+                    from_join += f" FULL OUTER JOIN {next_cn} ON {join_cond}"
+                combine_sql = f"{with_clause}\nSELECT {', '.join(coalesce_dims + all_m_cols)}\nFROM {from_join}"
             else:
                 all_m_cols = [f"{cn}.{self._q_ident(m.name)}" for cn, f_c in zip(cte_names, distinct_fact_concepts) for m in detected_metrics if m.concept == f_c]
-                combine_sql = f"{with_clause}\nSELECT {', '.join(all_m_cols)}\nFROM {cte_names[0]} CROSS JOIN {cte_names[1]}"
+                from_join = " CROSS JOIN ".join(cte_names)
+                combine_sql = f"{with_clause}\nSELECT {', '.join(all_m_cols)}\nFROM {from_join}"
             generated_sql = combine_sql + f"\nLIMIT {limit_val};"
         else:
             sql_lines.append("SELECT")
@@ -1665,8 +1613,6 @@ class NLQueryEngine:
                 sql_lines.append(j)
             if not effective_semantic_view and filters:
                 sql_lines.append(f"WHERE {' AND '.join(filters)}")
-            elif effective_semantic_view and outer_filters:
-                sql_lines.append(f"WHERE {' AND '.join(outer_filters)}")
             if not effective_semantic_view and group_by_parts:
                 sql_lines.append(f"GROUP BY {', '.join(group_by_parts)}")
             order_col = first_metric_order_col or "1"
@@ -1697,26 +1643,92 @@ class NLQueryEngine:
         guard_checks: List[Dict[str, Any]] = []
         suggested_metrics: List[str] = []
         try:
-            from semabridge.ai.sql_guard_engine import inspect_and_guard_generated_sql
-            all_metrics_list = [me.metric for me in lexicon.metrics]
-            all_concepts_list = list(self.ontology.concepts.values()) if (self.ontology and hasattr(self.ontology, "concepts")) else []
-            guard_dec = inspect_and_guard_generated_sql(
-                sql=generated_sql,
-                prompt=clean_prompt,
-                all_metrics=all_metrics_list,
-                all_concepts=all_concepts_list,
-                semantic_view_name=effective_semantic_view,
+            from semabridge.ai.sql_validator import (
+                metadata_from_domain,
+                select_domain_for_view,
+                validate_and_rewrite_generated_sql,
             )
-            guard_assumptions = guard_dec.assumptions
-            guard_checks = guard_dec.checks
-            suggested_metrics = guard_dec.suggested_metrics
-            if guard_dec.rewritten_sql:
-                generated_sql = guard_dec.rewritten_sql
-            for gw in guard_dec.warnings:
-                if gw not in warnings:
-                    warnings.append(gw)
+            val_domain = None
+            if hasattr(self.ontology, "domains") and self.ontology.domains:
+                val_domain = select_domain_for_view(self.ontology, effective_semantic_view)
+                if not val_domain and target_domain and target_domain in self.ontology.domains:
+                    val_domain = self.ontology.domains[target_domain]
+                if not val_domain and self.ontology.domains:
+                    val_domain = next(iter(self.ontology.domains.values()), None)
+
+            val_model = (
+                metadata_from_domain(val_domain, view=effective_semantic_view, platform=dialect.lower())
+                if val_domain
+                else None
+            )
+            val_res = validate_and_rewrite_generated_sql(
+                sql=generated_sql,
+                model=val_model,
+                question=clean_prompt,
+            )
+            guard_assumptions = val_res.assumptions
+            guard_checks = val_res.checks
+            if val_res.rewritten_sql:
+                generated_sql = val_res.rewritten_sql
+                # Re-validate rewritten SQL
+                reval_res = validate_and_rewrite_generated_sql(
+                    sql=generated_sql,
+                    model=val_model,
+                    question=clean_prompt,
+                )
+                guard_checks = reval_res.checks
+                for gw in reval_res.warnings:
+                    if gw not in warnings:
+                        warnings.append(gw)
+            else:
+                for gw in val_res.warnings:
+                    if gw not in warnings:
+                        warnings.append(gw)
+
+            if not val_res.allowed:
+                ref_reason = val_res.refusal_reason or "Refused by SQL governance guard."
+                ref_code = "INCOMPLETE_ANSWER"
+                if "CURRENT_DATE_ANCHOR" in val_res.warnings:
+                    ref_code = "CURRENT_DATE_ANCHOR"
+                elif "FAN_OUT" in val_res.warnings or "NON_UNIQUE_JOIN" in val_res.warnings:
+                    ref_code = "FAN_OUT"
+                elif "UNKNOWN_METRIC" in val_res.warnings:
+                    ref_code = "UNKNOWN_METRIC"
+
+                return QueryResolutionPlan(
+                    original_prompt=clean_prompt,
+                    detected_metrics=[m.label or m.name for m in detected_metrics],
+                    detected_dimensions=dim_names,
+                    filters=filters,
+                    applied_policies=applied_policies,
+                    derived_from_metrics=derived_from_metrics,
+                    resolved_tables=[],
+                    join_clauses=[],
+                    generated_sql="",
+                    sql=None,
+                    confidence_score=0.0,
+                    explanation=ref_reason,
+                    warnings=warnings,
+                    answerable=False,
+                    refused=True,
+                    reason_code=ref_code,
+                    reason_text=ref_reason,
+                    engine="local",
+                    alternatives=self._find_alternatives(
+                        dim_names=dim_names,
+                        dim_to_pair=dim_to_pair,
+                        refused_metrics=detected_metrics,
+                    ),
+                    parsed_phrases=parsed_phrases,
+                    plan_checks_passed=False,
+                    is_certified=False,
+                    view=effective_semantic_view,
+                    semantic_view=effective_semantic_view,
+                    query_path="none",
+                    guard_checks=guard_checks,
+                )
         except Exception as guard_err:
-            logger.debug("NLQueryEngine guard check skipped/failed: %s", guard_err)
+            logger.warning("NLQueryEngine guard check failed: %s", guard_err)
 
         return QueryResolutionPlan(
             original_prompt=clean_prompt,
@@ -1737,7 +1749,7 @@ class NLQueryEngine:
             view=effective_semantic_view,
             semantic_view=effective_semantic_view,
             query_path="semantic_view" if effective_semantic_view else "governed_ontology",
-            is_certified=bool(effective_semantic_view and not warnings),
+            is_certified=False,
             plan_checks_passed=True,
             assumptions=guard_assumptions,
             guard_checks=guard_checks,
@@ -1889,9 +1901,8 @@ class NLQueryEngine:
                 verb_matched = [a for a in date_attrs if set(content_lemmas(a.name)) & p_lems]
                 if verb_matched:
                     return verb_matched[0]
-            exact = [a for a in date_attrs if a.name.casefold() == "date"]
-            partial = [a for a in date_attrs if "date" in a.name.casefold()]
-            return (exact or partial or date_attrs)[0]
+            grain_matched = [a for a in date_attrs if getattr(a, "is_grain_date", False) or getattr(a, "is_primary_key", False)]
+            return (grain_matched or date_attrs)[0]
 
         anchor_names = (
             {primary_table.casefold()}
