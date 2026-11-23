@@ -76,8 +76,9 @@ def get_project_drift_target_info(project_id: Optional[str], view: Optional[str]
             deployments = repo.list_project_deployments(project_id, include_unmanaged=True)
             latest = next((d for d in deployments if d.get("is_latest")), None)
             resolved_view = latest["semantic_view"] if latest else None
-    except Exception:
-        resolved_view = view
+    except Exception as exc:
+        logger.warning("Failed validating project view for %s (view=%s): %s", project_id, view, exc)
+        resolved_view = None
 
     state = _load_state()
     p_key = _pkey(project_id)
@@ -111,8 +112,8 @@ def get_project_drift_target_info(project_id: Optional[str], view: Optional[str]
             from semabridge.ontology.store import ontology_store
             doms = ontology_store.domains_for(project_id)
             views_checked = sorted({d.semantic_view_name for d in doms if getattr(d, "semantic_view_name", None)})
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed loading domains for %s: %s", project_id, exc)
 
     if resolved_view and resolved_view not in views_checked:
         views_checked = [resolved_view]
@@ -170,13 +171,27 @@ def _drift_session():
 
 def _ensure_drift_table() -> None:
     from semabridge.repository.orm.base import Base
-    from semabridge.repository.orm.models import DriftEventRow
+    from semabridge.repository.orm.models import (
+        DriftEventRow,
+        DriftBaselineRow,
+        DriftLastCheckRow,
+        DriftScheduleRow,
+    )
     from semabridge.repository.orm.session_factory import db_manager
 
     engine = db_manager.get_engine()
     if id(engine) in _drift_tables_ready:
         return
-    Base.metadata.create_all(bind=engine, tables=[DriftEventRow.__table__], checkfirst=True)
+    Base.metadata.create_all(
+        bind=engine,
+        tables=[
+            DriftEventRow.__table__,
+            DriftBaselineRow.__table__,
+            DriftLastCheckRow.__table__,
+            DriftScheduleRow.__table__,
+        ],
+        checkfirst=True,
+    )
     _drift_tables_ready.add(id(engine))
 
 
@@ -208,7 +223,6 @@ def _db_load_events() -> Optional[List[Dict[str, Any]]]:
         with _drift_session() as session:
             rows = session.execute(
                 select(DriftEventRow.payload_json)
-                .where((DriftEventRow.status.notin_(["BASELINE", "LAST_CHECK", "SCHEDULE"])) | (DriftEventRow.status.is_(None)))
                 .order_by(DriftEventRow.position, DriftEventRow.updated_at)
             ).all()
     except Exception as exc:  # noqa: BLE001 -- the JSON file is the fallback
@@ -228,7 +242,12 @@ def _db_load_events() -> Optional[List[Dict[str, Any]]]:
 
 def _db_save_state_metadata(data: Dict[str, Any]) -> None:
     try:
-        from semabridge.repository.orm.models import DriftEventRow
+        from sqlalchemy import select
+        from semabridge.repository.orm.models import (
+            DriftBaselineRow,
+            DriftLastCheckRow,
+            DriftScheduleRow,
+        )
 
         _ensure_drift_table()
         now = datetime.now(timezone.utc)
@@ -239,44 +258,71 @@ def _db_save_state_metadata(data: Dict[str, Any]) -> None:
                     for v_name, b_entry in views.items():
                         if isinstance(b_entry, dict):
                             full_v = _full_view_key(b_entry.get("view_name") or v_name)
-                            row_id = f"baseline:{p_clean}:{full_v}"
-                            row = session.get(DriftEventRow, row_id)
+                            row_id = f"{p_clean}:{full_v}"
+                            row = session.get(DriftBaselineRow, row_id)
                             if row is None:
-                                row = DriftEventRow(id=row_id)
+                                row = DriftBaselineRow(
+                                    id=row_id,
+                                    project_id=str(p_clean),
+                                    view_name=str(b_entry.get("view_name") or v_name),
+                                    version=1,
+                                    payload_json=json.dumps(b_entry, default=str),
+                                    updated_at=now,
+                                )
                                 session.add(row)
-                            row.project_id = str(p_clean)
-                            row.status = "BASELINE"
-                            row.position = 0
-                            row.payload_json = json.dumps(b_entry, default=str)
-                            row.updated_at = now
+                            else:
+                                row.version = (row.version or 1) + 1
+                                row.payload_json = json.dumps(b_entry, default=str)
+                                row.updated_at = now
 
             last_checks = data.get("last_checks") or {}
             for p_clean, lc_entry in last_checks.items():
                 if isinstance(lc_entry, dict):
-                    row_id = f"last_check:{p_clean}"
-                    row = session.get(DriftEventRow, row_id)
+                    row_id = str(p_clean)
+                    row = session.get(DriftLastCheckRow, row_id)
                     if row is None:
-                        row = DriftEventRow(id=row_id)
+                        row = DriftLastCheckRow(
+                            id=row_id,
+                            project_id=str(p_clean).split(":")[0],
+                            view_name=lc_entry.get("view") or lc_entry.get("semantic_view"),
+                            version=1,
+                            payload_json=json.dumps(lc_entry, default=str),
+                            updated_at=now,
+                        )
                         session.add(row)
-                    row.project_id = str(p_clean).split(":")[0]
-                    row.status = "LAST_CHECK"
-                    row.position = 0
-                    row.payload_json = json.dumps(lc_entry, default=str)
-                    row.updated_at = now
+                    else:
+                        row.version = (row.version or 1) + 1
+                        row.view_name = lc_entry.get("view") or lc_entry.get("semantic_view") or row.view_name
+                        row.payload_json = json.dumps(lc_entry, default=str)
+                        row.updated_at = now
 
             schedules = data.get("schedules") or []
+            existing_s_ids = set()
             for s_entry in schedules:
                 if isinstance(s_entry, dict) and s_entry.get("id"):
-                    row_id = f"schedule:{s_entry['id']}"
-                    row = session.get(DriftEventRow, row_id)
+                    s_id = str(s_entry["id"])
+                    existing_s_ids.add(s_id)
+                    row = session.get(DriftScheduleRow, s_id)
                     if row is None:
-                        row = DriftEventRow(id=row_id)
+                        row = DriftScheduleRow(
+                            id=s_id,
+                            project_id=str(s_entry.get("project_id") or "") or None,
+                            version=1,
+                            payload_json=json.dumps(s_entry, default=str),
+                            updated_at=now,
+                        )
                         session.add(row)
-                    row.project_id = str(s_entry.get("project_id") or "") or None
-                    row.status = "SCHEDULE"
-                    row.position = 0
-                    row.payload_json = json.dumps(s_entry, default=str)
-                    row.updated_at = now
+                    else:
+                        row.version = (row.version or 1) + 1
+                        row.project_id = str(s_entry.get("project_id") or "") or None
+                        row.payload_json = json.dumps(s_entry, default=str)
+                        row.updated_at = now
+
+            if "schedules" in data:
+                all_s_rows = session.execute(select(DriftScheduleRow)).scalars().all()
+                for sr in all_s_rows:
+                    if sr.id not in existing_s_ids:
+                        session.delete(sr)
 
             session.commit()
     except Exception as exc:  # noqa: BLE001
@@ -289,33 +335,48 @@ def _db_load_state_metadata() -> Tuple[Dict[str, Any], Dict[str, Any], List[Dict
     schedules: List[Dict[str, Any]] = []
     try:
         from sqlalchemy import select
-        from semabridge.repository.orm.models import DriftEventRow
+        from semabridge.repository.orm.models import (
+            DriftBaselineRow,
+            DriftLastCheckRow,
+            DriftScheduleRow,
+        )
 
         _ensure_drift_table()
         with _drift_session() as session:
-            rows = session.execute(
-                select(DriftEventRow).where(
-                    DriftEventRow.status.in_(["BASELINE", "LAST_CHECK", "SCHEDULE"])
-                )
-            ).scalars().all()
-            for r in rows:
+            b_rows = session.execute(select(DriftBaselineRow)).scalars().all()
+            for r in b_rows:
                 try:
                     payload = json.loads(r.payload_json)
-                except Exception:
+                except Exception as ex:
+                    logger.warning("Unreadable baseline row %s: %s", r.id, ex)
                     continue
-                if not isinstance(payload, dict):
-                    continue
-                if r.status == "BASELINE":
+                if isinstance(payload, dict):
                     p = _pkey(payload.get("project_id") or r.project_id)
-                    fv = _full_view_key(payload.get("view_name") or payload.get("semantic_view"))
+                    fv = _full_view_key(payload.get("view_name") or payload.get("semantic_view") or r.view_name)
                     baselines.setdefault(p, {})[fv] = payload
-                    vk = _view_key(payload.get("view_name") or payload.get("semantic_view"))
+                    vk = _view_key(payload.get("view_name") or payload.get("semantic_view") or r.view_name)
                     if vk and vk != fv:
                         baselines[p][vk] = payload
-                elif r.status == "LAST_CHECK":
+
+            lc_rows = session.execute(select(DriftLastCheckRow)).scalars().all()
+            for r in lc_rows:
+                try:
+                    payload = json.loads(r.payload_json)
+                except Exception as ex:
+                    logger.warning("Unreadable last check row %s: %s", r.id, ex)
+                    continue
+                if isinstance(payload, dict):
                     p = _pkey(payload.get("project_id") or r.project_id)
                     last_checks[p] = payload
-                elif r.status == "SCHEDULE":
+
+            sc_rows = session.execute(select(DriftScheduleRow)).scalars().all()
+            for r in sc_rows:
+                try:
+                    payload = json.loads(r.payload_json)
+                except Exception as ex:
+                    logger.warning("Unreadable schedule row %s: %s", r.id, ex)
+                    continue
+                if isinstance(payload, dict):
                     schedules.append(payload)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Drift metadata could not be loaded from database: %s", exc)
@@ -357,22 +418,27 @@ def _db_save_events(events: List[Dict[str, Any]], loaded_ids: Optional[set]) -> 
 
 def _import_json_events_once(db_events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """First use after the move to the database: an empty table takes the
-    events of the old JSON file (once; the file is then marked imported)."""
-    if db_events:
-        return db_events
+    events and metadata of the old JSON file (once; the file is then marked imported)."""
     data = _read_json_file()
-    file_events = [e for e in (data.get("events") or []) if isinstance(e, dict) and e.get("id")]
-    if not file_events or data.get(_IMPORTED_MARKER):
+    if not data or data.get(_IMPORTED_MARKER):
         return db_events
-    if not _db_save_events(file_events, set()):
-        return file_events
+
+    file_events = [e for e in (data.get("events") or []) if isinstance(e, dict) and e.get("id")]
+    if not db_events and file_events:
+        if not _db_save_events(file_events, set()):
+            return file_events
+        db_events = file_events
+
+    if data.get("baselines") or data.get("last_checks") or data.get("schedules"):
+        _db_save_state_metadata(data)
+
     data[_IMPORTED_MARKER] = True
     try:
         _write_json_file(data)
     except OSError as exc:
         logger.warning("Drift state file could not be marked as imported: %s", exc)
-    logger.info("Imported %d drift event(s) from %s into the database", len(file_events), _state_path())
-    return file_events
+    logger.info("Imported drift events and metadata from %s into the database", _state_path())
+    return db_events
 
 
 def _load_state() -> Dict[str, Any]:
@@ -421,15 +487,11 @@ def _save_state(data: Dict[str, Any]) -> None:
     in_db = _db_save_events(events, data.get(_LOADED_IDS_KEY))
     if in_db:
         _db_save_state_metadata(data)
-    file_data: Dict[str, Any] = {
-        k: v for k, v in data.items() if k not in (_LOADED_IDS_KEY, "events")
-    }
-    if in_db:
-        file_data[_IMPORTED_MARKER] = True
         data[_LOADED_IDS_KEY] = {str(e.get("id")) for e in events if isinstance(e, dict) and e.get("id")}
-        if "PYTEST_CURRENT_TEST" in os.environ or os.environ.get("SEMABRIDGE_DRIFT_STATE_PATH"):
-            _write_json_file(file_data)
     else:
+        file_data: Dict[str, Any] = {
+            k: v for k, v in data.items() if k not in (_LOADED_IDS_KEY,)
+        }
         file_data["events"] = events
         _write_json_file(file_data)
 
@@ -648,74 +710,71 @@ def _iso_str(val: Any) -> Optional[str]:
     if hasattr(val, "isoformat"):
         try:
             return val.isoformat()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Converting timestamp to ISO string failed: %s", exc)
     return str(val)
 
 
 def _build_baseline_from_deployment(project_id: str, view_name: str, domain: Any = None) -> Optional[Dict[str, Any]]:
-    """Build a baseline from the last successful deployment's DDL/snapshot."""
+    """Build a baseline only from the deployment of that view: its deployed DDL or deployed snapshot."""
+    if not project_id or not view_name:
+        return None
     try:
         from semabridge.repository.model_repository import ModelRepository, _deserialize_sml_blob
         repo = ModelRepository()
 
-        # Check deployment info under project_id and normalized variants
-        p_candidates = [project_id, _pkey(project_id), f"proj-{_pkey(project_id)}"]
-        seen_pids = set()
+        seen_pids = [project_id]
+        if domain:
+            src_pid = getattr(domain, "source_project_id", None)
+            if src_pid and src_pid not in seen_pids:
+                seen_pids.append(src_pid)
+
+        # 1. Find deployment specifically for this view to get deployed DDL
         dep_info = None
-        for pid in p_candidates:
-            if pid and pid not in seen_pids:
-                seen_pids.add(pid)
+        for pid in seen_pids:
+            try:
+                deployments = repo.list_project_deployments(pid, include_unmanaged=True)
+                v_full = _full_view_key(view_name)
+                v_short = _view_key(view_name)
+                for d in deployments:
+                    sv = d.get("semantic_view")
+                    if sv and (_full_view_key(sv) == v_full or _view_key(sv) == v_short):
+                        dep_info = d
+                        break
+                if dep_info:
+                    break
+            except Exception as exc:
+                logger.warning("Listing project deployments for %s failed: %s", pid, exc)
+
+        if not dep_info:
+            for pid in seen_pids:
                 try:
                     d = repo.get_project_deployment_info(pid)
                     if isinstance(d, dict) and d.get("ddl"):
                         dep_info = d
                         break
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Getting project deployment info for %s failed: %s", pid, exc)
 
         ddl = dep_info.get("ddl") if isinstance(dep_info, dict) else None
 
+        # 2. Find deployed snapshot for this view
         snap = None
-        # 1. Try get_last_deployed_snapshot
         for pid in seen_pids:
             try:
-                snap = repo.get_last_deployed_snapshot(project_id=pid, view_name=view_name)
-                if snap:
+                s = repo.get_last_deployed_snapshot(pid, view_name=view_name)
+                if s and getattr(s, "sml_blob", None):
+                    snap = s
                     break
-            except Exception:
-                pass
-            if not snap and view_name:
-                try:
-                    base_v = view_name.split(".")[-1].strip('"')
-                    snap = repo.get_last_deployed_snapshot(project_id=pid, view_name=base_v)
-                    if snap:
-                        break
-                except Exception:
-                    pass
-
-        # 2. Try get_head
-        if not snap:
-            for pid in seen_pids:
-                try:
-                    h = repo.get_head(pid)
-                    if h and getattr(h, "sml_blob", None):
-                        snap = h
-                        break
-                except Exception:
-                    pass
-
-        # 3. Try list_snapshots for any successful snapshot
-        if not snap:
-            for pid in seen_pids:
-                try:
-                    snaps = repo.list_snapshots(pid)
-                    succ = [s for s in snaps if getattr(s, "status", None) == "success" and getattr(s, "sml_blob", None)]
-                    if succ:
-                        snap = succ[0]
-                        break
-                except Exception:
-                    pass
+            except Exception as exc:
+                logger.warning("Getting last deployed snapshot for %s (%s) failed: %s", pid, view_name, exc)
+            try:
+                h = repo.get_head(pid)
+                if h and getattr(h, "sml_blob", None):
+                    snap = h
+                    break
+            except Exception as exc:
+                logger.warning("Getting head snapshot for %s failed: %s", pid, exc)
 
         if not ddl and not snap:
             logger.info(
@@ -735,69 +794,60 @@ def _build_baseline_from_deployment(project_id: str, view_name: str, domain: Any
                     base_metrics[m_info[1].upper()] = str(m_info[3]).strip()
 
         if snap and getattr(snap, "sml_blob", None):
-            blob = _deserialize_sml_blob(snap.sml_blob)
-            if isinstance(blob, dict):
-                for m in (blob.get("metrics") or []):
-                    mn = (m.get("name") or m.get("unique_name") or "").upper()
-                    if mn:
-                        src_defs[mn] = (m.get("expression") or m.get("dax_expression") or m.get("sql_expression") or "").strip()
-                        if mn not in base_metrics:
-                            sql_expr = (m.get("sql_expression") or "").strip()
-                            if sql_expr:
-                                base_metrics[mn] = sql_expr
-                for ds in (blob.get("datasets") or []):
-                    for m in (ds.get("metrics") or []):
+            try:
+                blob = _deserialize_sml_blob(snap.sml_blob)
+                if isinstance(blob, dict):
+                    for m in (blob.get("metrics") or []):
                         mn = (m.get("name") or m.get("unique_name") or "").upper()
                         if mn:
-                            src_defs[mn] = (m.get("dax_expression") or m.get("sql_expression") or m.get("expression") or "").strip()
-                            if mn not in base_metrics:
+                            dax = (m.get("expression") or m.get("dax_expression") or "").strip()
+                            if dax:
+                                src_defs[mn] = dax
+                            # If no DDL was found, use the deployed snapshot's sql_expression
+                            if not ddl and mn not in base_metrics:
                                 sql_expr = (m.get("sql_expression") or "").strip()
                                 if sql_expr:
                                     base_metrics[mn] = sql_expr
+                    for ds in (blob.get("datasets") or []):
+                        for m in (ds.get("metrics") or []):
+                            mn = (m.get("name") or m.get("unique_name") or "").upper()
+                            if mn:
+                                dax = (m.get("expression") or m.get("dax_expression") or "").strip()
+                                if dax and mn not in src_defs:
+                                    src_defs[mn] = dax
+                                if not ddl and mn not in base_metrics:
+                                    sql_expr = (m.get("sql_expression") or "").strip()
+                                    if sql_expr:
+                                        base_metrics[mn] = sql_expr
+            except Exception as exc:
+                logger.warning("Deserializing SML blob for %s failed: %s", project_id, exc)
 
-        if not src_defs and domain:
-            for m in (getattr(domain, "metrics", []) or []):
-                mn = (getattr(m, "name", "") or "").upper()
-                if mn:
-                    src_defs[mn] = (getattr(m, "dax_expression", "") or getattr(m, "sql_expression", "") or "").strip()
-                    if mn not in base_metrics and getattr(m, "sql_expression", None):
-                        base_metrics[mn] = m.sql_expression.strip()
+        if not base_metrics:
+            logger.info(
+                "Could not build baseline from deployment for project %s (view %s): no metrics found in DDL or snapshot",
+                project_id, view_name,
+            )
+            return None
 
-        if base_metrics:
-            deployed_at_iso = (
-                _iso_str(getattr(snap, "timestamp", None))
-                or _iso_str(getattr(snap, "deployed_at", None))
-                or (dep_info.get("deployed_at") if isinstance(dep_info, dict) else None)
-            )
-            snapshot_id_val = snap.snapshot_id if (snap and getattr(snap, "snapshot_id", None)) else None
-            return record_deploy_baseline(
-                project_id=project_id,
-                view_name=view_name,
-                metrics=base_metrics,
-                source_definitions=src_defs,
-                deployed_at=deployed_at_iso,
-                snapshot_id=snapshot_id_val,
-                baseline_source="snapshot",
-            )
-        else:
-            reason = []
-            if not ddl:
-                reason.append("no deployed DDL found")
-            if not snap:
-                reason.append("no snapshot found")
-            elif not getattr(snap, "sml_blob", None):
-                reason.append("snapshot has no SML blob")
-            else:
-                reason.append("no metrics could be extracted from DDL or snapshot")
-            logger.warning(
-                "Could not build baseline from deployment for project %s (view %s): %s",
-                project_id,
-                view_name,
-                "; ".join(reason),
-            )
+        deployed_at_iso = (
+            _iso_str(getattr(snap, "timestamp", None))
+            or _iso_str(getattr(snap, "deployed_at", None))
+            or (dep_info.get("deployed_at") if isinstance(dep_info, dict) else None)
+        )
+        snapshot_id_val = snap.snapshot_id if (snap and getattr(snap, "snapshot_id", None)) else None
+
+        return record_deploy_baseline(
+            project_id=project_id,
+            view_name=view_name,
+            metrics=base_metrics,
+            source_definitions=src_defs,
+            deployed_at=deployed_at_iso,
+            snapshot_id=snapshot_id_val,
+            baseline_source="deploy" if ddl else "snapshot",
+        )
     except Exception as exc:
         logger.warning("Could not build baseline from deployment for %s: %s", project_id, exc, exc_info=True)
-    return None
+        return None
 
 
 def migrate_superseded_drift_events(events: List[Dict[str, Any]]) -> int:
@@ -854,12 +904,19 @@ def run_drift_check(
     ]
 
     if target_view_name and target_domains:
+        full_target = _full_view_key(target_view_name)
         tail = str(target_view_name).strip().split(".")[-1].strip('"').lower()
         matching = [
             d for d in target_domains
             if getattr(d, "semantic_view_name", None)
-            and str(d.semantic_view_name).strip().split(".")[-1].strip('"').lower() == tail
+            and _full_view_key(d.semantic_view_name) == full_target
         ]
+        if not matching:
+            matching = [
+                d for d in target_domains
+                if getattr(d, "semantic_view_name", None)
+                and str(d.semantic_view_name).strip().split(".")[-1].strip('"').lower() == tail
+            ]
         if matching:
             target_domains = matching
 
@@ -891,7 +948,8 @@ def run_drift_check(
     if is_databricks_proj:
         return {
             "status": "NOT_CHECKED",
-            "not_checked_reason": "DATABRICKS_UNAVAILABLE",
+            "reason": "drift check not supported for Databricks yet",
+            "not_checked_reason": "drift check not supported for Databricks yet",
             "checked_metrics": 0,
             "not_checked": [],
             "skipped_placeholders": [],
@@ -904,6 +962,19 @@ def run_drift_check(
             "semantic_view": target_view_name,
         }
 
+    _IDENT = re.compile(r'^(?:[A-Za-z_][A-Za-z0-9_$]*|"[^"]+")$')
+
+    def _safe_quote_view_name(sv_name: str) -> Optional[str]:
+        parts = [p.strip() for p in str(sv_name).split(".") if p.strip()]
+        if not 1 <= len(parts) <= 3:
+            return None
+        quoted_parts = []
+        for p in parts:
+            if not _IDENT.match(p):
+                return None
+            quoted_parts.append(p if p.startswith('"') else f'"{p.upper()}"' if not p.isupper() else p)
+        return ".".join(quoted_parts)
+
     sf_metrics_by_view: Dict[str, Dict[str, Dict[str, str]]] = {}
     inspected_views: set = set()
     inspected_full_views: set = set()
@@ -915,10 +986,12 @@ def run_drift_check(
             kw = get_snowflake_connect_kwargs(sf)
             if kw.get("account") and kw.get("user"):
                 import snowflake.connector
+                from semabridge.connectors.sql_guard import guard_connection
 
                 conn = snowflake.connector.connect(**kw)
                 try:
-                    cur = conn.cursor()
+                    guarded_conn = guard_connection(conn, read_only=True)
+                    cur = guarded_conn.cursor()
                     sf_connected = True
                     for dom in target_domains:
                         sv = getattr(dom, "semantic_view_name", None)
@@ -928,8 +1001,12 @@ def run_drift_check(
                         if v_key in inspected_views or v_key in failed_views:
                             continue
                         sf_metrics = sf_metrics_by_view.setdefault(v_key, {})
+                        quoted_sv = _safe_quote_view_name(sv)
+                        if not quoted_sv:
+                            logger.warning("Drift check skipped invalid semantic view name: %s", sv)
+                            continue
                         try:
-                            cur.execute(f"DESCRIBE SEMANTIC VIEW {sv}")
+                            cur.execute(f"DESCRIBE SEMANTIC VIEW {quoted_sv}")
                             cols = [c[0].lower() for c in cur.description] if cur.description else []
                             for row in cur.fetchall():
                                 rec = dict(zip(cols, row))
@@ -946,12 +1023,12 @@ def run_drift_check(
                             inspected_views.add(v_key)
                             inspected_full_views.add(sv)
                         except Exception as exc:
-                            logger.info("Drift check could not describe %s: %s", sv, exc)
+                            logger.warning("Drift check could not describe %s: %s", sv, exc)
                             failed_views[v_key] = str(exc)
                 finally:
                     conn.close()
     except Exception as exc:
-        logger.info("Drift check Snowflake inspection skipped: %s", exc)
+        logger.warning("Drift check Snowflake inspection failed: %s", exc)
         sf_connected = False
 
     state_curr = _load_state()
@@ -1017,7 +1094,7 @@ def run_drift_check(
         v_key = _view_key(dom_view)
         dom_pid = project_id or getattr(dom, "source_project_id", None)
         base = get_deploy_baseline(dom_pid, dom_view)
-        if (not base or base.get("baseline_source") == "live_capture") and dom_pid:
+        if not base and dom_pid:
             # 1. Try building from the last successful deployment's DDL/snapshot
             snap_base = _build_baseline_from_deployment(dom_pid, dom_view, dom)
             if snap_base:
@@ -1026,7 +1103,7 @@ def run_drift_check(
         # 2. Only if none, capture from live Snowflake view
         if not base and v_key in inspected_views and v_key not in failed_views and sf_metrics_by_view.get(v_key):
             src_defs = {
-                m.name.upper(): (getattr(m, "dax_expression", "") or getattr(m, "sql_expression", "") or "").strip()
+                m.name.upper(): (getattr(m, "dax_expression", "") or getattr(m, "expression", "") or "").strip()
                 for m in (getattr(dom, "metrics", []) or [])
                 if getattr(m, "name", None)
             }
@@ -1125,20 +1202,21 @@ def run_drift_check(
 
         dom_pid = project_id or getattr(dom, "source_project_id", None)
         base = get_deploy_baseline(dom_pid, dom_view)
-        if (not base or base.get("baseline_source") == "live_capture") and dom_pid:
+        if not base and dom_pid:
             snap_base = _build_baseline_from_deployment(dom_pid, dom_view, dom)
             if snap_base:
                 base = snap_base
         base_metrics = dict(base.get("metrics", {})) if base else {}
         base_src_defs = dict(base.get("source_definitions", {})) if base else {}
 
-        # Fallback to domain metrics if no baseline metrics were saved
-        if not base_metrics and dom_metrics:
-            base_metrics = {
-                m.name.upper(): (m.sql_expression or getattr(m, "dax_expression", "") or "").strip()
-                for m in dom_metrics
-                if (m.sql_expression or getattr(m, "dax_expression", ""))
-            }
+        # No fallback to domain metrics if no baseline metrics were saved
+        if not base_metrics:
+            not_checked.append({
+                "domain": dom.domain,
+                "view": dom_view,
+                "reason": "Not checked: no deploy baseline (redeploy to record one)",
+            })
+            continue
 
         for base_name, base_expr in base_metrics.items():
             checked += 1
@@ -1201,8 +1279,8 @@ def run_drift_check(
                         affected = [
                             *(x.name if hasattr(x, "name") else (x.get("name") if isinstance(x, dict) else str(x)) for x in impact_items)
                         ]
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Blast radius simulation failed for %s: %s", base_name, exc)
 
                 ev = {
                     "id": f"drift-{uuid.uuid4().hex[:10]}",
@@ -1225,33 +1303,37 @@ def run_drift_check(
                 new_events.append(ev)
 
         # Check for Power BI / source definition drift (compare latest snapshot extraction with deploy baseline source)
-        latest_src_defs = {}
+        latest_src_defs: Dict[str, str] = {}
         m_proj = project_id or getattr(dom, "source_project_id", None)
+        m_model = getattr(dom, "source_model_id", None)
         if m_proj:
             try:
                 from semabridge.repository.model_repository import ModelRepository, _deserialize_sml_blob
                 repo = ModelRepository()
-                latest_snap = repo.get_head(m_proj)
+                latest_snap = repo.get_last_deployed_snapshot(project_id=m_proj, view_name=dom_view) or repo.get_head(m_proj)
                 if latest_snap and getattr(latest_snap, "sml_blob", None):
                     blob = _deserialize_sml_blob(latest_snap.sml_blob)
                     if isinstance(blob, dict):
                         for m in (blob.get("metrics") or []):
                             mn = (m.get("name") or m.get("unique_name") or "").upper()
-                            if mn:
-                                latest_src_defs[mn] = (m.get("expression") or m.get("dax_expression") or m.get("sql_expression") or "").strip()
+                            dax = (m.get("expression") or m.get("dax_expression") or "").strip()
+                            if mn and dax:
+                                latest_src_defs[mn] = dax
                         for ds in (blob.get("datasets") or []):
                             for m in (ds.get("metrics") or []):
                                 mn = (m.get("name") or m.get("unique_name") or "").upper()
-                                if mn and mn not in latest_src_defs:
-                                    latest_src_defs[mn] = (m.get("dax_expression") or m.get("sql_expression") or m.get("expression") or "").strip()
-            except Exception:
-                pass
+                                dax = (m.get("expression") or m.get("dax_expression") or "").strip()
+                                if mn and dax and mn not in latest_src_defs:
+                                    latest_src_defs[mn] = dax
+            except Exception as exc:
+                logger.warning("Extracting latest source definitions for %s failed: %s", m_proj, exc)
 
         if not latest_src_defs:
             for m in dom_metrics:
                 mn = (getattr(m, "name", "") or "").upper()
-                if mn:
-                    latest_src_defs[mn] = (getattr(m, "dax_expression", "") or getattr(m, "sql_expression", "") or "").strip()
+                dax = (getattr(m, "dax_expression", "") or getattr(m, "expression", "") or "").strip()
+                if mn and dax:
+                    latest_src_defs[mn] = dax
 
         for m_name_up, curr_src in latest_src_defs.items():
             deploy_src = base_src_defs.get(m_name_up)
@@ -1293,8 +1375,6 @@ def run_drift_check(
                 dom_view = getattr(dom, "semantic_view_name", None)
                 base = get_deploy_baseline(project_id or getattr(dom, "source_project_id", None), dom_view)
                 base_metrics = base.get("metrics", {}) if base else {}
-                if not base_metrics and getattr(dom, "metrics", None):
-                    base_metrics = {m.name.upper(): (m.sql_expression or getattr(m, "dax_expression", "") or "").strip() for m in dom.metrics}
                 base_keys = {k.upper() for k in base_metrics}
                 view_matched = matched_sf_keys_by_view.get(v_key, set())
                 for sf_k, sf_e in view_metrics.items():
@@ -1405,7 +1485,7 @@ def run_drift_check(
             "status": status,
             "not_checked_reason": not_checked_reason,
             "baseline_source": run_baseline_source or "deploy",
-            "baseline_at": run_baseline_at or now,
+            "baseline_at": run_baseline_at,
             "metrics_compared": checked,
             "view": target_view_name,
             "semantic_view": target_view_name,
@@ -1416,7 +1496,7 @@ def run_drift_check(
         "status": status,
         "not_checked_reason": not_checked_reason,
         "baseline_source": run_baseline_source or "deploy",
-        "baseline_at": run_baseline_at or now,
+        "baseline_at": run_baseline_at,
         "views_checked": checked_views,
         "metrics_compared": checked,
         "checked_metrics": checked,
@@ -1546,12 +1626,20 @@ def delete_schedule(schedule_id: str) -> bool:
     state = _load_state()
     before = len(state["schedules"])
     state["schedules"] = [s for s in state["schedules"] if s["id"] != schedule_id]
+    try:
+        from sqlalchemy import delete
+        from semabridge.repository.orm.models import DriftScheduleRow
+        with _drift_session() as session:
+            session.execute(delete(DriftScheduleRow).where(DriftScheduleRow.id == schedule_id))
+            session.commit()
+    except Exception as exc:
+        logger.warning("Failed deleting drift schedule %s from database: %s", schedule_id, exc)
     _save_state(state)
     try:
         if _SCHEDULER is not None:
             _SCHEDULER.remove_job(schedule_id)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed removing APScheduler job %s: %s", schedule_id, exc)
     return len(state["schedules"]) < before
 
 
