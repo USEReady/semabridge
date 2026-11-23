@@ -423,8 +423,8 @@ def validate_project_connector_accounts_belong_to_user(user_id: str | None, payl
                 if isinstance(yaml_targets, list):
                     for t in yaml_targets:
                         _scan_dict(t)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Failed to parse config_yaml for account ids: %s", exc)
 
     if not account_ids:
         return

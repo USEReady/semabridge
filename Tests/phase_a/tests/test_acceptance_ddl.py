@@ -14,18 +14,28 @@ import os
 import pytest
 
 BATCH, BASE = os.environ.get("ACCEPT_BATCH_CSV"), os.environ.get("ACCEPT_BASELINE")
-pytestmark = pytest.mark.skipif(not (BATCH and BASE), reason="set ACCEPT_BATCH_CSV and ACCEPT_BASELINE")
-
-RANK = {"MISSING": 0, "AMBIGUOUS": 1, "EMITTED_DIFFERENT": 2, "EMITTED_REVERSED": 3, "EMITTED": 3}
-
+is_ci = os.getenv("CI") == "true" or os.getenv("GITHUB_ACTIONS") == "true"
 
 def _jobs():
     with open(BATCH, newline="", encoding="utf-8") as fh:
         return [(r["model"], r["pbix"], r["ddl"]) for r in csv.DictReader(fh)]
 
+if not (BATCH and BASE):
+    if is_ci:
+        _PARAM_JOBS = [("CI_MISSING", "CI_MISSING", "CI_MISSING")]
+    else:
+        _PARAM_JOBS = []
+        pytestmark = pytest.mark.skip(reason="set ACCEPT_BATCH_CSV and ACCEPT_BASELINE")
+else:
+    _PARAM_JOBS = _jobs()
 
-@pytest.mark.parametrize("model,pbix,ddl", _jobs() if BATCH else [])
+RANK = {"MISSING": 0, "AMBIGUOUS": 1, "EMITTED_DIFFERENT": 2, "EMITTED_REVERSED": 3, "EMITTED": 3}
+
+
+@pytest.mark.parametrize("model,pbix,ddl", _PARAM_JOBS)
 def test_no_relationship_regressed(model, pbix, ddl):
+    if not (BATCH and BASE):
+        pytest.fail("ACCEPT_BATCH_CSV and ACCEPT_BASELINE environment variables required in CI")
     from relationship_inventory import reconcile
     rows, _, _ = reconcile(pbix, open(ddl, encoding="utf-8").read())
     old = {r["source_relationship"]: r for r in json.load(open(BASE, encoding="utf-8")).get(model, [])}
@@ -41,8 +51,10 @@ def test_no_relationship_regressed(model, pbix, ddl):
     assert not worse, "\n".join(worse)
 
 
-@pytest.mark.parametrize("model,pbix,ddl", _jobs() if BATCH else [])
+@pytest.mark.parametrize("model,pbix,ddl", _PARAM_JOBS)
 def test_ddl_static_validation(model, pbix, ddl):
+    if not (BATCH and BASE):
+        pytest.fail("ACCEPT_BATCH_CSV and ACCEPT_BASELINE environment variables required in CI")
     from validate_semantic_view import Report, parse_ddl, static_checks
     tables, rels = parse_ddl(open(ddl, encoding="utf-8").read())
     rep = Report()

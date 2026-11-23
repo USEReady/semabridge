@@ -6,34 +6,38 @@ from semabridge.converter.osi_to_sml import OSIToSMLConverter
 from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
 from semabridge.core.settings import SnowflakeConfig
 
-pbix_path = os.environ.get(
-    "SEMABRIDGE_LIFE_EXPECTANCY_PBIX",
-    os.path.join(os.environ.get("SEMABRIDGE_PBIX_DIR", ""), "Life expectancy v202009.pbix"),
-)
-if not os.path.isfile(pbix_path):
-    pytest.skip(f"PBIX file not found at {pbix_path}", allow_module_level=True)
-conn = LocalPBIXConnector({"pbix_path": pbix_path})
-raw_tmsl = conn.discover().get("raw_tmsl") or {}
-osi = TMSLToOSIConverter().to_osi({"tmsl": raw_tmsl, "dataset_id": "Life_expectancy"})
-sml = OSIToSMLConverter().from_osi(osi)
+def test_years_pk():
+    pbix_path = os.environ.get(
+        "SEMABRIDGE_LIFE_EXPECTANCY_PBIX",
+        os.path.join(os.environ.get("SEMABRIDGE_PBIX_DIR", ""), "Life expectancy v202009.pbix"),
+    )
+    if not os.path.isfile(pbix_path):
+        if os.getenv("CI") == "true" or os.getenv("GITHUB_ACTIONS") == "true":
+            pytest.fail(f"Required PBIX fixture missing in CI: {pbix_path}")
+        pytest.skip(f"PBIX file not found at {pbix_path}")
+    conn = LocalPBIXConnector({"pbix_path": pbix_path})
+    raw_tmsl = conn.discover().get("raw_tmsl") or {}
+    osi = TMSLToOSIConverter().to_osi({"tmsl": raw_tmsl, "dataset_id": "Life_expectancy"})
+    sml = OSIToSMLConverter().from_osi(osi)
 
-cfg = SnowflakeConfig(account="test", user="test", password="pwd", warehouse="wh", database="SEMABRIDGE", schema_name="LIFE_EXPECTANCY")
-emitter = SnowflakeEmitter(cfg)
-from semabridge.connectors.tables_clause_builder import TablesClauseBuilder
+    cfg = SnowflakeConfig(account="test", user="test", password="pwd", warehouse="wh", database="SEMABRIDGE", schema_name="LIFE_EXPECTANCY")
+    emitter = SnowflakeEmitter(cfg)
+    from semabridge.connectors.tables_clause_builder import TablesClauseBuilder
 
-tbuilder = TablesClauseBuilder(
-    emitter.semantic_view_builder.identifier_sanitizer,
-    emitter.semantic_view_builder.schema_manager,
-    emitter.semantic_view_builder.config,
-    emitter.semantic_view_builder.behavior,
-    emitter.semantic_view_builder.live_schema_metadata,
-)
-registry = emitter.semantic_view_builder.alias_registry
-tables_lines, declared_pk, rel_pk_map, ds_lookup, ds_by_name, live_ds_lookup = tbuilder.build_for_sml(
-    sml, registry, {}, {"Years", "Indicators", "Population"}
-)
-print("declared_pk:", declared_pk)
-for line in tables_lines:
-    if "YEARS" in line:
-        print("tables_line:", line)
+    tbuilder = TablesClauseBuilder(
+        emitter.semantic_view_builder.identifier_sanitizer,
+        emitter.semantic_view_builder.schema_manager,
+        emitter.semantic_view_builder.config,
+        emitter.semantic_view_builder.behavior,
+        emitter.semantic_view_builder.live_schema_metadata,
+    )
+    registry = emitter.semantic_view_builder.alias_registry
+    tables_lines, declared_pk, rel_pk_map, ds_lookup, ds_by_name, live_ds_lookup = tbuilder.build_for_sml(
+        sml, registry, {}, {"Years", "Indicators", "Population"}
+    )
+    print("declared_pk:", declared_pk)
+    for line in tables_lines:
+        if "YEARS" in line:
+            print("tables_line:", line)
+
 

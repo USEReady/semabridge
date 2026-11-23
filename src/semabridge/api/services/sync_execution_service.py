@@ -1475,8 +1475,19 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
     except Exception:
         pass  # Fabric not configured in .env — credentials come from Account table via identity_id
 
+    deploy_enabled = bool((target_cfg or {}).get("deploy", True))
+    dry_run = bool(payload.get("dry_run", False))
+    if dry_run:
+        deploy_enabled = False
+
     if source_type == "fabric":
-        resolved_workspace_id = _fabric_source_workspace(config, source_cfg, _fabric_env_workspace_id)
+        features = ((config.get("behavior") or {}).get("features") or {}) if isinstance(config.get("behavior"), dict) else {}
+        strict = bool(features.get("fabric_strict_workspace", False))
+        if dry_run and not strict:
+            project_ws = str(source_cfg.get("workspace_id") or (config.get("fabric", {}) or {}).get("workspace_id") or "").strip()
+            resolved_workspace_id = project_ws or str(_fabric_env_workspace_id or "")
+        else:
+            resolved_workspace_id = _fabric_source_workspace(config, source_cfg, _fabric_env_workspace_id)
     else:
         resolved_workspace_id = str(
             source_cfg.get("workspace_id")
@@ -1485,10 +1496,6 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
             or _fabric_env_workspace_id
             or "default"
         )
-    deploy_enabled = bool((target_cfg or {}).get("deploy", True))
-    dry_run = bool(payload.get("dry_run", False))
-    if dry_run:
-        deploy_enabled = False
 
     max_parallel_models = _resolve_requested_parallelism(payload)
     is_fabric_bound = source_type == "fabric" or target_type == "fabric"

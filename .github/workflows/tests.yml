@@ -3,6 +3,9 @@ name: Tests
 on:
   push:
   pull_request:
+  schedule:
+    - cron: '0 2 * * *'  # Nightly at 02:00 UTC
+  workflow_dispatch:
 
 concurrency:
   group: tests-${{ github.ref }}
@@ -37,11 +40,51 @@ jobs:
           pip install -r requirements.txt pytest-asyncio
 
       - name: Run backend tests
-        # Fails the job on any failed test or collection error.
+        # Fails the job on any failed test or collection error; pipes output for skip verification.
         run: >
           python -m pytest -q -p no:cacheprovider -o addopts=""
-          -o faulthandler_timeout=300
-          Tests
+          -o faulthandler_timeout=300 -rs
+          Tests 2>&1 | tee pytest-output.log
+
+      - name: Verify test skip reasons
+        if: always()
+        run: python Scripts/verify_ci_skips.py pytest-output.log
+
+  slow-tests:
+    name: Slow (wall-clock timing) test suite
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SEMABRIDGE_DATABASE_URL: "sqlite:///file::memory:?cache=shared&uri=true"
+      SEMABRIDGE_DB_BACKEND: orm
+      SEMABRIDGE_SLOW_TESTS: "1"
+      PYTHONPATH: ${{ github.workspace }}/src
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install -r requirements.txt pytest-asyncio
+
+      - name: Run slow backend tests
+        run: >
+          python -m pytest -q -p no:cacheprovider -o addopts=""
+          -o faulthandler_timeout=600 -rs
+          Tests -m slow 2>&1 | tee pytest-slow-output.log
+
+      - name: Verify slow test skip reasons
+        if: always()
+        run: python Scripts/verify_ci_skips.py pytest-slow-output.log
 
   frontend:
     name: Frontend unit tests

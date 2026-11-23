@@ -55,7 +55,7 @@ def _load_known_failures(known_failures_path: Path) -> Set[str]:
                 )
             if "::" not in test_id or any(c in test_id for c in ("*", "?", "[", "]")):
                 raise ValueError(
-                    f"{known_failures_path.name}:{line_no}: '{test_id}' must match a single test name containing '::', not a file or pattern."
+                    f"{known_failures_path.name}:{line_no}: '{test_id}' must match a single test name containing '::', not a wildcard pattern."
                 )
             known_failures.add(test_id)
     return known_failures
@@ -77,10 +77,13 @@ def _run_gate(
 
     print(f"📋 Loaded {len(known_failures)} accepted known failures from {known_failures_path.name}")
 
-    # Determine python binary (prefer repository .venv if available)
+    # Determine python binary (prefer current venv if active, else repo .venv)
     repo_root = Path(__file__).resolve().parent.parent
-    venv_py = repo_root / ".venv" / ("Scripts" if os.name == "nt" else "bin") / ("python.exe" if os.name == "nt" else "python")
-    python_bin = str(venv_py) if venv_py.exists() else sys.executable
+    if getattr(sys, "base_prefix", sys.prefix) != sys.prefix:
+        python_bin = sys.executable
+    else:
+        venv_py = repo_root / ".venv" / ("Scripts" if os.name == "nt" else "bin") / ("python.exe" if os.name == "nt" else "python")
+        python_bin = str(venv_py) if venv_py.exists() else sys.executable
 
     # Determine pytest command
     has_xdist = False
@@ -106,12 +109,20 @@ def _run_gate(
 
     if pytest_args:
         cmd.extend(pytest_args)
+    else:
+        cmd.append("Tests")
+
+    env = os.environ.copy()
+    src_dir = target_dir / "src"
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = f"{src_dir}{os.pathsep}{existing_pythonpath}" if existing_pythonpath else str(src_dir)
 
     print(f"🚀 Running test suite: {' '.join(cmd)}")
     try:
         proc = subprocess.run(
             cmd,
             cwd=str(target_dir),
+            env=env,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -123,11 +134,23 @@ def _run_gate(
     output = proc.stdout + "\n" + proc.stderr
 
     current_failures = set()
-    for line in output.splitlines():
-        m = re.match(r"^(?:FAILED|ERROR)\s+([^\s]+)", line.strip())
-        if m:
-            current_failures.add(m.group(1))
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        m_err = re.match(r"^ERROR\s+(?:collecting\s+)?([^\s\-]+)", line)
+        if m_err:
+            item = m_err.group(1).strip()
+            current_failures.add(item)
+            continue
+        m_fail = re.match(r"^FAILED\s+([^\s\-]+)", line)
+        if m_fail:
+            item = m_fail.group(1).strip()
+            current_failures.add(item)
+            continue
+        m_worker = re.search(r"\[gw\d+\]\s+\[\s*\d+%\s*\]\s+(?:FAILED|ERROR)\s+([^\s]+)", line)
+        if m_worker:
+            current_failures.add(m_worker.group(1).strip())
 
+    total_failures = len(current_failures)
     new_failures = sorted(current_failures - known_failures)
     now_passing = sorted(known_failures - current_failures)
     still_failing = sorted(current_failures & known_failures)
@@ -142,6 +165,7 @@ def _run_gate(
     print("                REGRESSION GATE SUMMARY                ")
     print("=" * 70)
     print(f"Execution mode:                     {mode_label}")
+    print(f"Total failures/errors found:        {total_failures}")
     print(f"Known in file:                      {len(known_failures)}")
     print(f"Failing now and known:              {len(still_failing)}")
     print(f"Newly passing (baseline can shrink):{len(now_passing)}")
