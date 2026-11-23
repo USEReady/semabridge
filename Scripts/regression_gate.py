@@ -23,6 +23,44 @@ from pathlib import Path
 from typing import List, Set
 
 
+def _load_known_failures(known_failures_path: Path) -> Set[str]:
+    """Parse and validate known_failures.txt.
+
+    Requirements:
+    - Single test per line (must contain '::' and not contain wildcards).
+    - Reason required after '#'.
+    - Empty lines and comment-only lines are ignored.
+    """
+    if not known_failures_path.exists():
+        raise FileNotFoundError(f"Known failures file not found: {known_failures_path}")
+
+    known_failures: Set[str] = set()
+    with open(known_failures_path, "r", encoding="utf-8") as f:
+        for line_no, raw_line in enumerate(f, start=1):
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "#" not in line:
+                raise ValueError(
+                    f"{known_failures_path.name}:{line_no}: reason required (e.g. 'test_path::test_name # reason')"
+                )
+            test_id, _, reason = line.partition("#")
+            test_id = test_id.strip()
+            reason = reason.strip()
+            if not test_id:
+                continue
+            if not reason:
+                raise ValueError(
+                    f"{known_failures_path.name}:{line_no}: reason required after '#' for '{test_id}'"
+                )
+            if "::" not in test_id or any(c in test_id for c in ("*", "?", "[", "]")):
+                raise ValueError(
+                    f"{known_failures_path.name}:{line_no}: '{test_id}' must match a single test name containing '::', not a file or pattern."
+                )
+            known_failures.add(test_id)
+    return known_failures
+
+
 def _run_gate(
     target_dir: Path,
     pytest_args: List[str],
@@ -31,14 +69,11 @@ def _run_gate(
 ) -> int:
     known_failures_path = target_dir / "Tests" / "known_failures.txt"
 
-    if not known_failures_path.exists():
-        print(f"❌ ERROR: Known failures file not found: {known_failures_path}")
+    try:
+        known_failures = _load_known_failures(known_failures_path)
+    except Exception as exc:
+        print(f"❌ ERROR: {exc}")
         return 1
-
-    with open(known_failures_path, "r", encoding="utf-8") as f:
-        known_failures: Set[str] = {
-            line.strip() for line in f if line.strip() and not line.startswith("#")
-        }
 
     print(f"📋 Loaded {len(known_failures)} accepted known failures from {known_failures_path.name}")
 
