@@ -36,8 +36,39 @@ def test_removed_sync_routes_return_410_gone_with_replacement():
     body = resp.json()
     assert "/api/runs" in body["replacement"]
 
-    # 5. POST /sync/conflicts/{conflict_id}/resolve
+    # 5. POST /sync/jobs/{job_id}/resume
+    resp = client.post("/sync/jobs/job-123/resume")
+    assert resp.status_code == 410
+    body = resp.json()
+    assert "/api/runs" in body["replacement"]
+
+    # 6. GET /sync/jobs/{job_id}/conflicts
+    resp = client.get("/sync/jobs/job-123/conflicts")
+    assert resp.status_code == 410
+    body = resp.json()
+    assert "/api/runs" in body["replacement"]
+
+    # 7. GET /sync/conflicts
+    resp = client.get("/sync/conflicts")
+    assert resp.status_code == 410
+    body = resp.json()
+    assert "/api/runs/resolve" in body["replacement"]
+
+    # 8. GET /sync/conflicts/{conflict_id}
+    resp = client.get("/sync/conflicts/c-123")
+    assert resp.status_code == 410
+    body = resp.json()
+    assert "/api/runs/resolve" in body["replacement"]
+
+    # 9. POST /sync/conflicts/{conflict_id}/resolve
     resp = client.post("/sync/conflicts/c-123/resolve", json={})
     assert resp.status_code == 410
     body = resp.json()
     assert "/api/runs/resolve" in body["replacement"]
+
+    # 10. PATCH /sync/jobs/{job_id}/conflicts/{conflict_id}
+    resp = client.patch("/sync/jobs/job-123/conflicts/c-123", json={})
+    assert resp.status_code == 410
+    body = resp.json()
+    assert "/api/runs/resolve" in body["replacement"]
+

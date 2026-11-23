@@ -56,44 +56,9 @@ class StartSyncRequest(BaseModel):
     max_data_rows: int = Field(default=10_000, ge=0)
 
 
-def _validated_path(raw: Optional[str], *, expect: str, field: str) -> Optional[str]:
-    """Resolve a user-supplied path against the file-access allow-list.
+from semabridge.auth.file_access import validate_file_path
 
-    Returns the resolved path (symlinks followed) or ``None`` when not given.
-    Raises 403 when it lies outside every allowed root, 400 when malformed.
-    """
-    if raw is None or not str(raw).strip():
-        return None
-    from semabridge.auth import file_access
-    from semabridge.domain.exceptions import PermissionError as DomainPermissionError
-    from semabridge.domain.exceptions import ValidationError as DomainValidationError
-
-    try:
-        return str(file_access.resolve_allowed_path(str(raw), expect=expect))
-    except DomainPermissionError as exc:
-        raise HTTPException(status_code=403, detail=f"{field}: {exc}") from exc
-    except DomainValidationError as exc:
-        raise HTTPException(status_code=400, detail=f"{field}: {exc}") from exc
-
-
-def start_sync_job(request: StartSyncRequest) -> Dict[str, Any]:
-    """Start a new synchronization job."""
-    pbix_folder = _validated_path(request.pbix_folder, expect="dir", field="pbix_folder")
-    source_field = "source_path" if request.source_path else "file_path"
-    source_path = _validated_path(
-        request.source_path or request.file_path, expect="any", field=source_field
-    )
-    from semabridge.sync.models import SyncConfig
-    config = SyncConfig(
-        direction=request.direction,
-        conflict_resolution=request.conflict_resolution,
-        pbix_folder=pbix_folder,
-        source_path=source_path,
-        pbix_pattern=request.pbix_pattern,
-        snowflake_database=request.snowflake_database,
-        snowflake_schema=request.snowflake_schema or request.target_snowflake_schema,
-    )
-    return {"status": "ok"}
+_validated_path = validate_file_path
 
 
 def _gone_response(removed_path: str, replacement: str) -> JSONResponse:
@@ -121,10 +86,12 @@ def gone_sync_job_detail(job_id: str) -> JSONResponse:
     return _gone_response(f"/sync/jobs/{job_id}", "/api/runs")
 
 
+@router.get("/conflicts")
+@router.get("/conflicts/{conflict_id}")
 @router.post("/conflicts/{conflict_id}/resolve")
 @router.patch("/jobs/{job_id}/conflicts/{conflict_id}")
-def gone_conflicts(conflict_id: str, job_id: str = "") -> JSONResponse:
-    return _gone_response("/sync/conflicts/resolve", "/api/runs/resolve")
+def gone_conflicts(conflict_id: str = "", job_id: str = "") -> JSONResponse:
+    return _gone_response("/sync/conflicts", "/api/runs/resolve")
 
 
 # =============================================================================

@@ -51,6 +51,15 @@ def test_value_encrypted_with_another_key_stays_byte_identical_and_warns(caplog)
         ).fetchone()
         assert row[0] == foreign_token  # Byte-identical
 
+    # Run migration a second time: changes nothing, stays byte-identical
+    migrated_second = migrate_credentials_encryption(engine)
+    assert migrated_second == 0
+    with engine.begin() as conn:
+        row_second = conn.execute(
+            text("SELECT value FROM semabridge_credentials WHERE service = 'test_fabric'")
+        ).fetchone()
+        assert row_second[0] == foreign_token
+
     # Assert warning logged naming service and key, but NOT the token or secret value
     assert any(
         "test_fabric" in r.message and "client_secret" in r.message and "secret_value_123" not in r.message

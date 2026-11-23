@@ -127,6 +127,49 @@ def test_user_b_saving_config_with_user_a_account_forbidden():
     fabric_mock.assert_not_called()
 
 
+def test_user_b_patching_project_with_user_a_account_forbidden():
+    with db_manager.get_session() as session:
+        proj = Project(
+            project_id="proj_b_patch",
+            name="Project B Patch",
+            owner_user_id="2",
+            workspace_id="ws-123",
+        )
+        session.add(proj)
+        session.commit()
+
+    client = TestClient(app)
+    response = client.patch(
+        "/api/projects/proj_b_patch",
+        headers=_auth_headers(client, user_id=2, role="user"),
+        json={
+            "source": {
+                "type": "fabric",
+                "identity_id": "acct_user_a",
+            },
+        },
+    )
+    assert response.status_code == 403
+    assert "Forbidden: connector identities belong to another user" in response.text
+
+
+def test_user_b_using_user_a_account_in_target_forbidden():
+    client = TestClient(app)
+    response = client.post(
+        "/api/projects",
+        headers=_auth_headers(client, user_id=2, role="user"),
+        json={
+            "name": "Project Target Check",
+            "source": {"type": "pbix"},
+            "targets": [
+                {"type": "snowflake", "account_id": "acct_user_a"}
+            ],
+        },
+    )
+    assert response.status_code == 403
+    assert "Forbidden: connector identities belong to another user" in response.text
+
+
 def test_owner_and_admin_succeed():
     client = TestClient(app)
     fabric_mock = MagicMock()
@@ -168,3 +211,29 @@ def test_owner_and_admin_succeed():
         )
         assert res_admin.status_code == 200
         assert fabric_mock.called
+
+    # 3. Owner and Admin can patch project with owner's account
+    with db_manager.get_session() as session:
+        proj = Project(
+            project_id="proj_a_patch",
+            name="Project A Patch",
+            owner_user_id="1",
+            workspace_id="ws-123",
+        )
+        session.add(proj)
+        session.commit()
+
+    res_patch_owner = client.patch(
+        "/api/projects/proj_a_patch",
+        headers=_auth_headers(client, user_id=1, role="user"),
+        json={"source": {"identity_id": "acct_user_a"}},
+    )
+    assert res_patch_owner.status_code == 200
+
+    res_patch_admin = client.patch(
+        "/api/projects/proj_a_patch",
+        headers=_auth_headers(client, user_id=3, role="admin"),
+        json={"source": {"identity_id": "acct_user_a"}},
+    )
+    assert res_patch_admin.status_code == 200
+

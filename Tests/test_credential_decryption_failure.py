@@ -74,3 +74,17 @@ def test_test_connection_surfaces_reenter_error_and_never_calls_connector(
     assert result["status"] == "failed"
     assert "re-enter credential 'password'" in result["message"]
     assert "snowflake" in result["message"]
+
+
+def test_connector_connection_manager_never_receives_ciphertext(foreign_token):
+    cm = CredentialManager(url_override="sqlite:///:memory:")
+    with cm._session() as session:
+        session.add(Credential(owner_id=0, service="snowflake", key="account", value="my_account", is_secret=False))
+        session.add(Credential(owner_id=0, service="snowflake", key="user", value="my_user", is_secret=False))
+        session.add(Credential(owner_id=0, service="snowflake", key="password", value=foreign_token, is_secret=True))
+        session.commit()
+
+    with pytest.raises(CredentialDecryptionError) as exc_info:
+        cm.get_credentials("snowflake", mask_secrets=False)
+    assert "re-enter credential 'password'" in str(exc_info.value)
+

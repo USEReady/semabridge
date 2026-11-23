@@ -35,7 +35,13 @@ def test_regression_gate_rejects_whole_file_and_missing_reason(tmp_path):
     with pytest.raises(ValueError, match="must match a single test name containing '::'"):
         _load_known_failures(kf4)
 
-    # 5. Valid entry with single test and reason
+    # 5. Directory / folder level entry
+    kf6 = tmp_path / "kf6.txt"
+    kf6.write_text("Tests/ # folder\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="must match a single test name containing '::'"):
+        _load_known_failures(kf6)
+
+    # 6. Valid entry with single test and reason
     kf5 = tmp_path / "kf5.txt"
     kf5.write_text(
         "# Header comment\n"

@@ -13,11 +13,15 @@ def test_migration_query_compiles_for_postgres_dialect():
         "FROM semabridge_credentials WHERE is_secret = :is_secret"
     ).bindparams(is_secret=True)
 
-    compiled_pg = str(stmt.compile(dialect=postgresql.dialect()))
-    assert "is_secret = %(is_secret)s" in compiled_pg or "is_secret = :is_secret" in compiled_pg
+    compiled_pg = stmt.compile(dialect=postgresql.dialect())
+    sql_text = str(compiled_pg)
+    assert "is_secret = %(is_secret)s" in sql_text or "is_secret = :is_secret" in sql_text
 
     # Verify no 'is_secret = 1' in postgres query
-    assert "is_secret = 1" not in compiled_pg
+    assert "is_secret = 1" not in sql_text
+    # Verify the bound parameter is the boolean True, not an integer 1
+    assert compiled_pg.params["is_secret"] is True
+    assert isinstance(compiled_pg.params["is_secret"], bool)
 
 
 def test_migration_query_works_on_sqlite(tmp_path):

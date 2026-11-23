@@ -242,7 +242,7 @@ def _attach_fabric_identities(
     """
     from semabridge.sources.base import SourceError
 
-    workspace_id = _fabric_source_workspace(config, source_cfg, _fabric_env_workspace())
+    workspace_id = _fabric_source_workspace(config, source_cfg, "")
     identity_id = str(source_cfg.get("identity_id") or account_id or "").strip() or None
     resolver = model_resolver or _default_fabric_model_resolver
 
@@ -1481,13 +1481,7 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
         deploy_enabled = False
 
     if source_type == "fabric":
-        features = ((config.get("behavior") or {}).get("features") or {}) if isinstance(config.get("behavior"), dict) else {}
-        strict = bool(features.get("fabric_strict_workspace", False))
-        if dry_run and not strict:
-            project_ws = str(source_cfg.get("workspace_id") or (config.get("fabric", {}) or {}).get("workspace_id") or "").strip()
-            resolved_workspace_id = project_ws or str(_fabric_env_workspace_id or "")
-        else:
-            resolved_workspace_id = _fabric_source_workspace(config, source_cfg, _fabric_env_workspace_id)
+        resolved_workspace_id = _fabric_source_workspace(config, source_cfg, "")
     else:
         resolved_workspace_id = str(
             source_cfg.get("workspace_id")

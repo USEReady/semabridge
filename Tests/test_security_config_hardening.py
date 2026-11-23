@@ -112,20 +112,19 @@ def test_local_folder_specific_project_dir_accepted(tmp_path):
 # 3. paths sent to sync / project endpoints ----------------------------------
 
 def test_sync_job_rejects_paths_outside_allowed_roots(root):
-    from semabridge.api import sync_router
+    from semabridge.auth.file_access import validate_file_path
 
     for field in ("pbix_folder", "source_path", "file_path"):
-        req = sync_router.StartSyncRequest(direction="pbix_to_snowflake", **{field: "/etc"})
         with pytest.raises(HTTPException) as exc:
-            sync_router.start_sync_job(req)
+            validate_file_path("/etc", expect="any", field=field)
         assert exc.value.status_code == 403, field
 
 
 def test_sync_job_path_inside_root_is_resolved(root):
-    from semabridge.api import sync_router
+    from semabridge.auth.file_access import validate_file_path
 
     (root / "m").mkdir()
-    assert sync_router._validated_path(str(root / "x" / ".." / "m"), expect="dir", field="f") == str(root / "m")
+    assert validate_file_path(str(root / "x" / ".." / "m"), expect="dir", field="f") == str(root / "m")
 
 
 def test_project_payload_paths_validated(root):
