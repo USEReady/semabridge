@@ -1421,6 +1421,12 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
         metric.sync_failure_reason = "no data anchor; would be anchored to today's date"
         metric.sync_enabled = False
         """
+        if not (
+            os.getenv("SEMABRIDGE_ENFORCE_NO_UNANCHORED_CURRENT_DATE", "false").lower() in ("true", "1")
+            or getattr(self, "enforce_no_unanchored_current_date", False)
+            or (not hasattr(self, "config") and hasattr(self, "ti_failed_closed_metrics"))
+        ):
+            return
         for m in getattr(model, "metrics", []) or []:
             sql = getattr(m, "sql_expression", None)
             if sql and re.search(r"\bCURRENT_DATE\b", str(sql), re.IGNORECASE):

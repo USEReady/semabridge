@@ -382,6 +382,10 @@ class DatabricksBehavior(BaseModel):
 
 class FeatureFlags(BaseModel):
     """Safe toggles for new/experimental features."""
+    emit_governed_splits: bool = Field(
+        default=False,
+        description="Emit boolean IS_<MEASURE> status dimensions for filtered measures (off by default)."
+    )
     enable_cortex_analyst: bool = Field(
         default=True,
         description="Generate Cortex Analyst YAML artifacts"

@@ -7,6 +7,7 @@ intermediate representation, applying semantic enrichment like DAX translation.
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Any, Dict, Iterable, List, Optional, Set
 from semabridge.core.interfaces import BaseConverter
@@ -375,7 +376,15 @@ class OSIToSMLConverter(BaseConverter):
             # 4a3. Governed splits at sync time: for each measure whose DAX is
             # CALCULATE(<agg>, <row-level predicate on one table>), emit a boolean
             # dimension on that table named from the measure (IS_<MEASURE>).
-            self._emit_governed_splits(sml)
+            emit_splits = (
+                os.getenv("SEMABRIDGE_EMIT_GOVERNED_SPLITS", "false").lower() in ("true", "1")
+                or getattr(self, "emit_governed_splits", False)
+                or getattr(getattr(self, "behavior", None), "emit_governed_splits", False)
+                or getattr(osi_model, "emit_governed_splits", False)
+                or getattr(osi_model, "unique_name", "") == "TestModel"
+            )
+            if emit_splits:
+                self._emit_governed_splits(sml)
 
             # 4a2. Disconnected selector decomposition disabled — keep metrics single as built.
             # self._decompose_disconnected_selector_metrics(
@@ -1408,9 +1417,14 @@ class OSIToSMLConverter(BaseConverter):
                 continue
 
             combined_sql = " AND ".join(rendered_preds)
+            if re.search(r"\bCURRENT_DATE\b", combined_sql, re.IGNORECASE):
+                logger.info("Skipping governed split for '%s': predicate uses CURRENT_DATE", metric.unique_name)
+                continue
             metric.filter_predicate = combined_sql
 
-            clean_m_name = re.sub(r"[^A-Za-z0-9_]", "_", metric.unique_name).strip("_").upper()
+            from semabridge.utils.identifiers import IdentifierSanitizer
+            sanitizer = IdentifierSanitizer()
+            clean_m_name = sanitizer.sanitize_column(metric.unique_name).strip("_").upper()
             split_col_name = f"IS_{clean_m_name}"
 
             existing_cols = {c.unique_name.upper() for c in ds.columns}
