@@ -292,16 +292,23 @@ def _normalize_dialect(req: NLQueryRequest) -> str:
     return dialect
 
 
-def _empty_plan(prompt: str, explanation: str, warnings: List[str], tables: Optional[List[str]] = None) -> QueryResolutionPlan:
+def _empty_plan(prompt: str, explanation: str, warnings: List[str], tables: Optional[List[str]] = None, reason_code: str = "INCOMPLETE_ANSWER") -> QueryResolutionPlan:
     return QueryResolutionPlan(
         original_prompt=prompt,
         detected_metrics=[],
         detected_dimensions=[],
         resolved_tables=tables or [],
         generated_sql="",
+        sql=None,
         confidence_score=0.0,
         explanation=explanation,
         warnings=warnings,
+        answerable=False,
+        refused=True,
+        reason_code=reason_code,
+        reason_text=explanation,
+        engine="local",
+        guard_checks=[],
     )
 
 
@@ -354,9 +361,10 @@ def _resolve_project_grain_and_keys(project_id: Optional[str]) -> Tuple[Dict[str
     if not project_id:
         return table_grain, key_uniqueness
     try:
-        from semabridge.api.services.core_domain_service import get_project_snapshot
-        snap = get_project_snapshot(project_id)
-        if snap:
+        from semabridge.api.services.project_shared import get_project_snapshots
+        snaps = get_project_snapshots(project_id)
+        if snaps:
+            snap = snaps[-1]
             if hasattr(snap, "key_uniqueness"):
                 key_uniqueness.update(getattr(snap, "key_uniqueness", {}) or {})
             elif isinstance(snap, dict) and "key_uniqueness" in snap:
@@ -365,8 +373,8 @@ def _resolve_project_grain_and_keys(project_id: Optional[str]) -> Tuple[Dict[str
                 table_grain.update(getattr(snap, "table_grain", {}) or {})
             elif isinstance(snap, dict) and "table_grain" in snap:
                 table_grain.update(snap.get("table_grain") or {})
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed to resolve project grain/keys for project %s: %s", project_id, exc)
     return table_grain, key_uniqueness
 
 
@@ -414,12 +422,15 @@ def _try_cortex(prompt: str, scope: ProjectScope) -> tuple[Optional[QueryResolut
         detected_metrics = _extract_metric_names_from_sv_sql(effective_sql)
         detected_dims = [d.split(".")[-1] for d in _extract_dimension_names_from_sv_sql(effective_sql)]
 
+        req_id = resp.get("request_id")
+        cortex_engine = f"snowflake_cortex:{req_id}" if req_id else "snowflake_cortex"
         plan = QueryResolutionPlan(
             original_prompt=prompt,
             detected_metrics=detected_metrics,
             detected_dimensions=detected_dims,
             resolved_tables=[scope.semantic_view],
             generated_sql=effective_sql,
+            sql=effective_sql,
             confidence_score=0.95,
             explanation=f"[Snowflake Cortex Analyst] {resp.get('explanation', '')}".strip(),
             warnings=validation.warnings,
@@ -430,6 +441,7 @@ def _try_cortex(prompt: str, scope: ProjectScope) -> tuple[Optional[QueryResolut
             is_certified=validation.is_certified_eligible and validation.checks_passed and effective_path in ("semantic_view", "rewritten to governed"),
             view=scope.semantic_view,
             semantic_view=scope.semantic_view,
+            engine=cortex_engine,
         )
         return plan, None
     except Exception as exc:
@@ -449,27 +461,67 @@ def _local_plan(engine, prompt: str, dialect: str, scope: ProjectScope, offline_
         # unlabelled physical SQL.
         offline_draft=bool(offline_label),
     )
+    plan.engine = "local"
+    if getattr(plan, "refused", False):
+        if (
+            getattr(plan, "reason_code", None) == "UNKNOWN_METRIC"
+            and not scope.project_id
+            and not getattr(ontology_store, "_demo_seeded_fallback", False)
+        ):
+            if hasattr(ontology_store, "seed_demo_domains"):
+                ontology_store._demo_seeded_fallback = True
+                ontology_store.seed_demo_domains()
+                if ontology_store.query_engine:
+                    return _local_plan(ontology_store.query_engine, prompt, dialect, scope, offline_label)
+        plan.generated_sql = ""
+        plan.sql = None
+        plan.guard_checks = []
+        return plan
     if getattr(plan, "generated_sql", None):
-        from semabridge.ai.sql_validator import validate_and_rewrite_generated_sql
+        from semabridge.ai.sql_validator import validate_and_rewrite_generated_sql, metadata_from_domain, select_domain_for_view
         tg, ku = _resolve_project_grain_and_keys(scope.project_id)
+        local_meta = None
+        if scope.project_id:
+            try:
+                proj_domains = ontology_store.get_project_domains(scope.project_id) if hasattr(ontology_store, "get_project_domains") else []
+                if proj_domains:
+                    domain = select_domain_for_view(
+                        type("Fed", (), {"domains": {d.name: d for d in proj_domains}})(),
+                        scope.semantic_view,
+                    )
+                    if domain:
+                        local_meta = metadata_from_domain(
+                            domain,
+                            view=scope.semantic_view,
+                            platform=(dialect or "snowflake").lower(),
+                            table_grain=tg,
+                            key_uniqueness=ku,
+                        )
+            except Exception as exc:
+                logger.warning("Failed to load ontology domain for project %s: %s", scope.project_id, exc)
+                local_meta = None
+        if local_meta is None and not scope.project_id:
+            local_meta = getattr(engine, "ontology", None)
         validation = validate_and_rewrite_generated_sql(
             sql=plan.generated_sql,
-            prompt=prompt,
-            dialect=dialect,
-            model_metadata=getattr(engine, "ontology", None),
-            semantic_view_name=scope.semantic_view,
-            table_grain=tg,
-            key_uniqueness=ku,
+            model=local_meta,
+            question=prompt,
         )
         if not validation.allowed:
             plan.answerable = False
-            plan.explanation = validation.refusal_reason or "Query rejected by governance guard."
+            plan.refused = True
+            plan.reason_code = validation.warnings[0] if validation.warnings else "REFUSED"
+            plan.reason_text = validation.refusal_reason or "Query rejected by governance guard."
+            plan.explanation = plan.reason_text
+            plan.generated_sql = ""
+            plan.sql = None
+            plan.guard_checks = []
             plan.plan_checks_passed = False
-            if hasattr(plan, "guard_checks"):
-                plan.guard_checks.extend(validation.checks)
+            plan.query_path = "none"
         else:
             if validation.rewritten_sql:
                 plan.generated_sql = validation.rewritten_sql
+                plan.sql = validation.rewritten_sql
             plan.query_path = validation.query_path
             if hasattr(plan, "warnings"):
                 plan.warnings.extend([w for w in validation.warnings if w not in plan.warnings])
@@ -586,7 +638,10 @@ def _guard_statements(exec_sql: str) -> None:
     statements = [strip_sql_comments(s).strip() for s in split_statements(exec_sql)]
     statements = [s for s in statements if s]
     if not statements:
-        raise HTTPException(status_code=400, detail="SQL query cannot be empty.")
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "NO_EXECUTABLE_SQL", "message": "SQL query cannot be empty or comment-only."},
+        )
     for stmt in statements:
         try:
             validate_safe_sql(stmt)
@@ -675,8 +730,10 @@ def _execute_snowflake(
 
     try:
         import snowflake.connector
+        from semabridge.connectors.sql_guard import guard_connection
 
-        conn = snowflake.connector.connect(**connect_kwargs)
+        raw_conn = snowflake.connector.connect(**connect_kwargs)
+        conn = guard_connection(raw_conn, read_only=True)
         try:
             cur = conn.cursor()
             cur.execute(exec_sql)
@@ -721,10 +778,12 @@ def _execute_databricks(
                 _b = _json.loads(token)
                 if isinstance(_b, dict):
                     token = _b.get("token") or _b.get("access_token") or token
-            except Exception:
-                pass
+            except Exception as j_exc:
+                logger.debug("Failed parsing JSON Databricks token: %s", j_exc)
         if not token:
             return _not_executed("DATABRICKS", exec_sql, "missing Databricks token.")
+        from semabridge.connectors.sql_guard import validate_read_only_sql
+        validate_read_only_sql(exec_sql)
         clean_host = str(db_cfg.host).replace("https://", "").replace("http://", "").rstrip("/")
         db_payload = {"statement": exec_sql, "warehouse_id": db_cfg.warehouse_id, "wait_timeout": "15s"}
         if getattr(db_cfg, "catalog", None):
@@ -818,8 +877,8 @@ def check_query_results(
                     warnings.append(
                         f"possible double counting: grouped total ({breakdown_total:.2f}) differs from card value ({card_total:.2f})"
                     )
-        except (ValueError, TypeError):
-            pass
+        except (ValueError, TypeError) as num_err:
+            logger.debug("Failed computing metric card total difference: %s", num_err)
 
     if is_breakdown and dim_indices:
         d_idx = dim_indices[0]
@@ -840,28 +899,85 @@ def execute_semantic_query(
     owner_id: Optional[str] = None,
 ) -> ExecuteQueryResponse:
     """Guard and execute SQL on the project's warehouse (no fabricated data)."""
-    if not req.sql or not req.sql.strip():
-        raise HTTPException(status_code=400, detail="SQL query cannot be empty.")
-    clean_sql = req.sql.strip().rstrip(";").strip()
+    raw_sql = str(req.sql or "")
+    clean_sql = raw_sql.strip().rstrip(";").strip()
     exec_sql = strip_sql_comments(clean_sql).strip()
     if not exec_sql:
-        raise HTTPException(status_code=400, detail="SQL query cannot be empty.")
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "NO_EXECUTABLE_SQL", "message": "SQL query cannot be empty or comment-only."},
+        )
     _guard_statements(exec_sql)
     if not re.search(r"\blimit\s+\d+\s*$", exec_sql, re.IGNORECASE):
         exec_sql = f"{exec_sql} LIMIT {int(req.limit)}"
 
-    from semabridge.ai.sql_validator import validate_and_rewrite_generated_sql
-    model_meta = getattr(ontology_store.query_engine, "ontology", None)
+    from semabridge.ai.sql_validator import validate_and_rewrite_generated_sql, metadata_from_domain, select_domain_for_view
+    from semabridge.connectors.sql_guard import validate_read_only_sql
+
+    server_resolved_view = None
+    if req.project_id:
+        try:
+            from semabridge.repository.model_repository import ModelRepository
+            repo = ModelRepository()
+            if hasattr(repo, "list_project_deployments"):
+                deployments = repo.list_project_deployments(req.project_id, include_unmanaged=True)
+                latest = next((d for d in deployments if d.get("is_latest")), None)
+                if latest and latest.get("semantic_view"):
+                    server_resolved_view = latest["semantic_view"]
+            if not server_resolved_view:
+                dep_info = repo.get_project_deployment_info(req.project_id)
+                if dep_info and dep_info.get("semantic_view"):
+                    server_resolved_view = dep_info["semantic_view"]
+        except Exception as exc:
+            logger.warning("Failed resolving deployment info for project %s: %s", req.project_id, exc)
+        if not server_resolved_view:
+            scope = _scope_for(req.project_id)
+            if scope and scope.semantic_view:
+                server_resolved_view = scope.semantic_view
+
+    # b. Governed queries must target the server-resolved view
+    sv_match = re.search(r"\bSEMANTIC_VIEW\s*\(\s*([^\s,()]+)", clean_sql, re.IGNORECASE)
+    if sv_match:
+        target_view_in_sql = sv_match.group(1).strip()
+        def _norm_v(v: str) -> str:
+            return ".".join(p.strip().strip('"').upper() for p in v.split(".") if p.strip())
+        norm_sql_view = _norm_v(target_view_in_sql)
+        norm_server_view = _norm_v(server_resolved_view) if server_resolved_view else ""
+        is_match = bool(norm_server_view and norm_sql_view == norm_server_view)
+        if not is_match and norm_server_view and ("." not in target_view_in_sql or "." not in server_resolved_view):
+            is_match = (norm_sql_view.split(".")[-1] == norm_server_view.split(".")[-1])
+        if not is_match:
+            raise HTTPException(status_code=400, detail="query targets a view outside this project")
+
+    model_meta = None
     tg, ku = _resolve_project_grain_and_keys(req.project_id)
+    if req.project_id:
+        try:
+            proj_domains = ontology_store.get_project_domains(req.project_id) if hasattr(ontology_store, "get_project_domains") else []
+            if proj_domains:
+                domain = select_domain_for_view(
+                    type("Fed", (), {"domains": {d.name: d for d in proj_domains}})(),
+                    server_resolved_view,
+                )
+                if domain:
+                    target_platform = (req.target or "snowflake").lower()
+                    model_meta = metadata_from_domain(
+                        domain,
+                        view=server_resolved_view,
+                        platform=target_platform,
+                        table_grain=tg,
+                        key_uniqueness=ku,
+                    )
+        except Exception as exc:
+            logger.warning("Failed to load ontology domain for project %s: %s", req.project_id, exc)
+            model_meta = None
+    if model_meta is None and not req.project_id:
+        model_meta = getattr(ontology_store.query_engine, "ontology", None)
+
     validation = validate_and_rewrite_generated_sql(
         sql=clean_sql,
-        prompt=req.question or "",
-        dialect=req.target or "SNOWFLAKE",
-        model_metadata=model_meta,
-        semantic_view_name=req.view_name,
-        table_grain=tg,
-        key_uniqueness=ku,
-        known_query_path=req.query_path,
+        model=model_meta,
+        question=req.question or "",
     )
     if not validation.allowed:
         raise HTTPException(status_code=400, detail=validation.refusal_reason or "SQL rejected by governance guard.")
@@ -871,6 +987,10 @@ def execute_semantic_query(
         exec_sql = strip_sql_comments(clean_sql).strip()
         if not re.search(r"\blimit\s+\d+\s*$", exec_sql, re.IGNORECASE):
             exec_sql = f"{exec_sql} LIMIT {int(req.limit)}"
+        # Re-verify rewritten SQL for safety before execution
+        _guard_statements(exec_sql)
+
+    validate_read_only_sql(exec_sql)
 
     target = (req.target or "SNOWFLAKE").upper()
     if target in ("SNOWFLAKE", "CORTEX"):

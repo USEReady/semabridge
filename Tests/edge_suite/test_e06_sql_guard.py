@@ -12,6 +12,9 @@ ALLOWED = [
     "SELECT SYSTEM$TYPEOF(1)", "SELECT * FROM t QUALIFY ROW_NUMBER() OVER (ORDER BY a) = 1",
     "SELECT COUNT(*) FROM t WHERE merge_key IS NULL", "SELECT a AS \"grant\" FROM t", "SELECT GET_DDL('VIEW','v')",
     "(SELECT 1)", "SELECT 1 UNION ALL SELECT 2", "SELECT * FROM t LIMIT 10 OFFSET 5",
+    # column and function names that look like keywords must not be blocked (statement type decides)
+    "SELECT comment, list, set, use FROM t", "SELECT t.comment FROM t WHERE t.list = 1",
+    "SELECT GET(v, 'a') FROM t", "SELECT GET_PATH(v, 'a.b') FROM t", "SELECT \"USE\" FROM t",
 ]
 BLOCKED = [
     "", "   ", ";", "DROP TABLE t", "drop view v", "DELETE FROM t", "UPDATE t SET a=1", "INSERT INTO t VALUES (1)",

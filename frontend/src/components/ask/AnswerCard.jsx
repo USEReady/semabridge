@@ -4,7 +4,26 @@ import AnswerResult from './AnswerResult';
 import { answerTitle, ENGINES } from './askApi';
 import { BTN, CARD, CHIP, LINK_BTN, pill } from './askStyles';
 
-const engineLabel = (id) => ENGINES.find((e) => e.id === id)?.label || id;
+const engineLabel = (id) => {
+  if (!id) return '';
+  const raw = String(id).trim();
+  const lower = raw.toLowerCase();
+  if (lower.startsWith('snowflake_cortex') || lower === 'snowflake' || lower === 'cortex') {
+    if (lower.includes(':')) {
+      const parts = raw.split(':');
+      return `Snowflake Cortex (${parts.slice(1).join(':')})`;
+    }
+    return 'Snowflake Cortex';
+  }
+  if (lower.startsWith('databricks_genie') || lower === 'databricks' || lower === 'genie') {
+    return 'Databricks Genie';
+  }
+  if (lower === 'local' || lower.startsWith('local')) {
+    return 'Local Engine';
+  }
+  const found = ENGINES.find((e) => e.id.toLowerCase() === lower);
+  return found?.label || raw;
+};
 
 function Step({ label, children }) {
   return (
@@ -29,7 +48,8 @@ function HowAnswered({ plan, result, target }) {
   const policies = plan?.applied_policies || [];
   const filters = (plan?.filters || []).filter((f) => !policies.includes(f));
   const warnings = plan?.warnings || [];
-  const path = plan?.query_path || result?.query_path || (plan?.is_draft ? 'free-form (not governed)' : 'semantic_view');
+  const rawPath = result?.query_path || plan?.query_path || (plan?.is_draft ? 'free-form (not governed)' : 'semantic_view');
+  const path = rawPath === 'rewritten to governed' ? 'rewritten to governed' : rawPath.includes('free-form') ? 'free-form (not governed)' : (rawPath === 'none' ? 'none' : 'semantic_view');
   const assumptions = plan?.assumptions || [];
   const guardChecks = plan?.guard_checks || [];
   const suggestedMetrics = plan?.suggested_metrics || [];
@@ -183,7 +203,7 @@ function HowAnswered({ plan, result, target }) {
               {copied ? 'copied' : 'copy'}
             </button>
             <span style={{ color: 'var(--text-tertiary)' }}>
-              · {engineLabel(target)}
+              · {engineLabel(plan?.engine || result?.dialect || result?.target || target)}
               {result?.execution_time_ms ? ` · ${result.execution_time_ms} ms` : ''}
             </span>
           </Step>
@@ -234,7 +254,7 @@ function AnsweredBy({ plan, result }) {
   );
 }
 
-export default function AnswerCard({ entry, onCertify, onRetry, onOfflineDraft, onPickView }) {
+export default function AnswerCard({ entry, onCertify, onRetry, onOfflineDraft, onPickView, onAsk }) {
   const { status, plan, result, error, errorStage, cortexUnavailable, target, certifyState, certifyError, question } = entry;
   const candidateViews = entry.candidateViews || [];
   const [confirming, setConfirming] = useState(false);
@@ -244,6 +264,60 @@ export default function AnswerCard({ entry, onCertify, onRetry, onOfflineDraft, 
       <div style={{ ...CARD, flexDirection: 'row', alignItems: 'center', color: 'var(--text-secondary)', fontSize: 13 }} aria-live="polite">
         <Loader2 size={16} className="animate-spin" style={{ animation: 'spin 1s linear infinite' }} />
         Finding governed metrics and running on {engineLabel(target)}…
+      </div>
+    );
+  }
+
+  const isRefused = status === 'refused' || plan?.refused;
+  if (isRefused) {
+    const reasonText = plan?.reason_text || plan?.explanation || error || "Can't answer this as asked.";
+    const decidingEngine = engineLabel(plan?.engine || 'local');
+    const alternatives = plan?.alternatives || [];
+
+    return (
+      <div role="alert" style={{ ...CARD, borderColor: 'var(--color-warning, #f59e0b)', background: 'var(--bg-surface)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <AlertTriangle size={16} color="var(--color-warning, #f59e0b)" />
+          <b style={{ fontSize: 14, color: 'var(--text-primary)' }}>Can't answer this as asked</b>
+        </div>
+        <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5, wordBreak: 'break-word' }}>
+          {reasonText}
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
+          Decided by {decidingEngine}
+        </div>
+        {alternatives.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4, paddingTop: 10, borderTop: '1px solid var(--border-main)' }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>Suggested alternatives:</span>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {alternatives.map((alt, idx) => {
+                const qText = typeof alt === 'string' ? alt : alt.question;
+                return (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => onAsk?.(qText)}
+                    style={{
+                      ...BTN,
+                      background: 'var(--bg-surface-raised, rgba(255,255,255,0.05))',
+                      borderColor: 'var(--border-focus)',
+                      color: 'var(--accent-blue, #38bdf8)',
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                      padding: '6px 12px',
+                      borderRadius: 8,
+                      fontSize: 12.5,
+                    }}
+                    title={qText}
+                  >
+                    {qText}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        <AnsweredBy plan={plan} result={result} />
       </div>
     );
   }
@@ -288,7 +362,7 @@ export default function AnswerCard({ entry, onCertify, onRetry, onOfflineDraft, 
           </div>
         )}
         <AnsweredBy plan={plan} result={result} />
-        {plan && (plan.generated_sql || (plan.guard_checks || []).length > 0) && (
+        {plan && !plan.refused && (plan.generated_sql || (plan.guard_checks || []).length > 0) && (
           <HowAnswered plan={plan} result={null} target={target} />
         )}
       </div>
@@ -296,10 +370,14 @@ export default function AnswerCard({ entry, onCertify, onRetry, onOfflineDraft, 
   }
 
   const usesCertified = (plan?.detected_metrics || []).length > 0;
-  const allWarnings = Array.from(new Set([
-    ...(plan?.warnings || []),
-    ...(result?.warnings || []),
-  ]));
+  const normalizeWarning = (w) => (typeof w === 'string' ? w : (w?.message || String(w || ''))).trim().replace(/\s+/g, ' ');
+  const allWarnings = Array.from(
+    new Map(
+      [...(plan?.warnings || []), ...(result?.warnings || [])]
+        .map((w) => [normalizeWarning(w), normalizeWarning(w)])
+        .filter(([k]) => Boolean(k))
+    ).values()
+  );
   const rawPath = result?.query_path || plan?.query_path || (usesCertified ? 'semantic_view' : (plan?.route === 'cortex' ? 'free-form (not governed)' : 'semantic_view'));
   const isGoverned = rawPath === 'semantic_view' || rawPath === 'rewritten to governed' || (!rawPath.includes('free-form') && !rawPath.includes('not governed'));
   const allChecksPassed = (plan?.guard_checks || []).length === 0 || (plan?.guard_checks || []).every((c) => c.passed !== false);

@@ -53,7 +53,7 @@ export function useDeployedViews(projectId) {
 
   // Determine selected view: URL query param -> latest view fallback
   const selectedView = useMemo(() => {
-    if (urlView) {
+    if (urlView && views.length > 0) {
       // Check if URL view matches any known view in the list
       const matched = views.find(
         (v) =>
@@ -61,17 +61,25 @@ export function useDeployedViews(projectId) {
           normalizeViewName(v.view) === normalizeViewName(urlView)
       );
       if (matched) return matched.semantic_view || matched.view;
+      return latestView?.semantic_view || latestView?.view || '';
+    }
+    if (urlView && views.length === 0 && loading) {
       return urlView;
     }
     return latestView?.semantic_view || latestView?.view || '';
-  }, [urlView, views, latestView]);
+  }, [urlView, views, latestView, loading]);
 
-  // Persist default (latest) view to URL if ?view is omitted
+  // Persist default (latest) view to URL if ?view is omitted or belongs to another project
   useEffect(() => {
     if (!loading && views.length > 0) {
       const current = searchParams.get('view');
+      const matched = current && views.find(
+        (v) =>
+          normalizeViewName(v.semantic_view) === normalizeViewName(current) ||
+          normalizeViewName(v.view) === normalizeViewName(current)
+      );
       const def = latestView?.semantic_view || latestView?.view || '';
-      if (!current && def) {
+      if ((!current || !matched) && def) {
         setSearchParams(
           (prev) => {
             const next = new URLSearchParams(prev);

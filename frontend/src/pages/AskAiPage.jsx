@@ -148,7 +148,14 @@ export default function AskAiPage() {
         allowOfflineDraft,
         semanticView,
       });
-      patch(id, { status: 'done', plan, result, cortexUnavailable: false, candidateViews: [], semanticView });
+      patch(id, {
+        status: plan?.refused ? 'refused' : 'done',
+        plan,
+        result,
+        cortexUnavailable: false,
+        candidateViews: [],
+        semanticView,
+      });
     } catch (err) {
       patch(id, {
         status: 'error',
@@ -351,6 +358,7 @@ export default function AskAiPage() {
                       onRetry={() => retry(entry, false)}
                       onOfflineDraft={() => retry(entry, true)}
                       onPickView={(view) => retry(entry, false, view)}
+                      onAsk={ask}
                     />
                   </React.Fragment>
                 ))

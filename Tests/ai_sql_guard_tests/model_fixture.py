@@ -17,6 +17,7 @@ MODEL = {
         "HIRES": {"grain": "event", "columns": ["EMPLID", "HIREDATE", "BU"]},
         "SEPARATIONS": {"grain": "event", "columns": ["EMPLID", "SEPDATE", "BU", "REASON"]},
         "EMPLOYEE_ENRICHED": {"grain": "snapshot", "snapshot_date": "DATE", "entity_key": "EMPLID",
+                              "generated": True, "source_table": "EMPLOYEE",
                               "columns": ["EMPLID", "DATE", "BU", "AGE", "TENUREDAYS", "TERMDATE"]},
     },
     "relationships": [

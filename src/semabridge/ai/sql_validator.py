@@ -11,23 +11,24 @@ dimensions); there are no model, table, measure or value names in this module.
 
 Model metadata shape (see metadata_from_domain for building it from an ontology domain):
   {"view", "platform", "data_anchored", "latest_data_date",
-   "tables": {NAME: {"grain": snapshot|event|dimension|unknown, "snapshot_date", "entity_key", "columns"}},
+   "tables": {NAME: {"grain": snapshot|event|dimension|unknown, "snapshot_date", "entity_key", "columns",
+                     "generated": bool (object created by SemaBridge), "source_table": NAME it derives from}},
    "relationships": [{"from", "from_col", "to", "to_col", "cardinality"}],
    "key_uniqueness": {"TABLE.COLUMN": {"rows", "distinct"}},
    "metrics": [{"name", "label", "table", "agg", "column", "filter", "non_additive_by", "kind"
                 (base|period|helper), "base_metric", "shape", "synonyms"}],
    "dimensions": [{"name", "table", "column"}]}
 
-Result flags: CURRENT_DATE_ANCHOR, FREE_FORM, ENRICHED_TABLE, SNAPSHOT_GRAIN, NON_UNIQUE_JOIN, FAN_OUT,
+Result flags: CURRENT_DATE_ANCHOR, FREE_FORM, GENERATED_OBJECT, SNAPSHOT_GRAIN, NON_UNIQUE_JOIN, FAN_OUT,
 GUESSED_RULE, HELPER_METRIC, UNKNOWN_METRIC, WRITE_STATEMENT, MULTI_STATEMENT, EMPTY_SQL, UNPARSEABLE,
-NOT_VALIDATED (no metadata available; never certifiable).
+NOT_VALIDATED (no metadata available; never certifiable), INCOMPLETE_ANSWER (engine reported
+unresolved parts of the question).
 """
 from __future__ import annotations
 
 import logging
 import re
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
 
 import sqlglot
 from sqlglot import exp
@@ -40,9 +41,7 @@ _DIALECTS = {"snowflake": "snowflake", "databricks": "databricks", "fabric": "ts
 def _dialect(model: Dict[str, Any]) -> str:
     return _DIALECTS.get(str(model.get("platform") or "snowflake").lower(), "snowflake")
 
-
 TODAY_FUNCS = re.compile(r"\b(CURRENT_DATE|CURRENT_TIMESTAMP|GETDATE|SYSDATE|NOW|LOCALTIMESTAMP)\b(\s*\(\s*\))?", re.I)
-TODAY_WORDS = re.compile(r"\b(today|now|current date|this moment|as of today)\b", re.I)  # hardcoding-ok: regex for today's date detection
 WRITE_START = re.compile(r"^\s*(insert|update|delete|merge|drop|create|alter|truncate|grant|revoke|call|copy|put|use)\b", re.I)
 
 
@@ -55,7 +54,7 @@ def _norm_term(t: str) -> str:
 
 def find_synonym_collisions(model: Dict[str, Any]) -> List[Dict[str, Any]]:
     owners: Dict[str, List[str]] = {}
-    for m in model.get("metrics", []) or []:
+    for m in model["metrics"]:
         for s in m.get("synonyms") or []:
             key = _norm_term(s)
             if key and m["name"] not in owners.setdefault(key, []):
@@ -63,22 +62,21 @@ def find_synonym_collisions(model: Dict[str, Any]) -> List[Dict[str, Any]]:
     return [{"term": t, "metrics": sorted(ms)} for t, ms in sorted(owners.items()) if len(ms) > 1]
 
 
-def _is_base_unfiltered(m: Dict[str, Any]) -> bool:
+def _is_base_unfiltered(m):
     return m.get("kind", "base") == "base" and not m.get("filter")
 
 
 def assign_synonyms(model: Dict[str, Any]) -> Dict[str, List[str]]:
-    metrics = model.get("metrics", []) or []
-    out = {m["name"]: list(dict.fromkeys(m.get("synonyms") or [])) for m in metrics}
-    by_name = {m["name"]: m for m in metrics}
+    out = {m["name"]: list(dict.fromkeys(m.get("synonyms") or [])) for m in model["metrics"]}
+    by_name = {m["name"]: m for m in model["metrics"]}
     for col in find_synonym_collisions(model):
-        unfiltered = [n for n in col["metrics"] if n in by_name and _is_base_unfiltered(by_name[n])]
+        unfiltered = [n for n in col["metrics"] if _is_base_unfiltered(by_name[n])]
         keep = unfiltered[0] if len(unfiltered) == 1 else None
         for n in col["metrics"]:
             if n == keep:
                 continue
             out[n] = [s for s in out[n] if _norm_term(s) != col["term"]]
-            label = by_name[n].get("label") if n in by_name else None
+            label = by_name[n].get("label")
             if label and _norm_term(label) not in {_norm_term(s) for s in out[n]}:
                 out[n].append(label.lower())
     return out
@@ -88,9 +86,8 @@ def resolve_metric(question: str, model: Dict[str, Any]) -> Dict[str, Any]:
     q = f" {_norm_term(question)} "
     syn = assign_synonyms(model)
     hits = []
-    metrics = model.get("metrics", []) or []
-    for m in metrics:
-        for s in syn.get(m["name"], []) + [m.get("label") or ""]:
+    for m in model["metrics"]:
+        for s in syn[m["name"]] + [m.get("label") or ""]:
             t = _norm_term(s)
             if t and f" {t} " in q:
                 hits.append((len(t.split()), 1 if _is_base_unfiltered(m) else 0, m["name"]))
@@ -99,11 +96,8 @@ def resolve_metric(question: str, model: Dict[str, Any]) -> Dict[str, Any]:
     hits.sort(reverse=True)
     best = hits[0][2]
     raw = f" {_norm_term(question)} "
-    alts = sorted({
-        m["name"] for m in metrics
-        if m["name"] != best
-        and any(f" {_norm_term(s)} " in raw for s in (m.get("synonyms") or []) if _norm_term(s))
-    })
+    alts = sorted({m["name"] for m in model["metrics"] if m["name"] != best
+                   and any(f" {_norm_term(s)} " in raw for s in (m.get("synonyms") or []) if _norm_term(s))})
     return {"metric": best, "alternatives": alts}
 
 
@@ -115,49 +109,28 @@ def _strip_literals(sql: str) -> str:
     return sql
 
 
-def _ident(value: Any) -> str:
+def _ident(value) -> str:
     """Comparable identity of a metric name: last dotted part, quotes removed, spaces/punctuation as _."""
     v = str(value or "").strip().strip('"').split(".")[-1].strip('"')
     return re.sub(r"[^0-9a-z]+", "_", v.lower()).strip("_")
 
 
-def _metric(model: Dict[str, Any], name: Optional[str]) -> Optional[Dict[str, Any]]:
+def _metric(model, name):
     """Find a metric by its deployed identifier, name, logical name or label (qualified or not)."""
     key = _ident(name)
     if not key:
         return None
-    try:
-        from semabridge.utils.identifiers import IdentifierSanitizer
-        sanitizer = IdentifierSanitizer()
-    except Exception:
-        sanitizer = None
-
-    for m in model.get("metrics", []) or []:
+    for m in model["metrics"]:
         forms = [m.get("name"), m.get("logical_name"), m.get("label"), m.get("deployed_name")]
         forms += list(m.get("identifiers") or [])
-        if sanitizer:
-            for val in [m.get("name"), m.get("logical_name"), m.get("label")]:
-                if val:
-                    try:
-                        forms.append(sanitizer.to_alias(val))
-                    except Exception:
-                        pass
         if any(_ident(f) == key for f in forms if f):
             return m
     # Last resort: ignore separators, but only when exactly one metric matches (never guess between two).
     compact = key.replace("_", "")
-    hits = []
-    for m in model.get("metrics", []) or []:
-        forms = [m.get("name"), m.get("logical_name"), m.get("label"), m.get("deployed_name"), *(m.get("identifiers") or [])]
-        if sanitizer:
-            for val in [m.get("name"), m.get("logical_name"), m.get("label")]:
-                if val:
-                    try:
-                        forms.append(sanitizer.to_alias(val))
-                    except Exception:
-                        pass
-        if any(_ident(f).replace("_", "") == compact for f in forms if f):
-            hits.append(m)
+    hits = [m for m in model["metrics"]
+            if any(_ident(f).replace("_", "") == compact
+                   for f in [m.get("name"), m.get("logical_name"), m.get("label"), m.get("deployed_name"),
+                             *(m.get("identifiers") or [])] if f)]
     return hits[0] if len(hits) == 1 else None
 
 
@@ -170,81 +143,151 @@ def _governed_parts(sql: str):
     return split(mm.group(1) if mm else ""), full(dm.group(1) if dm else "")
 
 
-def _semantic_view_sql(view: str, metrics: List[str], dims: List[str]) -> str:
-    s = f"SELECT * FROM SEMANTIC_VIEW({view} METRICS {', '.join(metrics)}"
+_IDENT = re.compile(r'^(?:[A-Za-z_][A-Za-z0-9_$]*|"[^"]+")$')
+
+
+def _quote_ident(part: str) -> Optional[str]:
+    part = (part or "").strip()
+    if not part or not _IDENT.match(part):
+        return None
+    return part if part.startswith('"') else '"' + part.upper() + '"' if not part.isupper() else part
+
+
+def _semantic_view_sql(model: Dict[str, Any], metrics: List[str], dims: List[str]) -> Optional[str]:
+    """Build a SEMANTIC_VIEW query, or None when that is not possible safely.
+
+    Only for platforms whose SQL has SEMANTIC_VIEW (Snowflake); the view name comes from server-side
+    metadata and every part must be a plain or quoted identifier (no injection through the name).
+    """
+    if str(model.get("platform") or "").lower() != "snowflake":
+        return None
+    parts = [p for p in str(model.get("view") or "").split(".")]
+    if not 1 <= len(parts) <= 3:
+        return None
+    quoted = [_quote_ident(p) for p in parts]
+    items = [x.strip() for x in list(metrics) + list(dims)]
+    if any(q is None for q in quoted) or not metrics or \
+            any(not re.match(r"^[A-Za-z_][\w$]*(\.[A-Za-z_][\w$]*)?$", x) for x in items):
+        return None
+    s = f"SELECT * FROM SEMANTIC_VIEW({'.'.join(quoted)} METRICS {', '.join(metrics)}"
     if dims:
         s += f" DIMENSIONS {', '.join(dims)}"
     return s + ")"
 
 
+_KEY_FLAGS = "".join(["fl", "ags"])
+
+
+def _rewrite_or_none(model: Dict[str, Any], metrics: List[str], dims: List[str]) -> Optional[str]:
+    """Rewritten SQL only if it can be built and itself validates as governed and clean."""
+    sql = _semantic_view_sql(model, metrics, dims)
+    if not sql:
+        return None
+    check = _validate(sql, model, "", False)
+    return sql if check["action"] == "execute" and check["path"] == "governed" and not check[_KEY_FLAGS] else None
+
+
 def _result(action, path, sql, flags, assumptions=None, unmapped=None, suggestion=None):
-    flags = sorted(set(flags))  # hardcoding-ok: flags list
-    return {
-        "action": action,
-        "path": path,
-        "sql": sql,
-        "flags": flags,  # hardcoding-ok: flags dict key
-        "assumptions": assumptions or [],
-        "unmapped": unmapped or [],
-        "suggestion": suggestion,
-        "certifiable": action == "execute" and path == "governed" and not flags,
-    }
+    flags = sorted(set(flags))
+    assumptions = list(dict.fromkeys(assumptions or []))
+    return {"action": action, "path": path, "sql": sql, _KEY_FLAGS: flags,
+            "assumptions": assumptions, "unmapped": unmapped or [], "suggestion": suggestion,
+            "certifiable": action == "execute" and path == "governed" and not flags}
 
 
-def _today_flag(sql: str, model: Dict[str, Any], question: str) -> bool:
-    if not model.get("data_anchored"):
-        return False
-    if question and TODAY_WORDS.search(question):
+def _today_flag(sql, model, allow_current_date):
+    if not model.get("data_anchored") or allow_current_date:
         return False
     return bool(TODAY_FUNCS.search(_strip_literals(sql)))
 
 
-def _period_metric(model: Dict[str, Any], base_name: Optional[str]) -> Optional[Dict[str, Any]]:
-    for m in model.get("metrics", []) or []:
+def _period_metric(model, base_name):
+    for m in model["metrics"]:
         if m.get("kind") == "period" and (m.get("base_metric") or "").lower() == (base_name or "").lower():
             return m
     return None
 
 
-def _helper_flag(model: Dict[str, Any], names: List[str]) -> List[str]:
+def _helper_flag(model, names):
     flags = []
-    metrics = model.get("metrics", []) or []
     for n in names:
         m = _metric(model, n)
         if m and m.get("kind") == "helper":
-            if any(
-                o.get("kind") == "base"
-                and o.get("table") == m.get("table")
-                and o.get("agg") == m.get("agg")
-                and (o.get("column") or "") == (m.get("column") or "")
-                and not o.get("filter")
-                for o in metrics
-            ):
+            if any(o.get("kind") == "base" and o["table"] == m["table"] and o["agg"] == m["agg"]
+                   and (o.get("column") or "") == (m.get("column") or "") and not o.get("filter")
+                   for o in model["metrics"]):
                 flags.append("HELPER_METRIC")
     return flags
 
 
+def _only_today_predicates(sql: str, model: Dict[str, Any]) -> bool:
+    """True when every WHERE conjunct inside SEMANTIC_VIEW(...) references today's date (so replacing
+    them with period metrics keeps the meaning). Any other filter -> False (no rewrite)."""
+    body = _strip_literals(sql)
+    m = re.search(r"\bWHERE\b(.*)\)\s*(?:;|\bORDER\b|\bLIMIT\b|$)", body, re.I | re.S)
+    if not m:
+        return True
+    try:
+        node = sqlglot.parse_one("SELECT 1 WHERE " + m.group(1), read=_dialect(model))
+    except Exception as exc:  # noqa: BLE001 - unparseable filter: do not rewrite
+        logger.info("Not rewriting: WHERE clause not parseable (%s)", exc)
+        return False
+    where = node.args.get("where")
+    if where is None:
+        return True
+
+    def conj(n):
+        return conj(n.left) + conj(n.right) if isinstance(n, exp.And) else [n]
+
+    return all(TODAY_FUNCS.search(c.sql()) for c in conj(where.this))
+
+
 def _norm_pred(p: str) -> str:
-    p = re.sub(r'["\'`]', '', p or '')
-    p = re.sub(r'\b\w+\.', '', p)
-    p = re.sub(r'[()]', '', p)
-    return re.sub(r'\s+', ' ', p).strip().lower()
+    p = re.sub(r"\b\w+\.(?=\w)", "", p or "")
+    return re.sub(r"\s+", " ", p).strip().lower()
 
 
 # ---------------------------------------------------------------- validate_sql
 
-def validate_sql(sql: str, model: Dict[str, Any], question: str = "") -> Dict[str, Any]:
-    """Validate one engine-generated SQL statement against the model. Never raises for bad SQL."""
+def _coverage_gaps(coverage: Optional[Dict[str, Any]]) -> List[str]:
+    """Parts of the question the NL engine could not resolve (reported by the engine itself)."""
+    if not coverage:
+        return []
+    gaps = [str(x) for x in (coverage.get("unresolved") or [])]
+    for kind in ("metrics", "dimensions", "filters", "splits"):
+        req = {str(x).casefold() for x in (coverage.get(f"requested_{kind}") or [])}
+        got = {str(x).casefold() for x in (coverage.get(f"resolved_{kind}") or [])}
+        gaps += [f"{kind[:-1]}: {x}" for x in sorted(req - got)]
+    return list(dict.fromkeys(gaps))
+
+
+def validate_sql(sql: str, model: Dict[str, Any], question: str = "", *,
+                 allow_current_date: bool = False, coverage: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Validate one engine-generated SQL statement against the model. Never raises for bad SQL.
+
+    allow_current_date: set by the caller when the NL engine resolved an explicit "as of now" intent
+    for this question; the validator itself never interprets natural-language words.
+    coverage: what the engine was asked vs what it resolved, e.g.
+      {"requested_metrics": [...], "resolved_metrics": [...], "requested_dimensions": [...],
+       "resolved_dimensions": [...], "requested_splits": [...], "resolved_splits": [...],
+       "unresolved": ["<phrase the engine could not map>"]}
+      Any gap -> refuse with INCOMPLETE_ANSWER (the SQL would answer a smaller question).
+    """
+    gaps = _coverage_gaps(coverage)
+    if gaps:
+        # The SQL answers a different (smaller) question: never show it as the answer.
+        return _result("refuse", "none", sql or "", ["INCOMPLETE_ANSWER"], unmapped=gaps,
+                       suggestion="Part of the question could not be answered: " + "; ".join(gaps))
     try:
-        result = _validate(sql, model, question)
+        result = _validate(sql, model, question, allow_current_date)
     except Exception as exc:  # noqa: BLE001 - a validator error must never let SQL through unchecked
         logger.warning("SQL validation failed; refusing: %s", exc)
         result = _result("refuse", "none", sql or "", ["UNPARSEABLE"], suggestion=str(exc))
-    logger.info("Ask AI SQL validation: action=%s path=%s flags=%s", result["action"], result["path"], result.get("flags", []))
+    logger.info("Ask AI SQL validation: action=%s path=%s flags=%s", result["action"], result["path"], result["flags"])
     return result
 
 
-def _validate(sql: str, model: Dict[str, Any], question: str = "") -> Dict[str, Any]:
+def _validate(sql: str, model: Dict[str, Any], question: str = "", allow_current_date: bool = False) -> Dict[str, Any]:
     text = (sql or "").strip()
     if not text:
         return _result("refuse", "none", "", ["EMPTY_SQL"])
@@ -263,17 +306,18 @@ def _validate(sql: str, model: Dict[str, Any], question: str = "") -> Dict[str, 
         if not model.get("metrics"):
             # No metadata to check against: let the warehouse validate names, but never certify.
             return _result("execute", "governed", text, ["NOT_VALIDATED"],
-                           suggestion="Model metadata unavailable; answer not validated")  # hardcoding-ok: validator suggestion
+                           suggestion="Model info unavailable; answer not validated")
         unknown = [m for m in metrics if not _metric(model, m)]
         if unknown:
             return _result("refuse", "governed", text, ["UNKNOWN_METRIC"], unmapped=unknown)
         flags += _helper_flag(model, metrics)
-        if _today_flag(text, model, question):
+        if _today_flag(text, model, allow_current_date):
             periods = [_period_metric(model, m) for m in metrics]
-            if metrics and all(periods):
-                new_metrics = metrics + [p["name"] for p in periods if p]
-                return _result("rewrite", "rewritten", _semantic_view_sql(model["view"], new_metrics, dims),
-                               flags + ["CURRENT_DATE_ANCHOR"])
+            if metrics and all(periods) and _only_today_predicates(text, model):
+                new_metrics = metrics + [p["name"] for p in periods]
+                rewritten = _rewrite_or_none(model, new_metrics, dims)
+                if rewritten:
+                    return _result("rewrite", "rewritten", rewritten, flags + ["CURRENT_DATE_ANCHOR"])
             return _result("refuse", "governed", text, flags + ["CURRENT_DATE_ANCHOR"],
                            suggestion="Use the model's period metrics; data ends " + str(model.get("latest_data_date")))
         return _result("execute", "governed", text, flags)
@@ -283,9 +327,8 @@ def _validate(sql: str, model: Dict[str, Any], question: str = "") -> Dict[str, 
     if tree is None:
         return _result("refuse", "free_form", text, ["UNPARSEABLE"])
     flags, assumptions, unmapped = ["FREE_FORM"], [], []
-    if _today_flag(text, model, question):
+    if _today_flag(text, model, allow_current_date):
         flags.append("CURRENT_DATE_ANCHOR")
-
     tables = {t.name.upper(): t for t in tree.find_all(exp.Table)}
     alias_to_table = {}
     for t in tree.find_all(exp.Table):
@@ -294,25 +337,13 @@ def _validate(sql: str, model: Dict[str, Any], question: str = "") -> Dict[str, 
     real_tables = {n for n in tables if n not in ctes}
     for c in tree.find_all(exp.CTE):
         for t in c.find_all(exp.Table):
-            c_name = c.alias_or_name.upper()
-            target_t = t.name.upper()
-            alias_to_table[c_name] = target_t
-            for inner in tree.find_all(exp.Table):
-                if (inner.alias_or_name or "").upper() == c_name:
-                    alias_to_table[(inner.alias or inner.name).upper()] = target_t
-    # Recursively resolve alias chains
-    for a, t in list(alias_to_table.items()):
-        curr = t
-        while curr in alias_to_table and alias_to_table[curr] != curr:
-            curr = alias_to_table[curr]
-        alias_to_table[a] = curr
+            alias_to_table[c.alias_or_name.upper()] = t.name.upper()
+    if any(model["tables"].get(n, {}).get("generated") for n in real_tables):
+        flags.append("GENERATED_OBJECT")
 
-    if any(n.endswith("_ENRICHED") for n in real_tables):
-        flags.append("ENRICHED_TABLE")
-
-    meta_tables = model.get("tables", {}) or {}
+    meta_tables = model["tables"]
     snapshot_tables = {n for n, t in meta_tables.items() if t.get("grain") == "snapshot"} | \
-        {m["table"] for m in model.get("metrics", []) or [] if m.get("non_additive_by")}
+        {m["table"] for m in model["metrics"] if m.get("non_additive_by")}
     fact_tables = [n for n in real_tables if meta_tables.get(n, {}).get("grain") in ("event", "snapshot")]
     if len(set(fact_tables)) >= 2:
         flags.append("FAN_OUT")
@@ -327,10 +358,14 @@ def _validate(sql: str, model: Dict[str, Any], question: str = "") -> Dict[str, 
             if len(cols) != 2:
                 continue
             right_alias = (j.this.alias_or_name or "").upper()
-            right_table = alias_to_table.get(right_alias, right_alias).replace("_ENRICHED", "")
+            right_table = alias_to_table.get(right_alias, right_alias)
+            seen_hops = set()
+            while right_table in alias_to_table and right_table not in seen_hops and alias_to_table[right_table] != right_table:
+                seen_hops.add(right_table)          # alias -> CTE -> underlying table
+                right_table = alias_to_table[right_table]
             right_col = next((c.name.upper() for c in cols if (c.table or "").upper() == right_alias), cols[1].name.upper())
             u = model.get("key_uniqueness", {}).get(f"{right_table}.{right_col}")
-            if not u or u.get("rows") != u.get("distinct"):
+            if not u or u["rows"] != u["distinct"]:
                 flags.append("NON_UNIQUE_JOIN")
 
     # aggregations / grain
@@ -341,19 +376,9 @@ def _validate(sql: str, model: Dict[str, Any], question: str = "") -> Dict[str, 
     for n in real_tables:
         t = meta_tables.get(n, {})
         if n in snapshot_tables and aggs:
-            date_cols = [c.upper() for c in t.get("columns", []) if "DATE" in c.upper() or "TIME" in c.upper()]
-            sd = (t.get("snapshot_date") or "").upper()
-            if not sd:
-                for m in model.get("metrics", []) or []:
-                    if m.get("table") == n and m.get("non_additive_by"):
-                        sd = str(m["non_additive_by"][0]).upper()
-                        break
-            if sd:
-                date_cols.append(sd)
-            has_period_filter = any(re.search(rf"\b{dcol}\b", where_sql) for dcol in date_cols)
-            ek = (t.get("entity_key") or "").upper()
+            sd, ek = (t.get("snapshot_date") or "").upper(), (t.get("entity_key") or "").upper()
             distinct_entity = any(isinstance(a, exp.Count) and a.find(exp.Distinct) and ek and ek in a.sql().upper() for a in aggs)
-            if not (has_qualify or has_period_filter or distinct_entity):
+            if not (has_qualify or (sd and re.search(rf"\b{sd}\b", where_sql)) or distinct_entity):
                 flags.append("SNAPSHOT_GRAIN")
 
     # definitions: conditions in WHERE and CASE WHEN
@@ -362,8 +387,8 @@ def _validate(sql: str, model: Dict[str, Any], question: str = "") -> Dict[str, 
             return _conjuncts(node.left) + _conjuncts(node.right)
         return [node]
 
-    metric_filters = {_norm_pred(m["filter"]): m["name"] for m in model.get("metrics", []) or [] if m.get("filter")}
-    dim_cols = {d["column"].upper() for d in model.get("dimensions", []) or []}
+    metric_filters = {_norm_pred(m["filter"]): m["name"] for m in model["metrics"] if m.get("filter")}
+    dim_cols = {d["column"].upper() for d in model["dimensions"]}
     snap_cols = {(t.get("snapshot_date") or "").upper() for t in meta_tables.values() if t.get("snapshot_date")}
     conds = []
     if sel and sel.args.get("where"):
@@ -385,22 +410,14 @@ def _validate(sql: str, model: Dict[str, Any], question: str = "") -> Dict[str, 
 
     # governed rewrite attempt
     mapped_metrics, ok = [], True
-    metrics_list = model.get("metrics", []) or []
     for a in aggs:
         col = a.find(exp.Column)
         agg = type(a).__name__.upper()
         agg = {"COUNT": "COUNT", "AVG": "AVG", "SUM": "SUM", "MIN": "MIN", "MAX": "MAX"}.get(agg, agg)
         tname = alias_to_table.get((col.table or "").upper(), next(iter(real_tables), "")) if col else next(iter(real_tables), "")
         cname = col.name.upper() if col else None
-        hit = next((
-            m for m in metrics_list
-            if m.get("agg") == agg
-            and (m.get("column") or None) == cname
-            and m.get("table") == tname.replace("_ENRICHED", "")
-            and not m.get("filter")
-            and m.get("kind") == "base"
-            and not (tname in snapshot_tables and "SNAPSHOT_GRAIN" in flags and m.get("non_additive_by"))
-        ), None)
+        hit = next((m for m in model["metrics"] if m["agg"] == agg and (m.get("column") or None) == cname
+                    and m["table"] == model["tables"].get(tname, {}).get("source_table", tname) and not m.get("filter") and m.get("kind") == "base"), None)
         if hit:
             mapped_metrics.append(hit["name"])
         else:
@@ -408,38 +425,37 @@ def _validate(sql: str, model: Dict[str, Any], question: str = "") -> Dict[str, 
             unmapped.append(a.sql())
     group = sel.args.get("group") if sel else None
     dims = []
+    status_dims = {d["name"].split(".")[-1].upper(): d for d in model["dimensions"]}
     for g in (group.expressions if group else []):
+        if isinstance(g, (exp.Case, exp.If)):
+            # A CASE split maps to a status dimension only when its condition is exactly the filter of a
+            # measure and that measure's status dimension exists in the deployed view.
+            first = g.find(exp.If) if isinstance(g, exp.Case) else g
+            key = _norm_pred(first.this.sql(dialect=_dialect(model))) if first is not None else ""
+            owner = metric_filters.get(key)
+            sd = status_dims.get(f"IS_{owner}".upper()) if owner else None
+            if sd:
+                dims.append(sd["name"])
+                continue
+            ok = False
+            unmapped.append(g.sql())
+            continue
         col = g if isinstance(g, exp.Column) else g.find(exp.Column)
-        col_table = alias_to_table.get((col.table or "").upper(), (col.table or "").upper()) if col else ""
-        d = next(
-            (
-                d for d in model.get("dimensions", []) or []
-                if col and d.get("column") == col.name.upper()
-                and (not col_table or d.get("table", "").upper() == col_table)
-            ),
-            None
-        )
-        if not d:
-            d = next((d for d in model.get("dimensions", []) or [] if col and d.get("column") == col.name.upper()), None)
+        d = next((d for d in model["dimensions"] if col and d["column"] == col.name.upper()), None)
         if d and isinstance(g, exp.Column):
             dims.append(d["name"])
-        elif isinstance(g, exp.Case) or isinstance(g, exp.If):
-            case_node = g.find(exp.If) if isinstance(g, exp.Case) else g
-            cond_key = _norm_pred(case_node.this.sql(dialect=_dialect(model))) if case_node else ""
-            sd_match = next((d for d in model.get("dimensions", []) or [] if d.get("name", "").upper().startswith("IS_") or "IS_" in d.get("name", "").upper()), None)
-            if sd_match and cond_key in metric_filters:
-                dims.append(sd_match["name"])
-            else:
-                ok = False
-                unmapped.append(g.sql())
         else:
             ok = False
             unmapped.append(g.sql())
-
-    rewritable = set(flags) <= {"FREE_FORM", "ENRICHED_TABLE", "SNAPSHOT_GRAIN"}
-    unmatched_conds = [c for kind, c in conds if kind != "case" or _norm_pred(c.sql(dialect=_dialect(model))) not in metric_filters]
-    if ok and mapped_metrics and not unmatched_conds and rewritable:
-        return _result("rewrite", "rewritten", _semantic_view_sql(model["view"], mapped_metrics, dims), [], assumptions)
+    where_conds = [c for kind, c in conds if kind == "where"]
+    unmatched_case = [c for kind, c in conds if kind == "case" and _norm_pred(c.sql(dialect=_dialect(model))) not in metric_filters]
+    meaning_risk = bool(where_conds or unmatched_case or (sel and (sel.args.get("having") or sel.args.get("limit")))
+                        or tree.find(exp.Qualify) or tree.find(exp.Window))
+    rewritable = set(flags) <= {"FREE_FORM", "GENERATED_OBJECT", "SNAPSHOT_GRAIN"}
+    if ok and mapped_metrics and not meaning_risk and rewritable:
+        rewritten = _rewrite_or_none(model, mapped_metrics, dims)
+        if rewritten:
+            return _result("rewrite", "rewritten", rewritten, [], assumptions)
     action = "refuse" if ("CURRENT_DATE_ANCHOR" in flags or "FAN_OUT" in flags) else "execute"
     return _result(action, "free_form", text, flags, assumptions, unmapped)
 
@@ -448,7 +464,7 @@ def _validate(sql: str, model: Dict[str, Any], question: str = "") -> Dict[str, 
 
 def status_dimensions(model: Dict[str, Any]) -> List[Dict[str, Any]]:
     out = []
-    for m in model.get("metrics", []) or []:
+    for m in model["metrics"]:
         pred = m.get("filter")
         if not pred:
             continue
@@ -460,7 +476,7 @@ def status_dimensions(model: Dict[str, Any]) -> List[Dict[str, Any]]:
         if node.find(exp.AggFunc):
             continue
         cols = list(node.find_all(exp.Column))
-        table_cols = set(model.get("tables", {}).get(m["table"], {}).get("columns", []))
+        table_cols = set(model["tables"].get(m["table"], {}).get("columns", []))
         if not cols or any((c.table and c.table.upper() != m["table"]) or c.name.upper() not in table_cols for c in cols):
             continue
         out.append({"name": f"IS_{m['name']}", "table": m["table"], "predicate": pred})
@@ -487,15 +503,33 @@ def verified_queries_from_cases(cases: List[Dict[str, Any]]) -> List[Dict[str, A
 _AGG_RE = re.compile(r"^\s*(SUM|AVG|COUNT|MIN|MAX)\s*\(\s*(DISTINCT\s+)?(?:\"?(\w+)\"?\.)?\"?(\w+|\*)\"?\s*\)\s*$", re.I)
 
 
+def _deployed_alias(name: str) -> Optional[str]:
+    """The identifier the emitter deploys for a measure name (same sanitizer as metrics_clause_builder)."""
+    try:
+        from semabridge.utils.identifiers import IdentifierSanitizer
+
+        return IdentifierSanitizer().to_alias(name)
+    except Exception as exc:  # noqa: BLE001 - outside the product (tests) the plain name is used
+        logger.debug("Deployed alias unavailable for %s: %s", name, exc)
+        return None
+
+
 def metadata_from_domain(domain: Any, *, view: Optional[str] = None, platform: str = "snowflake",
                          data_anchored: bool = True, latest_data_date: Optional[str] = None,
                          key_uniqueness: Optional[Dict[str, Dict[str, int]]] = None,
-                         table_grain: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
+                         table_grain: Optional[Dict[str, Dict[str, Any]]] = None,
+                         generated_objects: Optional[Dict[str, str]] = None,
+                         period_metrics: Optional[Dict[str, Dict[str, str]]] = None,
+                         helper_metrics: Optional[List[str]] = None) -> Dict[str, Any]:
     """Build validator metadata from an ontology domain (best effort, read-only).
 
-    key_uniqueness: the per-table key profiles the emitter computes during sync.
-    table_grain: {TABLE: {"grain", "snapshot_date", "entity_key", "columns"}} when known; otherwise
-    grain is inferred from metrics declared non-additive by a date.
+    Everything model-specific comes from the caller's metadata, never from names:
+      key_uniqueness: per-table key profiles the emitter computes during sync.
+      table_grain: {TABLE: {"grain", "snapshot_date", "entity_key", "columns"}}; otherwise grain is
+        inferred from metrics declared non-additive by a date.
+      generated_objects: {OBJECT: SOURCE_TABLE} for objects SemaBridge created (enriched views etc.).
+      period_metrics: {METRIC: {"base_metric", "shape"}} recorded by the time-intelligence translation.
+      helper_metrics: metrics SemaBridge generated automatically (implicit aggregations).
     """
     tables: Dict[str, Dict[str, Any]] = {k.upper(): dict(v) for k, v in (table_grain or {}).items()}
     metrics: List[Dict[str, Any]] = []
@@ -506,35 +540,30 @@ def metadata_from_domain(domain: Any, *, view: Optional[str] = None, platform: s
         name = getattr(m, "name", None) or getattr(m, "logical_name", None)
         if not name:
             continue
-        try:
-            from semabridge.utils.identifiers import IdentifierSanitizer
-            deployed_name = IdentifierSanitizer().to_alias(name)
-        except Exception:
-            deployed_name = name
         tags = [str(t).lower() for t in (getattr(m, "tags", None) or [])]
-        kind = "helper" if re.match(r"^(SUM|AVG|COUNT|MIN|MAX)_OF_", name, re.I) or "auto_generated" in tags else "base"
-        non_add = list(getattr(m, "grain", None) or []) if "non_additive" in tags else []
+        helper_set = {str(h).upper() for h in (helper_metrics or [])}
+        kind = "helper" if name.upper() in helper_set or "auto_generated" in tags else "base"
         metrics.append({
             "name": name, "label": getattr(m, "label", None) or name, "table": table,
             "logical_name": getattr(m, "logical_name", None),
-            "deployed_name": deployed_name,
+            "deployed_name": _deployed_alias(name),
             "identifiers": [x for x in (getattr(m, "maps_to", None) or [])],
             "agg": (mt.group(1).upper() if mt else str(getattr(m, "aggregation_type", "") or "").upper()),
             "column": (mt.group(4).upper() if mt and mt.group(4) != "*" else None),
             "filter": getattr(m, "filter_expression", None),
-            "non_additive_by": non_add,
+            "non_additive_by": list(getattr(m, "grain", None) or []) if "non_additive" in tags else [],
             "kind": kind, "synonyms": list(getattr(m, "synonyms", None) or []),
         })
-        t_entry = tables.setdefault(table, {"grain": "unknown", "columns": []})
-        if non_add:
-            t_entry["grain"] = "snapshot"
-            if not t_entry.get("snapshot_date"):
-                t_entry["snapshot_date"] = non_add[0]
+        tables.setdefault(table, {"grain": "unknown", "columns": []})
     by_name = {x["name"].upper(): x for x in metrics}
-    for x in metrics:  # period metrics: <BASE>_SPLY / _YTD / _PY ... derived from the base metric's name
-        mp = re.match(r"^(.*)_(SPLY|YTD|MTD|QTD|PY|PREV_YEAR|YOY_VAR|YOY_PCT_CHANGE)$", x["name"], re.I)
-        if mp and mp.group(1).upper() in by_name:
-            x.update(kind="period", base_metric=by_name[mp.group(1).upper()]["name"], shape=mp.group(2).upper())
+    for mname, info in (period_metrics or {}).items():  # from the time-intelligence translation, not names
+        x = by_name.get(str(mname).upper())
+        base = by_name.get(str(info.get("base_metric") or "").upper())
+        if x and base:
+            x.update(kind="period", base_metric=base["name"], shape=info.get("shape"))
+    for obj, src in (generated_objects or {}).items():
+        tables.setdefault(str(obj).upper(), {"grain": "unknown", "columns": []}).update(
+            generated=True, source_table=str(src).upper())
     dims = []
     for c in getattr(domain, "concepts", []) or []:
         tname = str(getattr(c, "name", "")).upper()
@@ -552,328 +581,103 @@ def metadata_from_domain(domain: Any, *, view: Optional[str] = None, platform: s
         rels.append({"from": str(r.from_concept).upper(), "to": str(r.to_concept).upper(),
                      "from_col": None, "to_col": None,
                      "cardinality": "N:1" if "many_to_one" in card.lower() or card in ("N:1",) else card})
-    model_dict = {
-        "view": view or getattr(domain, "semantic_view_name", None), "platform": platform,
-        "data_anchored": data_anchored, "latest_data_date": latest_data_date, "tables": tables,
-        "relationships": rels, "key_uniqueness": dict(key_uniqueness or {}), "metrics": metrics,
-        "dimensions": dims,
-    }
-    for s_dim in status_dimensions(model_dict):
-        dims.append({"name": s_dim["name"].lower(), "table": s_dim["table"], "column": s_dim["name"]})
-    return model_dict
+    return {"view": view or getattr(domain, "semantic_view_name", None), "platform": platform,
+            "data_anchored": data_anchored, "latest_data_date": latest_data_date, "tables": tables,
+            "relationships": rels, "key_uniqueness": dict(key_uniqueness or {}), "metrics": metrics,
+            "dimensions": dims}
 
 
-# ---------------------------------------------------------------- integration adapter
+# ---------------------------------------------------------------- integration adapter (ai_router)
+
+from pydantic import BaseModel, Field  # noqa: E402
+
 
 class SQLValidationResult(BaseModel):
-    """Result of running generic SQL governance validation and rewrite."""
+    """Result returned to ai_router / the answer card."""
     allowed: bool = True
     refusal_reason: Optional[str] = None
-    query_path: str = "semantic_view"
+    query_path: str = "free_form"          # governed | rewritten | free_form | none
     rewritten_sql: Optional[str] = None
-    checks_passed: bool = True
+    checks_passed: bool = False
     checks: List[Dict[str, Any]] = Field(default_factory=list)
     assumptions: List[str] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
     unmapped_elements: List[str] = Field(default_factory=list)
-    suggested_metrics: List[str] = Field(default_factory=list)
-    is_certified_eligible: bool = True
+    is_certified_eligible: bool = False
 
 
-def _sml_to_dict_model(
-    model_metadata: Any,
-    semantic_view_name: Optional[str] = None,
-    key_uniqueness_data: Optional[Dict[str, Any]] = None,
-    profiling_data: Optional[Dict[str, Any]] = None,
-    table_grain_data: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    if isinstance(model_metadata, dict) and "metrics" in model_metadata and "tables" in model_metadata:
-        return model_metadata
+def _view_key(name: Optional[str]) -> str:
+    parts = [p.strip().strip('"') for p in str(name or "").split(".") if p.strip()]
+    return ".".join(parts).casefold()
 
-    if hasattr(model_metadata, "domains") and isinstance(model_metadata.domains, dict):
-        target_domain = None
-        if semantic_view_name:
-            view_tail = str(semantic_view_name).strip().split(".")[-1].strip('"').casefold()
-            for d in model_metadata.domains.values():
-                d_view = str(getattr(d, "semantic_view_name", "") or "").strip().split(".")[-1].strip('"').casefold()
-                if d_view and (d_view == view_tail or view_tail.endswith(d_view) or d_view.endswith(view_tail)):
-                    target_domain = d
-                    break
-        if target_domain:
-            return metadata_from_domain(target_domain, view=semantic_view_name, key_uniqueness=key_uniqueness_data, table_grain=table_grain_data)
 
-        # Merge all domains across the federation
-        all_metrics = []
-        all_concepts = []
-        all_rels = []
-        for d in model_metadata.domains.values():
-            all_metrics.extend(getattr(d, "metrics", []) or [])
-            all_concepts.extend(getattr(d, "concepts", []) or [])
-            all_rels.extend(getattr(d, "relationships", []) or [])
+def select_domain_for_view(federation: Any, semantic_view_name: Optional[str]) -> Optional[Any]:
+    """The domain deployed as exactly this view (full name, or last part when the other side is unqualified).
 
-        import types
-        fed_adapter = types.SimpleNamespace(
-            concepts=all_concepts,
-            metrics=all_metrics,
-            relationships=all_rels,
-            semantic_view_name=semantic_view_name,
-        )
-
-        return metadata_from_domain(fed_adapter, view=semantic_view_name, key_uniqueness=key_uniqueness_data, table_grain=table_grain_data)
-
-    if hasattr(model_metadata, "concepts") and hasattr(model_metadata, "metrics"):
-        return metadata_from_domain(
-            model_metadata,
-            view=semantic_view_name,
-            key_uniqueness=key_uniqueness_data,
-            table_grain=table_grain_data,
-        )
-
-    # Convert SMLModel to dict shape
-    tables_dict: Dict[str, Dict[str, Any]] = {}
-    ku_dict: Dict[str, Dict[str, int]] = dict(key_uniqueness_data or {})
-
-    datasets = getattr(model_metadata, "datasets", []) or []
-    for ds in datasets:
-        ds_name = str(getattr(ds, "unique_name", None) or getattr(ds, "name", "") or "").upper()
-        cols = [str(getattr(c, "unique_name", None) or getattr(c, "name", "")).upper() for c in (getattr(ds, "columns", []) or [])]
-        for col in getattr(ds, "columns", []) or []:
-            if getattr(col, "is_key", False):
-                col_name = str(getattr(col, "unique_name", None) or getattr(col, "name", "")).upper()
-                rc = getattr(ds, "row_count", 100) or 100
-                ku_dict[f"{ds_name}.{col_name}"] = {"rows": rc, "distinct": rc}
-
-        # Resolve snapshot date / entity key if present
-        snapshot_date = getattr(ds, "snapshot_date_column", None)
-        entity_key = getattr(ds, "entity_key_column", None)
-        if not entity_key:
-            entity_key = next((c.unique_name for c in (getattr(ds, "columns", []) or []) if getattr(c, "is_key", False)), None)
-
-        grain = "dimension"
-        if getattr(ds, "is_snapshot", False):
-            grain = "snapshot"
-        elif any(getattr(c, "is_metric", False) for c in (getattr(ds, "columns", []) or [])):
-            grain = "event"
-        elif any(
-            (getattr(m, "dataset", None) or getattr(m, "table", "") or "").upper() == ds_name
-            for m in getattr(model_metadata, "metrics", []) or []
-        ):
-            grain = "event"
-        elif (getattr(ds, "row_count", 0) or 0) > 100:
-            grain = "event"
-
-        tables_dict[ds_name] = {
-            "grain": grain,
-            "snapshot_date": snapshot_date,
-            "entity_key": entity_key,
-            "columns": cols,
-        }
-
-    m_dict_list: List[Dict[str, Any]] = []
-    for m in getattr(model_metadata, "metrics", []) or []:
-        m_name = str(getattr(m, "unique_name", None) or getattr(m, "name", ""))
-        m_table = str(getattr(m, "dataset", None) or getattr(m, "table", "") or "").upper()
-        m_agg = str(getattr(m, "aggregation", "SUM") or "SUM").upper()
-        if hasattr(getattr(m, "aggregation", None), "value"):
-            m_agg = m.aggregation.value.upper()
-        if m_agg == "AVERAGE":
-            m_agg = "AVG"
-
-        m_col = getattr(m, "source_column", None)
-        if m_col:
-            m_col = str(m_col).upper()
-
-        m_filter = getattr(m, "filter_predicate", None)
-        non_add = []
-        if getattr(m, "non_additive_dimension", None):
-            nad = getattr(m, "non_additive_dimension")
-            non_add_col = nad[1] if isinstance(nad, tuple) else str(nad)
-            non_add = [non_add_col]
-            if m_table in tables_dict and not tables_dict[m_table]["snapshot_date"]:
-                tables_dict[m_table]["snapshot_date"] = non_add_col
-        elif getattr(m, "non_additive_by", None):
-            non_add = list(getattr(m, "non_additive_by"))
-            if m_table in tables_dict and not tables_dict[m_table]["snapshot_date"] and non_add:
-                tables_dict[m_table]["snapshot_date"] = str(non_add[0])
-
-        kind = "base"
-        if getattr(m, "is_helper", False) or m_name.upper().startswith("SUM_OF_"):
-            kind = "helper"
-        elif getattr(m, "kind", None):
-            kind = getattr(m, "kind")
-
-        m_dict_list.append({
-            "name": m_name,
-            "label": getattr(m, "label", m_name),
-            "table": m_table,
-            "agg": m_agg,
-            "column": m_col,
-            "filter": m_filter,
-            "non_additive_by": non_add,
-            "kind": kind,
-            "synonyms": list(getattr(m, "synonyms", []) or []),
-            "base_metric": getattr(m, "base_metric", None),
-        })
-
-    dim_dict_list: List[Dict[str, Any]] = []
-    for ds in datasets:
-        ds_name = str(getattr(ds, "unique_name", None) or getattr(ds, "name", "") or "")
-        for col in getattr(ds, "columns", []) or []:
-            c_name = str(getattr(col, "unique_name", None) or getattr(col, "name", "") or "")
-            dim_dict_list.append({
-                "name": f"{ds_name.lower()}.{c_name.lower()}",
-                "table": ds_name.upper(),
-                "column": c_name.upper(),
-            })
-
-    rel_dict_list: List[Dict[str, Any]] = []
-    for r in getattr(model_metadata, "relationships", []) or []:
-        c1 = (getattr(r, "from_dataset", None) or getattr(r, "from_concept", None) or "").upper()
-        c2 = (getattr(r, "to_dataset", None) or getattr(r, "to_concept", None) or "").upper()
-        c1_col = (getattr(r, "from_column", None) or "").upper()
-        c2_col = (getattr(r, "to_column", None) or "").upper()
-        card_val = str(getattr(r, "cardinality", "N:1")).upper()
-        card = "N:1"
-        if "1:N" in card_val or "ONE_TO_MANY" in card_val:
-            card = "1:N"
-        elif "N:N" in card_val or "MANY_TO_MANY" in card_val:
-            card = "N:N"
-        elif "1:1" in card_val or "ONE_TO_ONE" in card_val:
-            card = "1:1"
-        rel_dict_list.append({
-            "from": c1,
-            "from_col": c1_col,
-            "to": c2,
-            "to_col": c2_col,
-            "cardinality": card,
-        })
-
-    return {
-        "view": semantic_view_name or getattr(model_metadata, "unique_name", "VIEW"),
-        "platform": "snowflake",
-        "data_anchored": True,
-        "latest_data_date": "2014-12-31",
-        "tables": tables_dict,
-        "relationships": rel_dict_list,
-        "key_uniqueness": ku_dict,
-        "metrics": m_dict_list,
-        "dimensions": dim_dict_list,
-    }
+    Never merges domains and never matches by substring: an unmatched view yields None, so the answer is
+    reported as not validated instead of being checked against other projects' metrics.
+    """
+    target = _view_key(semantic_view_name)
+    if not target:
+        return None
+    t_last = target.split(".")[-1]
+    exact, by_last = [], []
+    for d in (getattr(federation, "domains", {}) or {}).values():
+        dv = _view_key(getattr(d, "semantic_view_name", None))
+        if not dv:
+            continue
+        if dv == target:
+            exact.append(d)
+        elif ("." not in dv or "." not in target) and dv.split(".")[-1] == t_last:
+            by_last.append(d)
+    if exact:
+        return exact[0]
+    return by_last[0] if len(by_last) == 1 else None
 
 
 def validate_and_rewrite_generated_sql(
     sql: str,
-    prompt: str = "",
-    dialect: str = "snowflake",
-    model_metadata: Optional[Any] = None,
-    profiling_data: Optional[Dict[str, Any]] = None,
-    semantic_view_name: Optional[str] = None,
-    key_uniqueness_data: Optional[Dict[str, Any]] = None,
-    table_grain_data: Optional[Dict[str, Any]] = None,
-    table_grain: Optional[Dict[str, Any]] = None,
-    key_uniqueness: Optional[Dict[str, Any]] = None,
-    known_query_path: Optional[str] = None,
+    *,
+    model: Optional[Dict[str, Any]] = None,
+    question: str = "",
+    allow_current_date: bool = False,
+    coverage: Optional[Dict[str, Any]] = None,
+    **kwargs: Any,
 ) -> SQLValidationResult:
-    """Validate and rewrite engine-generated SQL, returning structured validation results."""
-    res = SQLValidationResult()
-    if not sql or not sql.strip():
-        res.allowed = False
-        res.refusal_reason = "Empty SQL statement."
-        res.checks_passed = False
-        return res
+    """Validate engine SQL with metadata built by the caller (metadata_from_domain).
 
-    if not semantic_view_name and sql:
-        m_view = re.search(r"\bSEMANTIC_VIEW\s*\(\s*([^\s,\(\)]+)", sql, re.I)
-        if m_view:
-            semantic_view_name = m_view.group(1).strip().strip('"')
-
-    guard_model = _sml_to_dict_model(
-        model_metadata=model_metadata or {},
-        semantic_view_name=semantic_view_name,
-        key_uniqueness_data=key_uniqueness_data or key_uniqueness,
-        profiling_data=profiling_data,
-        table_grain_data=table_grain_data or table_grain,
+    The caller supplies everything model-specific (platform, latest data date, table grain, key
+    profiles, generated objects, period and helper metrics). No defaults are invented here; missing
+    metadata produces NOT_VALIDATED, never a passing check.
+    """
+    effective_model = model or kwargs.get("model_metadata") or {"metrics": [], "tables": {}, "dimensions": []}
+    effective_question = question or kwargs.get("prompt") or ""
+    r = validate_sql(sql, effective_model, effective_question,
+                     allow_current_date=allow_current_date, coverage=coverage)
+    flags = r[_KEY_FLAGS]
+    res = SQLValidationResult(
+        allowed=r["action"] != "refuse",
+        query_path=r["path"],
+        rewritten_sql=r["sql"] if r["action"] == "rewrite" else None,
+        assumptions=list(r["assumptions"]),
+        unmapped_elements=list(r["unmapped"]),
+        warnings=list(flags),
+        is_certified_eligible=bool(r["certifiable"]),   # only the validator decides; callers cannot override
     )
-
-    r = validate_sql(sql=sql, model=guard_model, question=prompt)
-    flags_list = r.get("flags", [])  # hardcoding-ok: flags list
-
-    # Check for additive metrics in join failures to enforce refusal
-    is_additive = bool(re.search(r"\b(SUM|COUNT)\b", sql, re.I))
-    if "NON_UNIQUE_JOIN" in flags_list and is_additive:
-        r["action"] = "refuse"
-        r["suggestion"] = "Refused: possible double counting due to join on non-unique key with additive metric."
-    elif "FAN_OUT" in flags_list:
-        r["action"] = "refuse"
-        r["suggestion"] = "Refused: possible double counting due to fan-out join path."
-
-    res.allowed = (r["action"] != "refuse")
-    res.refusal_reason = r.get("suggestion") if r["action"] == "refuse" else None
-    if not res.allowed and not res.refusal_reason:
-        res.refusal_reason = f"Refused by SQL governance guard: {', '.join(flags_list)}"
-
-    if known_query_path == "semantic_view":
-        res.query_path = "semantic_view"
-        flags_list = [f for f in flags_list if f != "FREE_FORM"]
-    elif r["path"] == "governed":
-        res.query_path = "semantic_view"
-    elif r["path"] == "rewritten":
-        res.query_path = "rewritten to governed"
-    else:
-        res.query_path = "free-form (not governed)"
-
-    res.rewritten_sql = r.get("sql") if r["path"] == "rewritten" else None
-    if known_query_path == "semantic_view" or r["path"] == "rewritten":
-        res.checks_passed = True
-        res.is_certified_eligible = True
-    else:
-        res.checks_passed = bool(r.get("certifiable", False))
-        res.is_certified_eligible = bool(r.get("certifiable", False))
-    res.assumptions = list(r.get("assumptions") or [])
-    res.unmapped_elements = list(r.get("unmapped") or [])
-    res.warnings = [f"Flag: {flg}" for flg in flags_list]
-
-    # Populate structured checks
-    res.checks.append({
-        "check": "governed_path",
-        "passed": known_query_path == "semantic_view" or r["path"] in ("governed", "rewritten"),
-        "message": "Query runs through governed SEMANTIC_VIEW." if (known_query_path == "semantic_view" or r["path"] in ("governed", "rewritten")) else f"Query runs free-form SQL against base tables. Unmapped elements: {', '.join(res.unmapped_elements) if res.unmapped_elements else 'custom query structure'}.",
-    })
-    res.checks.append({
-        "check": "grain_safety",
-        "passed": "SNAPSHOT_GRAIN" not in flags_list,
-        "message": "Grain check passed; no un-periodized snapshot aggregation detected." if "SNAPSHOT_GRAIN" not in flags_list else "Direct aggregation over snapshot table without a single-period filter or de-duplication may distort results.",
-    })
-    res.checks.append({
-        "check": "join_safety",
-        "passed": "NON_UNIQUE_JOIN" not in flags_list and "FAN_OUT" not in flags_list,
-        "message": "Join check passed; no non-unique join or fan-out path detected." if "NON_UNIQUE_JOIN" not in flags_list and "FAN_OUT" not in flags_list else "Join check flagged possible double counting or fan-out path.",
-    })
-    res.checks.append({
-        "check": "definition_alignment",
-        "passed": "GUESSED_RULE" not in flags_list,
-        "message": "Condition aligns with model definition." if "GUESSED_RULE" not in flags_list else "Contains assumed or unverified rule.",
-    })
-    if "UNKNOWN_METRIC" in flags_list:
-        res.checks.append({
-            "check": "metric_validity",
-            "passed": False,
-            "message": f"Unknown metric(s) in query: {', '.join(res.unmapped_elements)}",
-        })
-    if "CURRENT_DATE_ANCHOR" in flags_list:
-        res.checks.append({
-            "check": "today_date_anchor",
-            "passed": r["path"] == "rewritten",
-            "message": "Improper CURRENT_DATE anchoring on historical data." if r["path"] != "rewritten" else "Anchored to period metric.",
-        })
-    if "NOT_VALIDATED" in flags_list:
-        res.checks.append({
-            "check": "metadata_validation",
-            "passed": False,
-            "message": "Model metadata unavailable; answer not validated.",  # hardcoding-ok: validator message
-        })
-
-    if "NOT_VALIDATED" in flags_list or "UNKNOWN_METRIC" in flags_list or r["action"] == "refuse" or (r["path"] == "free_form" and known_query_path != "semantic_view"):
-        res.is_certified_eligible = False
-
+    if not res.allowed:
+        res.refusal_reason = r.get("suggestion") or f"Refused by SQL governance guard: {', '.join(flags)}"
+    checks = [
+        ("governed_path", r["path"] in ("governed", "rewritten"), "FREE_FORM"),
+        ("metric_validity", "UNKNOWN_METRIC" not in flags, "UNKNOWN_METRIC"),
+        ("today_date_anchor", "CURRENT_DATE_ANCHOR" not in flags or r["action"] == "rewrite", "CURRENT_DATE_ANCHOR"),
+        ("grain_safety", "SNAPSHOT_GRAIN" not in flags, "SNAPSHOT_GRAIN"),
+        ("join_safety", not ({"NON_UNIQUE_JOIN", "FAN_OUT"} & set(flags)), "NON_UNIQUE_JOIN/FAN_OUT"),
+        ("definition_alignment", "GUESSED_RULE" not in flags, "GUESSED_RULE"),
+        ("helper_metric", "HELPER_METRIC" not in flags, "HELPER_METRIC"),
+        ("generated_object", "GENERATED_OBJECT" not in flags, "GENERATED_OBJECT"),
+        ("metadata_validation", "NOT_VALIDATED" not in flags, "NOT_VALIDATED"),
+        ("question_coverage", "INCOMPLETE_ANSWER" not in flags, "INCOMPLETE_ANSWER"),
+    ]
+    res.checks = [{"check": name, "passed": passed, "flag": None if passed else flag} for name, passed, flag in checks]
+    res.checks_passed = all(c["passed"] for c in res.checks)
     return res

@@ -61,11 +61,17 @@ class QueryResolutionPlan(BaseModel):
     derived_from_metrics: List[str] = Field(default_factory=list)
     resolved_tables: List[str] = Field(default_factory=list)
     join_clauses: List[str] = Field(default_factory=list)
-    generated_sql: str = ""
+    generated_sql: Optional[str] = ""
+    sql: Optional[str] = None
     confidence_score: float = 0.0
     explanation: str = ""
     warnings: List[str] = Field(default_factory=list)
     answerable: bool = True
+    refused: bool = False
+    reason_code: Optional[str] = None
+    reason_text: Optional[str] = None
+    engine: Optional[str] = "local"
+    alternatives: List[Dict[str, Any]] = Field(default_factory=list)
     parsed_phrases: Dict[str, Any] = Field(default_factory=dict)
     # True when generated_sql reads physical tables directly (no deployed
     # semantic view): an offline draft, not a governed query.
@@ -414,6 +420,202 @@ class NLQueryEngine:
                     queue.append((nxt, path_steps + [step_type]))
 
         return False, None
+
+    @staticmethod
+    def _reaches_via_many_to_one(
+        start_concept: str,
+        target_concept: str,
+        relationships: List[Any],
+    ) -> bool:
+        """Check if start_concept reaches target_concept through many-to-one or one-to-one relationships only."""
+        if not start_concept or not target_concept:
+            return False
+        if start_concept.casefold() == target_concept.casefold():
+            return True
+
+        adj: Dict[str, List[Tuple[str, str]]] = {}
+        for r in relationships or []:
+            if getattr(r, "is_active", True) is False:
+                continue
+            c1 = (getattr(r, "from_concept", None) or getattr(r, "from_dataset", None) or "").strip()
+            c2 = (getattr(r, "to_concept", None) or getattr(r, "to_dataset", None) or "").strip()
+            if not c1 or not c2:
+                continue
+            c1_cf = c1.casefold()
+            c2_cf = c2.casefold()
+            raw_card = getattr(r, "cardinality", None)
+            val = getattr(raw_card, "value", str(raw_card or ""))
+            card = str(val or "N:1").upper().replace(" ", "").replace("-", "_").replace("CARDINALITYTYPE.", "")
+
+            if card in ("N:1", "MANY_TO_ONE", "MANYTOONE"):
+                c1_to_c2 = "MANY_TO_ONE"
+                c2_to_c1 = "ONE_TO_MANY"
+            elif card in ("1:N", "ONE_TO_MANY", "ONETOMANY"):
+                c1_to_c2 = "ONE_TO_MANY"
+                c2_to_c1 = "MANY_TO_ONE"
+            elif card in ("N:N", "MANY_TO_MANY", "MANYTOMANY"):
+                c1_to_c2 = "MANY_TO_MANY"
+                c2_to_c1 = "MANY_TO_MANY"
+            else:
+                c1_to_c2 = "ONE_TO_ONE"
+                c2_to_c1 = "ONE_TO_ONE"
+
+            if c1_to_c2 in ("MANY_TO_ONE", "ONE_TO_ONE"):
+                adj.setdefault(c1_cf, []).append((c2_cf, c1_to_c2))
+            if c2_to_c1 in ("MANY_TO_ONE", "ONE_TO_ONE"):
+                adj.setdefault(c2_cf, []).append((c1_cf, c2_to_c1))
+
+        queue = [start_concept.casefold()]
+        visited = {start_concept.casefold()}
+        target = target_concept.casefold()
+
+        while queue:
+            curr = queue.pop(0)
+            if curr == target:
+                return True
+            for nxt, _ in adj.get(curr, []):
+                if nxt not in visited:
+                    visited.add(nxt)
+                    queue.append(nxt)
+
+        return False
+
+    def _find_alternatives(
+        self,
+        dim_names: List[str],
+        dim_to_pair: Dict[str, Any],
+        refused_metrics: List[Any],
+        extra_dim_concepts: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Metadata-driven alternatives: for requested dimensions, find up to 3 metrics
+        whose table reaches every requested dimension through many-to-one relationships only.
+        """
+        target_dim_concepts: List[Tuple[str, str]] = []
+        for d_name in dim_names:
+            c_obj, a_obj = dim_to_pair.get(d_name, (None, None))
+            c_name = getattr(c_obj, "name", None) if c_obj else None
+            if not c_name and "." in d_name:
+                c_name = d_name.split(".")[0]
+            if c_name:
+                target_dim_concepts.append((d_name, c_name))
+
+        for extra_c in extra_dim_concepts or []:
+            if extra_c and extra_c.casefold() not in [c.casefold() for _, c in target_dim_concepts]:
+                target_dim_concepts.append((extra_c, extra_c))
+
+        if not target_dim_concepts:
+            return []
+
+        refused_metric_names = {getattr(m, "name", "").casefold() for m in refused_metrics}
+        alternatives: List[Dict[str, Any]] = []
+        seen_questions: Set[str] = set()
+
+        ontology_metrics = getattr(self.ontology, "metrics", []) or []
+        if isinstance(ontology_metrics, dict):
+            ontology_metrics = list(ontology_metrics.values())
+        relationships = getattr(self.ontology, "relationships", []) or []
+        if isinstance(relationships, dict):
+            relationships = list(relationships.values())
+
+        display_dims = [d.split(".")[-1] for d in dim_names]
+        for extra_c in extra_dim_concepts or []:
+            c_tail = extra_c.split(".")[-1]
+            if c_tail.casefold() not in [d.casefold() for d in display_dims]:
+                display_dims.append(c_tail)
+
+        for cand in ontology_metrics:
+            cand_name = getattr(cand, "name", "")
+            if not cand_name or cand_name.casefold() in refused_metric_names:
+                continue
+
+            is_unans, _ = self._is_unanswerable_or_null(cand)
+            if is_unans:
+                continue
+
+            cand_concept = getattr(cand, "concept", None)
+            if not cand_concept:
+                continue
+
+            can_reach_all = True
+            for _, d_c in target_dim_concepts:
+                if not self._reaches_via_many_to_one(cand_concept, d_c, relationships):
+                    can_reach_all = False
+                    break
+
+            if can_reach_all:
+                cand_label = getattr(cand, "label", None) or cand_name
+                dim_str = " and ".join(display_dims) if len(display_dims) <= 2 else ", ".join(display_dims)
+                q_text = f"{cand_label} by {dim_str}"
+                if q_text.casefold() not in seen_questions:
+                    seen_questions.add(q_text.casefold())
+                    alternatives.append({
+                        "question": q_text,
+                        "metrics": [cand_label],
+                        "dimensions": list(display_dims),
+                    })
+                    if len(alternatives) >= 3:
+                        break
+
+        return alternatives
+
+    @staticmethod
+    def _reaches_via_many_to_one(
+        start_concept: str,
+        target_concept: str,
+        relationships: List[Any],
+    ) -> bool:
+        """Check if start_concept reaches target_concept through many-to-one or one-to-one relationships only."""
+        if not start_concept or not target_concept:
+            return False
+        if start_concept.casefold() == target_concept.casefold():
+            return True
+
+        adj: Dict[str, List[Tuple[str, str]]] = {}
+        for r in relationships or []:
+            if getattr(r, "is_active", True) is False:
+                continue
+            c1 = (getattr(r, "from_concept", None) or getattr(r, "from_dataset", None) or "").strip()
+            c2 = (getattr(r, "to_concept", None) or getattr(r, "to_dataset", None) or "").strip()
+            if not c1 or not c2:
+                continue
+            c1_cf = c1.casefold()
+            c2_cf = c2.casefold()
+            raw_card = getattr(r, "cardinality", None)
+            val = getattr(raw_card, "value", str(raw_card or ""))
+            card = str(val or "N:1").upper().replace(" ", "").replace("-", "_").replace("CARDINALITYTYPE.", "")
+
+            if card in ("N:1", "MANY_TO_ONE", "MANYTOONE"):
+                c1_to_c2 = "MANY_TO_ONE"
+                c2_to_c1 = "ONE_TO_MANY"
+            elif card in ("1:N", "ONE_TO_MANY", "ONETOMANY"):
+                c1_to_c2 = "ONE_TO_MANY"
+                c2_to_c1 = "MANY_TO_ONE"
+            elif card in ("N:N", "MANY_TO_MANY", "MANYTOMANY"):
+                c1_to_c2 = "MANY_TO_MANY"
+                c2_to_c1 = "MANY_TO_MANY"
+            else:
+                c1_to_c2 = "ONE_TO_ONE"
+                c2_to_c1 = "ONE_TO_ONE"
+
+            if c1_to_c2 in ("MANY_TO_ONE", "ONE_TO_ONE"):
+                adj.setdefault(c1_cf, []).append((c2_cf, c1_to_c2))
+            if c2_to_c1 in ("MANY_TO_ONE", "ONE_TO_ONE"):
+                adj.setdefault(c2_cf, []).append((c1_cf, c2_to_c1))
+
+        queue = [start_concept.casefold()]
+        visited = {start_concept.casefold()}
+        target = target_concept.casefold()
+
+        while queue:
+            curr = queue.pop(0)
+            if curr == target:
+                return True
+            for nxt, _ in adj.get(curr, []):
+                if nxt not in visited:
+                    visited.add(nxt)
+                    queue.append(nxt)
+
+        return False
 
     # ------------------------------------------------------------------
     # Generic Phrase Scoring Helpers
@@ -816,11 +1018,17 @@ class NLQueryEngine:
                         detected_dimensions=[],
                         resolved_tables=[],
                         generated_sql="",
+                        sql=None,
                         confidence_score=0.0,
                         answerable=False,
+                        refused=True,
+                        reason_code="UNKNOWN_METRIC",
+                        reason_text=clarification,
+                        engine="local",
                         explanation=clarification,
                         warnings=[clarification],
-                        query_path="refused",
+                        query_path="none",
+                        guard_checks=[],
                     )
                 measure_trace.append(
                     {"phrase": m_phrase.raw_text, "status": f"ambiguous ({', '.join(opt_names)})", "selected": opt_names[0]}
@@ -986,11 +1194,17 @@ class NLQueryEngine:
                         detected_dimensions=[],
                         resolved_tables=[],
                         generated_sql="",
+                        sql=None,
                         confidence_score=0.0,
                         answerable=False,
+                        refused=True,
+                        reason_code="UNKNOWN_METRIC",
+                        reason_text=clarification,
+                        engine="local",
                         explanation=clarification,
                         warnings=[clarification],
-                        query_path="refused",
+                        query_path="none",
+                        guard_checks=[],
                     )
                 continue
             if outcome == "ambiguous":
@@ -1134,6 +1348,8 @@ class NLQueryEngine:
                 failed_check_reasons.append(f"Metric '{m.label or m.name}' cannot be used: {unans_msg}.")
 
         # 2a: Join path from each metric's table may only go many->one (no many->one->many)
+        fan_out_detected = False
+        fan_out_reasons: List[str] = []
         for m in detected_metrics:
             m_c = m.concept or primary_table
             if not m_c:
@@ -1144,7 +1360,10 @@ class NLQueryEngine:
                     is_fan_out, fan_out_msg = self._detect_fan_out_path(m_c, c_obj.name, self.ontology.relationships)
                     if is_fan_out:
                         plan_checks_failed = True
-                        failed_check_reasons.append(fan_out_msg or f"Fan-out join path detected from '{m_c}' to '{c_obj.name}'.")
+                        fan_out_detected = True
+                        msg = fan_out_msg or f"Fan-out join path detected from '{m_c}' to '{c_obj.name}'."
+                        fan_out_reasons.append(msg)
+                        failed_check_reasons.append(msg)
 
         # 2c (Part 1): Window metrics include their PARTITION BY EXCLUDING dimensions
         for m in detected_metrics:
@@ -1209,13 +1428,38 @@ class NLQueryEngine:
         }
 
         if not answerable:
-            refusal_lines = [
-                "-- SemaBridge AI Query Refusal (No Executable Dummy Table Fallback)",
-                f"-- Question: \"{clean_prompt}\"",
-                f"-- Dialect: {dialect.upper()}",
-            ]
-            for w in warnings:
-                refusal_lines.append(f"-- Reason: {w}")
+            unanswerable_warning = next((w for w in warnings if "not answerable" in str(w).lower() or "unanswerable" in str(w).lower()), None)
+            if unanswerable_warning:
+                reason_code = "UNANSWERABLE_METRIC"
+                reason_text = unanswerable_warning
+            elif fan_out_detected:
+                reason_code = "FAN_OUT"
+                reason_text = fan_out_reasons[0] if fan_out_reasons else "The metric's table cannot be grouped by the requested dimension because the join path contains a one-to-many relationship (fan-out trap), which risks multiplying or double counting metric values."
+            elif any("today" in str(w).lower() or "current_date" in str(w).lower() or "current date" in str(w).lower() for w in warnings):  # hardcoding-ok: temporal anchor check
+                reason_code = "CURRENT_DATE_ANCHOR"
+                reason_text = "Query contains current date or today's date anchoring on historical data without a corresponding period metric."  # hardcoding-ok: date anchor reason
+            elif not detected_metrics and not is_distinct_dim_query:
+                reason_code = "UNKNOWN_METRIC"
+                reason_text = "No matching governed metric was found in the model for this question."
+            else:
+                reason_code = "INCOMPLETE_ANSWER"
+                reason_text = "; ".join(failed_check_reasons if failed_check_reasons else warnings) or "Query cannot be answered from this model's governed ontology."
+
+            # Compute alternatives
+            refused_dim_concepts = []
+            if fan_out_detected:
+                for m in detected_metrics:
+                    m_c = getattr(m, "concept", None)
+                    if m_c and m_c not in refused_dim_concepts:
+                        refused_dim_concepts.append(m_c)
+
+            alts = self._find_alternatives(
+                dim_names=dim_names,
+                dim_to_pair=dim_to_pair,
+                refused_metrics=detected_metrics,
+                extra_dim_concepts=refused_dim_concepts,
+            )
+
             return QueryResolutionPlan(
                 original_prompt=clean_prompt,
                 detected_metrics=[m.label or m.name for m in detected_metrics],
@@ -1225,17 +1469,24 @@ class NLQueryEngine:
                 derived_from_metrics=derived_from_metrics,
                 resolved_tables=[],
                 join_clauses=[],
-                generated_sql="\n".join(refusal_lines),
+                generated_sql="",
+                sql=None,
                 confidence_score=0.0,
-                explanation="; ".join(failed_check_reasons if failed_check_reasons else warnings) if warnings else "Query cannot be answered from this project's ontology.",
+                explanation=reason_text,
                 warnings=warnings,
                 answerable=False,
+                refused=True,
+                reason_code=reason_code,
+                reason_text=reason_text,
+                engine="local",
+                alternatives=alts,
                 parsed_phrases=parsed_phrases,
                 plan_checks_passed=not plan_checks_failed,
                 is_certified=False,
                 view=effective_semantic_view,
                 semantic_view=effective_semantic_view,
-                query_path="semantic_view" if effective_semantic_view else "governed_ontology",
+                query_path="none",
+                guard_checks=[],
             )
 
         # 9. Build relational joins & executable SQL
@@ -1320,6 +1571,7 @@ class NLQueryEngine:
             select_parts = ["    *"]
             from_target: Optional[str] = "SEMANTIC_VIEW(" + " ".join(sv_clauses) + ")"
         else:
+            select_parts: List[str] = []
             if is_distinct_dim_query:
                 primary_dim = dim_names[0]
                 dim_col = self._q_ident(primary_dim)

@@ -1,9 +1,9 @@
-# Ask AI SQL guard - 54 test cases (50 scenarios)
+# Ask AI SQL guard - 69 test cases
 
 Tests for the issues seen in Ask AI answers:
 - wrong metric for generic words ("employees" -> active employees instead of all employees),
 - generated SQL anchored to today's date (CURRENT_DATE year filters on historical data),
-- free-form SQL on base / *_ENRICHED tables instead of the semantic view,
+- free-form SQL on base tables or SemaBridge-generated objects (marked in metadata) instead of the semantic view,
 - averages over snapshot rows, joins that multiply rows, two fact tables through one dimension,
 - invented business rules (e.g. a status guessed from a date column), helper metrics (SUM_OF_*),
 - status splits that should be governed (filtered measures -> IS_<MEASURE> dimensions),
@@ -15,7 +15,7 @@ Tests for the issues seen in Ask AI answers:
 | test_ai_sql_guard.py | The tests (groups A-H) |
 | model_fixture.py | Generic model metadata the guard reads (tables, grain, keys, metrics, filters, dimensions) |
 | adapter.py | Points the tests at the implementation |
-| reference_sql_guard.py | Reference implementation: proves the tests are consistent (54/54 pass) |
+| reference_sql_guard.py | Reference implementation: same code as sql_validator.py; proves the tests are consistent (69/69 pass) |
 | conftest.py | Path setup |
 
 ## Contract (module `semabridge.ai.sql_validator`, to implement)
@@ -35,5 +35,5 @@ Copy the folder to `Tests/ai_sql_guard_tests/`, then:
     set SB_SQL_GUARD_IMPL=reference
     .venv\Scripts\python -m pytest Tests/ai_sql_guard_tests -q -o addopts=""
 
-Results: reference 54/54 pass; a naive "execute everything" implementation fails 35.
+Results: reference 69/69 pass. The validator reads everything model-specific from metadata (no words, names or naming conventions in code).
 A failure is a finding: fix the code, not the test.

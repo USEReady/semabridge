@@ -359,8 +359,51 @@ def validate_read_only_sql(sql: str, *, warn_only: Optional[bool] = None) -> boo
     code_no_strings = re.sub(r'"(?:""|[^"])*"', '""', code_no_strings)
     code_no_strings = re.sub(r"\$\$.*?\$\$", "$$$$", code_no_strings, flags=re.DOTALL)
 
+    import sqlglot
+    import sqlglot.expressions as exp
+
+    # Check statement AST types instead of substring keyword matching
+    # to avoid blocking valid column names (comment, list, set, use) and functions (GET())
+    parsed_statements = None
+    try:
+        parsed_statements = sqlglot.parse(clean, read="snowflake")
+    except Exception:
+        pass
+
+    if parsed_statements:
+        forbidden_types = (
+            exp.Insert, exp.Delete, exp.Update, exp.Drop, exp.Alter, exp.Create,
+            exp.Merge, exp.TruncateTable, exp.Comment, exp.Use, exp.Set,
+            exp.Commit, exp.Rollback, exp.ListStage, exp.Put,
+        )
+        for stmt in parsed_statements:
+            if not stmt:
+                continue
+            found_forbidden = list(stmt.find_all(forbidden_types))
+            if found_forbidden:
+                node = found_forbidden[0]
+                kw = type(node).__name__.upper()
+                preview = clean[:120].replace("\n", " ")
+                return _reject(f"Read-only SQL guard blocked forbidden operation '{kw}': {preview!r}.")
+
+            if isinstance(stmt, exp.Command):
+                cmd_text = (stmt.this or "").strip().upper()
+                cmd_kw = cmd_text.split()[0] if cmd_text else "COMMAND"
+                if cmd_kw in {"USE", "SET", "UNSET", "COMMENT", "CALL", "EXECUTE", "COPY", "PUT", "GET", "REMOVE", "LIST", "GRANT", "REVOKE", "BEGIN", "COMMIT", "ROLLBACK", "UNDROP"}:
+                    preview = clean[:120].replace("\n", " ")
+                    return _reject(f"Read-only SQL guard blocked forbidden command '{cmd_kw}': {preview!r}.")
+
+    # Check statement-leading keyword (top-level operation)
+    clean_first_word = re.match(r"^\s*([A-Za-z]+)\b", clean)
+    if clean_first_word:
+        first_kw = clean_first_word.group(1).upper()
+        if first_kw in {"DELETE", "INSERT", "UPDATE", "DROP", "ALTER", "TRUNCATE", "MERGE", "CREATE", "GRANT", "REVOKE", "CALL", "EXECUTE", "COPY", "PUT", "USE", "UNDROP", "COMMENT", "BEGIN", "COMMIT", "ROLLBACK", "SET", "UNSET", "REMOVE", "LIST"}:
+            preview = clean[:120].replace("\n", " ")
+            return _reject(f"Read-only SQL guard blocked forbidden operation '{first_kw}': {preview!r}.")
+
+    # For nested DML mutations in non-AST constructs
     mutation_match = re.search(
-        r"\b(DELETE|INSERT|UPDATE|DROP|ALTER|TRUNCATE|MERGE|CREATE|GRANT|REVOKE|CALL|EXECUTE|COPY|PUT|GET|USE|UNDROP|COMMENT|BEGIN|COMMIT|ROLLBACK|SET|UNSET|REMOVE|LIST)\b",
+        r"\b(DELETE\s+FROM|INSERT\s+INTO|INSERT\s+OVERWRITE|UPDATE\s+\w+\s+SET|DROP\s+(?:TABLE|VIEW|SCHEMA|DATABASE)|TRUNCATE\s+TABLE|ALTER\s+(?:TABLE|SESSION|USER)|CREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMPORARY\s+)?(?:TABLE|VIEW|SEMANTIC\s+VIEW)|GRANT\s+\w+\s+ON|REVOKE\s+\w+\s+ON|EXECUTE\s+IMMEDIATE)\b",
         code_no_strings,
         re.IGNORECASE,
     )

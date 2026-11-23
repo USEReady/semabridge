@@ -4,12 +4,12 @@ Contract (module semabridge.ai.sql_validator):
   find_synonym_collisions(model) -> [{"term", "metrics"}]
   assign_synonyms(model) -> {metric_name: [terms]}
   resolve_metric(question, model) -> {"metric", "alternatives"}
-  validate_sql(sql, model, question="") -> {"action": execute|rewrite|refuse,
+  validate_sql(sql, model, question="", *, allow_current_date=False) -> {"action": execute|rewrite|refuse,
         "path": governed|rewritten|free_form|none, "sql", "flags": [codes], "assumptions",
         "unmapped", "suggestion", "certifiable": bool}
   status_dimensions(model) -> [{"name": "IS_<METRIC>", "table", "predicate"}]
   verified_queries_from_cases(cases) -> [{"question", "sql"}]
-Flag codes: CURRENT_DATE_ANCHOR, FREE_FORM, ENRICHED_TABLE, SNAPSHOT_GRAIN, NON_UNIQUE_JOIN, FAN_OUT,
+Flag codes: CURRENT_DATE_ANCHOR, FREE_FORM, GENERATED_OBJECT, SNAPSHOT_GRAIN, NON_UNIQUE_JOIN, FAN_OUT,
 GUESSED_RULE, HELPER_METRIC, UNKNOWN_METRIC, WRITE_STATEMENT, MULTI_STATEMENT, EMPTY_SQL.
 """
 import pytest
@@ -102,9 +102,15 @@ def test_b04_all_today_functions_are_detected(fn):
     assert "CURRENT_DATE_ANCHOR" in r["flags"]
 
 
-def test_b05_question_about_today_may_use_current_date():
-    r = impl.validate_sql(sv("SEPS", None, "x = CURRENT_DATE"), model(), "How many separations today?")
+def test_b05_explicit_now_intent_from_the_engine_allows_current_date():
+    r = impl.validate_sql(sv("SEPS", None, "x = CURRENT_DATE"), model(), "q", allow_current_date=True)
     assert "CURRENT_DATE_ANCHOR" not in r["flags"]
+
+
+def test_b10_validator_does_not_interpret_question_words():
+    # "today" in the question changes nothing; only the engine's resolved intent does.
+    r = impl.validate_sql(sv("SEPS", None, "x = CURRENT_DATE"), model(), "How many separations today?")
+    assert "CURRENT_DATE_ANCHOR" in r["flags"]
 
 
 def test_b06_current_date_inside_a_string_is_not_flagged():
@@ -149,10 +155,17 @@ def test_c03_partly_mappable_sql_stays_free_form_with_unmapped_parts():
     assert r["path"] == "free_form" and r["unmapped"]
 
 
-def test_c04_enriched_helper_table_is_flagged():
+def test_c04_object_generated_by_semabridge_is_flagged_from_metadata():
     sql = "SELECT BU, MEDIAN(AGE) FROM EMPLOYEE_ENRICHED GROUP BY BU"
     r = impl.validate_sql(sql, model(), "median age by business unit")
-    assert "ENRICHED_TABLE" in r["flags"]
+    assert "GENERATED_OBJECT" in r["flags"]
+
+
+def test_c08_generated_flag_comes_from_metadata_not_the_name():
+    m = model()
+    m["tables"]["EMPLOYEE_ENRICHED"]["generated"] = False
+    sql = "SELECT BU, MEDIAN(AGE) FROM EMPLOYEE_ENRICHED GROUP BY BU"
+    assert "GENERATED_OBJECT" not in impl.validate_sql(sql, m, "x")["flags"]
 
 
 def test_c05_free_form_answers_are_never_certifiable():
@@ -308,3 +321,72 @@ def test_h02_duplicate_questions_are_registered_once():
     c = {"question": "How many employees?", "sql": sv("EMPCOUNT"), "status": "certified", "power_bi_match": True}
     d = dict(c, question="  how many   employees? ")
     assert len(impl.verified_queries_from_cases([c, d])) == 1
+
+
+# =============================================================================
+# I. Question coverage (3)
+# =============================================================================
+
+def test_i01_dropped_split_and_metric_refuse_the_answer():
+    cov = {"requested_metrics": ["AVG_AGE", "AVG_TENURE_DAYS"], "resolved_metrics": ["AVG_AGE"],
+           "requested_dimensions": ["bu.bu"], "resolved_dimensions": ["bu.bu"],
+           "requested_splits": ["status"], "resolved_splits": []}
+    r = impl.validate_sql(sv("AVG_AGE", "bu.bu"), model(), "q", coverage=cov)
+    assert r["action"] == "refuse" and "INCOMPLETE_ANSWER" in r["flags"]
+    assert any("AVG_TENURE_DAYS".casefold() in u for u in r["unmapped"]) and any("status" in u for u in r["unmapped"])
+
+
+def test_i02_unresolved_phrase_reported_by_engine_refuses():
+    r = impl.validate_sql(sv("AVG_AGE", "bu.bu"), model(), "q", coverage={"unresolved": ["<phrase>"]})
+    assert r["action"] == "refuse" and not r["certifiable"]
+
+
+def test_i03_complete_coverage_is_unaffected():
+    cov = {"requested_metrics": ["AVG_AGE"], "resolved_metrics": ["avg_age"],
+           "requested_dimensions": ["bu.bu"], "resolved_dimensions": ["BU.BU"]}
+    r = impl.validate_sql(sv("AVG_AGE", "bu.bu"), model(), "q", coverage=cov)
+    assert r["action"] == "execute" and r["certifiable"] is True
+
+
+# =============================================================================
+# J. Rewrite safety (6) - a rewrite must keep the meaning and can never inject SQL
+# =============================================================================
+
+def test_j01_where_filter_prevents_free_form_rewrite():
+    sql = "SELECT e.BU, AVG(e.AGE) FROM EMPLOYEE e WHERE e.GENDER = 'F' GROUP BY e.BU"
+    r = impl.validate_sql(sql, model(), "average age of women by business unit")
+    assert r["action"] != "rewrite" and r["sql"] == sql
+
+
+def test_j02_extra_filter_prevents_today_anchor_rewrite():
+    sql = sv("NEW_HIRES", "bu.bu", "YEAR(x) = YEAR(CURRENT_DATE()) - 1 AND employee.gender = 'F'")
+    r = impl.validate_sql(sql, model(), "q")
+    assert r["action"] == "refuse"
+
+
+@pytest.mark.parametrize("view", ["DB.S.V) METRICS x); DROP TABLE t; --", "DB.S.V; DELETE FROM t", None, "", "A.B.C.D"])
+def test_j03_unsafe_or_missing_view_name_never_rewrites(view):
+    sql = "SELECT e.BU, AVG(e.AGE) FROM EMPLOYEE e GROUP BY e.BU"
+    r = impl.validate_sql(sql, model(view=view), "q")
+    assert r["action"] != "rewrite"
+    assert "DROP" not in r["sql"].upper() and "DELETE" not in r["sql"].upper()
+
+
+def test_j04_no_semantic_view_rewrite_for_other_platforms():
+    sql = "SELECT e.BU, AVG(e.AGE) FROM EMPLOYEE e GROUP BY e.BU"
+    r = impl.validate_sql(sql, model(platform="databricks"), "q")
+    assert r["action"] != "rewrite"
+
+
+def test_j05_rewritten_sql_validates_as_clean_governed():
+    sql = "SELECT e.BU, AVG(e.AGE) FROM EMPLOYEE e GROUP BY e.BU"
+    r = impl.validate_sql(sql, model(), "q")
+    assert r["action"] == "rewrite"
+    again = impl.validate_sql(r["sql"], model(), "q")
+    assert again["action"] == "execute" and again["path"] == "governed" and not again["flags"]
+
+
+def test_j06_limit_or_having_prevents_rewrite():
+    for sql in ("SELECT e.BU, AVG(e.AGE) FROM EMPLOYEE e GROUP BY e.BU LIMIT 5",
+                "SELECT e.BU, AVG(e.AGE) FROM EMPLOYEE e GROUP BY e.BU HAVING AVG(e.AGE) > 30"):
+        assert impl.validate_sql(sql, model(), "q")["action"] != "rewrite"
