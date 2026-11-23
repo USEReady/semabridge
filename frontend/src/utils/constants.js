@@ -19,6 +19,7 @@ export const CONNECTOR_TYPES = [
 
 export const TARGET_CONNECTOR_TYPES = [
   { value: 'snowflake', label: 'Snowflake' },
+  { value: 'databricks', label: 'Databricks' },
 ];
 
 export const INTERMEDIATE_FORMAT_TYPES = [

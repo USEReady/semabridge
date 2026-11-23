@@ -22,6 +22,10 @@ const DEFAULT_WIZARD_STATE = {
   snowflakeSchema: '',
   targetDatabase: '',
   targetSchema: '',
+  // Databricks target: Unity Catalog catalog + schema. Kept apart from the
+  // Snowflake target's database/schema above so the two never mix.
+  databricksCatalog: '',
+  databricksSchema: '',
   targetAccount: '',
   targetWarehouse: '',
   modelQueryRegex: false,

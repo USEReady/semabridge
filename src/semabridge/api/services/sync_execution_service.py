@@ -531,6 +531,12 @@ def model_config_fingerprint(config: Dict[str, Any], job: Dict[str, Any], target
             "schema": str(target_cfg.get("schema") or target_cfg.get("schema_name") or "").strip().upper(),
         },
     }
+    # Databricks targets deploy into catalog.schema: a changed catalog must
+    # invalidate the dry run too. Added only when set, so every existing
+    # (catalog-less) target keeps exactly the same fingerprint.
+    catalog = str(target_cfg.get("catalog") or "").strip().upper()
+    if catalog:
+        payload["target"]["catalog"] = catalog
     return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
 
 

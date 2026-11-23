@@ -51,6 +51,10 @@ export function StepConnectorConfig({
   setTargetDatabase,
   targetSchema,
   setTargetSchema,
+  databricksCatalog = '',
+  setDatabricksCatalog = () => {},
+  databricksSchema = '',
+  setDatabricksSchema = () => {},
   targetAccount,
   setTargetAccount,
   targetWarehouse,
@@ -961,6 +965,31 @@ export function StepConnectorConfig({
                           No Databricks accounts configured. This target will use global connection defaults from Settings.
                         </div>
                       )}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+                        <div>
+                          <label style={LABEL}>Unity Catalog Catalog</label>
+                          <input
+                            type="text"
+                            value={databricksCatalog}
+                            onChange={e => setDatabricksCatalog(e.target.value)}
+                            placeholder="e.g. workspace"
+                            style={INPUT}
+                          />
+                        </div>
+                        <div>
+                          <label style={LABEL}>Schema</label>
+                          <input
+                            type="text"
+                            value={databricksSchema}
+                            onChange={e => setDatabricksSchema(e.target.value)}
+                            placeholder="e.g. semabridge_dev"
+                            style={INPUT}
+                          />
+                        </div>
+                      </div>
+                      <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: -4 }}>
+                        Where metric views will be created. Leave blank to use the catalog and schema from Settings.
+                      </p>
                     </div>
                   )}
 

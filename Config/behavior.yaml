@@ -54,6 +54,7 @@ semantic_model:
 # Databricks deployment behavior.
 # ---------------------------------------------------------------------------
 databricks:
+  use_planner_path: true
   create_metadata_table: true # OSI-first deploy: skip Semabridge metadata Delta table
   create_measure_views: true # Generate measure views for deployed measures
   model_artifact_mode: "per_model" # "per_dataset" (legacy) | "per_model" (single metadata + single model metric view)
