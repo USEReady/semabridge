@@ -100,6 +100,11 @@ class TargetPolicies:
     # matched case-insensitively. Defaults to the start of placeholder_sql
     # up to "AS".
     placeholder_marker: str = ""
+    # Add the relationship-graph advisories after translation (measures
+    # whose CALCULATE filters a table their own table cannot / can only
+    # through enrichment reach). They predict Snowflake semantic-view
+    # compile errors (010211), so only Snowflake turns them on.
+    relationship_advisories: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "rules", MappingProxyType(dict(self.rules)))
@@ -159,6 +164,10 @@ class TargetCapabilities:
     nested_joins: bool
     # Helper/bridge views may be created to keep two-table measures.
     bridge_views: bool
+    # Measures may read helper columns precomputed on an enriched source view
+    # (Snowflake: whole-table totals such as "_ALL_COUNTA_..."). Without it
+    # the renderer declines measures that need them.
+    enriched_helper_columns: bool = False
 
 
 class SqlDialect(ABC):
