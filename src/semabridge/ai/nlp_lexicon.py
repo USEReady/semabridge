@@ -24,6 +24,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 import yaml
 
 from semabridge.ontology.models import infer_aggregation_from_sql
+from semabridge.utils.synonyms import is_filtered_metric
 
 try:
     import sqlglot
@@ -52,7 +53,7 @@ _SYNTAX_STOPWORDS = frozenset({
 # Relative-period / trend / growth wording. Year & quarter literals (2024, Q1)
 # are handled separately as explicit filters.
 _TIME_INTENT_RE = re.compile(
-    r"\b(?:trends?|trending)(?:\s+over\s+time)?\b|\bover\s+time\b"
+    r"\b(?:trends?|trending)(?:\s+over\s+time)?\b|\bover\s+time\b"  # hardcoding-ok: generic time patterns
     r"|\b(?:growth|change|variance)\b"
     r"|\b(?:last|previous|prior|past|this|current|next)\s+(?:\d+\s+)?(?:years?|quarters?|months?|weeks?|days?)\b"
     r"|\b(?:ytd|qtd|mtd|yoy|mom|qoq|sply|year[- ]?to[- ]?date|quarter[- ]?to[- ]?date|month[- ]?to[- ]?date"
@@ -204,7 +205,8 @@ def wordnet_related_lemmas(lemma: str) -> frozenset[str]:
                     if "_" not in drv_name and len(drv_name) >= 3:
                         family.add(lemmatize_token(drv_name))
         return frozenset(family)
-    except Exception:  # pragma: no cover
+    except Exception as exc:  # pragma: no cover
+        logger.debug("WordNet related lemmas failed for %s: %s", lemma, exc)
         return frozenset({lemma})
 
 
@@ -241,7 +243,8 @@ def lemmatize_phrase_tokens(text: str, use_pos: bool = True) -> List[str]:
         try:
             from nltk import pos_tag
             pos_tags = pos_tag(raw_words)
-        except Exception:  # pragma: no cover
+        except Exception as exc:  # pragma: no cover
+            logger.debug("POS tagging failed for %s: %s", raw_words, exc)
             pos_tags = None
 
     lemmas: List[str] = []
@@ -311,7 +314,8 @@ def extract_sql_filter_literals(
                                 if isinstance(item, sql_exp.Literal) and item.is_string:
                                     _add(node.this.name, item.name)
                     break
-                except Exception:
+                except Exception as exc:
+                    logger.debug("Failed parsing expression with dialect %s: %s", dial, exc)
                     continue
 
         if not parsed_ok:
@@ -780,8 +784,23 @@ class ProjectLexicon:
             is_pct = bool(
                 re.search(r"(%|_pct|\bpct\b|pctof|percent|ratio|share|\brate\b|\bmom|\byoy|\bqoq)", m_text, re.I)
             )
-            is_cnt = bool(is_count_fn(m)) if is_count_fn else False
-            has_filter = bool(filter_lits) or bool(getattr(m, "filter_expression", None))
+            is_cnt = False
+            if not is_pct:
+                if is_count_fn:
+                    is_cnt = bool(is_count_fn(m))
+                else:
+                    m_sql_str = str(getattr(m, "sql_expression", "") or "").strip()
+                    agg_inferred = infer_aggregation_from_sql(m_sql_str)
+                    is_cnt = bool(
+                        agg_inferred in ("COUNT", "COUNT_DISTINCT")
+                        or str(getattr(m, "aggregation_type", "") or "").upper() in ("COUNT", "COUNT_DISTINCT")
+                        or (bool(re.match(r"^\s*COUNT\s*\(", m_sql_str, re.I)) and not re.search(r"[/*+-]", m_sql_str))
+                    )
+            has_filter = (
+                bool(filter_lits)
+                or bool(getattr(m, "filter_expression", None))
+                or is_filtered_metric(m)
+            )
 
             all_l = name_label_lemmas | c_lemmas | filter_val_lemmas
             m_sql = getattr(m, "sql_expression", None)

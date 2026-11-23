@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -96,6 +97,18 @@ class DomainOntologyStore:
             return any(d.domain.casefold() == name_cf or d.id == dom.id for d in domains.values())
 
         if self.storage_dir.is_dir():
+            # One-time cleanup of preview_* files
+            for pf in list(self.storage_dir.glob("preview_*.yaml")) + list(self.storage_dir.glob("preview_*.yml")):
+                try:
+                    logger.info("Cleaning up preview ontology file: %s", pf.name)
+                    pf.unlink()
+                except Exception as ex:
+                    logger.warning("Could not delete preview file %s: %s", pf, ex)
+            try:
+                self.prune_preview_attachments()
+            except Exception as ex:
+                logger.warning("Could not prune preview attachments: %s", ex)
+
             files = sorted(set(self.storage_dir.glob("*.yaml")) | set(self.storage_dir.glob("*.yml")))
             for f in files:
                 try:
@@ -361,6 +374,12 @@ relationships:
         Raises :class:`OntologyValidationError` on invalid content.
         """
         with self._lock:
+            if getattr(domain_ontology, "semantic_view_name", None):
+                sv = domain_ontology.semantic_view_name
+                if re.search(r'(\b[\w$]+\.[\w$]+)\.(?:")?\1\b', sv, re.I):
+                    domain_ontology = domain_ontology.model_copy(
+                        update={"semantic_view_name": re.sub(r'(\b[\w$]+\.[\w$]+)\.(?:")?\1\b', r'\1', sv, flags=re.I).replace('"', '')}
+                    )
             orig = self.get_domain(original) if original else None
             if orig is not None and domain_ontology.id == slugify_domain(domain_ontology.domain) and orig.id:
                 # The YAML did not pin an id: keep the existing stable id across a rename.
@@ -379,10 +398,18 @@ relationships:
             if errors:
                 raise OntologyValidationError(errors)
 
-            new_path = self._path_for_id(domain_ontology.id) if save_to_disk else None
+            is_preview = (
+                str(getattr(domain_ontology, "source_project_id", "") or "").startswith("preview-")
+                or str(getattr(domain_ontology, "source_project_id", "") or "").startswith("preview_")
+                or str(getattr(domain_ontology, "id", "") or "").startswith("preview_")
+                or str(getattr(domain_ontology, "id", "") or "").startswith("preview-")
+            )
+            eff_save = save_to_disk and not is_preview
+
+            new_path = self._path_for_id(domain_ontology.id) if eff_save else None
             replaced = orig or self._find(domain_ontology.domain)
 
-            if save_to_disk and self.storage_dir.is_dir():
+            if eff_save and self.storage_dir.is_dir():
                 yaml_str = FederatedOntologyLoader.dump_domain_yaml(domain_ontology)
                 tmp = new_path.with_suffix(new_path.suffix + ".tmp")
                 tmp.write_text(yaml_str, encoding="utf-8")
@@ -390,11 +417,11 @@ relationships:
 
             if replaced is not None:
                 self.domains.pop(replaced.domain, None)
-                if save_to_disk and replaced.id and replaced.id != domain_ontology.id:
+                if eff_save and replaced.id and replaced.id != domain_ontology.id:
                     self._remove_file(replaced.id)
                     self._rename_attachment(replaced.id, domain_ontology.id)
             self.domains[domain_ontology.domain] = domain_ontology
-            if save_to_disk and self.storage_dir.is_dir():
+            if eff_save and self.storage_dir.is_dir():
                 self._disk_ids.add(domain_ontology.id)
             self.load_errors = [e for e in self.load_errors if e.get("file") != f"{domain_ontology.id}.ontology.yaml"]
 
@@ -538,6 +565,17 @@ relationships:
         if changed:
             self._write_attachments_full(data)
 
+    def prune_preview_attachments(self) -> List[str]:
+        """Drop attachment entries for preview projects."""
+        with self._lock:
+            data = self._read_attachments_full()
+            to_remove = [k for k in data if str(k).startswith("preview-") or str(k).startswith("preview_")]
+            for k in to_remove:
+                del data[k]
+            if to_remove:
+                self._write_attachments_full(data)
+            return to_remove
+
     def prune_dangling_attachments(self) -> List[str]:
         """Drop attachment entries that point at domain files that no longer exist."""
         with self._lock:
@@ -577,6 +615,9 @@ relationships:
         project (``source_model_id``) is filed under that model, every other
         domain is shared by all of the project's models.
         """
+        pid_str = str(project_id or "")
+        if pid_str.startswith("preview-") or pid_str.startswith("preview_"):
+            return []
         with self._lock:
             doms: List[DomainOntology] = []
             missing: List[str] = []
@@ -614,6 +655,10 @@ relationships:
 
     def attach_model_domain(self, project_id: str, model_id: str, domain_id: str) -> None:
         """Ensure ``domain_id`` is attached to ``model_id`` of the project (idempotent)."""
+        pid_str = str(project_id or "")
+        did_str = str(domain_id or "")
+        if pid_str.startswith("preview-") or pid_str.startswith("preview_") or did_str.startswith("preview-") or did_str.startswith("preview_"):
+            return
         with self._lock:
             data = self._read_attachments_full()
             key = self._project_attachment_key(project_id, data) or str(project_id)
@@ -628,6 +673,10 @@ relationships:
 
     def attach_shared_domain(self, project_id: str, domain_id: str) -> None:
         """Ensure ``domain_id`` is attached to the project as a shared domain (idempotent)."""
+        pid_str = str(project_id or "")
+        did_str = str(domain_id or "")
+        if pid_str.startswith("preview-") or pid_str.startswith("preview_") or did_str.startswith("preview-") or did_str.startswith("preview_"):
+            return
         with self._lock:
             data = self._read_attachments_full()
             key = self._project_attachment_key(project_id, data) or str(project_id)

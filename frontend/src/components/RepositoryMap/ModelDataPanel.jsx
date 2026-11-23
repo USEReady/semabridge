@@ -1,6 +1,52 @@
 import { useMemo, useState } from 'react';
 import { Copy, Search } from 'lucide-react';
 
+const selectStyle = {
+    border: '1px solid var(--border-color)',
+    borderRadius: 8,
+    padding: '8px 12px',
+    fontSize: 13,
+    background: 'var(--bg-app)',
+    color: 'var(--text-secondary)',
+    cursor: 'pointer',
+    outline: 'none',
+    minWidth: 140
+};
+
+const btnPrimary = {
+    border: '1px solid var(--border-color)',
+    borderRadius: 8,
+    background: '#2563EB',
+    color: '#fff',
+    padding: '8px 16px',
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 8,
+    transition: 'all 0.2s',
+    whiteSpace: 'nowrap'
+};
+
+const thStyle = {
+    textAlign: 'left',
+    padding: '12px 16px',
+    borderBottom: '1px solid var(--border-color)',
+    color: 'var(--text-tertiary)',
+    textTransform: 'uppercase',
+    letterSpacing: '.06em',
+    fontSize: 11,
+    fontWeight: 700
+};
+
+const tdStyle = {
+    textAlign: 'left',
+    padding: '12px 16px',
+    color: 'var(--text-primary)',
+    fontSize: 13
+};
+
   export default function ModelDataPanel({
       graphData,
       // diffReport = null,
@@ -432,49 +478,3 @@ function DetailCard({ label, value }) {
         </div>
     );
 }
-
-const selectStyle = {
-    border: '1px solid var(--border-color)',
-    borderRadius: 8,
-    padding: '8px 12px',
-    fontSize: 13,
-    background: 'var(--bg-app)',
-    color: 'var(--text-secondary)',
-    cursor: 'pointer',
-    outline: 'none',
-    minWidth: 140
-};
-
-const btnPrimary = {
-    border: '1px solid var(--border-color)',
-    borderRadius: 8,
-    background: '#2563EB',
-    color: '#fff',
-    padding: '8px 16px',
-    fontSize: 13,
-    fontWeight: 600,
-    cursor: 'pointer',
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 8,
-    transition: 'all 0.2s',
-    whiteSpace: 'nowrap'
-};
-
-const thStyle = {
-    textAlign: 'left',
-    padding: '12px 16px',
-    borderBottom: '1px solid var(--border-color)',
-    color: 'var(--text-tertiary)',
-    textTransform: 'uppercase',
-    letterSpacing: '.06em',
-    fontSize: 11,
-    fontWeight: 700
-};
-
-const tdStyle = {
-    textAlign: 'left',
-    padding: '12px 16px',
-    color: 'var(--text-primary)',
-    fontSize: 13
-};

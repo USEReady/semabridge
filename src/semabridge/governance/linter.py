@@ -36,6 +36,8 @@ class LintReport(BaseModel):
     warning_count: int
     issues: List[LintIssue] = Field(default_factory=list)
     summary: str
+    metrics_checked: int = 0
+    concepts_checked: int = 0
 
 
 # Concept/attribute identifiers: snake_case in either warehouse case (order_line / ORDER_LINE).
@@ -105,8 +107,10 @@ class SemanticLinter:
         # 1. Rule: Existing Metric Collisions + Separator-Normalized Collisions (E7, E8)
         reported_collision_keys: Set[str] = set()
         for col in ontology.collisions:
-            if allowed_cf and not any(d.casefold() in allowed_cf for d in (col.conflicting_domains or [])):
-                continue
+            if allowed_cf:
+                matching_count = sum(1 for d in (col.conflicting_domains or []) if d.casefold() in allowed_cf)
+                if matching_count < 2:
+                    continue
             reported_collision_keys.add(_norm_metric_name(col.item_name))
             issues.append(
                 LintIssue(
@@ -464,13 +468,15 @@ class SemanticLinter:
                 if node not in visited:
                     _dfs(node)
 
+        metrics_checked = len(all_metrics)
+        concepts_checked = len(all_concepts)
         error_count = sum(1 for i in issues if i.severity == "ERROR")
         warning_count = sum(1 for i in issues if i.severity == "WARNING")
-        passed = error_count == 0
+        passed = error_count == 0 and (metrics_checked > 0 or concepts_checked > 0)
 
         summary = (
             f"CI/CD Governance Gate: {'PASSED' if passed else 'FAILED'} · "
-            f"{error_count} Errors, {warning_count} Warnings across {len(all_metrics)} metrics."
+            f"{error_count} Errors, {warning_count} Warnings across {metrics_checked} metrics."
         )
 
         return LintReport(
@@ -480,4 +486,6 @@ class SemanticLinter:
             warning_count=warning_count,
             issues=issues,
             summary=summary,
+            metrics_checked=metrics_checked,
+            concepts_checked=concepts_checked,
         )

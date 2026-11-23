@@ -9,11 +9,14 @@ validation error naming the key, never a silently dropped value.
 
 from __future__ import annotations
 
+import logging
 import re
 from enum import Enum
 from typing import Annotated, Any, Dict, List, Literal, Optional
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
+
+logger = logging.getLogger("semabridge.ontology.models")
 
 
 class ConceptType(str, Enum):
@@ -239,6 +242,71 @@ class DomainConcept(_StrictModel):
         return self
 
 
+def strip_ddl_clauses(expr: Any) -> Any:
+    """Strip top-level WITH SYNONYMS and COMMENT clauses tracking quote and bracket state."""
+    if not isinstance(expr, str):
+        return expr
+    s = expr
+    n = len(s)
+    in_single = False
+    in_double = False
+    depth = 0
+    i = 0
+    cut_idx = None
+
+    while i < n:
+        c = s[i]
+        if in_single:
+            if c == "'":
+                if i + 1 < n and s[i + 1] == "'":
+                    i += 2
+                    continue
+                in_single = False
+            i += 1
+            continue
+        elif in_double:
+            if c == '"':
+                if i + 1 < n and s[i + 1] == '"':
+                    i += 2
+                    continue
+                in_double = False
+            i += 1
+            continue
+
+        if c == "'":
+            in_single = True
+            i += 1
+            continue
+        elif c == '"':
+            in_double = True
+            i += 1
+            continue
+        elif c in "([{":
+            depth += 1
+            i += 1
+            continue
+        elif c in ")]}":
+            depth = max(0, depth - 1)
+            i += 1
+            continue
+
+        if depth == 0:
+            prev_ok = (i == 0) or s[i - 1].isspace() or s[i - 1] in (',', ';')
+            if prev_ok:
+                rest = s[i:]
+                if re.match(r"^WITH\s+SYNONYMS\b", rest, re.IGNORECASE):
+                    cut_idx = i
+                    break
+                if re.match(r"^COMMENT\s*=", rest, re.IGNORECASE):
+                    cut_idx = i
+                    break
+        i += 1
+
+    if cut_idx is not None:
+        s = s[:cut_idx]
+    return s.rstrip().rstrip(",").rstrip()
+
+
 class DomainMetric(_StrictModel):
     name: str = Field(..., min_length=1)
     logical_name: Optional[str] = None
@@ -267,12 +335,22 @@ class DomainMetric(_StrictModel):
     # Optional explicit binding to the concept (dataset) this metric is computed over.
     concept: Optional[str] = None
     semantic_view_name: Optional[str] = None
+    non_additive_dimension: Optional[str] = None
     tags: CleanList = Field(default_factory=list)
     # Explicit binding to model measure names ("Measure" or "Table.Measure").
     maps_to: CleanList = Field(default_factory=list)
     origin: Optional[Origin] = None
     stale: bool = False
     bi_description: Optional[str] = None
+
+    @field_validator("sql_expression", mode="before")
+    @classmethod
+    def _strip_ddl_clauses(cls, v: Any, info: ValidationInfo) -> Any:
+        cleaned = strip_ddl_clauses(v)
+        if isinstance(v, str) and cleaned != v.strip():
+            m_name = (info.data.get("name") if info and hasattr(info, "data") else None) or "unknown"
+            logger.warning("Stripped DDL clause from metric '%s' sql_expression", m_name)
+        return cleaned
 
     @model_validator(mode="after")
     def _derive_aggregation(self) -> "DomainMetric":
@@ -385,7 +463,8 @@ class OntologyCollision(BaseModel):
     conflicting_domains: List[str]
     descriptions: Dict[str, Optional[str]] = Field(default_factory=dict)
     expressions: Dict[str, Optional[str]] = Field(default_factory=dict)
-    severity: str = "WARNING"  # 'WARNING' or 'ERROR'
+    severity: str = "WARNING"  # 'WARNING' or 'ERROR' or 'INFO'
+    identical: bool = False
     message: str
 
 

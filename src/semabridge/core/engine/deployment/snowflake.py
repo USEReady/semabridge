@@ -78,12 +78,35 @@ def target_snowflake_config(context: RunContext):
     from semabridge.auth.credential_builder import build_snowflake_config, project_snowflake_target
 
     with db_manager.get_session() as session:
-        account = session.execute(
-            select(Account).where(
-                Account.connector_type == "SNOWFLAKE",
-                Account.id == identity_id,
-            )
-        ).scalars().first()
+        account = None
+        if identity_id:
+            account = session.execute(
+                select(Account).where(
+                    Account.connector_type == "SNOWFLAKE",
+                    Account.id == identity_id,
+                )
+            ).scalars().first()
+
+        if not account:
+            # Fall back to default or active Snowflake account configured in database
+            account = session.execute(
+                select(Account).where(
+                    Account.connector_type == "SNOWFLAKE",
+                    Account.is_default == True,
+                )
+            ).scalars().first()
+            if not account:
+                account = session.execute(
+                    select(Account).where(
+                        Account.connector_type == "SNOWFLAKE",
+                        Account.status == "Active",
+                    )
+                ).scalars().first()
+            if account:
+                logger.info(
+                    "Resolved active Snowflake account %s (%s) for target (fallback from identity_id %s)",
+                    account.tag, account.id, identity_id,
+                )
 
         if not account:
             logger.warning(
@@ -287,6 +310,8 @@ def _do_snowflake_deploy(self, context: RunContext, sf_cfg) -> None:
                 for entry in (getattr(emitter, "data_backfill_results", None) or [])
             ]
             context.cortex_validation_results = list(getattr(emitter, "cortex_validation_results", None) or [])
+            context.ti_anchor_stats = list(getattr(emitter, "ti_anchor_stats", None) or [])
+            context.ti_failed_closed_metrics = list(getattr(emitter, "ti_failed_closed_metrics", None) or [])
             context.deployed_ddl_text = getattr(emitter, "_last_deployed_ddl_text", None)
             # Journal of the warehouse objects this deploy staged, promoted,
             # dropped and cleaned up (connectors/staged_deploy.py).

@@ -1,7 +1,10 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { authFetch } from '../utils/api';
+import { useProjects } from '../hooks/useProjects';
 import Modal from '../components/common/Modal';
 import { ImpactReport } from '../components/ontology/GovernancePanels';
+import DeployedViewSelector from '../components/common/DeployedViewSelector';
 import {
   Play, Check, X, RefreshCw, Clock, Layers, ShieldCheck, ArrowLeftRight,
   Trash2, CheckCircle2, AlertTriangle, Code, Sparkles, HelpCircle,
@@ -46,18 +49,6 @@ const BTN_PRIMARY = {
   color: '#fff',
 };
 
-function useProjects() {
-  const [projects, setProjects] = useState([]);
-  const [projectId, setProjectId] = useState('');
-  useEffect(() => {
-    authFetch('/api/projects?limit=200&offset=0')
-      .then((r) => (r.ok ? r.json() : []))
-      .then((list) => setProjects(Array.isArray(list) ? list : (list?.projects || [])))
-      .catch(() => setProjects([]));
-  }, []);
-  return { projects, projectId, setProjectId };
-}
-
 export function DriftView({ projectId = '' }) {
   const [events, setEvents] = useState([]);
   const [schedules, setSchedules] = useState([]);
@@ -69,12 +60,28 @@ export function DriftView({ projectId = '' }) {
 
   // Blast Radius Modal state & simulation in mock mode for Drift Monitoring
   const [blastModalOpen, setBlastModalOpen] = useState(false);
-  const [blastTarget, setBlastTarget] = useState('TOTAL_UNITS');
+  const [blastTarget, setBlastTarget] = useState('');
   const [blastType, setBlastType] = useState('METRIC');
   const [blastChangeType, setBlastChangeType] = useState('MODIFY_EXPRESSION');
   const [blastLoading, setBlastLoading] = useState(false);
   const [blastReport, setBlastReport] = useState(null);
   const [blastError, setBlastError] = useState('');
+  const [projectMetrics, setProjectMetrics] = useState([]);
+
+  useEffect(() => {
+    if (!projectId) {
+      setProjectMetrics([]);
+      return;
+    }
+    authFetch(`/api/reconciliation/project-metrics?project_id=${encodeURIComponent(projectId)}`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => setProjectMetrics(d?.metrics || []))
+      .catch(() => setProjectMetrics([]));
+  }, [projectId, authFetch]);
+
+  const quickTargets = useMemo(() => {
+    return Array.from(new Set(projectMetrics.map((m) => m.name || m.logical_name).filter(Boolean)));
+  }, [projectMetrics]);
 
   const runBlastSimulation = async (targetOverride, changeTypeOverride, typeOverride) => {
     const target = (targetOverride ?? blastTarget).trim();
@@ -92,7 +99,6 @@ export function DriftView({ projectId = '' }) {
           target_type: tType,
           change_type: cType,
           project_id: projectId || undefined,
-          mock_mode: true,
         }),
       });
       const data = await res.json();
@@ -109,14 +115,16 @@ export function DriftView({ projectId = '' }) {
   };
 
   const handleOpenBlast = (initialTarget = '') => {
-    const candidate = initialTarget || events[0]?.metric_name || 'TOTAL_UNITS';
+    const candidate = initialTarget || events[0]?.metric_name || quickTargets[0] || '';
     setBlastTarget(candidate);
-    setBlastType(candidate === 'SalesFact' ? 'TABLE' : 'METRIC');
+    setBlastType('METRIC');
     setBlastChangeType('MODIFY_EXPRESSION');
     setBlastReport(null);
     setBlastError('');
     setBlastModalOpen(true);
-    runBlastSimulation(candidate, 'MODIFY_EXPRESSION', candidate === 'SalesFact' ? 'TABLE' : 'METRIC');
+    if (candidate) {
+      runBlastSimulation(candidate, 'MODIFY_EXPRESSION', 'METRIC');
+    }
   };
 
   const refresh = useCallback(async () => {
@@ -207,7 +215,7 @@ export function DriftView({ projectId = '' }) {
               borderColor: 'rgba(168, 85, 247, 0.35)',
               color: 'var(--accent-purple, #a855f7)',
             }}
-            onClick={() => handleOpenBlast(events[0]?.metric_name || 'TOTAL_UNITS')}
+            onClick={() => handleOpenBlast(events[0]?.metric_name || quickTargets[0] || '')}
             title="Check Blast Radius: see how metric changes affect downstream BI reports & AI agents"
           >
             <Zap size={13} style={{ color: 'var(--accent-purple, #a855f7)' }} /> Check Blast Radius
@@ -276,13 +284,12 @@ export function DriftView({ projectId = '' }) {
                 padding: 14,
                 borderRadius: 8,
                 background: 'var(--bg-app)',
-                border: `1px solid ${
-                  isPending
+                border: `1px solid ${isPending
                     ? 'rgba(234, 179, 8, 0.4)'
                     : isApproved
-                    ? 'rgba(34, 197, 94, 0.3)'
-                    : 'var(--border-main)'
-                }`,
+                      ? 'rgba(34, 197, 94, 0.3)'
+                      : 'var(--border-main)'
+                  }`,
                 display: 'flex',
                 flexDirection: 'column',
                 gap: 8,
@@ -295,41 +302,41 @@ export function DriftView({ projectId = '' }) {
                 {(ev.badges || [ev.drift_type])
                   .filter((b) => !['PENDING_APPROVAL', 'APPROVED', 'IGNORED', 'PENDING'].includes(String(b).toUpperCase()))
                   .map((badge, bIdx) => (
-                  <span
-                    key={bIdx}
-                    style={{
-                      fontSize: 10,
-                      fontWeight: 700,
-                      padding: '2px 6px',
-                      borderRadius: 4,
-                      textTransform: 'uppercase',
-                      background: badge.includes('MISMATCH')
-                        ? 'rgba(234, 179, 8, 0.15)'
-                        : badge.includes('FILTER')
-                        ? 'rgba(59, 130, 246, 0.15)'
-                        : badge.includes('DATE') || badge.includes('WINDOW')
-                        ? 'rgba(168, 85, 247, 0.15)'
-                        : badge.includes('APPROVED')
-                        ? 'rgba(34, 197, 94, 0.15)'
-                        : badge.includes('IGNORED')
-                        ? 'rgba(239, 68, 68, 0.15)'
-                        : 'rgba(107, 114, 128, 0.15)',
-                      color: badge.includes('MISMATCH')
-                        ? 'var(--color-warning)'
-                        : badge.includes('FILTER')
-                        ? 'var(--accent-blue)'
-                        : badge.includes('DATE') || badge.includes('WINDOW')
-                        ? 'var(--accent-purple)'
-                        : badge.includes('APPROVED')
-                        ? 'var(--color-success)'
-                        : badge.includes('IGNORED')
-                        ? 'var(--color-error)'
-                        : 'var(--text-secondary)',
-                    }}
-                  >
-                    {badge.replace(/_/g, ' ')}
-                  </span>
-                ))}
+                    <span
+                      key={bIdx}
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        padding: '2px 6px',
+                        borderRadius: 4,
+                        textTransform: 'uppercase',
+                        background: badge.includes('MISMATCH')
+                          ? 'rgba(234, 179, 8, 0.15)'
+                          : badge.includes('FILTER')
+                            ? 'rgba(59, 130, 246, 0.15)'
+                            : badge.includes('DATE') || badge.includes('WINDOW')
+                              ? 'rgba(168, 85, 247, 0.15)'
+                              : badge.includes('APPROVED')
+                                ? 'rgba(34, 197, 94, 0.15)'
+                                : badge.includes('IGNORED')
+                                  ? 'rgba(239, 68, 68, 0.15)'
+                                  : 'rgba(107, 114, 128, 0.15)',
+                        color: badge.includes('MISMATCH')
+                          ? 'var(--color-warning)'
+                          : badge.includes('FILTER')
+                            ? 'var(--accent-blue)'
+                            : badge.includes('DATE') || badge.includes('WINDOW')
+                              ? 'var(--accent-purple)'
+                              : badge.includes('APPROVED')
+                                ? 'var(--color-success)'
+                                : badge.includes('IGNORED')
+                                  ? 'var(--color-error)'
+                                  : 'var(--text-secondary)',
+                      }}
+                    >
+                      {badge.replace(/_/g, ' ')}
+                    </span>
+                  ))}
                 <span style={{
                   fontSize: 10,
                   fontWeight: 700,
@@ -403,13 +410,13 @@ export function DriftView({ projectId = '' }) {
                 <div style={{ padding: '8px 10px', borderRadius: 6, background: 'var(--bg-surface)', border: '1px solid var(--border-main)' }}>
                   <div style={{ color: 'var(--text-primary)', fontWeight: 600, marginBottom: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
                     <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <Sparkles size={12} style={{ color: 'var(--accent-blue)' }} /> Snowflake Warehouse (Proposed / SemaBridge Logic):
+                      <Sparkles size={12} style={{ color: 'var(--accent-blue)' }} /> Proposed Resolution:
                     </span>
                     <span style={{ fontSize: 9.5, padding: '1px 5px', borderRadius: 3, background: 'var(--bg-surface-raised)', border: '1px solid var(--border-main)', color: 'var(--text-secondary)', fontWeight: 700 }}>
-                      SEMABRIDGE
+                      REDEPLOY
                     </span>
                   </div>
-                  <code style={{ color: 'var(--text-primary)', wordBreak: 'break-all', fontWeight: 600 }}>{ev.proposed_snowflake_definition || ev.semabridge_definition || '—'}</code>
+                  <code style={{ color: 'var(--text-primary)', wordBreak: 'break-all', fontWeight: 600 }}>{ev.proposed_snowflake_definition || 'redeploy from source'}</code>
                 </div>
               </div>
 
@@ -455,7 +462,9 @@ export function DriftView({ projectId = '' }) {
         open={blastModalOpen}
         onClose={() => setBlastModalOpen(false)}
         title="Blast Radius & Downstream BI Impact"
-        size="lg"
+        size="2xl"
+        width={960}
+        style={{ maxWidth: 960, width: '95vw' }}
         footer={(
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
             <span style={{ fontSize: 11, color: 'var(--text-tertiary)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
@@ -514,15 +523,7 @@ export function DriftView({ projectId = '' }) {
               style={{ ...INPUT, width: '100%', boxSizing: 'border-box' }}
             />
             <datalist id="drift-blast-metrics">
-              {Array.from(new Set([
-                'TOTAL_UNITS',
-                'UNITS',
-                'SalesFact',
-                'COUNT_OF_PRODUCT',
-                'SALES_DOL',
-                'SENTIMENT_SCORE',
-                ...events.map((e) => e.metric_name).filter(Boolean),
-              ])).map((m) => (
+              {quickTargets.map((m) => (
                 <option key={m} value={m} />
               ))}
             </datalist>
@@ -574,11 +575,10 @@ export function DriftView({ projectId = '' }) {
           </div>
 
           {/* Quick Target Chips */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 11 }}>
-            <span style={{ color: 'var(--text-secondary)' }}>Quick Targets:</span>
-            {['TOTAL_UNITS', 'TOTAL_UNITS_YTD', 'TOTAL_VANARSDEL_UNITS', 'PCT_UNITS_MARKET_SHARE', 'TOTAL_CATEGORY_VOLUME', 'SalesFact', 'COUNT_OF_PRODUCT', 'MARGIN_PCT', 'SALES_DOL', 'SENTIMENT_SCORE']
-              .filter((v, i, arr) => arr.indexOf(v) === i)
-              .map((t) => (
+          {quickTargets.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 11 }}>
+              <span style={{ color: 'var(--text-secondary)' }}>Quick Targets:</span>
+              {quickTargets.slice(0, 12).map((t) => (
                 <button
                   key={t}
                   type="button"
@@ -593,14 +593,15 @@ export function DriftView({ projectId = '' }) {
                   }}
                   onClick={() => {
                     setBlastTarget(t);
-                    setBlastType(t === 'SalesFact' ? 'TABLE' : 'METRIC');
-                    runBlastSimulation(t, blastChangeType, t === 'SalesFact' ? 'TABLE' : 'METRIC');
+                    setBlastType('METRIC');
+                    runBlastSimulation(t, blastChangeType, 'METRIC');
                   }}
                 >
                   {t}
                 </button>
               ))}
-          </div>
+            </div>
+          )}
 
           {/* Error Message */}
           {blastError && (
@@ -670,7 +671,7 @@ export function ReverseSyncView({ projectId = '' }) {
           setBiAccountId(defBi.id);
         }
       })
-      .catch(() => {});
+      .catch(() => { });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadSemanticViews = useCallback(async (acctId) => {
@@ -715,7 +716,7 @@ export function ReverseSyncView({ projectId = '' }) {
         setBiWorkspaces(ws);
         if (ws.length) setBiWorkspaceId(ws[0].id || ws[0].workspace_id || '');
       })
-      .catch(() => {});
+      .catch(() => { });
   }, [biAccountId]);
 
   useEffect(() => {
@@ -730,7 +731,7 @@ export function ReverseSyncView({ projectId = '' }) {
         setBiModels(models);
         if (models.length) setBiModelId(models[0].id || models[0].model_id || models[0].name || '');
       })
-      .catch(() => {});
+      .catch(() => { });
   }, [biWorkspaceId, biAccountId]);
 
   const runPreview = async () => {
@@ -868,12 +869,15 @@ export function ReverseSyncView({ projectId = '' }) {
 }
 
 function BiTruthView({ projectId }) {
+  const [searchParams] = useSearchParams();
+  const selectedView = searchParams.get('view') || '';
   const [cases, setCases] = useState([]);
   const [runs, setRuns] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [infoMsg, setInfoMsg] = useState('');
   const [limit, setLimit] = useState(15);
+  const [replaceDrafts, setReplaceDrafts] = useState(false);
   const [filter, setFilter] = useState('all'); // 'all' | 'draft' | 'approved' | 'rejected'
 
   // Forms for adding manual and importing documents
@@ -997,7 +1001,9 @@ function BiTruthView({ projectId }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           project_id: projectId || undefined,
+          view: selectedView || undefined,
           limit: Number(limit) || 15,
+          replace_drafts: replaceDrafts,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -1007,7 +1013,7 @@ function BiTruthView({ projectId }) {
         if (data.added_count > 0) {
           setInfoMsg(`Generated ${data.added_count} new test questions from project model.`);
         } else {
-          setInfoMsg('All model questions are already loaded below.');
+          setInfoMsg(`No new questions - all ${data.skipped_count || 'existing'} already exist.`);
         }
         setTimeout(() => setInfoMsg(''), 4000);
       }
@@ -1063,7 +1069,10 @@ function BiTruthView({ projectId }) {
         method: 'POST',
         timeoutMs: 180000,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project_id: projectId || undefined }),
+        body: JSON.stringify({
+          project_id: projectId || undefined,
+          view: selectedView || undefined,
+        }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -1124,6 +1133,15 @@ function BiTruthView({ projectId }) {
                 <option value={50}>50 questions</option>
                 <option value={100}>All questions</option>
               </select>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer', marginLeft: 4 }}>
+                <input
+                  type="checkbox"
+                  checked={replaceDrafts}
+                  onChange={(e) => setReplaceDrafts(e.target.checked)}
+                />
+                Replace drafts
+              </label>
+              {projectId && <DeployedViewSelector projectId={projectId} />}
             </div>
             {draftCount > 0 && (
               <button type="button" style={BTN} onClick={approveAllDrafts}>
@@ -1412,7 +1430,7 @@ function BiTruthView({ projectId }) {
                 onClick={() => {
                   setUploadFileName('sample_questions.csv');
                   setUploadText(
-`question,expected_sql,metric_name
+                    `question,expected_sql,metric_name
 "What is total sales amount?","SELECT SUM(sales) FROM sales_fact;","Total Sales"
 "What is the total order count?","SELECT COUNT(order_id) FROM orders_fact;","Order Count"
 "Show sales by region","SELECT region, SUM(sales) FROM sales_fact GROUP BY region;","Regional Sales"`
@@ -1448,7 +1466,7 @@ function BiTruthView({ projectId }) {
                 onClick={() => {
                   setUploadFileName('sample_qa.txt');
                   setUploadText(
-`Q: What was total units sold this quarter?
+                    `Q: What was total units sold this quarter?
 A: SELECT SUM(units) FROM sales_fact WHERE quarter = 1;
 
 Q: What is total net margin percentage?
@@ -1513,8 +1531,19 @@ A: SELECT (SUM(margin) / NULLIF(SUM(revenue), 0)) * 100 FROM sales_fact;`
         </div>
 
         {filteredCases.length === 0 ? (
-          <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-secondary)', fontSize: 12.5 }}>
-            No test questions in this view. Click <strong>Generate from Project Model &amp; Metrics</strong> above to automatically create questions tailored to your project.
+          <div style={{ padding: 28, textAlign: 'center', color: 'var(--text-secondary)', fontSize: 12.5, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+            <div>No test questions in this view yet.</div>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={generate}
+              style={{ ...BTN_PRIMARY, background: 'var(--accent-blue)', color: '#fff', padding: '8px 16px', fontSize: 12.5 }}
+            >
+              <Sparkles size={14} /> {busy ? 'Generating…' : 'Generate from project model & metrics'}
+            </button>
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+              Automatically creates certified executive questions tailored to your project model and semantic view.
+            </div>
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -1530,11 +1559,10 @@ A: SELECT (SUM(margin) / NULLIF(SUM(revenue), 0)) * 100 FROM sales_fact;`
                     padding: 12,
                     borderRadius: 8,
                     background: 'var(--bg-app)',
-                    border: `1px solid ${
-                      runRes
+                    border: `1px solid ${runRes
                         ? runRes.passed ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'
                         : isApproved ? 'rgba(34,197,94,0.2)' : 'var(--border-main)'
-                    }`,
+                      }`,
                     display: 'flex',
                     flexDirection: 'column',
                     gap: 8,
@@ -1653,13 +1681,17 @@ A: SELECT (SUM(margin) / NULLIF(SUM(revenue), 0)) * 100 FROM sales_fact;`
 function CrossPlatformView({ projectId }) {
   const [versionTag, setVersionTag] = useState('v1.0.0');
   const [preview, setPreview] = useState(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
   const [accounts, setAccounts] = useState([]);
   const [sfAccountId, setSfAccountId] = useState('');
   const [dbAccountId, setDbAccountId] = useState('');
-  const [sfSql, setSfSql] = useState('SELECT 1 AS OK');
-  const [dbSql, setDbSql] = useState('SELECT 1 AS OK');
+  const [sfSql, setSfSql] = useState('');
+  const [dbSql, setDbSql] = useState('');
   const [parity, setParity] = useState(null);
   const [checking, setChecking] = useState(false);
+  const [metrics, setMetrics] = useState([]);
+  const [selectedMetric, setSelectedMetric] = useState('');
+  const [loadingMetrics, setLoadingMetrics] = useState(false);
 
   useEffect(() => {
     authFetch('/api/accounts')
@@ -1672,19 +1704,95 @@ function CrossPlatformView({ projectId }) {
         if (sf) setSfAccountId(sf.id);
         if (db) setDbAccountId(db.id);
       })
-      .catch(() => {});
+      .catch(() => { });
   }, []);
 
+  const handleMetricSelect = useCallback((metricName, metricList = metrics) => {
+    setSelectedMetric(metricName);
+    const m = (metricList || []).find((x) => x.name === metricName);
+    if (m) {
+      const expr = m.sql_expression || 'COUNT(*)';
+      const tbl = m.table || m.concept;
+      const query = tbl ? `SELECT ${expr} AS ${m.name} FROM ${tbl}` : `SELECT ${expr} AS ${m.name}`;
+      setSfSql(query);
+      setDbSql(query);
+    }
+  }, [metrics]);
+
+  useEffect(() => {
+    if (!projectId) {
+      setMetrics([]);
+      setSelectedMetric('');
+      return;
+    }
+    setLoadingMetrics(true);
+    authFetch(`/api/reconciliation/project-metrics?project_id=${encodeURIComponent(projectId)}`)
+      .then((r) => (r.ok ? r.json() : { metrics: [] }))
+      .then((data) => {
+        const list = data.metrics || [];
+        setMetrics(list);
+        if (list.length > 0) {
+          const first = list[0];
+          handleMetricSelect(first.name, list);
+        }
+      })
+      .catch(() => { })
+      .finally(() => setLoadingMetrics(false));
+  }, [projectId, handleMetricSelect]);
+
   const loadPreview = async () => {
-    const res = await authFetch('/api/cross-platform/preview', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project_id: projectId || undefined, version_tag: versionTag }),
-    });
-    if (res.ok) setPreview(await res.json());
+    setLoadingPreview(true);
+    try {
+      const res = await authFetch('/api/cross-platform/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: projectId || undefined,
+          metric: selectedMetric || undefined,
+          version_tag: versionTag,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPreview(data);
+        if ((!metrics || metrics.length === 0) && data.metrics?.length > 0) {
+          setMetrics(data.metrics);
+          if (!selectedMetric) {
+            handleMetricSelect(data.metrics[0].name, data.metrics);
+          }
+        }
+      }
+    } finally {
+      setLoadingPreview(false);
+    }
   };
 
   const runParity = async () => {
+    let querySf = sfSql.trim();
+    let queryDb = dbSql.trim();
+
+    if (!querySf && selectedMetric) {
+      const m = metrics.find((x) => x.name === selectedMetric);
+      if (m) {
+        const expr = m.sql_expression || 'COUNT(*)';
+        const tbl = m.table || m.concept;
+        querySf = tbl ? `SELECT ${expr} AS ${m.name} FROM ${tbl}` : `SELECT ${expr} AS ${m.name}`;
+        setSfSql(querySf);
+      }
+    }
+    if (!queryDb && querySf) {
+      queryDb = querySf;
+      setDbSql(queryDb);
+    }
+
+    if (!querySf) {
+      setParity({
+        parity_passed: false,
+        error: 'Please select a metric or enter a Snowflake SQL query before running parity.',
+      });
+      return;
+    }
+
     setChecking(true);
     try {
       const res = await authFetch('/api/cross-platform/parity-check', {
@@ -1692,13 +1800,26 @@ function CrossPlatformView({ projectId }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           project_id: projectId || undefined,
-          sql_snowflake: sfSql,
-          sql_databricks: dbSql,
+          sql_snowflake: querySf,
+          sql_databricks: queryDb || undefined,
           snowflake_account_id: sfAccountId || undefined,
           databricks_account_id: dbAccountId || undefined,
         }),
       });
-      if (res.ok) setParity(await res.json());
+      if (res.ok) {
+        setParity(await res.json());
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setParity({
+          parity_passed: false,
+          error: err.detail || 'Parity check request failed',
+        });
+      }
+    } catch (exc) {
+      setParity({
+        parity_passed: false,
+        error: String(exc?.message || exc),
+      });
     } finally {
       setChecking(false);
     }
@@ -1710,7 +1831,7 @@ function CrossPlatformView({ projectId }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={CARD}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10 }}>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11.5, color: 'var(--text-secondary)' }}>
             Snowflake Account
             <select style={INPUT} value={sfAccountId} onChange={(e) => setSfAccountId(e.target.value)}>
@@ -1726,25 +1847,87 @@ function CrossPlatformView({ projectId }) {
             </select>
           </label>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11.5, color: 'var(--text-secondary)' }}>
+            Metric to Verify
+            <select
+              style={INPUT}
+              value={selectedMetric}
+              onChange={(e) => handleMetricSelect(e.target.value)}
+              aria-label="Metric to verify"
+            >
+              <option value="">{metrics.length ? 'Select metric to compile…' : (loadingMetrics ? 'Loading metrics…' : 'No metrics in project')}</option>
+              {metrics.map((m) => (
+                <option key={m.name} value={m.name}>
+                  {m.label ? `${m.label} (${m.name})` : m.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11.5, color: 'var(--text-secondary)' }}>
             Version Tag
             <input style={INPUT} value={versionTag} onChange={(e) => setVersionTag(e.target.value)} placeholder="Version tag" />
           </label>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button type="button" style={BTN_PRIMARY} onClick={loadPreview}><Layers size={13} /> Preview Snowflake · Databricks · Fabric</button>
-          <button type="button" style={BTN} disabled={checking} onClick={runParity}><Play size={13} /> {checking ? 'Running…' : 'Run Side-by-Side Parity'}</button>
+          <button type="button" style={BTN_PRIMARY} disabled={loadingPreview} onClick={loadPreview}>
+            <Layers size={13} /> {loadingPreview ? 'Compiling…' : 'Preview Snowflake · Databricks · Fabric'}
+          </button>
+          <button type="button" style={BTN} disabled={checking} onClick={runParity}>
+            <Play size={13} /> {checking ? 'Running Parity…' : 'Run Side-by-Side Parity'}
+          </button>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 8 }}>
-          <input style={INPUT} value={sfSql} onChange={(e) => setSfSql(e.target.value)} placeholder="Snowflake SQL" />
-          <input style={INPUT} value={dbSql} onChange={(e) => setDbSql(e.target.value)} placeholder="Databricks SQL" />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 10 }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11.5, color: 'var(--text-secondary)' }}>
+            Snowflake Query
+            <textarea
+              style={{ ...INPUT, height: 72, fontFamily: 'monospace', resize: 'vertical' }}
+              value={sfSql}
+              onChange={(e) => setSfSql(e.target.value)}
+              placeholder="Snowflake SQL (e.g. SELECT COUNT(*) AS Case_Count)"
+            />
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11.5, color: 'var(--text-secondary)' }}>
+            Databricks Query
+            <textarea
+              style={{ ...INPUT, height: 72, fontFamily: 'monospace', resize: 'vertical' }}
+              value={dbSql}
+              onChange={(e) => setDbSql(e.target.value)}
+              placeholder="Databricks SQL (e.g. SELECT COUNT(*) AS Case_Count)"
+            />
+          </label>
         </div>
         {parity && (
-          <div style={{ fontSize: 12, padding: 10, borderRadius: 8, background: 'var(--bg-app)', border: '1px solid var(--border-main)' }}>
-            <strong style={{ color: parity.parity_passed ? 'var(--color-success)' : 'var(--color-warning)' }}>
-              {parity.parity_passed ? 'PARITY PASSED' : 'PARITY MISMATCH / NOT EXECUTED'}
-            </strong>
-            <div>Snowflake: {parity.snowflake?.success ? `${parity.snowflake.row_count} row(s)` : (parity.snowflake?.error || 'failed')}</div>
-            <div>Databricks: {parity.databricks?.success ? `${parity.databricks.row_count} row(s)` : (parity.databricks?.error || 'failed')}</div>
+          <div style={{ fontSize: 12, padding: 12, borderRadius: 8, background: 'var(--bg-app)', border: '1px solid var(--border-main)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              {parity.parity_passed ? <CheckCircle2 size={15} color="var(--color-success)" /> : <AlertTriangle size={15} color="var(--color-warning)" />}
+              <strong style={{ color: parity.parity_passed ? 'var(--color-success)' : 'var(--color-warning)' }}>
+                {parity.parity_passed ? 'PARITY PASSED — RESULTS MATCH' : 'PARITY MISMATCH / NOT EXECUTED'}
+              </strong>
+            </div>
+            {parity.error && <div style={{ color: 'var(--color-warning)', fontSize: 11.5 }}>{parity.error}</div>}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
+              <div style={{ padding: 10, borderRadius: 6, background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+                <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>Snowflake Result</div>
+                <div style={{ fontSize: 11, color: parity.snowflake?.success ? 'var(--color-success)' : 'var(--text-secondary)' }}>
+                  {parity.snowflake?.success ? `${parity.snowflake.row_count} row(s) returned` : (parity.snowflake?.error || 'Execution failed')}
+                </div>
+                {parity.snowflake?.success && parity.snowflake.rows?.length > 0 && (
+                  <pre style={{ margin: '6px 0 0', fontSize: 10.5, maxHeight: 110, overflow: 'auto', color: 'var(--text-secondary)' }}>
+                    {JSON.stringify(parity.snowflake.rows.slice(0, 5), null, 2)}
+                  </pre>
+                )}
+              </div>
+              <div style={{ padding: 10, borderRadius: 6, background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+                <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>Databricks Result</div>
+                <div style={{ fontSize: 11, color: parity.databricks?.success ? 'var(--color-success)' : 'var(--text-secondary)' }}>
+                  {parity.databricks?.success ? `${parity.databricks.row_count} row(s) returned` : (parity.databricks?.error || 'Execution failed')}
+                </div>
+                {parity.databricks?.success && parity.databricks.rows?.length > 0 && (
+                  <pre style={{ margin: '6px 0 0', fontSize: 10.5, maxHeight: 110, overflow: 'auto', color: 'var(--text-secondary)' }}>
+                    {JSON.stringify(parity.databricks.rows.slice(0, 5), null, 2)}
+                  </pre>
+                )}
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -1752,7 +1935,7 @@ function CrossPlatformView({ projectId }) {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
           {Object.entries(preview.previews || {}).map(([platform, info]) => (
             <div key={platform} style={CARD}>
-              <strong style={{ textTransform: 'uppercase', fontSize: 12 }}>{platform} ({info.metric_count} metrics)</strong>
+              <strong style={{ textTransform: 'uppercase', fontSize: 12 }}>{platform} ({info.metric_count} metric{info.metric_count === 1 ? '' : 's'})</strong>
               {info.gaps?.length > 0 && <div style={{ fontSize: 11, color: 'var(--color-warning)' }}>{info.gaps.join(' · ')}</div>}
               <pre style={{ margin: 0, fontSize: 11, maxHeight: 260, overflow: 'auto', background: 'var(--bg-app)', padding: 10, borderRadius: 8 }}>{info.definition}</pre>
             </div>
@@ -1771,7 +1954,7 @@ const TITLES = {
 };
 
 export default function GovernanceSuitePage({ mode = 'drift' }) {
-  const { projects, projectId, setProjectId } = useProjects();
+  const { projects, selectedProjectId: projectId, setSelectedProjectId: setProjectId } = useProjects();
   const [title, subtitle] = TITLES[mode] || TITLES.drift;
   return (
     <div style={{ height: '100%', overflow: 'auto', padding: '24px 28px', background: 'var(--bg-app)' }}>
@@ -1783,9 +1966,14 @@ export default function GovernanceSuitePage({ mode = 'drift' }) {
           </div>
           <select style={INPUT} value={projectId} onChange={(e) => setProjectId(e.target.value)} aria-label="Project scope">
             <option value="">All projects</option>
-            {projects.map((p) => (
-              <option key={p.id || p.name} value={p.id || p.name}>{p.name || p.id}</option>
-            ))}
+            {projects.map((p) => {
+              const pid = p.id || p.project_id || p.name;
+              return (
+                <option key={pid} value={pid}>
+                  {p.name || pid} ({pid})
+                </option>
+              );
+            })}
           </select>
         </div>
         {mode === 'drift' && <DriftView projectId={projectId} />}

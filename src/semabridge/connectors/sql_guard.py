@@ -353,6 +353,65 @@ def validate_read_only_sql(sql: str, *, warn_only: Optional[bool] = None) -> boo
         )
 
     clean = non_empty[0]
+
+    # Strip comments and string literals to inspect query structure for mutations
+    code_no_strings = re.sub(r"'(?:''|[^'])*'", "''", strip_sql_comments(clean))
+    code_no_strings = re.sub(r'"(?:""|[^"])*"', '""', code_no_strings)
+    code_no_strings = re.sub(r"\$\$.*?\$\$", "$$$$", code_no_strings, flags=re.DOTALL)
+
+    import sqlglot
+    import sqlglot.expressions as exp
+
+    # Check statement AST types instead of substring keyword matching
+    # to avoid blocking valid column names (comment, list, set, use) and functions (GET())
+    parsed_statements = None
+    try:
+        parsed_statements = sqlglot.parse(clean, read="snowflake")
+    except Exception:
+        pass
+
+    if parsed_statements:
+        forbidden_types = (
+            exp.Insert, exp.Delete, exp.Update, exp.Drop, exp.Alter, exp.Create,
+            exp.Merge, exp.TruncateTable, exp.Comment, exp.Use, exp.Set,
+            exp.Commit, exp.Rollback, exp.ListStage, exp.Put,
+        )
+        for stmt in parsed_statements:
+            if not stmt:
+                continue
+            found_forbidden = list(stmt.find_all(forbidden_types))
+            if found_forbidden:
+                node = found_forbidden[0]
+                kw = type(node).__name__.upper()
+                preview = clean[:120].replace("\n", " ")
+                return _reject(f"Read-only SQL guard blocked forbidden operation '{kw}': {preview!r}.")
+
+            if isinstance(stmt, exp.Command):
+                cmd_text = (stmt.this or "").strip().upper()
+                cmd_kw = cmd_text.split()[0] if cmd_text else "COMMAND"
+                if cmd_kw in {"USE", "SET", "UNSET", "COMMENT", "CALL", "EXECUTE", "COPY", "PUT", "GET", "REMOVE", "LIST", "GRANT", "REVOKE", "BEGIN", "COMMIT", "ROLLBACK", "UNDROP"}:
+                    preview = clean[:120].replace("\n", " ")
+                    return _reject(f"Read-only SQL guard blocked forbidden command '{cmd_kw}': {preview!r}.")
+
+    # Check statement-leading keyword (top-level operation)
+    clean_first_word = re.match(r"^\s*([A-Za-z]+)\b", clean)
+    if clean_first_word:
+        first_kw = clean_first_word.group(1).upper()
+        if first_kw in {"DELETE", "INSERT", "UPDATE", "DROP", "ALTER", "TRUNCATE", "MERGE", "CREATE", "GRANT", "REVOKE", "CALL", "EXECUTE", "COPY", "PUT", "USE", "UNDROP", "COMMENT", "BEGIN", "COMMIT", "ROLLBACK", "SET", "UNSET", "REMOVE", "LIST"}:
+            preview = clean[:120].replace("\n", " ")
+            return _reject(f"Read-only SQL guard blocked forbidden operation '{first_kw}': {preview!r}.")
+
+    # For nested DML mutations in non-AST constructs
+    mutation_match = re.search(
+        r"\b(DELETE\s+FROM|INSERT\s+INTO|INSERT\s+OVERWRITE|UPDATE\s+\w+\s+SET|DROP\s+(?:TABLE|VIEW|SCHEMA|DATABASE)|TRUNCATE\s+TABLE|ALTER\s+(?:TABLE|SESSION|USER)|CREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMPORARY\s+)?(?:TABLE|VIEW|SEMANTIC\s+VIEW)|GRANT\s+\w+\s+ON|REVOKE\s+\w+\s+ON|EXECUTE\s+IMMEDIATE)\b",
+        code_no_strings,
+        re.IGNORECASE,
+    )
+    if mutation_match:
+        kw = mutation_match.group(1).upper()
+        preview = clean[:120].replace("\n", " ")
+        return _reject(f"Read-only SQL guard blocked forbidden operation '{kw}': {preview!r}.")
+
     for pattern, op_name in _EXPLICIT_FORBIDDEN_PATTERNS:
         if pattern.search(clean):
             preview = clean[:120].replace("\n", " ")
@@ -373,8 +432,12 @@ def validate_read_only_sql(sql: str, *, warn_only: Optional[bool] = None) -> boo
                 f"Read-only SQL guard blocked potentially side-effecting system function '{sys_func}': {preview!r}."
             )
 
+    clean_unwrapped = clean.strip()
+    while clean_unwrapped.startswith("(") and clean_unwrapped.endswith(")"):
+        clean_unwrapped = clean_unwrapped[1:-1].strip()
+
     for pattern, action_name in _ALLOWLIST_PATTERNS:
-        if action_name in _READ_ONLY_ALLOWED_ACTIONS and pattern.search(clean):
+        if action_name in _READ_ONLY_ALLOWED_ACTIONS and (pattern.search(clean) or pattern.search(clean_unwrapped)):
             return True
 
     preview = clean[:120].replace("\n", " ")

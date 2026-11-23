@@ -21,7 +21,10 @@ from semabridge.repository.orm.account_models import (
     Post,
 )
 from semabridge.repository.orm.project_models import (
+    DriftBaselineRow,
     DriftEventRow,
+    DriftLastCheckRow,
+    DriftScheduleRow,
     MappingOverride,
     Project,
     ProjectConfigVersion,
@@ -84,7 +87,10 @@ __all__ = [
     "Project",
     "ProjectConfigVersion",
     "MappingOverride",
+    "DriftBaselineRow",
     "DriftEventRow",
+    "DriftLastCheckRow",
+    "DriftScheduleRow",
     "LocalFolder",
     "RetentionPolicy",
     # Execution runs

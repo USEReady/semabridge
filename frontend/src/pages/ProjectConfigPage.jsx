@@ -42,6 +42,32 @@ const FormCard = ({ title, subtitle, children }) => (
   </div>
 );
 
+const modalInputStyle = {
+  width: '100%',
+  padding: 8,
+  borderRadius: 6,
+  border: '1px solid var(--border-main)',
+  fontSize: 13,
+  background: 'var(--bg-input)',
+  color: 'var(--text-primary)',
+  boxSizing: 'border-box',
+};
+
+const primaryBtn = {
+  display: 'inline-flex', alignItems: 'center', gap: 6,
+  padding: '8px 14px', borderRadius: 8, border: 'none',
+  background: 'var(--accent-blue)', color: '#fff',
+  fontSize: 13, fontWeight: 600, cursor: 'pointer',
+};
+
+const secondaryBtn = {
+  display: 'inline-flex', alignItems: 'center', gap: 6,
+  padding: '8px 14px', borderRadius: 8,
+  border: '1px solid var(--border-main)',
+  background: 'transparent', color: 'var(--text-secondary)',
+  fontSize: 13, fontWeight: 600, cursor: 'pointer',
+};
+
 const FormLabel = ({ children }) => (
   <label style={{ 
     display: 'block', 
@@ -788,8 +814,9 @@ export default function ProjectConfigPage({ embedded = false } = {}) {
         console.warn('[ProjectConfigPage] load:failed', { projectId: id, requestId });
         setProject(null);
       } finally {
-        if (cancelled || initialLoadRequestRef.current !== requestId) return;
-        setLoading(false);
+        if (!cancelled && initialLoadRequestRef.current === requestId) {
+          setLoading(false);
+        }
       }
     })();
     return () => {
@@ -945,7 +972,7 @@ export default function ProjectConfigPage({ embedded = false } = {}) {
     return normalized;
   };
 
-  const parseProjectYaml = (yaml, projectMeta) => {
+  function parseProjectYaml(yaml, projectMeta) {
     const raw = String(yaml || '').trim();
     const fallbackTarget = ['fabric', 'snowflake', 'databricks'].includes(projectMeta?.target_type) ? projectMeta.target_type : 'snowflake';
     const fallbackSource = projectMeta?.source || 'fabric';
@@ -1039,7 +1066,7 @@ export default function ProjectConfigPage({ embedded = false } = {}) {
     };
   };
 
-  const hydrateFormFromYaml = (yaml, projectMeta) => {
+  function hydrateFormFromYaml(yaml, projectMeta) {
     const parsed = parseProjectYaml(yaml, projectMeta);
     setConfigTree(parsed.tree || {});
     setConfigForm(parsed.form);
@@ -3202,29 +3229,3 @@ function InfoRow({ label, value, mono = false }) {
     </div>
   );
 }
-
-const modalInputStyle = {
-  width: '100%',
-  padding: 8,
-  borderRadius: 6,
-  border: '1px solid var(--border-main)',
-  fontSize: 13,
-  background: 'var(--bg-input)',
-  color: 'var(--text-primary)',
-  boxSizing: 'border-box',
-};
-
-const primaryBtn = {
-  display: 'inline-flex', alignItems: 'center', gap: 6,
-  padding: '8px 14px', borderRadius: 8, border: 'none',
-  background: 'var(--accent-blue)', color: '#fff',
-  fontSize: 13, fontWeight: 600, cursor: 'pointer',
-};
-
-const secondaryBtn = {
-  display: 'inline-flex', alignItems: 'center', gap: 6,
-  padding: '8px 14px', borderRadius: 8,
-  border: '1px solid var(--border-main)',
-  background: 'transparent', color: 'var(--text-secondary)',
-  fontSize: 13, fontWeight: 600, cursor: 'pointer',
-};

@@ -2370,8 +2370,8 @@ async def clear_job_runs_compat(before: Optional[str] = None, user_id: Optional[
                                 f.unlink(missing_ok=True)
                             elif f.is_dir():
                                 shutil.rmtree(f, ignore_errors=True)
-                        except Exception:
-                            pass
+                        except Exception as rm_exc:
+                            logger.debug("Artifact removal failed for %s: %s", f, rm_exc)
                 if RUN_LOGS_ROOT.exists():
                     for f in list(RUN_LOGS_ROOT.glob(f"**/{rid}*")):
                         try:
@@ -2379,8 +2379,8 @@ async def clear_job_runs_compat(before: Optional[str] = None, user_id: Optional[
                                 f.unlink(missing_ok=True)
                             elif f.is_dir():
                                 shutil.rmtree(f, ignore_errors=True)
-                        except Exception:
-                            pass
+                        except Exception as rm_exc:
+                            logger.debug("Run log removal failed for %s: %s", f, rm_exc)
     except Exception as clean_exc:
         logger.debug("Artifact disk cleanup error: %s", clean_exc)
 

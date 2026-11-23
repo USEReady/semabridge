@@ -82,6 +82,9 @@ class FeatureFlag:
 
 
 FLAGS: List[FeatureFlag] = [
+    FeatureFlag("SEMABRIDGE_EMIT_GOVERNED_SPLITS", "bool", "false",
+                "Emit boolean IS_<MEASURE> status dimensions for filtered measures (off by default).",
+                "converter/osi_to_sml.py"),
     FeatureFlag("AUTH_ENABLED", "bool", "true",
                 "Enforce JWT authentication. Fails closed: only an explicit false/0/no/off disables it.",
                 "auth/flags.py"),

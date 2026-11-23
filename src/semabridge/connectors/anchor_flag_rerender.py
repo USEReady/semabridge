@@ -45,6 +45,7 @@ def rerender_anchor_dependent_metrics(
     label: str = "",
     failed_enrichment_datasets: Optional[Set[str]] = None,
     failed_enrichment_errors: Optional[Dict[str, str]] = None,
+    anchor_dates: Optional[Dict[str, str]] = None,
 ) -> int:
     """Re-translate every metric whose DAX resolves to a time-intelligence
     shape, passing `anchor_flag_map`, and overwrite `metric.sql_expression`
@@ -127,15 +128,43 @@ def rerender_anchor_dependent_metrics(
 
         dataset_name = getattr(metric, "dataset", None)
         target_ds = dataset_name
-        flag_map_for_dataset = anchor_flag_map.get(str(dataset_name or "").casefold(), {})
+        flag_map_for_dataset = anchor_flag_map.get(name) or anchor_flag_map.get(str(dataset_name or "").casefold(), {})
+
+        def _is_virtual_dataset(ds_name: str) -> bool:
+            ds = next((d for d in getattr(model, "datasets", []) or [] if getattr(d, "unique_name", "") == ds_name), None)
+            if not ds:
+                return False
+            if getattr(ds, "is_measure_table", False):
+                return True
+            cols = getattr(ds, "columns", []) or []
+            if not cols:
+                return True
+            non_dummy = [c for c in cols if getattr(c, "unique_name", "").upper() not in ("ID", "NAME", "DESCRIPTION", "_ID")]
+            return len(non_dummy) == 0
+
         if not flag_map_for_dataset and anchor_flag_map:
-            if len(anchor_flag_map) == 1:
-                target_ds, flag_map_for_dataset = next(iter(anchor_flag_map.items()))
-            else:
-                for k, v in anchor_flag_map.items():
-                    if v:
-                        target_ds, flag_map_for_dataset = k, v
+            resolved_from_dax = None
+            dax_expr_str = str(dax_expr or "")
+            # Only redirect if this metric lives in a virtual/measure dataset
+            if _is_virtual_dataset(str(dataset_name or "")):
+                for ds_k in anchor_flag_map.keys():
+                    if ds_k and re.search(rf"(?:'|\b){re.escape(ds_k)}(?:'|\b)\s*\[", dax_expr_str, re.IGNORECASE):
+                        resolved_from_dax = ds_k
                         break
+                if resolved_from_dax and anchor_flag_map.get(resolved_from_dax):
+                    target_ds, flag_map_for_dataset = resolved_from_dax, anchor_flag_map[resolved_from_dax]
+
+        # Multi-fact metric: if metric references multiple facts, combine their flag maps
+        leaf_facts = [
+            ds_k for ds_k in anchor_flag_map.keys()
+            if ds_k and re.search(rf"(?:'|\b){re.escape(ds_k)}(?:'|\b)\s*\[", str(dax_expr or ""), re.IGNORECASE)
+        ]
+        if len(leaf_facts) > 1:
+            combined_map = {}
+            for lf in leaf_facts:
+                combined_map.update(anchor_flag_map.get(lf, {}))
+            if combined_map:
+                flag_map_for_dataset = combined_map
 
         # If enriched view creation failed for this dataset, emit NULL with the real Snowflake error (no CURRENT_DATE fallback)
         failed_sets = failed_enrichment_datasets or set()
@@ -158,13 +187,16 @@ def rerender_anchor_dependent_metrics(
             continue
 
         if not flag_map_for_dataset:
-            # No confirmed flag map: leave the metric's existing rendering
-            # alone (no re-render to CURRENT_DATE() just because a map is
-            # missing) -- UNLESS that rendering cites this metric's own flag
-            # column (an earlier predicted pass upgraded it), which will never
-            # exist. Then retranslate with the empty map to restore the same
-            # rendering a never-enriched fact table gets, instead of leaving a
-            # dangling column reference.
+            # Policy: Time-intelligence metrics without a data anchor flag must fail closed
+            # to NULL rather than silently falling back to CURRENT_DATE() (unless explicit TODAY()/NOW()).
+            has_today_now = bool(re.search(r"\b(TODAY|NOW)\s*\(", str(dax_expr or "").upper()))
+            if not has_today_now:
+                metric.sql_expression = None
+                metric.sync_failure_reason = "no data anchor; would be anchored to today's date"
+                metric.sync_enabled = False
+                logger.info("No data anchor flags for '%s'; metric '%s' emitted as NULL", target_ds, name)
+                rerendered += 1
+                continue
             current_sql = getattr(metric, "sql_expression", None)
             if not enrichment_flag_column_if_referenced(shaped.get(name), current_sql):
                 continue
@@ -199,7 +231,13 @@ def rerender_anchor_dependent_metrics(
             translation.sql[:160],
         )
         metric.sql_expression = translation.sql
-        sync_time_anchor_advisory(metric, translation.sql)
+        m_anchor_dates = None
+        if anchor_dates:
+            if leaf_facts:
+                m_anchor_dates = {lf: anchor_dates[lf.casefold()] for lf in leaf_facts if lf.casefold() in anchor_dates}
+            elif target_ds and str(target_ds).casefold() in anchor_dates:
+                m_anchor_dates = {str(target_ds): anchor_dates[str(target_ds).casefold()]}
+        sync_time_anchor_advisory(metric, translation.sql, anchor_dates=m_anchor_dates)
         rerendered += 1
 
     return rerendered
@@ -211,11 +249,15 @@ ADVISORY_CATEGORY_TI_ANCHORED_TO_DATA = "time_intelligence_anchored_to_latest_da
 _PRIOR_PERIOD_FLAG_RE = re.compile(r"(SPLY|_PY_|_PY$|PRIOR|PREV|LAST_YEAR|_LY_|_LY$)")
 
 
-def _ti_data_anchor_note(flags: List[str]) -> str:
+def _ti_data_anchor_note(flags: List[str], anchor_dates: Optional[Dict[str, str]] = None) -> str:
+    date_clause = ""
+    if anchor_dates:
+        parts = [f"{table}: {dt}" for table, dt in sorted(anchor_dates.items())]
+        date_clause = f" (anchor date: {', '.join(parts)})"
     note = (
         "Time-intelligence window is anchored to the latest date in the data "
-        f"(enriched-view period flag {', '.join(flags)}), as DAX does with no date filter; "
-        "the window does not move with a period chosen in the query."
+        f"(enriched-view period flag {', '.join(flags)}{date_clause}), rather than the calendar's last date "
+        "(as a bare card does with no date filter); the window does not move with a period chosen in the query."
     )
     if any(_PRIOR_PERIOD_FLAG_RE.search(f) for f in flags):
         # E18: a per-period "same period last year" (shifting with each
@@ -232,7 +274,7 @@ def _ti_data_anchor_note(flags: List[str]) -> str:
     return note
 
 
-def sync_time_anchor_advisory(metric: Any, sql: Optional[str]) -> None:
+def sync_time_anchor_advisory(metric: Any, sql: Optional[str], anchor_dates: Optional[Dict[str, str]] = None) -> None:
     """Keep the metric's time-anchor advisory in line with the SQL it now has
     (E17). A metric first rendered with the CURRENT_DATE() fallback and then
     re-rendered against the enriched view's data-anchored period flags must
@@ -252,12 +294,12 @@ def sync_time_anchor_advisory(metric: Any, sql: Optional[str]) -> None:
     ]
     cats = [c for c in cats if c not in (ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE, ADVISORY_CATEGORY_TI_ANCHORED_TO_DATA)]
     sql_u = str(sql or "").upper()
-    flags = sorted(set(re.findall(r'\b(IS_[A-Z0-9_]+)\b', sql_u)))
+    flags = sorted(set(re.findall(r'\b((?:IS|FLAG)_[A-Z0-9_]+)\b', sql_u)))
     if "CURRENT_DATE()" in sql_u:
         notes.append(ADVISORY_NOTE_TI_ANCHORED_TO_CURRENT_DATE)
         cats.append(ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE)
     elif flags:
-        notes.append(_ti_data_anchor_note(flags))
+        notes.append(_ti_data_anchor_note(flags, anchor_dates=anchor_dates))
         cats.append(ADVISORY_CATEGORY_TI_ANCHORED_TO_DATA)
     try:
         metric.advisory_notes = notes

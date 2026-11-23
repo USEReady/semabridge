@@ -143,31 +143,33 @@ class DimensionsClauseBuilder:
                 if str(phys_col or "").upper().startswith(("ALL_", "__SB_")):
                     continue
                 
-                # Prefer live (confirmed Snowflake) schema over modeled fallback.
-                _live = (live_col_lookup or {}).get(attr.dataset)
-                if _live is not None:
-                    if phys_col not in _live:
-                        missing_dims.setdefault(attr.dataset, [])
-                        if phys_col not in missing_dims[attr.dataset]:
-                            missing_dims[attr.dataset].append(phys_col)
-                        self.drop_ledger.record(
-                            "column", attr.unique_name, DropStage.SCHEMA_VALIDATION,
-                            f"Column '{phys_col}' is present in the model but not found in the "
-                            f"live Snowflake schema for dataset '{attr.dataset}'",
-                            dataset=attr.dataset,
-                        )
-                        continue
-                else:
-                    known_phys = dataset_col_lookup.get(attr.dataset, set())
-                    if known_phys and phys_col not in known_phys:
-                        self.drop_ledger.record(
-                            "column", attr.unique_name, DropStage.SCHEMA_VALIDATION,
-                            f"Column '{phys_col}' is present in the model but not found in the "
-                            f"known physical schema for dataset '{attr.dataset}' "
-                            "(no live Snowflake schema was fetched to confirm it)",
-                            dataset=attr.dataset,
-                        )
-                        continue
+                is_split = bool(getattr(attr, "is_split", False) or getattr(attr, "is_split_dimension", False))
+                if not is_split:
+                    # Prefer live (confirmed Snowflake) schema over modeled fallback.
+                    _live = (live_col_lookup or {}).get(attr.dataset)
+                    if _live is not None:
+                        if phys_col not in _live:
+                            missing_dims.setdefault(attr.dataset, [])
+                            if phys_col not in missing_dims[attr.dataset]:
+                                missing_dims[attr.dataset].append(phys_col)
+                            self.drop_ledger.record(
+                                "column", attr.unique_name, DropStage.SCHEMA_VALIDATION,
+                                f"Column '{phys_col}' is present in the model but not found in the "
+                                f"live Snowflake schema for dataset '{attr.dataset}'",
+                                dataset=attr.dataset,
+                            )
+                            continue
+                    else:
+                        known_phys = dataset_col_lookup.get(attr.dataset, set())
+                        if known_phys and phys_col not in known_phys:
+                            self.drop_ledger.record(
+                                "column", attr.unique_name, DropStage.SCHEMA_VALIDATION,
+                                f"Column '{phys_col}' is present in the model but not found in the "
+                                f"known physical schema for dataset '{attr.dataset}' "
+                                "(no live Snowflake schema was fetched to confirm it)",
+                                dataset=attr.dataset,
+                            )
+                            continue
 
                 semantic_name = self.sanitizer.sanitize_semantic_name(attr.unique_name)
                 dim_key = (alias, semantic_name, phys_col)
@@ -201,9 +203,13 @@ class DimensionsClauseBuilder:
                         alias_to_phys_col[(alias, str(orig_pbix).strip().upper())] = phys_col
 
                     priv_prefix = "PRIVATE " if self._is_hidden_column(dataset_obj, raw_col, phys_col, attr=attr) else ""
+                    if is_split and getattr(attr, "expression", None):
+                        ref_expr = f"({attr.expression})"
+                    else:
+                        ref_expr = self.sanitizer.format_physical_column_ref(alias, phys_col, model_name=model_name)
                     dims_lines.append(
                         f'  {priv_prefix}{alias}."{emitted_name}" AS '
-                        f'{self.sanitizer.format_physical_column_ref(alias, phys_col, model_name=model_name)}'
+                        f'{ref_expr}'
                         f'{synonyms_clause(col_synonyms, element_description(attr, column_of(dataset_obj, raw_col)))}'
                     )
                     added_dimensions.add(dim_key)
@@ -266,11 +272,12 @@ class DimensionsClauseBuilder:
                     )
                     continue
 
+                is_split = bool(getattr(col, "is_split", False) or getattr(col, "is_split_dimension", False))
                 source_expr = getattr(col, 'source_expression', None)
                 is_calc = bool(getattr(col, "is_calculated", False)) or bool(
                     source_expr and not IdentifierSanitizer.is_physical_source_column(source_expr)
                 )
-                if is_calc:
+                if not is_split and is_calc:
                     # A DAX calculated column has no physical column unless the
                     # user materialized it; emit it only when the live schema
                     # confirms the column, otherwise record a by-design drop.
@@ -287,29 +294,30 @@ class DimensionsClauseBuilder:
                         )
                         continue
 
-                _live = (live_col_lookup or {}).get(dataset.unique_name)
-                if _live is not None:
-                    if phys_col not in _live:
-                        missing_dims.setdefault(dataset.unique_name, [])
-                        if phys_col not in missing_dims[dataset.unique_name]:
-                            missing_dims[dataset.unique_name].append(phys_col)
-                        self.drop_ledger.record(
-                            "column", col.unique_name, DropStage.SCHEMA_VALIDATION,
-                            f"Column '{phys_col}' is present in the model but not found in the "
-                            f"live Snowflake schema for dataset '{dataset.unique_name}'",
-                            dataset=dataset.unique_name,
-                        )
-                        continue
-                else:
-                    known_phys = dataset_col_lookup.get(dataset.unique_name, set())
-                    if known_phys and phys_col not in known_phys:
-                        self.drop_ledger.record(
-                            "column", col.unique_name, DropStage.SCHEMA_VALIDATION,
-                            f"Column '{phys_col}' is present in the model but not found in the "
-                            f"known physical schema for dataset '{dataset.unique_name}' "
-                            "(no live Snowflake schema was fetched to confirm it)",
-                            dataset=dataset.unique_name,
-                        )
+                if not is_split:
+                    _live = (live_col_lookup or {}).get(dataset.unique_name)
+                    if _live is not None:
+                        if phys_col not in _live:
+                            missing_dims.setdefault(dataset.unique_name, [])
+                            if phys_col not in missing_dims[dataset.unique_name]:
+                                missing_dims[dataset.unique_name].append(phys_col)
+                            self.drop_ledger.record(
+                                "column", col.unique_name, DropStage.SCHEMA_VALIDATION,
+                                f"Column '{phys_col}' is present in the model but not found in the "
+                                f"live Snowflake schema for dataset '{dataset.unique_name}'",
+                                dataset=dataset.unique_name,
+                            )
+                            continue
+                    else:
+                        known_phys = dataset_col_lookup.get(dataset.unique_name, set())
+                        if known_phys and phys_col not in known_phys:
+                            self.drop_ledger.record(
+                                "column", col.unique_name, DropStage.SCHEMA_VALIDATION,
+                                f"Column '{phys_col}' is present in the model but not found in the "
+                                f"known physical schema for dataset '{dataset.unique_name}' "
+                                "(no live Snowflake schema was fetched to confirm it)",
+                                dataset=dataset.unique_name,
+                            )
                 if excluded_fact_cols and (alias.upper(), str(phys_col).upper()) in excluded_fact_cols:
                     continue
 
@@ -335,9 +343,14 @@ class DimensionsClauseBuilder:
                     if semantic_source_name not in col_syns:
                         col_syns.append(semantic_source_name)
                 priv_prefix = "PRIVATE " if self._is_hidden_column(dataset, col.unique_name, phys_col) else ""
+                is_split = bool(getattr(col, "is_split", False) or getattr(col, "is_split_dimension", False))
+                if is_split and getattr(col, "expression", None):
+                    ref_expr = f"({col.expression})"
+                else:
+                    ref_expr = self.sanitizer.format_physical_column_ref(alias, phys_col, model_name=model_name)
                 dims_lines.append(
                     f'  {priv_prefix}{alias}."{emitted_name}" AS '
-                    f'{self.sanitizer.format_physical_column_ref(alias, phys_col, model_name=model_name)}'
+                    f'{ref_expr}'
                     f'{synonyms_clause(col_syns, element_description(col))}'
                 )
                 added_dimensions.add((alias, emitted_name, phys_col))

@@ -1378,7 +1378,7 @@ export const api = {
     },
 
     // ── Projects ───────────────────────────────────────────────────────────
-    async listProjects({ limit = 50, offset = 0 } = {}) {
+    async listProjects({ limit = 200, offset = 0 } = {}) {
         const cacheKey = `projects:list:${limit}:${offset}`;
         const cached = getCachedApiValue(cacheKey);
         if (cached) return cached;

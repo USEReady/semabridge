@@ -1,10 +1,22 @@
 from __future__ import annotations
 
+import hashlib
 import re
 import threading
+import unicodedata
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, Generator, List, Set
+
+_CURRENCY_MAP = {
+    "$": "_USD_",
+    "€": "_EUR_",
+    "£": "_GBP_",
+    "¥": "_JPY_",
+    "₹": "_INR_",
+    "₩": "_KRW_",
+    "%": "_PCT_",
+}
 
 def get_target_deployment_name(display_name: str, platform: str = "") -> str:
     """
@@ -18,27 +30,44 @@ def get_target_deployment_name(display_name: str, platform: str = "") -> str:
     Returns:
         A deterministic, uppercase string safe for deployment.
     """
-    # Replace spaces with underscores
-    sanitized = display_name.replace(' ', '_')
-    # Remove any non-alphanumeric/underscore characters
-    sanitized = re.sub(r'[^a-zA-Z0-9_]', '', sanitized)
-    # Capitalize
+    raw = str(display_name or "")
+    for sym, rep in _CURRENCY_MAP.items():
+        raw = raw.replace(sym, rep)
+
+    # Decompose unicode characters (e.g. accented letters to base letters)
+    norm = unicodedata.normalize("NFKD", raw)
+    ascii_clean = norm.encode("ASCII", "ignore").decode("ASCII")
+
+    # Replace spaces with underscores, then strip non-alphanumeric/underscore (honors existing deployed names)
+    sanitized = ascii_clean.replace(" ", "_")
+    sanitized = re.sub(r"[^a-zA-Z0-9_]", "", sanitized)
+
     capitalized = sanitized.upper()
-    
-    # Apply platform-specific suffixes if provided, to ensure multiple
-    # models deployed from the same project get distinct names
+
+    # If all ASCII characters were stripped (e.g. pure CJK/emoji), hash the original name
+    if not capitalized:
+        h = hashlib.sha256(display_name.encode("utf-8")).hexdigest()[:8].upper()
+        capitalized = f"OBJ_{h}"
+    elif capitalized[0].isdigit():
+        capitalized = f"_{capitalized}"
+
+    suffix = ""
     if platform:
         p_upper = platform.upper()
         if p_upper == "SNOWFLAKE":
-            return f"{capitalized}_SEMANTIC"
+            suffix = "_SEMANTIC"
         elif p_upper == "FABRIC":
-            return f"{capitalized}_FB"
+            suffix = "_FB"
         elif p_upper == "DATABRICKS":
-            return f"{capitalized}_DBX"
+            suffix = "_DBX"
         else:
-            return f"{capitalized}_{p_upper}"
+            suffix = f"_{p_upper}"
 
-    return capitalized
+    max_base_len = 240 - len(suffix)
+    if len(capitalized) > max_base_len:
+        capitalized = capitalized[:max_base_len]
+
+    return f"{capitalized}{suffix}"
 
 
 class TargetLockManager:

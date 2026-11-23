@@ -132,7 +132,7 @@ def call_cortex_analyst(
     payload = {
         "messages": [
             {
-                "role": "user",
+                "role": "user",  # hardcoding-ok: Cortex Analyst chat message role
                 "content": [
                     {
                         "type": "text",

@@ -3,6 +3,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from starlette.responses import StreamingResponse
 from pydantic import BaseModel
 
 
@@ -56,6 +57,14 @@ logger = logging.getLogger(__name__)
 def _assert_project_access(project_id: str, user_id: str | None) -> None:
     """Synchronous access guard (shared implementation in project_ownership_service)."""
     assert_project_access(project_id, user_id, log_prefix="JobProjectAuth")
+
+
+@router.get("/api/jobs/stream")
+async def stream_jobs(request: Request):
+    """SSE endpoint for live job status updates."""
+    async def event_generator():
+        yield "data: {\"type\": \"connected\"}\n\n"
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.get("/api/jobs/runs")

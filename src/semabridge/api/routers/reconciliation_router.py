@@ -223,7 +223,13 @@ def _validate_generate_queries_request(req: GenerateQueriesRequest, resolved_kin
                     project_metrics.setdefault(m_c, set()).add(normalize_separator_ident(cand, pct_word=True))
 
     if (resolved_kind or "").strip().lower() == "semantic_view":
-        sv_metric = expr or req.metric_name.strip()
+        sv_metric = _effective_semantic_view_metric(expr, req.metric_name.strip())
+        if "." not in sv_metric and project_metrics:
+            m_norm = normalize_separator_ident(sv_metric, pct_word=True)
+            for c_name, m_set in project_metrics.items():
+                if m_norm in m_set:
+                    sv_metric = f"{c_name}.{sv_metric}"
+                    break
         if not _QUALIFIED_IDENT_RE.fullmatch(sv_metric):
             raise HTTPException(
                 status_code=400,
@@ -395,6 +401,26 @@ def generate_reconciliation_queries(req: GenerateQueriesRequest) -> Dict[str, st
 @router.post("/verify", response_model=VerificationResult)
 def verify_metric_results(req: ReconcileDataRequest) -> VerificationResult:
     """Compare DAX vs SQL result sets, compute parity metrics, and persist project certifications."""
+    from semabridge.reconciliation.mock_parity import is_mock_parity_enabled
+    mock_active = is_mock_parity_enabled()
+    if not req.dax_results:
+        return VerificationResult(
+            metric_name=req.metric_name,
+            dimension_keys=req.dimension_keys,
+            total_rows_compared=0,
+            total_rows=len(req.sql_results or []),
+            matched_rows=0,
+            mismatched_rows=0,
+            max_absolute_delta=0.0,
+            max_percentage_delta=0.0,
+            status="PBI_VALUES_NEEDED",
+            dax_query_executed=req.dax_query,
+            sql_query_executed=req.sql_query,
+            certification_badge="Power BI values needed",
+            sample_mismatches=[],
+            comparison_rows=[],
+            message="Power BI values needed: upload a Power BI CSV or connect Power BI Desktop / Fabric to compare slices.",
+        )
     verifier = GoldenQueryVerifier(default_tolerance=req.tolerance)
     result = verifier.reconcile_data(
         metric_name=req.metric_name,
@@ -405,7 +431,9 @@ def verify_metric_results(req: ReconcileDataRequest) -> VerificationResult:
         sql_query=req.sql_query,
         custom_tolerance=req.tolerance,
     )
-    if req.persist_certification and (req.project_id or req.domain or req.view_metric):
+    if mock_active:
+        result = result.model_copy(update={"status": "SIMULATED", "certification_badge": "SIMULATED"})
+    elif req.persist_certification and (req.project_id or req.domain or req.view_metric) and result.status == "CERTIFIED":
         tol = req.tolerance or verifier.tolerance
         save_certification_record(
             metric_name=req.metric_name,
@@ -428,6 +456,27 @@ def verify_metric_results(req: ReconcileDataRequest) -> VerificationResult:
             max_mismatch_percentage=tol.max_mismatch_percentage,
             certified_by=req.certified_by,
         )
+        if req.project_id and req.sql_query:
+            try:
+                from semabridge.ai.verified_queries_service import record_query_execution, save_verified_query
+                record_query_execution(
+                    project_id=req.project_id,
+                    sql=req.sql_query,
+                    success=True,
+                    execution_type="reconciliation",
+                    view_name=req.view_metric or "SEMANTIC_VIEW",
+                    target="SNOWFLAKE",
+                )
+                save_verified_query(
+                    project_id=req.project_id,
+                    question=f"Verified {req.metric_name}",
+                    sql=req.sql_query,
+                    confirmed=True,
+                    view_name=req.view_metric,
+                    target="SNOWFLAKE",
+                )
+            except Exception as vq_err:
+                logger.debug("Failed registering verified query from reconciliation: %s", vq_err)
     return result
 
 
@@ -532,6 +581,14 @@ def certify_metric_end_to_end(req: CertifyMetricRequest, request: Request) -> Di
         is_mock_parity_enabled,
         generate_mock_comparative_data,
     )
+    from semabridge.ai.project_connection import _project_meta
+    meta = _project_meta(req.project_id) if req.project_id else {}
+    target_dict = meta.get("target") or (meta.get("targets")[0] if isinstance(meta.get("targets"), list) and meta.get("targets") else {})
+    is_dbx = (
+        str(meta.get("target_platform") or "").lower() == "databricks"
+        or str(getattr(target_dict, "get", lambda *a: "")("platform") or getattr(target_dict, "get", lambda *a: "")("type") or "").lower() == "databricks"
+    )
+    target_engine = "DATABRICKS" if is_dbx else "SNOWFLAKE"
     mock_active = is_mock_parity_enabled()
 
     sql_rows: List[Dict[str, Any]] = []
@@ -551,12 +608,12 @@ def certify_metric_end_to_end(req: CertifyMetricRequest, request: Request) -> Di
         dax_backend_used = "mock_fabric_analysis"
     else:
         # Real connection execution path
-        # 1. Execute Snowflake / SQL query live (non-simulated)
+        # 1. Execute SQL query live (non-simulated)
         uid = getattr(request.state, "user_id", None)
         exec_resp = execute_semantic_query(
             ExecuteQueryRequest(
                 sql=sql_query,
-                target="SNOWFLAKE",
+                target=target_engine,
                 project_id=req.project_id,
                 limit=100000,
                 allow_simulated=False,
@@ -566,7 +623,7 @@ def certify_metric_end_to_end(req: CertifyMetricRequest, request: Request) -> Di
         if not exec_resp.success or exec_resp.is_simulated:
             raise HTTPException(
                 status_code=400,
-                detail=f"Live Snowflake execution failed: {exec_resp.error or exec_resp.message or 'unknown error'}",
+                detail=f"Live {target_engine} execution failed: {exec_resp.error or exec_resp.message or 'unknown error'}",
             )
 
         raw_sf_rows = [dict(zip(exec_resp.columns, r)) for r in exec_resp.rows]
@@ -579,7 +636,7 @@ def certify_metric_end_to_end(req: CertifyMetricRequest, request: Request) -> Di
             sql_rows.append(mapped)
 
         # 2. Obtain DAX rows via supplied export or automated run_dax backend
-        if req.dax_results is not None:
+        if req.dax_results is not None and len(req.dax_results) > 0:
             dax_rows = req.dax_results
             dax_backend_used = "manual_rows"
         else:
@@ -592,10 +649,40 @@ def certify_metric_end_to_end(req: CertifyMetricRequest, request: Request) -> Di
                     workspace=req.dax_workspace,
                     workspace_id=req.dax_workspace_id,
                 )
-                dax_rows = dax_exec.rows
-                dax_backend_used = dax_exec.backend
-            except DaxExecutionError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
+                if dax_exec and dax_exec.success and dax_exec.rows:
+                    dax_rows = dax_exec.rows
+                    dax_backend_used = dax_exec.backend
+            except Exception as exc:
+                logger.info("Automated DAX backend not available: %s", exc)
+                dax_rows = []
+
+        if not dax_rows:
+            needed_result = VerificationResult(
+                metric_name=req.metric_name,
+                dimension_keys=pbi_dims,
+                total_rows_compared=0,
+                total_rows=len(sql_rows),
+                matched_rows=0,
+                mismatched_rows=0,
+                max_absolute_delta=0.0,
+                max_percentage_delta=0.0,
+                status="PBI_VALUES_NEEDED",
+                dax_query_executed=dax_query,
+                sql_query_executed=sql_query,
+                certification_badge="Power BI values needed",
+                sample_mismatches=[],
+                comparison_rows=[],
+                message="Power BI values needed: upload a Power BI CSV or connect Power BI Desktop / Fabric to compare slices.",
+            )
+            return {
+                "verification": needed_result.model_dump(),
+                "certification": None,
+                "dax_backend": None,
+                "verified_query_registered": False,
+                "verified_query": None,
+                "status": "PBI_VALUES_NEEDED",
+                "message": "Power BI values needed: upload a Power BI CSV or connect Power BI Desktop / Fabric to compare slices.",
+            }
 
     # 3. Verify mathematical parity and persist certification record
     result = verifier.reconcile_data(
@@ -608,37 +695,43 @@ def certify_metric_end_to_end(req: CertifyMetricRequest, request: Request) -> Di
         custom_tolerance=req.tolerance,
     )
     tol = req.tolerance or verifier.tolerance
-    cert_record = save_certification_record(
-        metric_name=req.metric_name,
-        status=result.status,
-        certification_badge=result.certification_badge,
-        project_id=req.project_id,
-        domain=req.domain,
-        view_metric=view_metric,
-        dimensions=pbi_dims,
-        dax_query=dax_query,
-        sql_query=sql_query,
-        dax_row_count=len(dax_rows),
-        sql_row_count=len(sql_rows),
-        matched_rows=result.matched_rows,
-        mismatched_rows=result.mismatched_rows,
-        max_absolute_delta=result.max_absolute_delta,
-        max_percentage_delta=result.max_percentage_delta,
-        absolute_tolerance=tol.absolute_tolerance,
-        relative_tolerance=tol.relative_tolerance,
-        max_mismatch_percentage=tol.max_mismatch_percentage,
-        certified_by=req.certified_by,
-    )
+    cert_status = "SIMULATED" if mock_active else result.status
+    cert_badge = "SIMULATED" if mock_active else result.certification_badge
+    cert_record = None
+    if mock_active:
+        result = result.model_copy(update={"status": "SIMULATED", "certification_badge": "SIMULATED"})
+    elif result.status == "CERTIFIED":
+        cert_record = save_certification_record(
+            metric_name=req.metric_name,
+            status=cert_status,
+            certification_badge=cert_badge,
+            project_id=req.project_id,
+            domain=req.domain,
+            view_metric=view_metric,
+            dimensions=pbi_dims,
+            dax_query=dax_query,
+            sql_query=sql_query,
+            dax_row_count=len(dax_rows),
+            sql_row_count=len(sql_rows),
+            matched_rows=result.matched_rows,
+            mismatched_rows=result.mismatched_rows,
+            max_absolute_delta=result.max_absolute_delta,
+            max_percentage_delta=result.max_percentage_delta,
+            absolute_tolerance=tol.absolute_tolerance,
+            relative_tolerance=tol.relative_tolerance,
+            max_mismatch_percentage=tol.max_mismatch_percentage,
+            certified_by=req.certified_by,
+        )
 
     verified_entry = None
-    if req.register_verified_query and result.status == "CERTIFIED":
+    if req.register_verified_query and (not mock_active) and result.status == "CERTIFIED":
         question_text = (req.verified_question or "").strip() or (
             f"What is {req.metric_name}" + (f" by {', '.join(pbi_dims)}" if pbi_dims else "") + "?"
         )
         verified_entry = save_verified_query_record(
             question=question_text,
             sql=sql_query,
-            target="SNOWFLAKE",
+            target=target_engine,
             project_id=req.project_id,
             domain=req.domain,
         )
@@ -812,6 +905,18 @@ def update_metric_sql_expression(req: UpdateMetricSqlRequest) -> Dict[str, Any]:
     if not new_sql:
         raise HTTPException(status_code=400, detail="sql_expression must not be empty.")
 
+    # Check for self-referencing expression that only references the metric itself
+    clean_sql = new_sql.strip().replace('"', '').replace("'", "").replace("`", "").casefold()
+    m_bare = m_name_clean.replace('"', '').replace("'", "").replace("`", "").casefold()
+    m_leaf = m_bare.split(".")[-1]
+    has_sql_calc = bool(re.search(r"[()+\-*/=<>]|\b(?:CASE|WHEN|THEN|ELSE|END|AND|OR|NOT|SUM|COUNT|AVG|MIN|MAX|DIV0|COALESCE|IFF)\s*\(", new_sql, re.I))
+    parts = [p.strip() for p in clean_sql.split(".") if p.strip()]
+    if not has_sql_calc and (clean_sql == m_bare or clean_sql == m_leaf or (len(parts) <= 2 and parts[-1] == m_leaf)):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Self-referencing SQL expression is not allowed: '{new_sql}' only references metric '{m_name_clean}'. Provide a real SQL expression (e.g. COUNT(BU.BU)).",
+        )
+
     target_dom = None
     target_metric: Optional[DomainMetric] = None
     m_cf = m_name_clean.casefold()
@@ -851,6 +956,21 @@ def update_metric_sql_expression(req: UpdateMetricSqlRequest) -> Dict[str, Any]:
             detail=f"Metric '{m_name_clean}' not found in ontology.",
         )
 
+    tm_bare = target_metric.name.strip().replace('"', '').replace("'", "").replace("`", "").casefold()
+    tm_leaf = tm_bare.split(".")[-1]
+    c_name = getattr(target_metric, "concept", "") or ""
+    c_clean = c_name.strip().replace('"', '').replace("'", "").casefold()
+    self_refs = {tm_bare, tm_leaf, m_bare, m_leaf}
+    if c_clean:
+        self_refs.add(f"{c_clean}.{tm_leaf}")
+        self_refs.add(f"{c_clean}.{m_leaf}")
+        self_refs.add(f"{c_clean}.{tm_bare}")
+    if not has_sql_calc and clean_sql in self_refs:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Self-referencing SQL expression is not allowed: '{new_sql}' only references metric '{target_metric.name}'. Provide a real SQL expression (e.g. COUNT(BU.BU)).",
+        )
+
     updated_metrics = []
     for m in target_dom.metrics:
         if m.name.casefold() == target_metric.name.casefold():
@@ -877,27 +997,239 @@ def update_metric_sql_expression(req: UpdateMetricSqlRequest) -> Dict[str, Any]:
     }
 
 
+def _build_metrics_from_project_snapshots_or_view(project_id: str, dep_info: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Build reconciliation metrics from the project's latest successful deployed model (snapshot) or semantic view."""
+    from semabridge.ontology.project_models import project_models, ProjectModel
+    from semabridge.ontology.per_model import build_model_domain
+    from semabridge.repository.model_repository import ModelRepository
+
+    view_name = dep_info.get("semantic_view") or dep_info.get("view_name") or ""
+    metrics_list: List[Dict[str, Any]] = []
+    seen: Set[Any] = set()
+
+    # 1. Try from project models and snapshots
+    try:
+        pms = project_models(project_id, repo=ModelRepository())
+    except Exception as exc:
+        logger.debug("project_models lookup failed for %s: %s", project_id, exc)
+        pms = []
+
+    models_with_blob = [pm for pm in pms if pm.blob]
+    if not models_with_blob:
+        try:
+            head = ModelRepository().get_head(project_id)
+            if head and head.sml_blob:
+                models_with_blob = [
+                    ProjectModel(
+                        model_id=project_id,
+                        model_name=dep_info.get("model_name") or project_id,
+                        snapshot_id=head.snapshot_id,
+                        blob=head.sml_blob,
+                        semantic_view=view_name,
+                    )
+                ]
+        except Exception as exc:
+            logger.debug("get_head lookup failed for %s: %s", project_id, exc)
+
+    for pm in models_with_blob:
+        try:
+            dom = build_model_domain(project_id, pm)
+            concept_map = {c.name: c for c in getattr(dom, "concepts", [])}
+            for c in getattr(dom, "concepts", []):
+                if getattr(c, "logical_name", None):
+                    concept_map[c.logical_name] = c
+
+            sv_dom = getattr(dom, "semantic_view_name", None) or view_name
+            for m in getattr(dom, "metrics", []):
+                seen_key = (sv_dom.split(".")[-1].casefold() if sv_dom else dom.domain, m.name)
+                if seen_key in seen:
+                    continue
+                seen.add(seen_key)
+                c = concept_map.get(m.concept)
+                dims = []
+                if c:
+                    for a in getattr(c, "attributes", []):
+                        if not a.is_hidden and not re.search(r"INT|DEC|FLOAT|NUM", a.data_type or "", re.I):
+                            dim_name = f"{c.logical_name or c.name}.{a.logical_name or a.name}"
+                            dims.append(dim_name)
+
+                target_view = getattr(m, "semantic_view_name", None) or sv_dom or (c.physical_table if c else m.concept) or ""
+                target_kind = "semantic_view" if (sv_dom or getattr(m, "semantic_view_name", None)) else "table"
+
+                metrics_list.append({
+                    "name": m.name,
+                    "logical_name": m.logical_name or m.name,
+                    "label": m.label or m.name,
+                    "domain": dom.domain,
+                    "domain_id": dom.id,
+                    "model_id": getattr(dom, "source_model_id", None),
+                    "dax_expression": m.dax_expression or "",
+                    "sql_expression": m.sql_expression or "",
+                    "target_table_or_view": target_view,
+                    "target_kind": target_kind,
+                    "concept": m.concept,
+                    "dimensions": dims,
+                })
+        except Exception as exc:
+            logger.debug("Failed building domain from model %s: %s", pm.model_name, exc)
+
+    if metrics_list:
+        return metrics_list
+
+    # 2. Try DDL parsing if available
+    ddl = dep_info.get("ddl")
+    target_view = view_name or "SEMANTIC_VIEW"
+    if ddl and isinstance(ddl, str):
+        try:
+            from semabridge.connectors.snowflake_emitter_parts.semantic_view_items import SemanticViewDDL
+            from semabridge.ontology.models import strip_ddl_clauses
+
+            sv = SemanticViewDDL(ddl)
+            sv_dims: List[str] = []
+            for d in sv.items("DIMENSIONS"):
+                d_id = f"{d.alias}.{d.name}" if d.alias and d.name and "." not in d.name else d.name
+                if d_id and d_id not in sv_dims:
+                    sv_dims.append(d_id)
+
+            for m in sv.items("METRICS"):
+                m_name = m.name
+                if m_name and m_name not in seen:
+                    seen.add(m_name)
+                    clean_sql = strip_ddl_clauses(m.expr)
+                    metrics_list.append({
+                        "name": m_name,
+                        "logical_name": m_name,
+                        "label": m_name,
+                        "domain": project_id,
+                        "domain_id": project_id,
+                        "model_id": None,
+                        "dax_expression": "",
+                        "sql_expression": clean_sql,
+                        "target_table_or_view": target_view,
+                        "target_kind": "semantic_view",
+                        "concept": m.alias or "",
+                        "dimensions": sv_dims,
+                        "is_private": bool(m.private),
+                    })
+        except Exception as exc:
+            logger.debug("Failed extracting metrics from SemanticViewDDL: %s", exc)
+
+    if metrics_list:
+        return metrics_list
+
+    # 3. Try DESCRIBE SEMANTIC VIEW in Snowflake
+    if view_name:
+        try:
+            from semabridge.api.routers.ai_router import execute_semantic_query, ExecuteQueryRequest
+            desc_resp = execute_semantic_query(
+                ExecuteQueryRequest(
+                    sql=f"DESCRIBE SEMANTIC VIEW {view_name}",
+                    target="SNOWFLAKE",
+                    project_id=project_id,
+                )
+            )
+            rows = desc_resp.rows or []
+            cols = [str(c).upper() for c in (desc_resp.columns or [])]
+            kind_idx = cols.index("KIND") if "KIND" in cols else -1
+            name_idx = cols.index("NAME") if "NAME" in cols else 0
+            expr_idx = cols.index("EXPRESSION") if "EXPRESSION" in cols else -1
+
+            dims = []
+            metrics_raw = []
+            for r in rows:
+                k = str(r[kind_idx]).upper() if kind_idx >= 0 and kind_idx < len(r) else ""
+                n = str(r[name_idx]).strip().replace('"', '') if name_idx < len(r) else ""
+                e = str(r[expr_idx]).strip() if expr_idx >= 0 and expr_idx < len(r) else n
+                if "DIMENSION" in k:
+                    dims.append(n)
+                elif "METRIC" in k or not k:
+                    metrics_raw.append((n, e))
+
+            for n, e in metrics_raw:
+                if n and n not in seen:
+                    seen.add(n)
+                    metrics_list.append({
+                        "name": n,
+                        "logical_name": n,
+                        "label": n,
+                        "domain": project_id,
+                        "domain_id": project_id,
+                        "model_id": None,
+                        "dax_expression": "",
+                        "sql_expression": e,
+                        "target_table_or_view": view_name,
+                        "target_kind": "semantic_view",
+                        "concept": "",
+                        "dimensions": dims,
+                    })
+        except Exception as exc:
+            logger.debug("DESCRIBE SEMANTIC VIEW failed for %s: %s", view_name, exc)
+
+    return metrics_list
+
+
 @router.get("/project-metrics", response_model=Dict[str, Any])
-def get_project_reconciliation_metrics(project_id: Optional[str] = None) -> Dict[str, Any]:
+def get_project_reconciliation_metrics(
+    project_id: Optional[str] = None,
+    view: Optional[str] = None,
+) -> Dict[str, Any]:
     """List metrics with DAX expressions, Snowflake SQL expressions, deployed view names, and dimensions."""
     from semabridge.ontology.store import ontology_store
     from semabridge.repository.model_repository import ModelRepository
 
-    dep_info: Dict[str, Any] = {}
-    if project_id:
+    raw_pid = (project_id or "").strip() or None
+    canonical_pid = raw_pid
+    if raw_pid:
         try:
-            dep_info = ModelRepository().get_project_deployment_info(project_id)
+            from semabridge.api.services.project_shared import resolve_canonical_project_id
+            c = resolve_canonical_project_id(raw_pid)
+            if c:
+                canonical_pid = c
+        except Exception:
+            pass
+
+    resolved_view = None
+    dep_info: Dict[str, Any] = {}
+    if canonical_pid:
+        repo = ModelRepository()
+        try:
+            if view:
+                resolved_view = repo.validate_project_view(canonical_pid, view)
+            else:
+                deployments = repo.list_project_deployments(canonical_pid, include_unmanaged=True)
+                latest = next((d for d in deployments if d.get("is_latest")), None)
+                resolved_view = latest["semantic_view"] if latest else None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+        try:
+            dep_info = repo.get_project_deployment_info(canonical_pid)
         except Exception:
             dep_info = {}
 
-    domains = _get_project_domains_for_validation(project_id) if project_id else list(
+    if resolved_view:
+        dep_info["semantic_view"] = resolved_view
+        dep_info["view_name"] = resolved_view.strip().split(".")[-1].strip('"')
+
+    domains = _get_project_domains_for_validation(canonical_pid) if canonical_pid else list(
         ontology_store.get_federated_ontology().domains.values()
     )
+    if canonical_pid and not domains and raw_pid != canonical_pid:
+        domains = _get_project_domains_for_validation(raw_pid)
+
+    if canonical_pid and not domains:
+        try:
+            from semabridge.ontology.per_model import sync_project_model_domains
+            sync_project_model_domains(canonical_pid, ontology_store)
+            domains = _get_project_domains_for_validation(canonical_pid)
+        except Exception as ex:
+            logger.debug("Auto-refresh of ontology domains for project %s failed: %s", canonical_pid, ex)
+
     # A domain without its own view only inherits the project's deployed view
     # when the project has a single view (multi-model: one view per model).
     own_views = {str(getattr(d, "semantic_view_name", "") or "").split(".")[-1].casefold() for d in domains}
     own_views.discard("")
-    view_name = "" if len(own_views) > 1 else (dep_info.get("semantic_view") or dep_info.get("view_name") or "")
+    view_name = resolved_view or ("" if len(own_views) > 1 else (dep_info.get("semantic_view") or dep_info.get("view_name") or ""))
 
     metrics_list = []
     seen = set()
@@ -940,8 +1272,13 @@ def get_project_reconciliation_metrics(project_id: Optional[str] = None) -> Dict
                 "dimensions": dims,
             })
 
+    if not metrics_list and canonical_pid:
+        metrics_list = _build_metrics_from_project_snapshots_or_view(canonical_pid, dep_info)
+
     return {
-        "project_id": project_id,
+        "project_id": canonical_pid or project_id,
+        "view": resolved_view,
+        "semantic_view": resolved_view,
         "count": len(metrics_list),
         "metrics": metrics_list,
     }

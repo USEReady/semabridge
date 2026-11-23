@@ -111,7 +111,10 @@ class DatabricksMetricEmitter:
                 c_name = _sanitize(col.unique_name)
                 out_name = c_name if c_name not in used else f"{_sanitize(ds.unique_name)}_{c_name}"
                 used.add(out_name)
-                select_clauses.append(f"    {alias_of[ds.unique_name]}.{c_name} AS {out_name}")
+                if getattr(col, "is_split_dimension", False) and getattr(col, "expression", None):
+                    select_clauses.append(f"    ({col.expression}) AS {out_name}")
+                else:
+                    select_clauses.append(f"    {alias_of[ds.unique_name]}.{c_name} AS {out_name}")
                 if col.description:
                     tag_statements.append(
                         f"ALTER VIEW {fq_view} ALTER COLUMN {out_name} COMMENT '{_escape_literal(col.description)}';"

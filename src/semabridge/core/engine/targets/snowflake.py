@@ -48,7 +48,7 @@ from semabridge.core.engine.exceptions import (
 logger = get_logger(__name__)
 
 def emitter_physical_namespace(context: RunContext) -> Optional[str]:
-    """Physical source data tables in Snowflake (CATEGORY, DATE, SALESFACT, etc.)
+    """Physical source data tables in Snowflake (CATEGORY, DATE, ORDERS, etc.)
     are pre-existing user-owned data tables and must never be namespaced per model,
     preserving parity with the demo_version sync engine. Model isolation in
     Snowflake is achieved via unique semantic view names, not physical table prefixing.

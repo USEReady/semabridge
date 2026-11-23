@@ -41,6 +41,7 @@ export async function askQuestion({ question, target, projectId, allowOfflineDra
       project_id: projectId || undefined,
       // Multi-model projects: the view the user picked after an ambiguous question.
       semantic_view: semanticView || undefined,
+      view: semanticView || undefined,
       allow_offline_draft: Boolean(allowOfflineDraft),
     });
     if (!res.ok) throw new Error(await readError(res, 'Could not interpret the question'));
@@ -50,17 +51,24 @@ export async function askQuestion({ question, target, projectId, allowOfflineDra
     throw err;
   }
 
-  if (!plan?.generated_sql) {
-    const reason = (plan?.warnings || []).find(Boolean) || plan?.explanation;
-    const isCortexUnavailable = /cortex unavailable/i.test(`${reason || ''} ${plan?.explanation || ''}`);
-    const err = new Error(reason || 'No SQL was generated for this question.');
-    err.stage = 'compile';
-    err.plan = plan;
-    err.cortexUnavailable = isCortexUnavailable;
-    // The question matched metrics in several semantic views (one per model).
-    err.candidateViews = Array.isArray(plan?.candidate_views) ? plan.candidate_views : [];
-    if (err.candidateViews.length) err.message = plan?.explanation || err.message;
-    throw err;
+  // Never call /api/ai/execute-query when the nl-query response has refused=True or no executable SQL.
+  const cleanSql = (plan?.generated_sql || '').replace(/--.*?$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '').trim();
+  if (plan?.refused || !cleanSql) {
+    if (Array.isArray(plan?.candidate_views) && plan.candidate_views.length > 0) {
+      const err = new Error(plan?.explanation || 'Several models can answer this question.');
+      err.stage = 'compile';
+      err.plan = plan;
+      err.candidateViews = plan.candidate_views;
+      throw err;
+    }
+    return {
+      plan: {
+        ...plan,
+        refused: true,
+        reason_text: plan?.reason_text || plan?.explanation || 'No executable SQL was generated for this question.',
+      },
+      result: null,
+    };
   }
 
   let result;
@@ -112,7 +120,7 @@ export async function fetchVerifiedQueries(projectId) {
 }
 
 export async function fetchProjects() {
-  const res = await authFetch('/api/projects?limit=50');
+  const res = await authFetch('/api/projects');
   if (!res.ok) return [];
   const data = await res.json();
   return Array.isArray(data) ? data : data.projects || [];

@@ -101,6 +101,60 @@ class DriftEventRow(Base):
     updated_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False, default=lambda: _utc_now())
 
 
+class DriftBaselineRow(Base):
+    """Post-deployment baseline for a semantic view (governance/drift_service).
+    Replaces local JSON baselines storage with database persistence.
+    """
+
+    __tablename__ = "drift_baselines"
+    __table_args__ = (
+        Index("ix_drift_baselines_project", "project_id"),
+        Index("ix_drift_baselines_view", "view_name"),
+    )
+
+    id: Mapped[str] = mapped_column(String(256), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(PROJECT_ID_LENGTH), nullable=False)
+    view_name: Mapped[str] = mapped_column(String(256), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False, default=lambda: _utc_now())
+
+
+class DriftLastCheckRow(Base):
+    """Last drift check execution result for a project/view (governance/drift_service).
+    Replaces local JSON last_checks storage with database persistence.
+    """
+
+    __tablename__ = "drift_last_checks"
+    __table_args__ = (
+        Index("ix_drift_last_checks_project", "project_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(256), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(PROJECT_ID_LENGTH), nullable=False)
+    view_name: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False, default=lambda: _utc_now())
+
+
+class DriftScheduleRow(Base):
+    """Recurring drift check schedule (governance/drift_service).
+    Replaces local JSON schedules storage with database persistence.
+    """
+
+    __tablename__ = "drift_schedules"
+    __table_args__ = (
+        Index("ix_drift_schedules_project", "project_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[Optional[str]] = mapped_column(String(PROJECT_ID_LENGTH), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False, default=lambda: _utc_now())
+
+
 class RetentionPolicy(Base):
     """User-configurable retention policy per project.
 

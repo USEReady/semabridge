@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import DeployedViewSelector from './common/DeployedViewSelector';
 import {
   Layers, Upload, FileCode, Sparkles, CheckCircle2,
   AlertTriangle, RefreshCw, Check, Plus,
@@ -96,6 +97,8 @@ const INPUT_STYLE = {
 export default function OntologyDomainManager({ projectId: propProjectId = null, mode = 'explorer' }) {
   const location = useLocation();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const selectedView = searchParams.get('view') || '';
 
   // Main tabs: 'overview' | 'mesh' | 'graph' | 'governance' | 'blast-radius'.
   // On /ontology the tab lives in ?tab=; embedded on a project page it is local state.
@@ -171,6 +174,8 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
   const [bootstrapModalOpen, setBootstrapModalOpen] = useState(false);
   const [bootstrapProject, setBootstrapProject] = useState('');
   const [bootstrapDomain, setBootstrapDomain] = useState('');
+  const [bootstrapProjectSearch, setBootstrapProjectSearch] = useState('');
+  const [scopeSearch, setScopeSearch] = useState('');
   const [bootstrapping, setBootstrapping] = useState(false);
 
   // Domains: every domain's detail (for overview counts and Run all checks), and the drawer
@@ -238,7 +243,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
 
   const [bootstrapDuplicateError, setBootstrapDuplicateError] = useState(null);
 
-  const fetchCertifications = async (projectId, domainName) => {
+  async function fetchCertifications(projectId, domainName) {
     try {
       const qs = new URLSearchParams();
       if (projectId) qs.set('project_id', projectId);
@@ -297,6 +302,14 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
   };
 
   const effectiveGovProjectId = govProjectId || selectedProjectSlug || '';
+  const _reconProjectId = () => (
+    govProjectId
+    || selectedProjectSlug
+    || inspectingDomainData?.source_project_id
+    || domainDetails[inspectingDomain]?.source_project_id
+    || domainData.domains?.find((d) => d.domain === inspectingDomain)?.source_project_id
+    || undefined
+  );
   useEffect(() => {
     setImpactReports({});
     setImpactLoading({});
@@ -307,15 +320,30 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
     resetParityState();
   }, [effectiveGovProjectId]);
 
-  const fetchDomains = async (autoSelectFirst = false) => {
+  async function fetchDomains(autoSelectFirst = false) {
     setLoading(true);
     try {
       const res = await authFetch('/api/ontology/domains');
       if (res.ok) {
         const data = await res.json();
         setDomainData(data);
-        if ((autoSelectFirst || !inspectingDomain) && data.domains?.length > 0) {
-          handleOpenDomainInspector(data.domains[0].domain, 'metrics');
+        const all = data.domains || [];
+        const projKey = (v) => String(v || '').trim().toLowerCase().replace(/^proj-/, '');
+        const want = selectedProjectSlug ? projKey(selectedProjectSlug) : null;
+        const scoped = want
+          ? all.filter(
+              (d) =>
+                projKey(d.source_project_id) === want ||
+                (attachedDomainIds && (attachedDomainIds.includes(d.id) || attachedDomainIds.includes(d.domain)))
+            )
+          : all;
+        if (scoped.length > 0) {
+          if (autoSelectFirst || !inspectingDomain || !scoped.some((d) => d.domain === inspectingDomain)) {
+            handleOpenDomainInspector(scoped[0].domain, 'metrics');
+          }
+        } else {
+          setInspectingDomain(null);
+          setInspectingDomainData(null);
         }
         return { data, details: await loadDomainDetails(data.domains || []) };
       }
@@ -328,7 +356,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
   };
 
   // Load every domain's metrics and concepts (overview counts, Run all checks)
-  const loadDomainDetails = async (domains) => {
+  async function loadDomainDetails(domains) {
     const entries = await runPool(domains.slice(0, 100), 6, async (d) => {
       try {
         const res = await authFetch(`/api/ontology/domains/${encodeURIComponent(d.domain)}`);
@@ -340,26 +368,27 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
     const map = Object.fromEntries(entries.filter(Boolean));
     setDomainDetails(map);
     return map;
-  };
+  }
 
-
-  const fetchProjects = async () => {
+  async function fetchProjects() {
     try {
-      const res = await authFetch('/api/projects?limit=50');
+      const res = await authFetch('/api/ontology/projects');
       if (res.ok) {
-        const data = await res.json();
-        const list = Array.isArray(data) ? data : data.projects || [];
-        setProjectsList(list);
-        if (list.length > 0 && !bootstrapProject) {
-          setBootstrapProject(list[0].id || list[0].name);
+        const list = await res.json();
+        setProjectsList(Array.isArray(list) ? list : list?.projects || []);
+      } else {
+        const altRes = await authFetch('/api/projects');
+        if (altRes.ok) {
+          const data = await altRes.json();
+          setProjectsList(Array.isArray(data) ? data : data?.projects || []);
         }
       }
     } catch (err) {
       console.warn('Could not load projects:', err);
     }
-  };
+  }
 
-  const handleOpenDomainInspector = async (domainName, initialTab = 'metrics') => {
+  async function handleOpenDomainInspector(domainName, initialTab = 'metrics') {
     if (!domainName) return;
     setInspectingDomain(domainName);
     setInspectorActiveTab(initialTab);
@@ -560,7 +589,8 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
   };
 
   const handleJumpToAiTest = (metricName) => {
-    const domConcepts = inspectingDomainData?.parsed?.concepts || allConcepts || [];
+    const fallbackConcepts = (domainData?.domains || []).flatMap((d) => domainDetails[d.domain]?.parsed?.concepts || []);
+    const domConcepts = inspectingDomainData?.parsed?.concepts || fallbackConcepts || [];
     const firstDim = domConcepts
       .flatMap((c) => c.attributes || [])
       .find((a) => !a.is_hidden && !/INT|DEC|FLOAT|NUM/i.test(a.data_type || ''));
@@ -580,7 +610,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
         change_type: changeType,
         table_context: tableCtx || undefined,
         project_id: effectiveGovProjectId || undefined,
-        mock_mode: true,
+        view: selectedView || undefined,
       }),
     });
     const data = await res.json();
@@ -634,9 +664,13 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
   };
 
   const openBootstrap = () => {
-    if (projectsList.length > 0 && !bootstrapProject) {
-      setBootstrapProject(selectedProjectSlug || projectsList[0].id || projectsList[0].name);
-    }
+    const matched = selectedProjectSlug
+      ? projectsList.find((p) => (p.id || p.project_id) === selectedProjectSlug && p.has_successful_sync)
+      : null;
+    setBootstrapProject(matched ? (matched.id || matched.project_id) : '');
+    setBootstrapProjectSearch('');
+    setBootstrapDomain('');
+    setBootstrapDuplicateError(null);
     setBootstrapModalOpen(true);
   };
 
@@ -676,6 +710,17 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
       setImpactReports(Object.fromEntries(reports.filter(Boolean)));
       await lintPromise;
       setChecksRanAt(Date.now());
+      if (names.length === 0) {
+        setStatusMessage({
+          type: 'warning',
+          text: 'Checked 0 metrics. No metrics found in this project to check.',
+        });
+      } else {
+        setStatusMessage({
+          type: 'success',
+          text: `Checked ${names.length} metrics.`,
+        });
+      }
     } finally {
       setRunningChecks(false);
     }
@@ -699,14 +744,17 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
       : (m.logical_name || m.name);
     const mName = m.name || logicalMetric;
     setReconMetric(mName);
-    const sqlEx = m.sql_expression || logicalMetric;
-    setReconExpr(sqlEx);
-    setReconCustomSql(sqlEx);
-    setReconDaxExpr(m.dax_expression || '');
     const svName = m.semantic_view_name || m.target_table_or_view || inspectingDomainData?.parsed?.semantic_view_name || concept?.physical_table || m.concept || '';
     setReconTable(svName);
     const isSv = Boolean(m.semantic_view_name || inspectingDomainData?.parsed?.semantic_view_name || m.target_kind === 'semantic_view');
     setReconTargetKind(isSv ? 'semantic_view' : 'table');
+    const svMetricIdent = (concept?.name || m.concept) && m.name
+      ? `${concept?.name || m.concept}.${m.name}`
+      : logicalMetric;
+    const realSql = (m.sql_expression && m.sql_expression.trim()) || '';
+    setReconExpr(realSql);
+    setReconCustomSql(realSql);
+    setReconDaxExpr(m.dax_expression || '');
     let chosenDim = '';
     if (m.dimensions?.length) {
       chosenDim = m.dimensions[0];
@@ -727,7 +775,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           metric_name: mName.trim(),
-          metric_sql_expression: sqlEx.trim(),
+          metric_sql_expression: (realSql || svMetricIdent || mName).trim(),
           target_table_or_view: svName.trim(),
           target_kind: isSv ? 'semantic_view' : 'table',
           dimensions: chosenDim ? [chosenDim.trim()] : [],
@@ -747,7 +795,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
     selectTab('governance');
   };
 
-  const handleRunLinter = async (stewardOverride) => {
+  async function handleRunLinter(stewardOverride) {
     const activeSteward = stewardOverride || lintStewardSeverity;
     setRunningLint(true);
     setQualityChecked(true);
@@ -807,57 +855,6 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
       setReconSliceRows([]);
     }
     fetchCertifications(govProjectId || selectedProjectSlug || undefined, inspectingDomain || undefined);
-  };
-
-  const _reconProjectId = () => (
-    govProjectId
-    || selectedProjectSlug
-    || inspectingDomainData?.source_project_id
-    || domainDetails[inspectingDomain]?.source_project_id
-    || domainData.domains?.find((d) => d.domain === inspectingDomain)?.source_project_id
-    || undefined
-  );
-
-  const handleUpdateMetricSql = async (newSql, reRun = false) => {
-    const targetM = reconMetric.trim();
-    if (!targetM || !newSql?.trim()) return;
-    setRunningRecon(true);
-    setReconError(null);
-    try {
-      const res = await authFetch('/api/reconciliation/update-metric-sql', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_id: _reconProjectId(),
-          domain: inspectingDomain || undefined,
-          metric_name: targetM,
-          sql_expression: newSql.trim(),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setReconError(describeApiError(data, 'Failed to update Snowflake SQL.'));
-        return;
-      }
-      setReconExpr(newSql.trim());
-      setReconCustomSql(newSql.trim());
-      setStatusMessage({ type: 'success', text: `Updated Snowflake SQL for ${targetM}.` });
-      fetchDomainData();
-      fetchProjectReconMetrics(govProjectId || selectedProjectSlug || undefined);
-      if (reRun) {
-        // Run with custom SQL query
-        const customSql = reconQueries?.sql_query
-          ? reconQueries.sql_query.replace(new RegExp(reconExpr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), newSql.trim())
-          : undefined;
-        await handleRunAutoDaxCertify({ customSqlQuery: customSql, overrideSqlExpr: newSql.trim() });
-      } else {
-        await handleGenerateReconQueries({ overrideSqlExpr: newSql.trim() });
-      }
-    } catch (err) {
-      setReconError(String(err));
-    } finally {
-      setRunningRecon(false);
-    }
   };
 
   const fetchProjectReconMetrics = useCallback(async (projId) => {
@@ -1015,6 +1012,56 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
     }
   };
 
+  const handleUpdateMetricSql = async (newSql, reRun = false) => {
+    const targetM = reconMetric.trim();
+    if (!targetM || !newSql?.trim()) return;
+    const cleanSql = newSql.trim().replace(/["'`]/g, '').toLowerCase();
+    const cleanTarget = targetM.replace(/["'`]/g, '').toLowerCase();
+    const leafTarget = cleanTarget.split('.').pop();
+    const hasOperators = /[().+\-*/=<>[\]]|\b(case|when|then|else|end|sum|count|avg|min|max)\b/i.test(newSql);
+    if (!hasOperators && (cleanSql === cleanTarget || cleanSql === leafTarget || cleanSql.endsWith(`.${leafTarget}`))) {
+      setReconError(`Self-referencing SQL expression is not allowed: '${newSql.trim()}' only references metric '${targetM}'. Provide a real SQL expression (e.g. COUNT(BU.BU)).`);
+      return;
+    }
+    setRunningRecon(true);
+    setReconError(null);
+    try {
+      const res = await authFetch('/api/reconciliation/update-metric-sql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: _reconProjectId(),
+          domain: inspectingDomain || undefined,
+          metric_name: targetM,
+          sql_expression: newSql.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setReconError(describeApiError(data, 'Failed to update Snowflake SQL.'));
+        return;
+      }
+      setReconExpr(newSql.trim());
+      setReconCustomSql(newSql.trim());
+      setStatusMessage({ type: 'success', text: `Updated Snowflake SQL for ${targetM}.` });
+      fetchDomains();
+      fetchProjectReconMetrics(govProjectId || selectedProjectSlug || undefined);
+      if (reRun) {
+        // Run with custom SQL query
+        const customSql = reconQueries?.sql_query
+          ? reconQueries.sql_query.replace(new RegExp(reconExpr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), newSql.trim())
+          : undefined;
+        await handleRunAutoDaxCertify({ customSqlQuery: customSql, overrideSqlExpr: newSql.trim() });
+      } else {
+        await handleGenerateReconQueries({ overrideSqlExpr: newSql.trim() });
+      }
+    } catch (err) {
+      setReconError(String(err));
+    } finally {
+      setRunningRecon(false);
+    }
+  };
+
   const handleRunReconciliation = async () => {
     setRunningRecon(true);
     setReconError(null);
@@ -1108,6 +1155,17 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
     );
   }, [domainData.domains, selectedProjectSlug, attachedDomainIds]);
 
+  useEffect(() => {
+    if (visibleDomains.length > 0) {
+      if (!inspectingDomain || !visibleDomains.some((d) => d.domain === inspectingDomain)) {
+        handleOpenDomainInspector(visibleDomains[0].domain, 'metrics');
+      }
+    } else {
+      setInspectingDomain(null);
+      setInspectingDomainData(null);
+    }
+  }, [visibleDomains]);
+
   const activeMetrics = useMemo(() => {
     const list = inspectingDomainData?.parsed?.metrics || [];
     if (!glossarySearchQuery.trim()) return list;
@@ -1152,9 +1210,16 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
   }, [selectedProjectSlug, projectsList]);
 
   // ── Derived data for Overview, Domains and Health ──────────────────────────
+  const visibleDomainIdentifiers = visibleDomains.flatMap((d) => [d.domain, d.id].filter(Boolean));
   const visibleNames = visibleDomains.map((d) => d.domain);
-  const scopedCollisions = scopeCollisions(domainData.collisions, visibleNames);
-  const collisionNames = new Set(scopedCollisions.map((c) => c.item_name));
+  const scopedCollisions = scopeCollisions(
+    domainData.collisions,
+    visibleDomainIdentifiers.length ? visibleDomainIdentifiers : visibleNames,
+    Boolean(selectedProjectSlug)
+  );
+  const collisionNames = new Set(
+    scopedCollisions.filter((c) => !c._isCrossProjectSummary).map((c) => c.item_name)
+  );
   const reconDriftRows = reconSliceRows.filter((r) => !r.matched);
   const driftMetric = reconDriftRows.length ? reconMetric : null;
   const reconDimension = reconDims.split(',').map((d) => d.trim()).filter(Boolean)[0] || '';
@@ -1233,11 +1298,20 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
   };
   attention.total = attention.collisions + attention.unresolved + attention.parityDrift;
 
+  const scopedMetricsChecked = selectedProjectSlug
+    ? visibleDomains.reduce((acc, d) => acc + (d.metric_count || d.metrics_count || d.metrics?.length || 0), 0)
+    : (lintReport?.metrics_checked || 0);
+  const scopedConceptsChecked = selectedProjectSlug
+    ? visibleDomains.reduce((acc, d) => acc + (d.concept_count || d.concepts_count || d.concepts?.length || 0), 0)
+    : (lintReport?.concepts_checked || 0);
+
   // Lint runs on the whole federation; keep only the visible domains' findings
   const scopedLint =
     lintReport && selectedProjectSlug
       ? {
           ...lintReport,
+          metrics_checked: scopedMetricsChecked,
+          concepts_checked: scopedConceptsChecked,
           issues: (lintReport.issues || []).filter((i) =>
             (i.domain || '').split(',').some((d) => visibleNames.includes(d.trim()))
           ),
@@ -1340,19 +1414,50 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
 
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
             {!propProjectId && (
-              <select
-                value={selectedProjectSlug}
-                onChange={(e) => setSelectedProjectSlug(e.target.value)}
-                style={SELECT_STYLE}
-                aria-label="Project scope"
-              >
-                <option value="">All projects</option>
-                {projectsList.map((p) => (
-                  <option key={p.id || p.name} value={p.id || p.name}>
-                    {p.name || p.id}
-                  </option>
-                ))}
-              </select>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                {projectsList.filter((p) => (p.ontology_domain_count > 0) || (p.domain_names && p.domain_names.length > 0)).length > 8 && (
+                  <input
+                    type="text"
+                    placeholder="Search projects…"
+                    value={scopeSearch}
+                    onChange={(e) => setScopeSearch(e.target.value)}
+                    style={{ ...INPUT_STYLE, padding: '4px 8px', fontSize: 11.5, width: 120 }}
+                  />
+                )}
+                <select
+                  value={selectedProjectSlug}
+                  onChange={(e) => setSelectedProjectSlug(e.target.value)}
+                  style={SELECT_STYLE}
+                  aria-label="Project scope"
+                >
+                  <option value="">All loaded domains</option>
+                  {projectsList
+                    .filter((p) => (p.ontology_domain_count > 0) || (p.domain_names && p.domain_names.length > 0))
+                    .filter((p) => {
+                      if (!scopeSearch.trim()) return true;
+                      const q = scopeSearch.toLowerCase();
+                      const name = String(p.name || '').toLowerCase();
+                      const id = String(p.id || p.project_id || '').toLowerCase();
+                      const doms = (p.domain_names || []).join(' ').toLowerCase();
+                      return name.includes(q) || id.includes(q) || doms.includes(q);
+                    })
+                    .map((p) => {
+                      const pid = p.id || p.project_id || p.name;
+                      const domStr = p.domain_names?.length ? ` · ${p.domain_names.join(', ')}` : '';
+                      return (
+                        <option key={pid} value={pid}>
+                          {p.name || pid} ({pid}){domStr}
+                        </option>
+                      );
+                    })}
+                </select>
+              </div>
+            )}
+
+            {(propProjectId || selectedProjectSlug) && (
+              <DeployedViewSelector
+                projectId={propProjectId || selectedProjectSlug}
+              />
             )}
 
             {activeTab === 'governance' && (
@@ -1427,7 +1532,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
                 }}
               >
                 {t.label}
-                {t.count !== undefined && <span style={{ color: 'var(--text-tertiary)', fontWeight: 500 }}>{t.count}</span>}
+                 {t.count !== undefined && <span style={{ color: 'var(--text-tertiary)', fontWeight: 500 }}>{t.count}</span>}
                 {t.badge > 0 && <Pill tone="warn">{t.badge}</Pill>}
               </button>
             );
@@ -1505,6 +1610,8 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
             onShowMap={() => selectTab('graph')}
             onOpenItem={setSelectedGlossaryItem}
             onSync={() => handleSyncWithOsi(inspectingDomain)}
+            onGenerate={openBootstrap}
+            onRunSync={() => navigate(`/runs?project=${encodeURIComponent(selectedProjectSlug || '')}`)}
             yaml={{
               value: editorYaml,
               onChange: setEditorYaml,
@@ -1979,18 +2086,45 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
                 <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>
                   SOURCE PROJECT
                 </label>
+                {projectsList.filter((p) => p.has_successful_sync).length > 5 && (
+                  <input
+                    type="text"
+                    placeholder="Search synced projects…"
+                    value={bootstrapProjectSearch}
+                    onChange={(e) => setBootstrapProjectSearch(e.target.value)}
+                    style={{ ...INPUT_STYLE, width: '100%', marginBottom: 6, fontSize: 12 }}
+                  />
+                )}
                 <select
                   value={bootstrapProject}
                   onChange={(e) => setBootstrapProject(e.target.value)}
                   style={{ ...SELECT_STYLE, width: '100%' }}
                 >
-                  <option value="">Select a project...</option>
-                  {projectsList.map((p) => (
-                    <option key={p.id || p.name} value={p.id || p.name}>
-                      {p.name || p.id}
-                    </option>
-                  ))}
+                  <option value="">Select a project with successful sync...</option>
+                  {projectsList
+                    .filter((p) => p.has_successful_sync)
+                    .filter((p) => {
+                      if (!bootstrapProjectSearch.trim()) return true;
+                      const q = bootstrapProjectSearch.toLowerCase();
+                      const name = String(p.name || '').toLowerCase();
+                      const id = String(p.id || p.project_id || '').toLowerCase();
+                      return name.includes(q) || id.includes(q);
+                    })
+                    .map((p) => {
+                      const pid = p.id || p.project_id || p.name;
+                      const hasOntology = (p.ontology_domain_count > 0) || (p.domain_names && p.domain_names.length > 0);
+                      return (
+                        <option key={pid} value={pid}>
+                          {p.name || pid} ({pid}){hasOntology ? ' — has ontology (re-sync)' : ''}
+                        </option>
+                      );
+                    })}
                 </select>
+                {projectsList.filter((p) => p.has_successful_sync).length === 0 && (
+                  <div style={{ fontSize: 11.5, color: 'var(--color-warning)', marginTop: 4 }}>
+                    No projects with a successful sync found yet. Run a sync on a project first.
+                  </div>
+                )}
               </div>
               <div>
                 <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>

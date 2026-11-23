@@ -59,14 +59,17 @@ def _dataset_lookup_and_aliases(model: SMLModel):
 
 
 def test_no_anchor_flag_map_leaves_shaped_metric_at_current_date_fallback():
+    """Policy update: time-intelligence metrics without a data anchor flag map must
+    fail closed to NULL rather than keeping a silent fallback to CURRENT_DATE(),
+    to prevent temporal skew when data is not anchored to today."""
     model = _model_with_ytd_and_plain_metric()
-    original_sql = model.metrics[0].sql_expression
     dataset_col_lookup, dataset_aliases = _dataset_lookup_and_aliases(model)
 
     count = rerender_anchor_dependent_metrics(model, {}, dataset_col_lookup, dataset_aliases)
 
-    assert count == 0
-    assert model.metrics[0].sql_expression == original_sql
+    assert count == 1
+    assert model.metrics[0].sql_expression is None
+    assert "no data anchor" in (model.metrics[0].sync_failure_reason or "")
 
 
 def test_flag_present_upgrades_shaped_metric_to_flag_column_reference():
@@ -100,13 +103,9 @@ def test_unshaped_metric_never_retranslated_even_with_flag_map_present():
 
 
 def test_divergence_downgrades_metric_back_to_current_date_fallback():
-    """The Step 9 (confirmed) safety-net case: a metric was previously
-    upgraded to a flag-column reference by a predicted pass, but the
-    confirmed map has NO entry for its fact table (enrichment didn't
-    actually establish an anchor for real) -- retranslating with the
-    now-empty per-dataset map must downgrade it back to the safe
-    CURRENT_DATE() fallback, not leave a dangling reference to a flag
-    column that will never exist."""
+    """Policy update: when confirmed enrichment fails to establish an anchor flag
+    for a fact table (divergence), the metric fails closed to NULL rather than
+    silently falling back to CURRENT_DATE(), preventing subtle calculation errors."""
     model = _model_with_ytd_and_plain_metric()
     dataset_col_lookup, dataset_aliases = _dataset_lookup_and_aliases(model)
     ytd_metric = next(m for m in model.metrics if m.unique_name == "Total_Units_YTD")
@@ -121,9 +120,8 @@ def test_divergence_downgrades_metric_back_to_current_date_fallback():
     )
 
     assert count == 1
-    assert 'SALESFACT."IS_YTD"' not in ytd_metric.sql_expression
-    assert "CURRENT_DATE()" in ytd_metric.sql_expression
-    assert "MAX_DATE" not in ytd_metric.sql_expression
+    assert ytd_metric.sql_expression is None
+    assert "no data anchor" in (ytd_metric.sync_failure_reason or "")
 
 
 def test_one_dax_translator_instance_reused_for_the_whole_pass(monkeypatch):

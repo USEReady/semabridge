@@ -134,11 +134,14 @@ def test_unrelated_zero_name_score_column_ties_do_not_block():
     assert resolved == "REP_SFDC_OPPORTUNITYFIELDHISTORY"
 
 
-def test_reconciliation_project_metrics_and_update_sql():
+def test_reconciliation_project_metrics_and_update_sql(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
     from semabridge.api.main import app
-    from semabridge.ontology.store import ontology_store
+    from semabridge.ontology.store import DomainOntologyStore
     from semabridge.ontology.models import DomainOntology, DomainMetric
+
+    temp_store = DomainOntologyStore(storage_dir=tmp_path)
+    monkeypatch.setattr("semabridge.ontology.store.ontology_store", temp_store)
 
     # Register a domain with DAX and SQL expressions
     dom = DomainOntology(
@@ -152,7 +155,7 @@ def test_reconciliation_project_metrics_and_update_sql():
             )
         ],
     )
-    ontology_store.add_or_update_domain(dom)
+    temp_store.add_or_update_domain(dom)
 
     client = TestClient(app)
 
@@ -178,7 +181,7 @@ def test_reconciliation_project_metrics_and_update_sql():
     assert update_resp.json()["sql_expression"] == 'SUM(COALESCE("SALES"."UNITS", 0))'
 
     # Verify updated in store
-    updated_dom = ontology_store.get_domain("ParityTestDomain")
+    updated_dom = temp_store.get_domain("ParityTestDomain")
     updated_metric = next(m for m in updated_dom.metrics if m.name == "TotalUnitsParity")
     assert updated_metric.sql_expression == 'SUM(COALESCE("SALES"."UNITS", 0))'
     assert updated_metric.dax_expression == "SUM(Sales[Units])"

@@ -52,7 +52,9 @@ function readFabricConnectionsFromStorage() {
 function writeFabricConnectionsToStorage(connections) {
     try {
         localStorage.setItem(FABRIC_CONNECTIONS_STORAGE_KEY, JSON.stringify(connections || []));
-    } catch {}
+    } catch {
+        /* ignore */
+    }
 }
 
 function withTimeout(promise, ms, fallbackValue = null) {
@@ -94,7 +96,7 @@ function FabricAccountForm({ initialTag, onSave, onCancel }) {
      * Pre-fetch the device code in the background so it is ready the
      * moment the user clicks "Sign in with Microsoft".
      */
-    const prefetchDeviceCode = () => {
+    function prefetchDeviceCode() {
         if (prefetchInFlight.current || prefetchedCode.current) return;
         prefetchInFlight.current = true;
         api.fabricLogin()
@@ -150,7 +152,7 @@ function FabricAccountForm({ initialTag, onSave, onCancel }) {
         }
     };
 
-    const startPolling = () => {
+    function startPolling() {
         setLoginPhase('polling');
         pollTimer.current = setTimeout(async () => {
             try {
@@ -977,7 +979,7 @@ function DatabricksAccountForm({ initialTag, status, onSave, onCancel }) {
         }
     };
 
-    const startPolling = () => {
+    function startPolling() {
         setLoginPhase('polling');
         pollTimer.current = setTimeout(async () => {
             try {

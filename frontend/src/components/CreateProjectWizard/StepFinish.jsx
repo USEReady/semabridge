@@ -178,11 +178,50 @@ export function StepFinish({
         </div>
       </div>
 
-      {createError && (
-        <div style={{ padding: '12px 14px', borderRadius: 10, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.28)', color: 'var(--text-primary)', fontSize: 12, lineHeight: 1.5 }}>
-          {createError}
-        </div>
-      )}
+      {createError && (() => {
+        const idMatch = typeof createError === 'string' && createError.match(/\((proj-[^)]+)\)/);
+        const existingProjectId = idMatch ? idMatch[1] : null;
+        return (
+          <div style={{ padding: '12px 14px', borderRadius: 10, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.28)', color: 'var(--text-primary)', fontSize: 12, lineHeight: 1.5 }}>
+            <div>{createError}</div>
+            <div style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center' }}>
+              {existingProjectId && (
+                <button
+                  type="button"
+                  onClick={() => navigate(`/projects/${existingProjectId}/config`)}
+                  style={{
+                    background: 'var(--accent-blue)',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: 6,
+                    padding: '6px 12px',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Open Existing Project ({existingProjectId}) →
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => { onClear?.(); navigate('/projects'); }}
+                style={{
+                  background: 'transparent',
+                  color: 'var(--text-secondary)',
+                  border: '1px solid var(--border-main)',
+                  borderRadius: 6,
+                  padding: '6px 12px',
+                  fontSize: 12,
+                  cursor: 'pointer',
+                }}
+              >
+                Back to Projects
+              </button>
+            </div>
+          </div>
+        );
+      })()}
 
       {!editMode && (
         <ToggleOption

@@ -16,6 +16,34 @@ import ModelDataPanel from './ModelDataPanel';
 import { ReactFlowProvider } from '@xyflow/react';
 import usePageCache from '../../hooks/usePageCache';
 
+// ── Inline micro-styles ──
+const iconBtnStyle = {
+    border: 'none', background: 'transparent', cursor: 'pointer',
+    color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center',
+    padding: 4, borderRadius: 6, transition: 'all .15s ease',
+};
+const toolBtnStyle = {
+    border: '1px solid var(--border-main)', background: 'var(--bg-surface-raised)', cursor: 'pointer',
+    display: 'inline-flex', alignItems: 'center', gap: 6,
+    padding: '5px 10px', borderRadius: 8,
+    color: 'var(--text-secondary)', fontSize: 11.5, fontWeight: 500,
+    transition: 'all .15s ease',
+};
+const thStyle = {
+    textAlign: 'left',
+    borderBottom: '1px solid var(--border-color)',
+    padding: '6px 8px',
+    color: 'var(--text-tertiary)',
+    textTransform: 'uppercase',
+    letterSpacing: '.04em',
+    fontSize: 10,
+};
+const tdStyle = {
+    borderBottom: '1px solid var(--border-color)',
+    padding: '6px 8px',
+    color: 'var(--text-secondary)',
+};
+
 
 function normalizeGraphPayload(rawGraph) {
     const rawNodes = Array.isArray(rawGraph?.nodes) ? rawGraph.nodes : [];
@@ -543,7 +571,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
         }
         // For non-ER mode, keep original positions (e.g., force layout)
         return baseGraph;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [diffMode, diffReport, graphStructureKey, erMode]);
 
     const connectorOptions = useMemo(() => {
@@ -613,11 +641,11 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
             const label = (counts[key] > 1 || isGeneric)
                 ? `${rawLabel} (${shortId})`
                 : rawLabel;
-                
+
             // Find connector for this model
             const node = nodes.find(n => n.id === m.id || n.data?.model_id === m.id);
             const connector = node?.data?.source_type || node?.data?.target_type || 'Generic';
-            
+
             return { ...m, label, connector };
         });
 
@@ -700,7 +728,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                     name: ws.displayName || ws.name || ws.id || 'Workspace',
                 })).filter(ws => ws.id));
             }).catch(() => setAvailableWorkspaces([]))
-              .finally(() => setWorkspacesLoading(false));
+                .finally(() => setWorkspacesLoading(false));
         } else {
             // Snowflake / Databricks: no workspace concept — load models directly
             setAvailableWorkspaces([]);
@@ -718,9 +746,9 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                     type: m.type || 'semantic_view',
                 })).filter(m => m.id));
             }).catch(() => setAvailableModels([]))
-              .finally(() => setModelsLoading(false));
+                .finally(() => setModelsLoading(false));
         }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectedConnector, accounts]);
 
     // ── Load models when a workspace is selected (Fabric) ───────────────────
@@ -745,12 +773,12 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                 type: m.type || 'semantic_model',
             })).filter(m => m.id));
         }).catch(() => setAvailableModels([]))
-          .finally(() => setModelsLoading(false));
+            .finally(() => setModelsLoading(false));
 
         // Update the workspaceNames map with this workspace
         const ws = availableWorkspaces.find(w => w.id === selectedWorkspaceId);
         if (ws) setWorkspaceNames(prev => ({ ...prev, [ws.id]: ws.name }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectedWorkspaceId]);
 
     // ── When a discovered model is chosen, find the matching project snapshot ──
@@ -1444,19 +1472,6 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
     );
 }
 
-// ── Inline micro-styles ──
-const iconBtnStyle = {
-    border: 'none', background: 'transparent', cursor: 'pointer',
-    color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center',
-    padding: 4, borderRadius: 6, transition: 'all .15s ease',
-};
-const toolBtnStyle = {
-    border: '1px solid var(--border-main)', background: 'var(--bg-surface-raised)', cursor: 'pointer',
-    display: 'inline-flex', alignItems: 'center', gap: 6,
-    padding: '5px 10px', borderRadius: 8,
-    color: 'var(--text-secondary)', fontSize: 11.5, fontWeight: 500,
-    transition: 'all .15s ease',
-};
 function MenuLabel({ children }) {
     return (
         <div style={{ padding: '6px 10px 4px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--text-tertiary)' }}>
@@ -1516,19 +1531,3 @@ function AuditCard({ label, value, tone }) {
         </div>
     );
 }
-
-const thStyle = {
-    textAlign: 'left',
-    borderBottom: '1px solid var(--border-color)',
-    padding: '6px 8px',
-    color: 'var(--text-tertiary)',
-    textTransform: 'uppercase',
-    letterSpacing: '.04em',
-    fontSize: 10,
-};
-
-const tdStyle = {
-    borderBottom: '1px solid var(--border-color)',
-    padding: '6px 8px',
-    color: 'var(--text-secondary)',
-};

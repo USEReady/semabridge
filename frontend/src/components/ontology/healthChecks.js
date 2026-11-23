@@ -1,8 +1,8 @@
 // Pure helpers that turn ontology data and check results into the Health list,
 // metric status pills and per-domain issue counts.
-import { plural } from './styles';
+import { plural } from './styles.js';
 
-export const SEVERITY_ORDER = { breaking: 0, warning: 1, pending: 2, passing: 3 };
+export const SEVERITY_ORDER = { breaking: 0, warning: 1, info: 2, pending: 3, passing: 4 };
 
 export const CATEGORY_LABEL = {
   impact: 'Impact',
@@ -14,12 +14,40 @@ export const CATEGORY_LABEL = {
 const itemName = (x) => (x && typeof x === 'object' ? x.name || x.message || JSON.stringify(x) : String(x));
 
 /** Collisions whose domains overlap the visible (project-scoped) domains. */
-export function scopeCollisions(collisions, domainNames) {
-  const names = new Set(domainNames);
-  return (collisions || []).filter((c) => {
+export function scopeCollisions(collisions, domainNames, isProjectScope = false) {
+  const names = new Set((domainNames || []).map((d) => String(d).toLowerCase()));
+  if (!isProjectScope) {
+    return (collisions || []).filter((c) => {
+      const doms = c.conflicting_domains || Object.keys(c.expressions || {});
+      return doms.length === 0 || doms.some((d) => names.has(String(d).toLowerCase()));
+    });
+  }
+
+  const intraProject = [];
+  const crossProject = [];
+
+  (collisions || []).forEach((c) => {
     const doms = c.conflicting_domains || Object.keys(c.expressions || {});
-    return doms.length === 0 || doms.some((d) => names.has(d));
+    const projectDoms = doms.filter((d) => names.has(String(d).toLowerCase()));
+    if (projectDoms.length >= 2) {
+      intraProject.push(c);
+    } else if (projectDoms.length === 1) {
+      crossProject.push(c);
+    }
   });
+
+  if (crossProject.length > 0) {
+    const allIdentical = crossProject.every((c) => c.identical === true);
+    intraProject.push({
+      _isCrossProjectSummary: true,
+      item_name: `${crossProject.length} cross-project metric${crossProject.length === 1 ? '' : 's'}`,
+      occurrences: crossProject,
+      identical: allIdentical,
+      conflicting_domains: Array.from(new Set(crossProject.flatMap((c) => c.conflicting_domains || []))),
+    });
+  }
+
+  return intraProject;
 }
 
 /** Status pill for a metric row: Conflict / Stale / Drift / Draft / Governed. */
@@ -143,13 +171,35 @@ export function buildHealthResults({
     }
 
     (collisions || []).forEach((c, i) => {
+      if (c._isCrossProjectSummary) {
+        const count = c.occurrences?.length || 0;
+        const isIdentical = c.identical === true;
+        rows.push({
+          id: 'collision-cross-project',
+          severity: 'info',
+          category: 'quality',
+          title: `${plural(count, 'metric')} shared across projects`,
+          detail: isIdentical
+            ? `Same definition in ${c.conflicting_domains?.length || 2} places across projects.`
+            : 'Cross-project occurrences with different definitions across projects.',
+          action: 'Details',
+          kind: 'collision',
+          payload: c,
+        });
+        return;
+      }
+
       const doms = c.conflicting_domains || Object.keys(c.expressions || {});
+      const isIdentical = c.identical === true;
+      const count = doms.length || 2;
       rows.push({
         id: `collision-${i}`,
-        severity: 'warning',
+        severity: isIdentical ? 'info' : (c.severity === 'ERROR' ? 'breaking' : 'warning'),
         category: 'quality',
         title: `“${c.item_name}” defined in ${doms.join(' and ')}`,
-        detail: 'Two different definitions. Pick an owner, or rename one.',
+        detail: isIdentical
+          ? `Same definition in ${count} places.`
+          : 'Different definitions. Pick an owner, or rename one.',
         action: 'Resolve',
         kind: 'collision',
         payload: c,
@@ -177,7 +227,25 @@ export function buildHealthResults({
           payload: list,
         });
       });
-      if (
+      const metricsChecked = lintReport.metrics_checked ?? (
+        lintReport.summary?.match(/across (\d+) metrics/)?.[1]
+          ? parseInt(lintReport.summary.match(/across (\d+) metrics/)[1], 10)
+          : 0
+      );
+      const conceptsChecked = lintReport.concepts_checked ?? 0;
+      const totalChecked = (metricsChecked || 0) + (conceptsChecked || 0);
+
+      if (totalChecked === 0) {
+        rows.push({
+          id: 'lint-empty',
+          severity: 'pending',
+          category: 'quality',
+          title: 'Not checked: no metrics in this project',
+          detail: 'No metrics found in this project to check. Deploy a semantic model or generate an ontology domain first.',
+          action: 'Check',
+          kind: 'lintRun',
+        });
+      } else if (
         !Object.keys(byRule).length &&
         !(loadErrors || []).length &&
         !(unresolved || []).length &&
@@ -194,6 +262,16 @@ export function buildHealthResults({
           payload: [],
         });
       }
+    } else {
+      rows.push({
+        id: 'lint-empty',
+        severity: 'pending',
+        category: 'quality',
+        title: 'Not checked: no metrics in this project',
+        detail: 'No metrics found in this project to check. Deploy a semantic model or generate an ontology domain first.',
+        action: 'Check',
+        kind: 'lintRun',
+      });
     }
   }
 
@@ -246,7 +324,7 @@ export function buildHealthResults({
   }
 
   // Parity (DAX vs SQL)
-  if (recon.rows.length) {
+  if (recon?.rows?.length) {
     const drift = recon.rows.filter((r) => !r.matched);
     if (drift.length) {
       const worst = drift.reduce((a, b) => (Number(b.deltaPct) > Number(a.deltaPct) ? b : a));
@@ -283,7 +361,7 @@ export function buildHealthResults({
   }
 
   // Access (row-level security)
-  if (rls.ddl) {
+  if (rls?.ddl) {
     rows.push({
       id: 'access',
       severity: 'passing',

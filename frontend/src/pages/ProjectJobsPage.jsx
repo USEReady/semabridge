@@ -22,6 +22,11 @@ const REFRESH_INTERVAL_MS = 4000;
 const PAGE_SIZE = 50;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+const linkBtn = {
+  border: 'none', background: 'transparent', padding: 0, cursor: 'pointer',
+  fontSize: 12, fontWeight: 600, color: 'var(--text-tertiary)',
+};
+
 const FILTERS = [
   { key: 'all', label: 'All' },
   { key: 'running', label: 'Running' },
@@ -607,11 +612,6 @@ export default function ProjectJobsPage() {
     </div>
   );
 }
-
-const linkBtn = {
-  border: 'none', background: 'transparent', padding: 0, cursor: 'pointer',
-  fontSize: 12, fontWeight: 600, color: 'var(--text-tertiary)',
-};
 
 function MenuItem({ label, hint, onClick }) {
   return (

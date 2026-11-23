@@ -27,7 +27,7 @@ export default function GlobalConfigEditor() {
         loadConfig();
     }, []);
 
-    const loadConfig = async () => {
+    async function loadConfig() {
         setLoading(true);
         setError(null);
         try {

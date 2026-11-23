@@ -4,7 +4,26 @@ import AnswerResult from './AnswerResult';
 import { answerTitle, ENGINES } from './askApi';
 import { BTN, CARD, CHIP, LINK_BTN, pill } from './askStyles';
 
-const engineLabel = (id) => ENGINES.find((e) => e.id === id)?.label || id;
+const engineLabel = (id) => {
+  if (!id) return '';
+  const raw = String(id).trim();
+  const lower = raw.toLowerCase();
+  if (lower.startsWith('snowflake_cortex') || lower === 'snowflake' || lower === 'cortex') {
+    if (lower.includes(':')) {
+      const parts = raw.split(':');
+      return `Snowflake Cortex (${parts.slice(1).join(':')})`;
+    }
+    return 'Snowflake Cortex';
+  }
+  if (lower.startsWith('databricks_genie') || lower === 'databricks' || lower === 'genie') {
+    return 'Databricks Genie';
+  }
+  if (lower === 'local' || lower.startsWith('local')) {
+    return 'Local Engine';
+  }
+  const found = ENGINES.find((e) => e.id.toLowerCase() === lower);
+  return found?.label || raw;
+};
 
 function Step({ label, children }) {
   return (
@@ -29,6 +48,11 @@ function HowAnswered({ plan, result, target }) {
   const policies = plan?.applied_policies || [];
   const filters = (plan?.filters || []).filter((f) => !policies.includes(f));
   const warnings = plan?.warnings || [];
+  const rawPath = result?.query_path || plan?.query_path || (plan?.is_draft ? 'free-form (not governed)' : 'semantic_view');
+  const path = rawPath === 'rewritten to governed' ? 'rewritten to governed' : rawPath.includes('free-form') ? 'free-form (not governed)' : (rawPath === 'none' ? 'none' : 'semantic_view');
+  const assumptions = plan?.assumptions || [];
+  const guardChecks = plan?.guard_checks || [];
+  const suggestedMetrics = plan?.suggested_metrics || [];
 
   const copy = async () => {
     try {
@@ -41,6 +65,9 @@ function HowAnswered({ plan, result, target }) {
   };
 
   const summary = [
+    path,
+    metrics.length ? `metric: ${metrics[0]}` : null,
+    assumptions.length ? `${assumptions.length} assumption${assumptions.length === 1 ? '' : 's'}` : null,
     metrics.length ? `matched ${metrics.length + dims.length} term${metrics.length + dims.length === 1 ? '' : 's'}` : 'no governed metric matched',
     policies.length ? `${policies.length} polic${policies.length === 1 ? 'y' : 'ies'} applied` : null,
     lineCount ? `${lineCount} lines of SQL` : null,
@@ -62,6 +89,21 @@ function HowAnswered({ plan, result, target }) {
 
       {open && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingLeft: 20 }}>
+          <Step label="Path">
+            <span
+              style={{
+                ...CHIP,
+                color: path.includes('free-form') || path.includes('not governed') ? 'var(--color-warning)' : 'var(--text-primary)',
+              }}
+            >
+              {path}
+            </span>
+            {plan?.is_certified && (
+              <span style={{ ...CHIP, color: 'var(--color-success, #10b981)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <ShieldCheck size={12} /> Certified
+              </span>
+            )}
+          </Step>
           <Step label="Matched">
             {metrics.length + dims.length === 0 && <span>No metrics or concepts matched.</span>}
             {metrics.map((m) => (
@@ -82,6 +124,48 @@ function HowAnswered({ plan, result, target }) {
               </span>
             )}
           </Step>
+          {suggestedMetrics.length > 0 && (
+            <Step label="Suggested">
+              {suggestedMetrics.map((sm, i) => (
+                <span key={`sug-${i}`} style={{ ...CHIP, border: '1px dashed var(--border-focus)' }}>
+                  {sm}
+                </span>
+              ))}
+            </Step>
+          )}
+          {assumptions.length > 0 && (
+            <Step label="Assumptions">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, width: '100%' }}>
+                {assumptions.map((a, i) => (
+                  <span key={`asm-${i}`} style={{ color: 'var(--color-warning, #f59e0b)' }}>⚠️ {a}</span>
+                ))}
+              </div>
+            </Step>
+          )}
+          {guardChecks.length > 0 && (
+            <Step label="Checks">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
+                {guardChecks.map((chk, i) => (
+                  <div key={`chk-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span
+                      style={{
+                        ...CHIP,
+                        color: chk.passed ? 'var(--color-success, #10b981)' : 'var(--color-warning, #f59e0b)',
+                        fontWeight: 600,
+                      }}
+                    >
+                      {chk.passed ? '✓ ' : '✗ '}{chk.check}
+                    </span>
+                    {chk.message && (
+                      <span style={{ fontSize: 12, color: chk.passed ? 'var(--text-secondary)' : 'var(--color-warning, #f59e0b)' }}>
+                        {chk.message}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </Step>
+          )}
           <Step label="Policies">
             {policies.length === 0 ? (
               <span>None applied</span>
@@ -119,7 +203,7 @@ function HowAnswered({ plan, result, target }) {
               {copied ? 'copied' : 'copy'}
             </button>
             <span style={{ color: 'var(--text-tertiary)' }}>
-              · {engineLabel(target)}
+              · {engineLabel(plan?.engine || result?.dialect || result?.target || target)}
               {result?.execution_time_ms ? ` · ${result.execution_time_ms} ms` : ''}
             </span>
           </Step>
@@ -149,19 +233,28 @@ function HowAnswered({ plan, result, target }) {
 
 const viewTail = (v) => String(v || '').split('.').pop().replace(/"/g, '');
 
-/** Which deployed semantic view (one per model in multi-model projects) answered. */
-function AnsweredBy({ plan }) {
-  const view = plan?.answered_by_view;
-  if (!view) return null;
+/** Which deployed semantic view or base table path answered. */
+function AnsweredBy({ plan, result }) {
+  const view = plan?.answered_by_view || plan?.view || plan?.semantic_view;
+  const path = result?.query_path || plan?.query_path || (plan?.is_draft ? 'free-form' : '');
+  const isFreeForm = path.includes('free-form') || path.includes('not governed') || plan?.is_draft;
+  const isRewritten = path === 'rewritten to governed' || path === 'rewritten';
+  if (!view && !isFreeForm) return null;
   return (
     <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }} title={view}>
-      Answered from semantic view <b style={{ fontFamily: 'var(--font-mono, monospace)', color: 'var(--text-secondary)' }}>{viewTail(view)}</b>
+      {isFreeForm ? (
+        <>Answered from <b style={{ fontFamily: 'var(--font-mono, monospace)', color: 'var(--text-secondary)' }}>base tables (free-form SQL)</b></>
+      ) : isRewritten ? (
+        <>Rewritten to semantic view <b style={{ fontFamily: 'var(--font-mono, monospace)', color: 'var(--text-secondary)' }}>{viewTail(view)}</b></>
+      ) : (
+        <>Answered from semantic view <b style={{ fontFamily: 'var(--font-mono, monospace)', color: 'var(--text-secondary)' }}>{viewTail(view)}</b></>
+      )}
       {plan?.answered_by_domain ? <> · domain {plan.answered_by_domain}</> : null}
     </div>
   );
 }
 
-export default function AnswerCard({ entry, onCertify, onRetry, onOfflineDraft, onPickView }) {
+export default function AnswerCard({ entry, onCertify, onRetry, onOfflineDraft, onPickView, onAsk }) {
   const { status, plan, result, error, errorStage, cortexUnavailable, target, certifyState, certifyError, question } = entry;
   const candidateViews = entry.candidateViews || [];
   const [confirming, setConfirming] = useState(false);
@@ -175,6 +268,60 @@ export default function AnswerCard({ entry, onCertify, onRetry, onOfflineDraft, 
     );
   }
 
+  const isRefused = status === 'refused' || plan?.refused;
+  if (isRefused) {
+    const reasonText = plan?.reason_text || plan?.explanation || error || "Can't answer this as asked.";
+    const decidingEngine = engineLabel(plan?.engine || 'local');
+    const alternatives = plan?.alternatives || [];
+
+    return (
+      <div role="alert" style={{ ...CARD, borderColor: 'var(--color-warning, #f59e0b)', background: 'var(--bg-surface)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <AlertTriangle size={16} color="var(--color-warning, #f59e0b)" />
+          <b style={{ fontSize: 14, color: 'var(--text-primary)' }}>Can't answer this as asked</b>
+        </div>
+        <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5, wordBreak: 'break-word' }}>
+          {reasonText}
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
+          Decided by {decidingEngine}
+        </div>
+        {alternatives.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4, paddingTop: 10, borderTop: '1px solid var(--border-main)' }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>Suggested alternatives:</span>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {alternatives.map((alt, idx) => {
+                const qText = typeof alt === 'string' ? alt : alt.question;
+                return (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => onAsk?.(qText)}
+                    style={{
+                      ...BTN,
+                      background: 'var(--bg-surface-raised, rgba(255,255,255,0.05))',
+                      borderColor: 'var(--border-focus)',
+                      color: 'var(--accent-blue, #38bdf8)',
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                      padding: '6px 12px',
+                      borderRadius: 8,
+                      fontSize: 12.5,
+                    }}
+                    title={qText}
+                  >
+                    {qText}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        <AnsweredBy plan={plan} result={result} />
+      </div>
+    );
+  }
+
   if (status === 'error') {
     return (
       <div role="alert" style={{ ...CARD, borderColor: 'var(--color-error)', background: 'var(--color-error-bg)' }}>
@@ -183,9 +330,11 @@ export default function AnswerCard({ entry, onCertify, onRetry, onOfflineDraft, 
           <b style={{ fontSize: 13.5, color: 'var(--text-primary)' }}>
             {errorStage === 'run'
               ? 'The query could not be run'
-              : candidateViews.length > 0
-                ? 'Several models can answer this'
-                : cortexUnavailable ? 'Cortex unavailable' : 'The question could not be interpreted'}
+              : String(error || '').toLowerCase().includes('refus') || String(error || '').toLowerCase().includes('reject')
+                ? 'Query refused by safety guard'
+                : candidateViews.length > 0
+                  ? 'Several models can answer this'
+                  : cortexUnavailable ? 'Cortex unavailable' : 'The question could not be interpreted'}
           </b>
           <span style={{ flex: 1 }} />
           {cortexUnavailable && onOfflineDraft && (
@@ -212,42 +361,77 @@ export default function AnswerCard({ entry, onCertify, onRetry, onOfflineDraft, 
             ))}
           </div>
         )}
-        <AnsweredBy plan={plan} />
-        {plan?.generated_sql && <HowAnswered plan={plan} result={null} target={target} />}
+        <AnsweredBy plan={plan} result={result} />
+        {plan && !plan.refused && (plan.generated_sql || (plan.guard_checks || []).length > 0) && (
+          <HowAnswered plan={plan} result={null} target={target} />
+        )}
       </div>
     );
   }
 
   const usesCertified = (plan?.detected_metrics || []).length > 0;
-  const certified = certifyState === 'done';
-  // Only answers computed by a live warehouse can be certified, never preview rows.
-  // (0 rows is a valid answer; the backend also requires a recorded real run.)
-  const canCertify = Boolean(result && result.success !== false && !result.is_simulated);
+  const normalizeWarning = (w) => (typeof w === 'string' ? w : (w?.message || String(w || ''))).trim().replace(/\s+/g, ' ');
+  const allWarnings = Array.from(
+    new Map(
+      [...(plan?.warnings || []), ...(result?.warnings || [])]
+        .map((w) => [normalizeWarning(w), normalizeWarning(w)])
+        .filter(([k]) => Boolean(k))
+    ).values()
+  );
+  const rawPath = result?.query_path || plan?.query_path || (usesCertified ? 'semantic_view' : (plan?.route === 'cortex' ? 'free-form (not governed)' : 'semantic_view'));
+  const isGoverned = rawPath === 'semantic_view' || rawPath === 'rewritten to governed' || (!rawPath.includes('free-form') && !rawPath.includes('not governed'));
+  const allChecksPassed = (plan?.guard_checks || []).length === 0 || (plan?.guard_checks || []).every((c) => c.passed !== false);
+  const isCertifiable = Boolean(
+    isGoverned &&
+    (plan?.is_certified_eligible ?? true) &&
+    (result?.is_certified_eligible ?? true) &&
+    allChecksPassed
+  );
+  const hasCertifiedSource = Boolean(plan?.is_verified_query || plan?.has_certified_metric || plan?.certified_source || result?.certified_source || result?.certified);
+  const isCertifiedAnswer = Boolean(
+    isCertifiable &&
+    hasCertifiedSource &&
+    allWarnings.filter((w) => !w.startsWith('Assumption:')).length === 0 &&
+    result && result.success !== false
+  );
+  const displayPath = rawPath === 'rewritten to governed' ? 'rewritten to governed' : rawPath.includes('free-form') ? 'free-form (not governed)' : 'governed';
+  const certified = certifyState === 'done' || isCertifiedAnswer;
+  // Only answers computed by a live warehouse that are certifiable can be certified, never preview rows or free-form unverified SQL.
+  const canCertify = Boolean(isCertifiable && result && result.success !== false && !result.is_simulated);
 
   return (
     <div style={CARD}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <b style={{ fontSize: 14, color: 'var(--text-primary)' }}>{answerTitle(plan, question)}</b>
-        {usesCertified ? (
-          <span style={pill('ok')}><ShieldCheck size={12} /> Uses certified metric</span>
+        {isCertifiedAnswer ? (
+          <span style={pill('ok')}><ShieldCheck size={12} /> Certified</span>
         ) : (
-          <span style={pill('warn')} title="No governed metric matched this question; check the SQL before relying on it.">
-            No governed metric matched
-          </span>
+          <>
+            <span style={pill(displayPath.includes('free-form') ? 'warn' : displayPath === 'rewritten to governed' ? 'ok' : 'neutral')}>
+              {displayPath}
+            </span>
+            {allWarnings.map((w, idx) => (
+              <span key={idx} style={pill('warn')} title={w}>
+                {w}
+              </span>
+            ))}
+          </>
         )}
         <span style={{ flex: 1 }} />
-        <button
-          type="button"
-          style={{ ...BTN, ...(certified ? { color: 'var(--color-success)', cursor: 'default' } : {}) }}
-          disabled={certified || certifyState === 'saving' || !canCertify || confirming}
-          onClick={() => setConfirming(true)}
-          title={canCertify
-            ? 'Save this question and its SQL as a verified query so AI engines reuse it'
-            : 'Run the question against a live warehouse (not a preview) before certifying it'}
-        >
-          {certified ? <Check size={13} /> : <ShieldCheck size={13} />}
-          {certified ? 'Certified' : certifyState === 'saving' ? 'Certifying…' : 'Certify answer'}
-        </button>
+        {(canCertify || certified) && (
+          <button
+            type="button"
+            style={{ ...BTN, ...(certified ? { color: 'var(--color-success)', cursor: 'default' } : {}) }}
+            disabled={certified || certifyState === 'saving' || !canCertify || confirming}
+            onClick={() => setConfirming(true)}
+            title={canCertify
+              ? 'Save this question and its SQL as a verified query so AI engines reuse it'
+              : 'Run the question against a live warehouse (not a preview) before certifying it'}
+          >
+            {certified ? <Check size={13} /> : <ShieldCheck size={13} />}
+            {certified ? 'Certified' : certifyState === 'saving' ? 'Certifying…' : 'Certify answer'}
+          </button>
+        )}
       </div>
       {confirming && !certified && (
         <div role="alertdialog" aria-label="Confirm certification" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border-main)', background: 'var(--bg-surface-raised)', fontSize: 12.5 }}>
@@ -264,7 +448,7 @@ export default function AnswerCard({ entry, onCertify, onRetry, onOfflineDraft, 
       )}
       {certifyError && <div style={{ fontSize: 12, color: 'var(--color-error)' }}>{certifyError}</div>}
 
-      <AnsweredBy plan={plan} />
+      <AnsweredBy plan={plan} result={result} />
 
       <AnswerResult columns={result?.columns} rows={result?.rows} />
 

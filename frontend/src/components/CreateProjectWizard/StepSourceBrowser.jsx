@@ -17,6 +17,7 @@ export function StepSourceBrowser({
   pbixFilesLoading = false,
   pbixFilesError = '',
   selectedPbixFilePath = '',
+  pbixUploadPath = '',
   onSelectPbixFile = () => { },
   // Databricks props
   databricksObjects = [],

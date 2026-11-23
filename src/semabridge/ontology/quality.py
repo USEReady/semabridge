@@ -417,7 +417,7 @@ def apply_review_decisions(
                 "maps_to": list(OrderedDict.fromkeys(bound)),
                 "synonyms": list(OrderedDict.fromkeys(synonyms)),
                 "description": description,
-                "origin": "user",
+                "origin": "user",  # hardcoding-ok: ontology origin property
             }
         )
         for p in sorted(positions[1:], reverse=True):
@@ -441,7 +441,7 @@ def apply_review_decisions(
                 continue
             met = metrics[pos]
             metrics[pos] = met.model_copy(
-                update={"name": new_name, "maps_to": list(met.maps_to) or [met.name], "origin": "user"}
+                update={"name": new_name, "maps_to": list(met.maps_to) or [met.name], "origin": "user"}  # hardcoding-ok: ontology origin property
             )
             report["renamed"].append(f"{name} -> {new_name}")
 

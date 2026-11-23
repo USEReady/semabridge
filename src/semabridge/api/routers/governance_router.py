@@ -23,6 +23,7 @@ class BlastRadiusRequest(BaseModel):
     change_type: str = "DROP"    # 'DROP', 'RENAME', 'MODIFY_TYPE', 'MODIFY_EXPRESSION'
     table_context: Optional[str] = None
     project_id: Optional[str] = None
+    view: Optional[str] = None
     mock_mode: Optional[bool] = None
 
 
@@ -46,10 +47,28 @@ def _resolve_project_allowed_domains(project_id: Optional[str]) -> Optional[List
     pid = (project_id or "").strip()
     if not pid:
         return None
-    doms = ontology_store.domains_for(pid)
-    if doms:
-        return [d.domain for d in doms] + [d.id for d in doms if d.id]
-    return [pid]
+    from semabridge.api.services.project_shared import resolve_canonical_project_id
+    from semabridge.ontology.models import project_key
+    c_pid = resolve_canonical_project_id(pid) or pid
+    pkey = project_key(c_pid) or project_key(pid)
+    doms = ontology_store.domains_for(c_pid) or ontology_store.domains_for(pid)
+    res: List[str] = []
+    seen: set = set()
+    for d in (doms or []):
+        for name in (d.domain, getattr(d, "id", None)):
+            if name and name.casefold() not in seen:
+                seen.add(name.casefold())
+                res.append(name)
+    for d in ontology_store.domains.values():
+        src_pid = getattr(d, "source_project_id", None)
+        if src_pid and project_key(src_pid) == pkey:
+            for name in (d.domain, getattr(d, "id", None)):
+                if name and name.casefold() not in seen:
+                    seen.add(name.casefold())
+                    res.append(name)
+    if res:
+        return res
+    return [c_pid, pid]
 
 
 @router.post("/blast-radius", response_model=BlastRadiusReport)
@@ -76,14 +95,9 @@ def simulate_blast_radius(req: BlastRadiusRequest) -> BlastRadiusReport:
         except Exception:
             certified_names = set()
 
-    from semabridge.reconciliation.mock_parity import is_mock_drift_enabled, is_mock_parity_enabled
+    from semabridge.reconciliation.mock_parity import is_mock_drift_enabled
 
-    is_mock = req.mock_mode
-    if is_mock is None:
-        if is_mock_drift_enabled() or is_mock_parity_enabled():
-            is_mock = True
-        elif req.project_id in ("proj-comp", "proj-sales"):
-            is_mock = True
+    is_mock = is_mock_drift_enabled()
 
     simulator = BlastRadiusSimulator(
         ontology=fed,

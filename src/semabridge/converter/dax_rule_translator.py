@@ -207,7 +207,7 @@ def is_simple_metric(dax: str) -> bool:
             return True
     
     # Pattern 3: Simple IF/IFERROR with measures and constants
-    # e.g., IF([Total VanArsdel Units]=0, 0, DIVIDE([Total VanArsdel Units], [Total Units], 0))
+    # e.g., IF([Total Brand Units]=0, 0, DIVIDE([Total Brand Units], [Total Units], 0))
     simple_if = r"^\s*IF\s*\(\s*[^()]*\[[^\]]+\][^()]*,\s*\d+\s*,\s*[^()]*(?:\[[\w\s]+\]|DIVIDE|IFERROR)\s*\([^)]*\)\s*\)\s*$"
     if re.match(simple_if, clean_dax, re.IGNORECASE):
         # Make sure no FILTER/ALL inside
@@ -306,7 +306,7 @@ def rule_based_translation(
                 log_rule_based_result(True)
                 
                 # More precise alias replacement
-                result = re.sub(r'\bSALESFACT\b(?=\.)', table_alias, result, flags=re.IGNORECASE)
+                result = re.sub(r'\b(?:FACT_TABLE)\b(?=\.)', table_alias, result, flags=re.IGNORECASE)
                 # Do not replace COL_DATE globally, it's a date dimension
                 # result = re.sub(r'\bCOL_DATE\b', table_alias, result, flags=re.IGNORECASE)
 
@@ -1153,7 +1153,7 @@ def translate_measure_arithmetic(dax: str, table_alias: str) -> Optional[str]:
 def translate_if_measure_expression(dax: str, table_alias: str) -> Optional[str]:
     """
     Handle IF statements with measure conditions.
-    e.g., IF([Total VanArsdel Units]=0, 0, DIVIDE([Total VanArsdel Units], [Total Units], 0))
+    e.g., IF([Total Brand Units]=0, 0, DIVIDE([Total Brand Units], [Total Units], 0))
     """
     if re.search(r"^\s*IF\s*\(", dax, re.IGNORECASE):
         logger.debug(f"IF measure expression: {dax[:80]}")
@@ -1219,8 +1219,8 @@ class MeasureDependencyResolver:
     Example:
         input: "TOTALYTD([TOTAL UNITS], 'Date'[Date])"
         refs: ["TOTAL UNITS"]
-        lookup [TOTAL UNITS] -> "SUM(SALESFACT.UNITS)"
-        output: "TOTALYTD(SUM(SALESFACT.UNITS), 'Date'[Date])"
+        lookup [TOTAL UNITS] -> "SUM(FACT_TABLE.UNITS)"
+        output: "TOTALYTD(SUM(FACT_TABLE.UNITS), 'Date'[Date])"
     """
     
     def __init__(self, fabric_model_measures: Dict[str, Dict]):
@@ -1507,7 +1507,7 @@ class TranslationBatcher:
         prompt_lines = [
             f"Translate {batch['size']} Fabric DAX measures to Snowflake SQL.",
             f"Only provide SQL expressions. No explanations.",
-            f"Use table alias SALESFACT for all table references.",
+            f"Use table alias {batch.get('table_alias') or 'FACT_TABLE'} for all table references.",
             ""
         ]
         

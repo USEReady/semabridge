@@ -3,7 +3,7 @@ before DDL emission.
 
 Built after a real production incident: a Tier-5 (Anthropic) translation for
 a rolling-12-month metric (R12M) produced
-`DATE_ADDDAYSTODATE(NEGATE(12), SALESFACT.MAX_DATE)` compared/combined
+`DATE_ADDDAYSTODATE(NEGATE(12), FACT_TABLE.MAX_DATE)` compared/combined
 against an INTEGER surrogate-key column (a MONTHINDEX-shaped column). Nothing
 in the pipeline validated that a date-producing expression and an
 integer-typed column were being combined, so the mismatch reached Snowflake

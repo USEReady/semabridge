@@ -6,7 +6,7 @@ become empty lists so a synonym issue cannot break model conversion or sync.
 
 from __future__ import annotations
 
-from typing import Any, Iterable
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from semabridge.utils.logger import get_logger
 
@@ -355,3 +355,154 @@ def copy_synonym_overrides(
             exc,
         )
         return 0
+
+
+def is_filtered_metric(metric: Any) -> bool:
+    """Determine generically whether a metric contains row-level filter predicates.
+
+    A filtered metric restricts which rows are aggregated (e.g. FILTER(...),
+    CASE WHEN ... THEN, WHERE, or IFF), whereas an unfiltered base metric aggregates
+    all rows of its underlying table/concept.
+    """
+    import re
+
+    sql_expr = str(
+        getattr(metric, "sql_expression", None)
+        or (metric.get("sql_expression") if isinstance(metric, dict) else None)
+        or ""
+    ).strip()
+    if sql_expr:
+        if re.search(r"\bCASE\s+WHEN\b|\bWHERE\b|\bIFF\s*\(|\bFILTER\s*\(", sql_expr, re.I):
+            return True
+        return False
+
+    dax_expr = str(
+        getattr(metric, "expression", None)
+        or getattr(metric, "dax_expression", None)
+        or (metric.get("expression") if isinstance(metric, dict) else None)
+        or ""
+    ).strip()
+    if not dax_expr:
+        return False
+    if re.search(r"\bFILTER\s*\(", dax_expr, re.I):
+        return True
+    if re.search(r"\bCALCULATE\s*\(.+,\s*[^)]*(?:=|<|>|ISBLANK|NOT|IN)\b", dax_expr, re.I):
+        return True
+    if re.search(r"\bCASE\s+WHEN\b|\bWHERE\b|\bIFF\s*\(", dax_expr, re.I):
+        return True
+    return False
+
+
+def get_metric_qualifier_word(metric: Any) -> Optional[str]:
+    """Derive qualifier prefix from metric label or unique_name."""
+    import re
+
+    name = str(
+        getattr(metric, "label", None)
+        or getattr(metric, "name", None)
+        or getattr(metric, "unique_name", None)
+        or (metric.get("label") if isinstance(metric, dict) else None)
+        or (metric.get("name") if isinstance(metric, dict) else None)
+        or ""
+    ).strip()
+    words = [w for w in re.split(r"[\s_]+", name) if w]
+    if len(words) > 1:
+        return words[0]
+    return name or None
+
+
+def disambiguate_metric_synonyms(
+    metrics: List[Any],
+    view_name: Optional[str] = None,
+) -> Tuple[List[Any], List[Dict[str, Any]]]:
+    """Ensure no two metrics in the same view share the same synonym.
+
+    When two metrics compete for a generic term (e.g. an unfiltered base count vs
+    a filtered count), the unfiltered/base metric gets the generic term; filtered
+    metrics receive qualified terms (the filter word + the noun).
+
+    Returns:
+        (metrics, list_of_collision_records)
+    """
+    collisions_recorded: List[Dict[str, Any]] = []
+    if not metrics:
+        return metrics, collisions_recorded
+
+    def _get_name(m: Any) -> str:
+        if isinstance(m, dict):
+            return str(m.get("unique_name") or m.get("name") or "metric")
+        return str(getattr(m, "unique_name", None) or getattr(m, "name", None) or getattr(m, "label", None) or "metric")
+
+    def _get_syns(m: Any) -> List[str]:
+        if isinstance(m, dict):
+            return list(m.get("synonyms") or [])
+        return list(getattr(m, "synonyms", None) or [])
+
+    def _set_syns(m: Any, syns: List[str]) -> None:
+        if isinstance(m, dict):
+            m["synonyms"] = syns
+        else:
+            setattr(m, "synonyms", syns)
+
+    # 1. Map each synonym to list of metrics that claim it
+    syn_claimants: Dict[str, List[Any]] = {}
+    for m in metrics:
+        for s in _get_syns(m):
+            cleaned = str(s or "").strip()
+            if cleaned:
+                syn_claimants.setdefault(cleaned.casefold(), []).append((cleaned, m))
+
+    # 2. Identify collisions where >= 2 metrics claim the same casefolded term
+    for cf_term, items in syn_claimants.items():
+        distinct_metrics = []
+        seen_names = set()
+        for raw_s, m in items:
+            m_name = _get_name(m)
+            if m_name not in seen_names:
+                seen_names.add(m_name)
+                distinct_metrics.append((raw_s, m))
+
+        if len(distinct_metrics) < 2:
+            continue
+
+        raw_term = distinct_metrics[0][0]
+        unfiltered_claimants = [m for _, m in distinct_metrics if not is_filtered_metric(m)]
+        filtered_claimants = [m for _, m in distinct_metrics if is_filtered_metric(m)]
+
+        winner = None
+        if len(unfiltered_claimants) == 1:
+            winner = unfiltered_claimants[0]
+        else:
+            winner = distinct_metrics[0][1]
+            for _, m in distinct_metrics:
+                m_label = str(getattr(m, "label", None) or getattr(m, "name", None) or "").strip()
+                if m_label.casefold() == cf_term:
+                    winner = m
+                    break
+
+        winner_name = _get_name(winner)
+        losers = [m for _, m in distinct_metrics if m is not winner]
+
+        collisions_recorded.append({
+            "view": view_name or "default",
+            "term": raw_term,
+            "metrics": [_get_name(m) for _, m in distinct_metrics],
+            "resolved_to": winner_name,
+        })
+
+        for loser in losers:
+            l_syns = _get_syns(loser)
+            new_l_syns = []
+            qualifier = get_metric_qualifier_word(loser)
+            for s in l_syns:
+                if str(s).strip().casefold() == cf_term:
+                    if qualifier and qualifier.casefold() not in cf_term:
+                        candidate = f"{qualifier} {s}".strip()
+                        if candidate.casefold() != cf_term and candidate not in new_l_syns:
+                            new_l_syns.append(candidate)
+                else:
+                    new_l_syns.append(s)
+            _set_syns(loser, new_l_syns)
+
+    return metrics, collisions_recorded
+

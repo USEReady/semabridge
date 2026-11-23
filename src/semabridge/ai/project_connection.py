@@ -199,11 +199,21 @@ def resolve_project_scope(project_id: Optional[str], explicit_view: Optional[str
     here and :func:`route_scope_to_view` picks the view that owns the metric
     asked about. A caller-supplied ``explicit_view`` always wins.
     """
-    pid = (project_id or "").strip() or None
-    scope = ProjectScope(project_id=pid, semantic_view=(explicit_view or "").strip() or None)
+    raw_pid = (project_id or "").strip() or None
+    scope = ProjectScope(project_id=raw_pid, semantic_view=(explicit_view or "").strip() or None)
     scope.explicit_view = bool(scope.semantic_view)
-    if not pid:
+    if not raw_pid:
         return scope
+
+    pid = raw_pid
+    try:
+        from semabridge.api.services.project_shared import resolve_canonical_project_id
+        c_pid = resolve_canonical_project_id(raw_pid)
+        if c_pid:
+            pid = c_pid
+            scope.project_id = pid
+    except Exception as exc:
+        logger.debug("Resolving canonical project id failed for %s: %s", raw_pid, exc)
 
     info: Dict[str, Any] = {}
     try:
@@ -218,6 +228,16 @@ def resolve_project_scope(project_id: Optional[str], explicit_view: Optional[str
     from semabridge.ontology.store import ontology_store
 
     domains = list(ontology_store.domains_for(pid))
+    if not domains and raw_pid != pid:
+        domains = list(ontology_store.domains_for(raw_pid))
+    if not domains:
+        try:
+            from semabridge.ontology.per_model import sync_project_model_domains
+            sync_project_model_domains(pid, ontology_store)
+            domains = list(ontology_store.domains_for(pid))
+        except Exception as exc:
+            logger.debug("Syncing project model domains failed for %s: %s", pid, exc)
+
     scope.domain_names = [d.domain for d in domains]
     scope.allowed_domains = [d.domain for d in domains] + [d.id for d in domains if getattr(d, "id", None)]
     scope.domain_views = {
@@ -226,6 +246,15 @@ def resolve_project_scope(project_id: Optional[str], explicit_view: Optional[str
     distinct = _distinct_views(scope.domain_views.values())
 
     if scope.explicit_view:
+        from semabridge.repository.model_repository import ModelRepository
+        repo = ModelRepository()
+        if hasattr(repo, "validate_project_view"):
+            try:
+                scope.semantic_view = repo.validate_project_view(pid, scope.semantic_view)
+            except ValueError:
+                raise
+            except Exception as exc:
+                logger.debug("Validating project view failed for %s: %s", pid, exc)
         # Restrict the ontology to the named view's domains (+ view-less shared ones).
         tail = _view_tail(scope.semantic_view)
         owners = [dn for dn, v in scope.domain_views.items() if _view_tail(v) == tail]
@@ -233,11 +262,31 @@ def resolve_project_scope(project_id: Optional[str], explicit_view: Optional[str
             _restrict_to(scope, domains, owners)
         return scope
 
-    if len(distinct) >= 2:
+    # Default when omitted = latest successful deploy
+    if not scope.semantic_view:
+        try:
+            from semabridge.repository.model_repository import ModelRepository
+            repo = ModelRepository()
+            if hasattr(repo, "list_project_deployments"):
+                deployments = repo.list_project_deployments(pid, include_unmanaged=True)
+                latest = next((d for d in deployments if d.get("is_latest")), None)
+                if latest:
+                    scope.semantic_view = latest["semantic_view"]
+        except Exception as exc:
+            logger.debug("Listing project deployments failed for %s: %s", pid, exc)
+
+    if len(distinct) >= 2 and not scope.semantic_view:
         # Several models -> several views: pick per question (route_scope_to_view).
         scope.semantic_view = None
         return scope
-    scope.semantic_view = info.get("semantic_view") or (distinct[0] if distinct else None)
+    if not scope.semantic_view:
+        scope.semantic_view = info.get("semantic_view") or (distinct[0] if distinct else None)
+
+    # If the project has a deployed semantic view or DDL, ensure allowed_domains is not an empty trap
+    if not scope.allowed_domains and (scope.semantic_view or info.get("ddl")):
+        scope.allowed_domains = [pid, raw_pid]
+        scope.domain_names = [info.get("model_name") or pid]
+
     return scope
 
 

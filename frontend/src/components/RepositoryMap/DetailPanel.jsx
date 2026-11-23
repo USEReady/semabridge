@@ -4,6 +4,26 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 
+// ── styles ──
+const closeBtnStyle = {
+    border: 'none', background: 'transparent', cursor: 'pointer',
+    color: 'var(--text-tertiary)', display: 'flex', padding: 2,
+};
+const tableCardStyle = {
+    display: 'flex', alignItems: 'flex-start', gap: 8,
+    padding: '8px 10px',
+    borderRadius: 6,
+    background: 'var(--bg-app)',
+    border: '1px solid var(--border-color)',
+    marginBottom: 4,
+};
+const colThStyle = {
+    textAlign: 'left', padding: '6px 0', fontSize: 10.5, fontWeight: 700,
+    textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-tertiary)',
+    borderBottom: '1px solid var(--border-main)',
+};
+const colTdStyle = { padding: '6px 0', borderBottom: '1px solid var(--border-light, var(--border-main))' };
+
 /**
  * DetailPanel — right sidebar showing:
  *   • File preview (syntax-highlighted raw content) when a file is selected.
@@ -334,13 +354,6 @@ function ColumnTable({ columns }) {
     );
 }
 
-const colThStyle = {
-    textAlign: 'left', padding: '6px 0', fontSize: 10.5, fontWeight: 700,
-    textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-tertiary)',
-    borderBottom: '1px solid var(--border-main)',
-};
-const colTdStyle = { padding: '6px 0', borderBottom: '1px solid var(--border-light, var(--border-main))' };
-
 function Section({ title, children }) {
     return (
         <div style={{ marginBottom: 14 }}>
@@ -451,17 +464,3 @@ function EmptyHint({ text }) {
         </div>
     );
 }
-
-// ── styles ──
-const closeBtnStyle = {
-    border: 'none', background: 'transparent', cursor: 'pointer',
-    color: 'var(--text-tertiary)', display: 'flex', padding: 2,
-};
-const tableCardStyle = {
-    display: 'flex', alignItems: 'flex-start', gap: 8,
-    padding: '8px 10px',
-    borderRadius: 6,
-    background: 'var(--bg-app)',
-    border: '1px solid var(--border-color)',
-    marginBottom: 4,
-};

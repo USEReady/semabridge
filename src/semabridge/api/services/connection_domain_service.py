@@ -99,8 +99,12 @@ install_websocket_alert_handler()
 
 logger = logging.getLogger("semabridge.api")
 
-db_manager = ModelRepository()
-engine = ExecutionEngine(db_manager=db_manager)
+try:
+    db_manager = ModelRepository()
+    engine = ExecutionEngine(db_manager=db_manager)
+except Exception:
+    db_manager = None
+    engine = None
 
 settings = get_settings()
 scheduler_service = SchedulerService()
