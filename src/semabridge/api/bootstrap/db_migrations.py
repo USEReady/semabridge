@@ -396,18 +396,23 @@ def migrate_credentials_encryption(engine=None) -> int:
             owner_id, service, key, value, is_secret = row[0], row[1], row[2], row[3], row[4]
             if not value or not isinstance(value, str):
                 continue
-            already_encrypted = False
             if value.startswith("gAAAAA"):
+                decrypted = False
                 try:
                     _get_fernet().decrypt(value.encode("utf-8"))
-                    already_encrypted = True
+                    decrypted = True
                 except Exception:
                     try:
                         _legacy_fernet().decrypt(value.encode("utf-8"))
-                        already_encrypted = True
+                        decrypted = True
                     except Exception:
                         pass
-            if already_encrypted:
+                if not decrypted:
+                    logger.warning(
+                        "Secret credential for service '%s', key '%s' appears to be a Fernet token but cannot be decrypted with current keys; leaving unchanged.",
+                        service,
+                        key,
+                    )
                 continue
             encrypted_val = encrypt_token(value)
             conn.execute(
