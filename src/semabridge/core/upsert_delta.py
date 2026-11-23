@@ -564,7 +564,7 @@ def merge_upsert(new_model: SMLModel, baseline: Optional[Dict[str, Any]]) -> SML
                     old_dep_name = _deployed_column_name(old_child)
                     old_label = str(_get(old_child, "label") or "").strip()
                     has_override = bool(old_label and normalize_name(old_label) != child_key)
-                    if (has_override or old_dep_name in override_deployed_names) and old_dep_name and old_dep_name in deployed_names:
+                    if old_dep_name and old_dep_name in deployed_names:
                         continue
                     children.append(child_cls.model_validate(old_child))
                     child_keys.add(child_key)

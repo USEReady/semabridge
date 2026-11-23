@@ -44,10 +44,23 @@ def test_removed_distinct_metric_is_kept_on_upsert(a, b):
     assert sorted(x.unique_name for x in merged.metrics) == sorted([a, b])
 
 
-@pytest.mark.parametrize("a,b", DIFFERENT)
+# Distinct names whose PUBLISHED (deployed) column names clash, e.g. both become SALES_AMOUNT.
+# Keeping both would create duplicate columns and the view would fail to create, so the removed
+# baseline column is skipped (rule restored after review: "skip the old column whenever the published
+# names clash").
+PUBLISHED_CLASH = {("Sales-Amount", "Sales Amount"), ("Sales.Amount", "Sales Amount"), ("Net", "Net.")}
+
+
+@pytest.mark.parametrize("a,b", [p for p in DIFFERENT if p not in PUBLISHED_CLASH])
 def test_removed_distinct_column_is_kept_on_upsert(a, b):
     merged = merge_upsert(_cols(a), _cols(a, b).model_dump())
     assert sorted(c.unique_name for c in merged.datasets[0].columns) == sorted([a, b])
+
+
+@pytest.mark.parametrize("a,b", sorted(PUBLISHED_CLASH))
+def test_removed_column_with_clashing_published_name_is_skipped(a, b):
+    merged = merge_upsert(_cols(a), _cols(a, b).model_dump())
+    assert [c.unique_name for c in merged.datasets[0].columns] == [a]
 
 
 @pytest.mark.parametrize("a,b", DIFFERENT)
