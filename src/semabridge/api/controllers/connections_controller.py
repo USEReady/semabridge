@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from semabridge.auth.flags import auth_enabled
 from semabridge.api.services.connections_service import (
+    audit_databricks_permissions,
     delete_connection,
     get_connections_status,
     list_workspaces,
@@ -117,6 +118,27 @@ async def _delete_connection(service: str, request: Request):
 async def _test_connection(service: str, request: Request):
     user_id = _resolve_user_id(request)
     return await test_connection(service, user_id=user_id)
+
+
+# ---------------------------------------------------------------------------
+# Databricks permission audit (CS-10) -- read-only; remediation SQL as text.
+# Body (optional): {"catalog": "...", "schema": "..."}; defaults to the
+# stored connection's catalog/schema.
+# ---------------------------------------------------------------------------
+
+@router.post('/api/connections/databricks/permissions')
+async def _databricks_permissions(request: Request):
+    user_id = _resolve_user_id(request)
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    payload = payload if isinstance(payload, dict) else {}
+    return await audit_databricks_permissions(
+        user_id=user_id,
+        catalog=(payload.get("catalog") or None),
+        schema=(payload.get("schema") or payload.get("schema_name") or None),
+    )
 
 
 # ---------------------------------------------------------------------------
