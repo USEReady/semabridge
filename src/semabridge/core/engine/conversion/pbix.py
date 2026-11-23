@@ -127,8 +127,11 @@ def _convert_pbix_to_sml(self, context: RunContext) -> SMLModel:
         [m.unique_name for m in osi_model.metrics],
     )
 
-    # Phase 2: OSI → SML
-    sml_model = OSIToSMLConverter(drop_ledger=context.drop_ledger).from_osi(
+    # Phase 2: OSI → SML, measures translated with the target platform's
+    # rules (Databricks only when its planner path is on; else Snowflake).
+    from semabridge.core.engine.conversion.rules_choice import conversion_rules
+
+    sml_model = OSIToSMLConverter(drop_ledger=context.drop_ledger, rules=conversion_rules(context)).from_osi(
         osi_model,
         row_counts=sf.row_counts,
     )
