@@ -70,7 +70,7 @@ def _sanitize_cell_value(val: Any) -> Any:
             if _dec.Decimal(str(f)) == val:
                 return f
         except Exception as ex:
-            logger.debug("Decimal conversion fallback: %s", ex)
+            logger.warning("Decimal conversion fallback: %s", ex)
         return str(val)
     if isinstance(val, (list, tuple, set)):
         return [_sanitize_cell_value(x) for x in val]
@@ -141,37 +141,44 @@ def _load_suite() -> Dict[str, Any]:
 
         engine = db_manager.get_engine()
         Base.metadata.create_all(bind=engine)
+        cases_dicts = []
+        runs_dicts = []
         with db_manager.get_session() as s:
             case_rows = s.query(BITruthCaseRow).all()
             run_rows = s.query(BITruthRunRow).order_by(BITruthRunRow.run_at.desc()).all()
-            if not case_rows:
-                p = _suite_path()
-                if p.exists():
-                    try:
-                        legacy_data = json.loads(p.read_text(encoding="utf-8"))
-                        legacy_cases = legacy_data.get(_CASES_KEY) or []
-                        legacy_runs = legacy_data.get("runs") or []
-                        if legacy_cases or legacy_runs:
-                            _save_suite({_CASES_KEY: legacy_cases, "runs": legacy_runs})
-                            with db_manager.get_session() as s2:
-                                case_rows = s2.query(BITruthCaseRow).all()
-                                run_rows = s2.query(BITruthRunRow).all()
-                    except Exception as ex:
-                        logger.debug("Failed migrating legacy bi_truth_suite.json: %s", ex)
+            cases_dicts = [_row_to_case_dict(r) for r in case_rows]
+            runs_dicts = [_row_to_run_dict(r) for r in run_rows]
 
-            return {
-                _CASES_KEY: [_row_to_case_dict(r) for r in case_rows],
-                "runs": [_row_to_run_dict(r) for r in run_rows],
-            }
+        if not cases_dicts:
+            p = _suite_path()
+            if p.exists():
+                try:
+                    legacy_data = json.loads(p.read_text(encoding="utf-8"))
+                    legacy_cases = legacy_data.get(_CASES_KEY) or []
+                    legacy_runs = legacy_data.get("runs") or []
+                    if legacy_cases or legacy_runs:
+                        _save_suite({_CASES_KEY: legacy_cases, "runs": legacy_runs})
+                        with db_manager.get_session() as s2:
+                            c_rows2 = s2.query(BITruthCaseRow).all()
+                            r_rows2 = s2.query(BITruthRunRow).all()
+                            cases_dicts = [_row_to_case_dict(r) for r in c_rows2]
+                            runs_dicts = [_row_to_run_dict(r) for r in r_rows2]
+                except Exception as ex:
+                    logger.warning("Failed migrating legacy bi_truth_suite.json: %s", ex)
+
+        return {
+            _CASES_KEY: cases_dicts,
+            "runs": runs_dicts,
+        }
     except Exception as exc:
-        logger.debug("DB load of bi_truth_suite failed, falling back to local file: %s", exc)
+        logger.warning("DB load of bi_truth_suite failed, falling back to local file: %s", exc)
         p = _suite_path()
         if p.exists():
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
                 return {_CASES_KEY: list(data.get(_CASES_KEY) or []), "runs": list(data.get("runs") or [])}
             except Exception as ex:
-                logger.debug("Reading local suite JSON failed: %s", ex)
+                logger.warning("Reading local suite JSON failed: %s", ex)
         return {_CASES_KEY: [], "runs": []}
 
 
@@ -187,13 +194,13 @@ def _save_suite(data: Dict[str, Any]) -> None:
         Base.metadata.create_all(bind=engine)
 
         with db_manager.get_session() as s:
-            s.query(BITruthCaseRow).delete()
             for c in cases_in:
                 exp_json = None
                 if c.get("expected_value") is not None:
                     exp_json = json.dumps(c["expected_value"], default=str)
                 dims_json = json.dumps(c.get("dimensions") or [], default=str)
-                s.add(
+                exp_rc = 0 if c.get("expected_row_count") == 0 else int(c.get("expected_row_count") or 1)
+                s.merge(
                     BITruthCaseRow(
                         id=str(c.get("id") or f"truth-{uuid.uuid4().hex[:8]}"),
                         project_id=c.get("project_id"),
@@ -202,7 +209,7 @@ def _save_suite(data: Dict[str, Any]) -> None:
                         question=str(c.get("question") or ""),
                         expected_sql=str(c.get("expected_sql") or ""),
                         expected_dax=str(c.get("expected_dax") or ""),
-                        expected_row_count=int(c.get("expected_row_count", 1) or 1),
+                        expected_row_count=exp_rc,
                         status=str(c.get("status") or "draft"),
                         created_at=str(c.get("created_at") or datetime.now(timezone.utc).isoformat()),
                         expected_value_json=exp_json,
@@ -216,10 +223,9 @@ def _save_suite(data: Dict[str, Any]) -> None:
                     )
                 )
 
-            s.query(BITruthRunRow).delete()
             for r in runs_in:
                 res_json = json.dumps(r.get("results") or [], default=str)
-                s.add(
+                s.merge(
                     BITruthRunRow(
                         id=str(r.get("id") or f"trun-{uuid.uuid4().hex[:8]}"),
                         project_id=r.get("project_id"),
@@ -231,9 +237,8 @@ def _save_suite(data: Dict[str, Any]) -> None:
                         results_json=res_json,
                     )
                 )
-            s.commit()
     except Exception as exc:
-        logger.debug("DB save of bi_truth_suite failed, writing to fallback file: %s", exc)
+        logger.warning("DB save of bi_truth_suite failed, writing to fallback file: %s", exc)
         p = _suite_path()
         p.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
 
@@ -246,7 +251,7 @@ def _is_ratio_or_pct_metric(
 ) -> bool:
     """Check if metric is a percentage, ratio, rate, or share using word boundaries and formula."""
     text = f"{name} {label or ''}".lower()
-    has_ratio_keyword = bool(re.search(r"(?<![A-Za-z0-9])(ratio|margin|rate|percentage|pct|share)(?![A-Za-z0-9])|%", text, re.I))  # hardcoding-ok: statistical ratio keywords
+    has_ratio_keyword = bool(re.search(r"(?<![A-Za-z0-9])(ratio|rate|percentage|pct|share)(?![A-Za-z0-9])|%", text, re.I))
     has_divide = bool(formula and ("/" in formula or "DIVIDE" in formula.upper()))
     is_custom_agg = agg_type in ("NONE", "CUSTOM", None, "")
 
@@ -315,12 +320,27 @@ def _format_expected_sql(
     dim_ident: Optional[Any] = None,
     is_top_n: bool = False,
     n: int = 5,
+    platform: Optional[str] = None,
 ) -> str:
-    """Format runnable Snowflake SEMANTIC_VIEW query using real view, metric, and dimension identifiers."""
+    """Format runnable query using real view, metric, and dimension identifiers."""
     if not view_name or not str(view_name).strip():
         raise ValueError("view_name is required to format expected SEMANTIC_VIEW SQL")
     clean_view = _format_sql_identifier(view_name)
     clean_metric = _format_sql_identifier(metric_ident)
+
+    target_platform = (platform or "SNOWFLAKE").upper()
+    if target_platform == "DATABRICKS":
+        if dim_ident:
+            if isinstance(dim_ident, (list, tuple)):
+                dims_str = ", ".join(_format_sql_identifier(d) for d in dim_ident if d)
+            else:
+                dims_str = _format_sql_identifier(str(dim_ident))
+            if dims_str:
+                if is_top_n:
+                    return f"SELECT {dims_str}, {clean_metric} FROM {clean_view} ORDER BY {clean_metric} DESC LIMIT {n};"
+                return f"SELECT {dims_str}, {clean_metric} FROM {clean_view} GROUP BY {dims_str};"
+        return f"SELECT {clean_metric} FROM {clean_view};"
+
     if dim_ident:
         if isinstance(dim_ident, (list, tuple)):
             dims_str = ", ".join(_format_sql_identifier(d) for d in dim_ident if d)
@@ -370,6 +390,11 @@ def _evaluate_sql_against_snowflake(
     if not project_id or not sql:
         return None, None
     try:
+        from semabridge.connectors.sql_guard import validate_read_only_sql
+        is_safe, safety_err = validate_read_only_sql(sql)
+        if not is_safe:
+            return None, f"SQL safety check failed: {safety_err}"
+
         from semabridge.ai.project_connection import resolve_project_warehouse_config
         from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
 
@@ -387,7 +412,7 @@ def _evaluate_sql_against_snowflake(
             try:
                 cur.execute("ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = 15")
             except Exception as ex:
-                logger.debug("Failed setting statement timeout: %s", ex)
+                logger.warning("Failed setting statement timeout: %s", ex)
             cur.execute(sql)
             cols = [d[0].upper() for d in cur.description] if cur.description else []
             rows = cur.fetchall()
@@ -412,59 +437,91 @@ def _evaluate_cases_in_background(cases: List[Dict[str, Any]], owner_id: Optiona
 
     def _worker():
         try:
-            pid = cases[0].get("project_id")
+            from semabridge.connectors.sql_guard import validate_read_only_sql
             from semabridge.ai.project_connection import resolve_project_warehouse_config
             from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
-
-            sf = resolve_project_warehouse_config(pid, "SNOWFLAKE", owner_id=owner_id)
-            if not sf:
-                return
-            kw = get_snowflake_connect_kwargs(sf)
-            if not (kw.get("account") and kw.get("user")):
-                return
             import snowflake.connector
 
-            conn = snowflake.connector.connect(**kw)
-            now = datetime.now(timezone.utc).isoformat()
-            try:
-                cur = conn.cursor()
-                try:
-                    cur.execute("ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = 15")
-                except Exception as ex:
-                    logger.debug("Failed setting statement timeout: %s", ex)
+            by_pid: Dict[Optional[str], List[Dict[str, Any]]] = {}
+            for c in cases:
+                pid = c.get("project_id")
+                by_pid.setdefault(pid, []).append(c)
 
-                state = _load_suite()
-                cases_map = {c["id"]: c for c in state.get(_CASES_KEY) or []}
-                updated = False
-                for c in cases:
-                    cid = c.get("id")
-                    sql = c.get("expected_sql")
-                    if not sql or cid not in cases_map:
-                        continue
+            valid_pids: Dict[str, Tuple[Any, Any, List[Dict[str, Any]]]] = {}
+            for pid, pcases in by_pid.items():
+                if not pid:
+                    continue
+                sf = resolve_project_warehouse_config(pid, "SNOWFLAKE", owner_id=owner_id)
+                if not sf:
+                    continue
+                kw = get_snowflake_connect_kwargs(sf)
+                if not (kw.get("account") and kw.get("user")):
+                    continue
+                valid_pids[pid] = (sf, kw, pcases)
+
+            if not valid_pids:
+                return
+
+            now = datetime.now(timezone.utc).isoformat()
+            state = _load_suite()
+            cases_map = {c["id"]: c for c in state.get(_CASES_KEY) or []}
+            updated = False
+
+            for pid, (sf, kw, pcases) in valid_pids.items():
+
+                conn = None
+                try:
+                    conn = snowflake.connector.connect(**kw)
+                    cur = conn.cursor()
                     try:
-                        cur.execute(sql)
-                        cols = [d[0].upper() for d in cur.description] if cur.description else []
-                        rows = cur.fetchall()
-                        res_rows = [
-                            {cols[i]: _sanitize_cell_value(val) for i, val in enumerate(row)}
-                            for row in rows
-                        ]
-                        cases_map[cid]["expected_value"] = res_rows
-                        cases_map[cid]["expected_evaluated_at"] = now
-                        cases_map[cid]["evaluation_status"] = "draft_evaluated"
-                        cases_map[cid]["evaluation_note"] = None
-                        updated = True
-                    except Exception as q_err:
-                        cases_map[cid]["evaluation_note"] = str(q_err)
-                        cases_map[cid]["evaluation_status"] = "evaluation_failed"
-                        updated = True
-                if updated:
-                    state[_CASES_KEY] = list(cases_map.values())
-                    _save_suite(state)
-            finally:
-                conn.close()
+                        cur.execute("ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = 15")
+                    except Exception as ex:
+                        logger.warning("Failed setting statement timeout: %s", ex)
+
+                    for c in pcases:
+                        cid = c.get("id")
+                        sql = c.get("expected_sql")
+                        if not sql or cid not in cases_map:
+                            continue
+
+                        is_safe, safety_err = validate_read_only_sql(sql)
+                        if not is_safe:
+                            cases_map[cid]["evaluation_note"] = f"SQL safety check failed: {safety_err}"
+                            cases_map[cid]["evaluation_status"] = "evaluation_failed"
+                            updated = True
+                            continue
+
+                        try:
+                            cur.execute(sql)
+                            cols = [d[0].upper() for d in cur.description] if cur.description else []
+                            rows = cur.fetchall()
+                            res_rows = [
+                                {cols[i]: _sanitize_cell_value(val) for i, val in enumerate(row)}
+                                for row in rows
+                            ]
+                            cases_map[cid]["expected_value"] = res_rows
+                            cases_map[cid]["expected_evaluated_at"] = now
+                            cases_map[cid]["evaluation_status"] = "draft_evaluated"
+                            cases_map[cid]["evaluation_note"] = None
+                            updated = True
+                        except Exception as q_err:
+                            cases_map[cid]["evaluation_note"] = str(q_err)
+                            cases_map[cid]["evaluation_status"] = "evaluation_failed"
+                            updated = True
+                except Exception as conn_err:
+                    logger.warning("Snowflake connection error in background evaluation for project %s: %s", pid, conn_err)
+                finally:
+                    if conn:
+                        try:
+                            conn.close()
+                        except Exception as close_err:
+                            logger.warning("Failed closing snowflake connection: %s", close_err)
+
+            if updated:
+                state[_CASES_KEY] = list(cases_map.values())
+                _save_suite(state)
         except Exception as exc:
-            logger.debug("Background Snowflake evaluation failed: %s", exc)
+            logger.warning("Background Snowflake evaluation failed: %s", exc)
 
     thread = threading.Thread(target=_worker, daemon=True)
     thread.start()
@@ -476,8 +533,8 @@ def _compare_truth_results(
     tolerance: float = 1e-3,
 ) -> Tuple[bool, Optional[str]]:
     """Compare generated query result against expected value within tolerance."""
-    if expected is None:
-        return False, "No expected value recorded for comparison"
+    if expected is None or actual is None:
+        return False, "No data returned or recorded for comparison"
 
     if isinstance(expected, (int, float, str)) and not isinstance(expected, (list, dict)):
         if isinstance(actual, list) and len(actual) == 1 and isinstance(actual[0], dict):
@@ -502,13 +559,15 @@ def _compare_truth_results(
     if isinstance(expected, list):
         if not isinstance(actual, list):
             return False, f"Expected {len(expected)} rows, but got non-list result"
+        if len(expected) == 0 and len(actual) == 0:
+            return False, "No rows returned or compared"
         if len(actual) != len(expected):
             return False, f"Row count mismatch: expected {len(expected)} rows, got {len(actual)} rows"
 
-        for i, (exp_row, act_row) in enumerate(zip(expected, actual)):
-            if isinstance(exp_row, dict) and isinstance(act_row, dict):
-                exp_ci = {str(k).upper(): v for k, v in exp_row.items()}
-                act_ci = {str(k).upper(): v for k, v in act_row.items()}
+        def _row_matches(exp_r: Any, act_r: Any) -> bool:
+            if isinstance(exp_r, dict) and isinstance(act_r, dict):
+                exp_ci = {str(k).upper(): v for k, v in exp_r.items()}
+                act_ci = {str(k).upper(): v for k, v in act_r.items()}
                 common_keys = set(exp_ci.keys()) & set(act_ci.keys())
                 keys_to_check = common_keys if common_keys else None
                 if keys_to_check:
@@ -521,33 +580,54 @@ def _compare_truth_results(
                             delta = abs(ef - af)
                             max_tol = tolerance * max(1.0, abs(ef))
                             if delta > max_tol:
-                                return False, f"Row {i} column {k} mismatch: expected {ef}, got {af} (delta {delta} > {max_tol})"
+                                return False
                         except (ValueError, TypeError):
                             if str(ev).strip().casefold() != str(av).strip().casefold():
-                                return False, f"Row {i} column {k} mismatch: expected '{ev}', got '{av}'"
+                                return False
+                    return True
                 else:
-                    for ev, av in zip(exp_row.values(), act_row.values()):
+                    for ev, av in zip(exp_r.values(), act_r.values()):
                         try:
                             ef = float(ev)
                             af = float(av)
                             delta = abs(ef - af)
                             max_tol = tolerance * max(1.0, abs(ef))
                             if delta > max_tol:
-                                return False, f"Row {i} value mismatch: expected {ef}, got {af} (delta {delta} > {max_tol})"
+                                return False
                         except (ValueError, TypeError):
                             if str(ev).strip().casefold() != str(av).strip().casefold():
-                                return False, f"Row {i} value mismatch: expected '{ev}', got '{av}'"
+                                return False
+                    return True
             else:
                 try:
-                    ef = float(exp_row)
-                    af = float(act_row)
+                    ef = float(exp_r)
+                    af = float(act_r)
                     delta = abs(ef - af)
                     max_tol = tolerance * max(1.0, abs(ef))
-                    if delta > max_tol:
-                        return False, f"Row {i} mismatch: expected {ef}, got {af}"
+                    return delta <= max_tol
                 except (ValueError, TypeError):
-                    if str(exp_row).strip().casefold() != str(act_row).strip().casefold():
-                        return False, f"Row {i} mismatch: expected '{exp_row}', got '{act_row}'"
+                    return str(exp_r).strip().casefold() == str(act_r).strip().casefold()
+
+        # Positional matching first
+        positional_all_match = True
+        for exp_r, act_r in zip(expected, actual):
+            if not _row_matches(exp_r, act_r):
+                positional_all_match = False
+                break
+        if positional_all_match:
+            return True, None
+
+        # Order-insensitive bipartite matching
+        matched_actual_indices: Set[int] = set()
+        for exp_r in expected:
+            matched = False
+            for j, act_r in enumerate(actual):
+                if j not in matched_actual_indices and _row_matches(exp_r, act_r):
+                    matched_actual_indices.add(j)
+                    matched = True
+                    break
+            if not matched:
+                return False, "Row mismatch: expected row not found in generated results"
 
         return True, None
 
@@ -579,7 +659,7 @@ def generate_truth_cases(
             if c:
                 pid = c
         except Exception as ex:
-            logger.debug("Failed resolving canonical project id for %s: %s", raw_pid, ex)
+            logger.warning("Failed resolving canonical project id for %s: %s", raw_pid, ex)
     now = datetime.now(timezone.utc).isoformat()
 
     resolved_view = None
@@ -593,6 +673,16 @@ def generate_truth_cases(
             resolved_view = latest["semantic_view"] if latest else None
 
     if replace_drafts and pid:
+        try:
+            from semabridge.repository.orm.session_factory import db_manager
+            from semabridge.repository.orm.ai_models import BITruthCaseRow
+            with db_manager.get_session() as s:
+                draft_rows = s.query(BITruthCaseRow).filter(BITruthCaseRow.status == "draft").all()
+                to_del = [r.id for r in draft_rows if _matches_pid(r.project_id, pid)]
+                if to_del:
+                    s.query(BITruthCaseRow).filter(BITruthCaseRow.id.in_(to_del)).delete(synchronize_session=False)
+        except Exception as ex:
+            logger.warning("Failed clearing drafts from DB: %s", ex)
         state[_CASES_KEY] = [
             c for c in state.get(_CASES_KEY) or []
             if not (_matches_pid(c.get("project_id"), pid) and str(c.get("status") or "").lower() == "draft")
@@ -757,21 +847,15 @@ def generate_truth_cases(
                 continue
 
             start_concept = m.concept
-            reachable_concepts = {start_concept} if start_concept else set()
-            changed = True
-            while changed:
-                changed = False
-                for r in active_rels:
-                    fc = getattr(r, "from_concept", None)
-                    tc = getattr(r, "to_concept", None)
-                    if fc in reachable_concepts and tc not in reachable_concepts:
-                        reachable_concepts.add(tc)
-                        changed = True
-                    elif tc in reachable_concepts and fc not in reachable_concepts:
-                        reachable_concepts.add(fc)
-                        changed = True
-
-            if not reachable_concepts:
+            reachable_concepts = set()
+            from semabridge.ai.nl_query_engine import NLQueryEngine
+            if start_concept:
+                reachable_concepts.add(start_concept)
+                for concept in getattr(dom, "concepts", []) or []:
+                    c_name = concept.name
+                    if c_name != start_concept and NLQueryEngine._reaches_via_many_to_one(start_concept, c_name, active_rels):
+                        reachable_concepts.add(c_name)
+            else:
                 reachable_concepts = {c.name for c in getattr(dom, "concepts", []) or []}
 
             business_dims: List[str] = []
@@ -791,15 +875,19 @@ def generate_truth_cases(
                         or (f"{c_name}.{a_name}".casefold() in rel_key_cols)
                     ):
                         continue
-                    dim_ref = f"{c_name}.{a_name}"
+                    tbl = getattr(concept, "logical_name", None) or NLQueryEngine._to_logical_id(concept.name)
+                    col = getattr(attr, "logical_name", None) or NLQueryEngine._to_dimension_name(attr.name)
+                    dim_ref = f"{tbl}.{col}"
                     dtype = str(getattr(attr, "data_type", "")).lower()
-                    if dtype in ("date", "datetime", "timestamp") or any(k in a_name.lower() for k in ("date", "month", "year", "quarter")):
+                    is_date = getattr(attr, "is_date", False) or getattr(attr, "is_temporal", False) or dtype in ("date", "datetime", "timestamp")
+                    if is_date:
                         date_dims.append(dim_ref)
-                    is_text = dtype in ("string", "text", "varchar") or not bool(re.search(r"int|dec|float|num|double|bool", dtype, re.I))
-                    if any(k in a_name.lower() for k in ("name", "desc", "cat", "type", "status", "tier")) or is_text:
-                        business_dims.append(dim_ref)
                     else:
-                        other_dims.append(dim_ref)
+                        is_num = bool(re.search(r"int|dec|float|num|double", dtype, re.I))
+                        if not is_num:
+                            business_dims.append(dim_ref)
+                        else:
+                            other_dims.append(dim_ref)
 
             candidate_dims = business_dims + other_dims
             metric_candidates: List[Dict[str, Any]] = []
@@ -888,7 +976,7 @@ def generate_truth_cases(
                 existing_keys_by_status[cand_key] = "draft"
                 created.append({
                     "id": f"truth-{uuid.uuid4().hex[:8]}",
-                    "project_id": project_id or getattr(dom, "source_project_id", None) or d_name,
+                    "project_id": project_id or getattr(dom, "source_project_id", None) or pid,
                     "domain": d_name,
                     "metric_name": m_name,
                     "question": cand["question"],
@@ -907,7 +995,7 @@ def generate_truth_cases(
             recon_res = get_project_reconciliation_metrics(pid)
             recon_metrics = recon_res.get("metrics") or []
         except Exception as exc:
-            logger.debug("Failed getting project reconciliation metrics for %s: %s", pid, exc)
+            logger.warning("Failed getting project reconciliation metrics for %s: %s", pid, exc)
             recon_metrics = []
 
         for m in recon_metrics:
@@ -929,7 +1017,7 @@ def generate_truth_cases(
                     if dep_info:
                         target_view = dep_info.get("semantic_view") or dep_info.get("view_name")
                 except Exception as ex:
-                    logger.debug("Failed getting project deployment info for %s: %s", pid, ex)
+                    logger.warning("Failed getting project deployment info for %s: %s", pid, ex)
             if not target_view:
                 target_view = m.get("domain")
             if not target_view:
@@ -1017,7 +1105,7 @@ def generate_truth_cases(
                     "question_kind": cand_kind,
                 })
 
-    existing_for_pid = [c for c in state.get(_CASES_KEY, []) if c.get("project_id") == pid]
+    existing_for_pid = [c for c in state.get(_CASES_KEY, []) if _matches_pid(c.get("project_id"), pid)]
     if not created and not existing_for_pid and pid:
         raise ValueError(
             f"Prerequisite missing: project '{pid}' has no certified metrics, verified queries, or deployed semantic models. "
@@ -1044,13 +1132,39 @@ def clear_truth_cases(project_id: Optional[str] = None) -> int:
     state = _load_suite()
     orig_len = len(state.get(_CASES_KEY) or [])
     pid = (project_id or "").strip()
+
+    try:
+        from semabridge.repository.orm.session_factory import db_manager
+        from semabridge.repository.orm.ai_models import BITruthCaseRow, BITruthRunRow
+        with db_manager.get_session() as s:
+            if pid:
+                all_cases = s.query(BITruthCaseRow).all()
+                to_delete = [c.id for c in all_cases if _matches_pid(c.project_id, pid)]
+                if to_delete:
+                    s.query(BITruthCaseRow).filter(BITruthCaseRow.id.in_(to_delete)).delete(synchronize_session=False)
+                all_runs = s.query(BITruthRunRow).all()
+                runs_to_delete = [r.id for r in all_runs if _matches_pid(r.project_id, pid)]
+                if runs_to_delete:
+                    s.query(BITruthRunRow).filter(BITruthRunRow.id.in_(runs_to_delete)).delete(synchronize_session=False)
+            else:
+                s.query(BITruthCaseRow).delete()
+                s.query(BITruthRunRow).delete()
+    except Exception as exc:
+        logger.warning("DB delete during clear_truth_cases failed: %s", exc)
+
     if pid:
         state[_CASES_KEY] = [c for c in state.get(_CASES_KEY) or [] if not _matches_pid(c.get("project_id"), pid)]
         state["runs"] = [r for r in state.get("runs") or [] if not _matches_pid(r.get("project_id"), pid)]
     else:
         state[_CASES_KEY] = []
         state["runs"] = []
-    _save_suite(state)
+
+    p = _suite_path()
+    if p.exists():
+        try:
+            p.write_text(json.dumps(state, indent=2, default=str), encoding="utf-8")
+        except Exception as ex:
+            logger.warning("Writing local suite JSON failed: %s", ex)
     return orig_len - len(state.get(_CASES_KEY) or [])
 
 
@@ -1062,7 +1176,8 @@ def add_manual_truth_case(
     metric_name: Optional[str] = None,
     expected_sql: Optional[str] = None,
     expected_dax: Optional[str] = None,
-    status: str = "approved",
+    status: str = "draft",
+    owner_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Manually add a single truth question with expected SQL or DAX."""
     q_clean = (question or "").strip()
@@ -1095,7 +1210,8 @@ def import_truth_cases_from_content(
     filename: str = "upload.csv",
     project_id: Optional[str] = None,
     domain: Optional[str] = None,
-    status: str = "approved",
+    status: str = "draft",
+    owner_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Parse uploaded document content (CSV, TSV, JSON, or text Q&A) into truth test cases."""
     import csv
@@ -1128,7 +1244,7 @@ def import_truth_cases_from_content(
                             "metric_name": str(m).strip(),
                         })
         except Exception as ex:
-            logger.debug("Parsing golden SQL CSV failed: %s", ex)
+            logger.warning("Parsing golden SQL JSON failed: %s", ex)
 
     # 2. Try CSV / TSV if JSON didn't yield items
     if not parsed_pairs and ("," in raw or "\t" in raw or "\n" in raw):
@@ -1180,7 +1296,7 @@ def import_truth_cases_from_content(
                                 "metric_name": "",
                             })
         except Exception as ex:
-            logger.debug("Parsing golden SQL CSV failed: %s", ex)
+            logger.warning("Parsing golden SQL CSV failed: %s", ex)
 
     # 3. Try Q: / A: Text or Markdown patterns
     if not parsed_pairs:
@@ -1358,25 +1474,31 @@ def build_engine_instructions_for_view(
     data_max_date: Optional[str] = None,
 ) -> str:
     """Build engine instructions per view from model metadata (governed path, no today's date, period metrics)."""
-    instructions: List[str] = [  # hardcoding-ok: template instructions for AI engines
+    instructions: List[str] = [
         "Always query using SEMANTIC_VIEW with governed METRICS and DIMENSIONS; never query base/physical or enriched tables directly.",
         "Never use invented business rules or status checks (e.g. checking if a date is NULL) - use the governed metrics provided.",
         "Never filter or anchor on the current date (CURRENT_DATE, GETDATE, NOW) because historical model data does not extend to the current date.",
     ]
     if data_max_date:
-        instructions.append(f"Model data ends at {data_max_date}; for period comparisons or 'last year', evaluate relative to the latest data period.")  # hardcoding-ok: template instruction
+        instructions.append(f"Model data ends at {data_max_date}; for period comparisons, evaluate relative to the latest data period.")
     else:
-        instructions.append("Model data ends at historical anchor dates; for period comparisons or 'last year', evaluate relative to the latest data period.")  # hardcoding-ok: template instruction
+        instructions.append("Model data ends at historical anchor points; for period comparisons, evaluate relative to the latest data period.")
 
     m_list = metrics or []
     period_metrics: List[str] = []
     for m in m_list:
-        m_name = getattr(m, "name", None) or getattr(m, "unique_name", None) or ""
-        if any(tag in m_name.upper() for tag in ("_SPLY", "_YOY", "_YTD", "SPLY", "YOY")):
-            period_metrics.append(m_name)
+        if (
+            getattr(m, "is_period_metric", False)
+            or getattr(m, "time_intelligence", False)
+            or getattr(m, "time_shift_tags", None)
+            or getattr(m, "comparison_type", None)
+        ):
+            m_name = getattr(m, "name", None) or getattr(m, "unique_name", None) or ""
+            if m_name:
+                period_metrics.append(m_name)
 
     if period_metrics:
-        instructions.append(f"Use governed period metrics ({', '.join(period_metrics[:5])}) for year-over-year and historical comparisons.")  # hardcoding-ok: template instruction
+        instructions.append(f"Use governed period metrics ({', '.join(period_metrics[:5])}) for period and historical comparisons.")
 
     snapshot_dims: List[str] = []
     for m in m_list:
@@ -1384,7 +1506,7 @@ def build_engine_instructions_for_view(
         if semi_dim:
             snapshot_dims.append(f"{getattr(m, 'name', '')} by {semi_dim}")
     if snapshot_dims:
-        instructions.append(f"Semi-additive metrics ({', '.join(snapshot_dims[:3])}) must not be summed over time; evaluate them at the end of the period.")  # hardcoding-ok: template instruction
+        instructions.append(f"Semi-additive metrics ({', '.join(snapshot_dims[:3])}) must not be summed over time; evaluate them at the end of the period.")
 
     return "\n".join(f"- {inst}" for inst in instructions)
 
@@ -1513,9 +1635,9 @@ def run_truth_suite(
                     try:
                         sf_cur.execute("ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = 15")
                     except Exception as ex:
-                        logger.debug("Failed setting statement timeout: %s", ex)
+                        logger.warning("Failed setting statement timeout: %s", ex)
         except Exception as conn_err:
-            logger.debug("Failed opening single Snowflake connection for truth run: %s", conn_err)
+            logger.warning("Failed opening single Snowflake connection for truth run: %s", conn_err)
 
     results: List[Dict[str, Any]] = []
 
@@ -1560,6 +1682,13 @@ def run_truth_suite(
             except Exception as exc:
                 err = str(exc)
 
+            if generated_sql:
+                from semabridge.connectors.sql_guard import validate_read_only_sql
+                is_safe, safety_err = validate_read_only_sql(generated_sql)
+                if not is_safe:
+                    err = f"SQL safety check failed: {safety_err}"
+                    generated_sql = ""
+
             actual_val = None
             if generated_sql and sf_cur is not None:
                 try:
@@ -1591,11 +1720,13 @@ def run_truth_suite(
                     ok = False
                     err = str(q_err)
             else:
-                ok = bool(generated_sql) and not err
+                ok = False
+                if not err:
+                    err = "Query not executed against warehouse"
 
             if ok and generated_sql and pid:
                 try:
-                    from semabridge.ai.verified_queries_service import record_query_execution, save_verified_query
+                    from semabridge.ai.verified_queries_service import record_query_execution
                     target_view = getattr(scope, "semantic_view", None) or c.get("view_name") or resolved_view
                     record_query_execution(
                         project_id=pid,
@@ -1605,17 +1736,8 @@ def run_truth_suite(
                         view_name=target_view,
                         target="SNOWFLAKE",
                     )
-                    save_verified_query(
-                        project_id=pid,
-                        question=c["question"],
-                        sql=generated_sql,
-                        confirmed=True,
-                        user_id=owner_id,
-                        view_name=target_view,
-                        target="SNOWFLAKE",
-                    )
                 except Exception as save_err:
-                    logger.debug("Learning loop: saving verified query for case %s skipped: %s", c.get("id"), save_err)
+                    logger.warning("Recording query execution for case %s skipped: %s", c.get("id"), save_err)
 
             results.append({
                 "case_id": c["id"],
@@ -1634,7 +1756,7 @@ def run_truth_suite(
             try:
                 sf_conn.close()
             except Exception as ex:
-                logger.debug("Closing Snowflake connection failed: %s", ex)
+                logger.warning("Closing Snowflake connection failed: %s", ex)
 
     passed = sum(1 for r in results if r["passed"])
     total = len(approved)

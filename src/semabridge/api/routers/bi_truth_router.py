@@ -51,7 +51,7 @@ class CreateManualTruthCaseRequest(BaseModel):
     metric_name: Optional[str] = None
     expected_sql: Optional[str] = None
     expected_dax: Optional[str] = None
-    status: str = "approved"
+    status: str = "draft"
 
 
 class ImportDocTextRequest(BaseModel):
@@ -59,7 +59,7 @@ class ImportDocTextRequest(BaseModel):
     filename: Optional[str] = "input.csv"
     project_id: Optional[str] = None
     domain: Optional[str] = None
-    status: str = "approved"
+    status: str = "draft"
 
 
 class RunTruthSuiteRequest(BaseModel):
@@ -107,7 +107,8 @@ def get_cases(project_id: Optional[str] = None) -> Dict[str, Any]:
 
 
 @router.post("/cases", response_model=Dict[str, Any])
-def create_case(req: CreateManualTruthCaseRequest) -> Dict[str, Any]:
+def create_case(req: CreateManualTruthCaseRequest, request: Request) -> Dict[str, Any]:
+    uid = getattr(request.state, "user_id", None)
     try:
         new_case = add_manual_truth_case(
             project_id=req.project_id,
@@ -117,6 +118,7 @@ def create_case(req: CreateManualTruthCaseRequest) -> Dict[str, Any]:
             expected_sql=req.expected_sql,
             expected_dax=req.expected_dax,
             status=req.status,
+            owner_id=str(uid) if uid else None,
         )
         return _sanitize_cell_value({"success": True, "case": new_case})
     except ValueError as e:
@@ -124,23 +126,26 @@ def create_case(req: CreateManualTruthCaseRequest) -> Dict[str, Any]:
 
 
 @router.post("/cases/import-text", response_model=Dict[str, Any])
-def import_cases_text(req: ImportDocTextRequest) -> Dict[str, Any]:
+def import_cases_text(req: ImportDocTextRequest, request: Request) -> Dict[str, Any]:
+    uid = getattr(request.state, "user_id", None)
     added = import_truth_cases_from_content(
         content=req.content,
         filename=req.filename or "input.csv",
         project_id=req.project_id,
         domain=req.domain,
         status=req.status,
+        owner_id=str(uid) if uid else None,
     )
     return _sanitize_cell_value({"success": True, "added_count": len(added), "cases": added})
 
 
 @router.post("/cases/upload", response_model=Dict[str, Any])
 async def upload_cases_file(
+    request: Request,
     file: UploadFile = File(...),
     project_id: Optional[str] = Form(default=None),
     domain: Optional[str] = Form(default=None),
-    status: str = Form(default="approved"),
+    status: str = Form(default="draft"),
 ) -> Dict[str, Any]:
     raw_bytes = await file.read()
     try:
@@ -148,12 +153,14 @@ async def upload_cases_file(
     except UnicodeDecodeError:
         text = raw_bytes.decode("latin-1", errors="ignore")
 
+    uid = getattr(request.state, "user_id", None)
     added = import_truth_cases_from_content(
         content=text,
         filename=file.filename or "upload.csv",
         project_id=project_id,
         domain=domain,
         status=status,
+        owner_id=str(uid) if uid else None,
     )
     return {"success": True, "added_count": len(added), "cases": added}
 

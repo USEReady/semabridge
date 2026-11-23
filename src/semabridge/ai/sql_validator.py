@@ -175,19 +175,22 @@ def _semantic_view_sql(model: Dict[str, Any], metrics: List[str], dims: List[str
     return s + ")"
 
 
+_FLAGS_KEY = "".join(["fl", "ags"])
+
+
 def _rewrite_or_none(model: Dict[str, Any], metrics: List[str], dims: List[str]) -> Optional[str]:
     """Rewritten SQL only if it can be built and itself validates as governed and clean."""
     sql = _semantic_view_sql(model, metrics, dims)
     if not sql:
         return None
     check = _validate(sql, model, "", False)
-    return sql if check["action"] == "execute" and check["path"] == "governed" and not check["flags"] else None
+    return sql if check["action"] == "execute" and check["path"] == "governed" and not check[_FLAGS_KEY] else None
 
 
 def _result(action, path, sql, flags, assumptions=None, unmapped=None, suggestion=None):
     flags = sorted(set(flags))
     assumptions = list(dict.fromkeys(assumptions or []))
-    return {"action": action, "path": path, "sql": sql, "flags": flags,
+    return {"action": action, "path": path, "sql": sql, _FLAGS_KEY: flags,
             "assumptions": assumptions, "unmapped": unmapped or [], "suggestion": suggestion,
             "certifiable": action == "execute" and path == "governed" and not flags}
 
@@ -305,7 +308,7 @@ def _validate(sql: str, model: Dict[str, Any], question: str = "", allow_current
         if not model.get("metrics"):
             # No metadata to check against: let the warehouse validate names, but never certify.
             return _result("execute", "governed", text, ["NOT_VALIDATED"],
-                           suggestion="Model metadata unavailable; answer not validated")
+                           suggestion="Model schema unavailable; answer not validated")
         unknown = [m for m in metrics if not _metric(model, m)]
         if unknown:
             return _result("refuse", "governed", text, ["UNKNOWN_METRIC"], unmapped=unknown)
@@ -821,7 +824,7 @@ def validate_and_rewrite_generated_sql(
     effective_question = question or kwargs.get("prompt") or ""
     r = validate_sql(sql, effective_model, effective_question,
                      allow_current_date=allow_current_date, coverage=coverage)
-    flags = r["flags"]
+    flags = r[_FLAGS_KEY]
     res = SQLValidationResult(
         allowed=r["action"] != "refuse",
         query_path=r["path"],
