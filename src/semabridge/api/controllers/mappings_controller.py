@@ -261,6 +261,11 @@ def _build_config_yaml_from_request(
         target_section["identity_id"] = target_config["identity_id"]
     if target_config.get("workspace_id"):
         target_section["workspace_id"] = target_config["workspace_id"]
+    # Databricks (Unity Catalog) targets: catalog + schema, optional warehouse.
+    if target_config.get("catalog"):
+        target_section["catalog"] = target_config["catalog"]
+    if target_config.get("warehouse_id"):
+        target_section["warehouse_id"] = target_config["warehouse_id"]
 
     config = {
         "project_name": project_name,
@@ -469,7 +474,10 @@ def _saved_project_target(project_cfg: Dict[str, Any], requested: Dict[str, Any]
     for target in candidates:
         if str(target.get("type") or "").strip().lower() == target_type:
             saved = {"type": target_type}
-            for key in ("identity_id", "account", "database", "schema", "warehouse", "role", "workspace_id"):
+            for key in (
+                "identity_id", "account", "database", "schema", "warehouse", "role", "workspace_id",
+                "catalog", "warehouse_id",  # Databricks (Unity Catalog) targets
+            ):
                 value = target.get(key) or (target.get("schema_name") if key == "schema" else None)
                 if value:
                     saved[key] = value

@@ -8,6 +8,9 @@ export function buildDryRunPayload({
   snowflakeSchema,
   targetDatabase,
   targetSchema,
+  databricksAccountId,
+  databricksCatalog,
+  databricksSchema,
   selectedModelNames,
   pbixPath,
 }) {
@@ -43,6 +46,15 @@ export function buildDryRunPayload({
   if (targetConfig.type === 'fabric') {
     if (fabricAccountId) targetConfig.identity_id = fabricAccountId;
     if (fabricWorkspaceId) targetConfig.workspace_id = fabricWorkspaceId;
+  }
+
+  if (targetConfig.type === 'databricks') {
+    // Unity Catalog destination; empty values fall back to the Settings defaults.
+    if (databricksAccountId) targetConfig.identity_id = databricksAccountId;
+    const catalog = String(databricksCatalog || '').trim();
+    const schema = String(databricksSchema || '').trim();
+    if (catalog) targetConfig.catalog = catalog;
+    if (schema) targetConfig.schema = schema;
   }
 
   return { sourceConfig, targetConfig };
@@ -165,6 +177,8 @@ export function buildMappingSignature(input = {}) {
     targetAccount: input.targetAccount || '',
     targetWarehouse: input.targetWarehouse || '',
     databricksAccountId: input.databricksAccountId || '',
+    databricksCatalog: input.databricksCatalog || '',
+    databricksSchema: input.databricksSchema || '',
     selectedModels: sorted(input.selectedModels),
     selectedModelNames: sorted(input.selectedModelNames),
     selectedDatabricksTables: sorted(input.selectedDatabricksTables),

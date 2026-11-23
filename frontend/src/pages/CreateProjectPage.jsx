@@ -80,6 +80,7 @@ const CONNECTOR_TYPES = [
 
 const TARGET_CONNECTOR_TYPES = [
   { value: 'snowflake', label: 'Snowflake' },
+  { value: 'databricks', label: 'Databricks' },
 ];
 
 const INTERMEDIATE_FORMAT_TYPES = [
@@ -261,6 +262,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     fabricAccountId, selectedConnectionId, snowflakeAccountId, databricksAccountId,
     fabricWorkspaceId, snowflakeDatabase, snowflakeSchema,
     targetDatabase, targetSchema, targetAccount, targetWarehouse,
+    databricksCatalog, databricksSchema,
     modelQueryRegex, pbixSourceMode,
     selectedLocalFolderId, selectedPbixFilePath,
     pbixUploadPath, pbixMultiFileMode, pbixFileEntries,
@@ -355,6 +357,8 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   const setSnowflakeSchema = (val) => setWizardState({ snowflakeSchema: val });
   const setTargetDatabase = (val) => setWizardState({ targetDatabase: val });
   const setTargetSchema = (val) => setWizardState({ targetSchema: val });
+  const setDatabricksCatalog = (val) => setWizardState({ databricksCatalog: val });
+  const setDatabricksSchema = (val) => setWizardState({ databricksSchema: val });
   const setTargetAccount = (val) => setWizardState({ targetAccount: val });
   const setTargetWarehouse = (val) => setWizardState({ targetWarehouse: val });
   const setModelQueryRegex = (val) => setWizardState({ modelQueryRegex: !!val });
@@ -515,6 +519,11 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       if (initialData.target_schema != null) setTargetSchema(initialData.target_schema);
       if (initialData.target_identity_id != null) setFabricAccountId(initialData.target_identity_id);
       if (initialData.target_workspace_id != null) setFabricWorkspaceId(initialData.target_workspace_id);
+      if (String(initialData.target_type || '').toLowerCase() === 'databricks') {
+        if (initialData.target_identity_id) setDatabricksAccountId(initialData.target_identity_id);
+        if (initialData.target_catalog != null) setDatabricksCatalog(initialData.target_catalog);
+        if (initialData.target_schema != null) setDatabricksSchema(initialData.target_schema);
+      }
       // sync/write strategy (copy | upsert)
       if (!editMode) {
         setWizardState({ write_strategy: 'copy' });
@@ -702,6 +711,8 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     targetAccount,
     targetWarehouse,
     databricksAccountId,
+    databricksCatalog,
+    databricksSchema,
     selectedModels,
     selectedModelNames,
     selectedDatabricksTables,
@@ -711,7 +722,8 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     pbixFilePaths,
     effectiveSources: effectiveSources.sources,
   }), [
-    databricksAccountId, fabricAccountId, fabricWorkspaceId, intermediateFormat,
+    databricksAccountId, databricksCatalog, databricksSchema,
+    fabricAccountId, fabricWorkspaceId, intermediateFormat,
     resolvedPbixPath, selectedConnectionId, selectedDatabricksTables, selectedModelNames,
     selectedModels, snowflakeAccountId, snowflakeDatabase, snowflakeSchema,
     sourceConnector, targetAccount, targetConnectors, targetDatabase, targetSchema,
@@ -1289,8 +1301,8 @@ export default function CreateProjectPage({ editMode = false, initialData = null
 
       if (connector === 'databricks') {
         if (databricksAccountId) target.identity_id = databricksAccountId;
-        if (targetDatabase.trim()) target.catalog = targetDatabase.trim();
-        if (targetSchema.trim()) target.schema = targetSchema.trim();
+        if (databricksCatalog.trim()) target.catalog = databricksCatalog.trim();
+        if (databricksSchema.trim()) target.schema = databricksSchema.trim();
       }
 
       if (connector === 'tableau_datasource') {
@@ -1345,6 +1357,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     lines.push('targets:');
     targets.forEach((target) => {
       lines.push(`  - type: ${target.type}`);
+      if (target.catalog) lines.push(`    catalog: "${escapeYamlString(target.catalog)}"`);
       if (target.database) lines.push(`    database: "${escapeYamlString(target.database)}"`);
       if (target.schema) lines.push(`    schema: "${escapeYamlString(target.schema)}"`);
       if (target.account) lines.push(`    account: "${escapeYamlString(target.account)}"`);
@@ -1460,6 +1473,9 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       snowflakeSchema,
       targetDatabase,
       targetSchema,
+      databricksAccountId,
+      databricksCatalog,
+      databricksSchema,
       selectedModelNames,
       pbixPath: effectiveSources.isMulti ? '' : effectiveSources.singlePbixPath,
     });
@@ -1467,7 +1483,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       ? (effectiveSources.isMulti ? effectiveSources.sources : [effectiveSources.singlePbixPath]).filter(Boolean)
       : selectedModelNames;
     return { source_config: sourceConfig, selected_sources: selected };
-  }, [sourceConnector, targetConnectors, fabricAccountId, fabricWorkspaceId, snowflakeAccountId, snowflakeDatabase, snowflakeSchema, targetDatabase, targetSchema, selectedModelNames, effectiveSources]);
+  }, [sourceConnector, targetConnectors, fabricAccountId, fabricWorkspaceId, snowflakeAccountId, snowflakeDatabase, snowflakeSchema, targetDatabase, targetSchema, databricksAccountId, databricksCatalog, databricksSchema, selectedModelNames, effectiveSources]);
 
   /* ─── Step validity ─── */
   const canAdvance = () => {
@@ -1499,6 +1515,9 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         snowflakeSchema,
         targetDatabase,
         targetSchema,
+        databricksAccountId,
+        databricksCatalog,
+        databricksSchema,
         selectedModelNames,
         pbixPath: effectivePbixPath,
       });
@@ -1556,7 +1575,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     } finally {
       setMappingLoading(false);
     }
-  }, [addLog, currentMappingSignature, sourceConnector, targetConnectors, selectedModelNames, createdProject, fabricWorkspaceId, snowflakeDatabase, snowflakeSchema, targetDatabase, targetSchema, pbixSourceMode, selectedPbixFilePath, pbixUploadPath]);
+  }, [addLog, currentMappingSignature, sourceConnector, targetConnectors, selectedModelNames, createdProject, fabricWorkspaceId, snowflakeDatabase, snowflakeSchema, targetDatabase, targetSchema, databricksAccountId, databricksCatalog, databricksSchema, pbixSourceMode, selectedPbixFilePath, pbixUploadPath]);
 
   // ── handleDryRun — triggers the dry-run API and populates detectedMappings ──
   const handleDryRun = useCallback(async () => {
@@ -1580,6 +1599,9 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       snowflakeSchema,
       targetDatabase,
       targetSchema,
+      databricksAccountId,
+      databricksCatalog,
+      databricksSchema,
       selectedModelNames,
       pbixPath: isMulti ? '' : effectiveSources.singlePbixPath,
     });
@@ -1655,6 +1677,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   }, [
     createdProject, sourceConnector, fabricWorkspaceId, snowflakeDatabase,
     snowflakeSchema, targetConnectors, targetDatabase, targetSchema,
+    databricksAccountId, databricksCatalog, databricksSchema,
     selectedModelNames, currentMappingSignature, fabricAccountId, effectiveSources,
   ]);
 
@@ -2103,6 +2126,8 @@ export default function CreateProjectPage({ editMode = false, initialData = null
               snowflakeSchema={snowflakeSchema} setSnowflakeSchema={setSnowflakeSchema}
               targetDatabase={targetDatabase} setTargetDatabase={setTargetDatabase}
               targetSchema={targetSchema} setTargetSchema={setTargetSchema}
+              databricksCatalog={databricksCatalog} setDatabricksCatalog={setDatabricksCatalog}
+              databricksSchema={databricksSchema} setDatabricksSchema={setDatabricksSchema}
               targetAccount={targetAccount} setTargetAccount={setTargetAccount}
               targetWarehouse={targetWarehouse} setTargetWarehouse={setTargetWarehouse}
               pbixFile={pbixFile}

@@ -51,6 +51,17 @@ def _convert_to_databricks_target(self, context: RunContext) -> None:
     """Generate a Databricks metric-view YAML artifact."""
     import yaml
     from semabridge.connectors.databricks_publisher import DatabricksPublisher
+    from semabridge.core.engine.conversion.rules_choice import databricks_planner_enabled
+
+    # With the planner path on, Step 6 wrote Databricks SQL (Phase 3.2); the
+    # existing publisher expects today's SQL, so it must not run on it. The
+    # planner path's own Step 8 lands in Phase 3.8.
+    if databricks_planner_enabled(context):
+        raise ConversionError(
+            "Databricks planner path (behavior.databricks.use_planner_path) is on, but its "
+            "deploy steps are not built yet (Phase 3.8). Dry runs work; to deploy with the "
+            "existing Databricks publisher, turn use_planner_path off."
+        )
 
     publisher = DatabricksPublisher(context.config.databricks, behavior=context.behavior)
     # Apply the same heuristic transforms that publish() applies so the

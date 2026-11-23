@@ -54,6 +54,16 @@ def _deploy_to_databricks(self, context: RunContext) -> None:
     are resolved from the linked Account row.
     """
     from semabridge.connectors.databricks_publisher import DatabricksPublisher
+    from semabridge.core.engine.conversion.rules_choice import databricks_planner_enabled
+
+    # Same guard as Step 8: never hand Databricks-dialect SQL (planner path,
+    # Phase 3.2) to the existing publisher. The planner deploy lands in 3.8.
+    if databricks_planner_enabled(context):
+        raise DeploymentError(
+            "Databricks planner path (behavior.databricks.use_planner_path) is on, but its "
+            "deploy steps are not built yet (Phase 3.8). To deploy with the existing "
+            "Databricks publisher, turn use_planner_path off."
+        )
 
     # Check for per-account identity_id scoping
     target_configs = getattr(context.config, "targets", None) or []
