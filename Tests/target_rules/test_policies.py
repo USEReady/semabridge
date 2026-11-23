@@ -140,7 +140,7 @@ def test_registry() -> None:
     assert "snowflake" in registered_targets()
     assert get_target_rules("SNOWFLAKE") is SNOWFLAKE_RULES
     with pytest.raises(UnsupportedTargetError):
-        get_target_rules("databricks")
+        get_target_rules("no-such-platform")
     other = dataclasses.replace(SNOWFLAKE_RULES, target="registry-test-platform")
     try:
         assert register_target_rules(other) is other

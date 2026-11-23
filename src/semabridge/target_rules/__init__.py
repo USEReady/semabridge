@@ -7,9 +7,10 @@ base.py      the shapes: TargetRules, TargetPolicies (ReasonCode -> Decision),
              TargetCapabilities, SqlDialect
 registry.py  platforms register their rules; shared code looks them up
 snowflake/   Snowflake's rules (dialect, policies, capabilities)
+databricks/  Databricks' rules (Phase 3.1): Unity Catalog metric views
 
-Only Snowflake exists so far (reproducing today's behaviour); Databricks is
-added in Phase 3 as another sub-package that registers itself.
+Snowflake's rules reproduce today's behaviour and stay the default; each
+platform is a sub-package that registers itself.
 """
 
 from __future__ import annotations
@@ -33,8 +34,11 @@ from semabridge.target_rules.registry import (
 
 # Importing a platform's package registers its rules.
 from semabridge.target_rules.snowflake import SNOWFLAKE_RULES, SnowflakeDialect  # noqa: E402
+from semabridge.target_rules.databricks import DATABRICKS_RULES, DatabricksDialect  # noqa: E402
 
 __all__ = [
+    "DATABRICKS_RULES",
+    "DatabricksDialect",
     "Decision",
     "DecisionRule",
     "ReasonCode",
