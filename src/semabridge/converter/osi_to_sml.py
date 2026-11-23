@@ -1417,15 +1417,15 @@ class OSIToSMLConverter(BaseConverter):
                 continue
 
             combined_sql = " AND ".join(rendered_preds)
-            if re.search(r"\bCURRENT_DATE\b", combined_sql, re.IGNORECASE):
-                logger.info("Skipping governed split for '%s': predicate uses CURRENT_DATE", metric.unique_name)
+            if re.search(r"\b(CURRENT_DATE|CURRENT_TIMESTAMP|GETDATE|SYSDATE|NOW|LOCALTIMESTAMP)\b", combined_sql, re.IGNORECASE):
+                logger.info("Skipping governed split for '%s': predicate uses CURRENT_DATE or timestamp function", metric.unique_name)
                 continue
             metric.filter_predicate = combined_sql
 
             from semabridge.utils.identifiers import IdentifierSanitizer
             sanitizer = IdentifierSanitizer()
-            clean_m_name = sanitizer.sanitize_column(metric.unique_name).strip("_").upper()
-            split_col_name = f"IS_{clean_m_name}"
+            clean_m_name = sanitizer.to_alias(metric.unique_name).strip("_").upper()
+            split_col_name = sanitizer.to_alias(f"IS_{clean_m_name}").strip("_").upper()
 
             existing_cols = {c.unique_name.upper() for c in ds.columns}
             if split_col_name in existing_cols:

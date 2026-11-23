@@ -175,22 +175,19 @@ def _semantic_view_sql(model: Dict[str, Any], metrics: List[str], dims: List[str
     return s + ")"
 
 
-_KEY_FLAGS = "".join(["fl", "ags"])
-
-
 def _rewrite_or_none(model: Dict[str, Any], metrics: List[str], dims: List[str]) -> Optional[str]:
     """Rewritten SQL only if it can be built and itself validates as governed and clean."""
     sql = _semantic_view_sql(model, metrics, dims)
     if not sql:
         return None
     check = _validate(sql, model, "", False)
-    return sql if check["action"] == "execute" and check["path"] == "governed" and not check[_KEY_FLAGS] else None
+    return sql if check["action"] == "execute" and check["path"] == "governed" and not check["flags"] else None
 
 
 def _result(action, path, sql, flags, assumptions=None, unmapped=None, suggestion=None):
     flags = sorted(set(flags))
     assumptions = list(dict.fromkeys(assumptions or []))
-    return {"action": action, "path": path, "sql": sql, _KEY_FLAGS: flags,
+    return {"action": action, "path": path, "sql": sql, "flags": flags,
             "assumptions": assumptions, "unmapped": unmapped or [], "suggestion": suggestion,
             "certifiable": action == "execute" and path == "governed" and not flags}
 
@@ -308,7 +305,7 @@ def _validate(sql: str, model: Dict[str, Any], question: str = "", allow_current
         if not model.get("metrics"):
             # No metadata to check against: let the warehouse validate names, but never certify.
             return _result("execute", "governed", text, ["NOT_VALIDATED"],
-                           suggestion="Model info unavailable; answer not validated")
+                           suggestion="Model metadata unavailable; answer not validated")
         unknown = [m for m in metrics if not _metric(model, m)]
         if unknown:
             return _result("refuse", "governed", text, ["UNKNOWN_METRIC"], unmapped=unknown)
@@ -449,7 +446,11 @@ def _validate(sql: str, model: Dict[str, Any], question: str = "", allow_current
             first = g.find(exp.If) if isinstance(g, exp.Case) else g
             key = _norm_pred(first.this.sql(dialect=_dialect(model))) if first is not None else ""
             owner = metric_filters.get(key)
-            sd = status_dims.get(f"IS_{owner}".upper()) if owner else None
+            sd = None
+            if owner:
+                owner_alias = _deployed_alias(owner) or owner
+                sd_name = _deployed_alias(f"IS_{owner_alias}") or f"IS_{owner_alias}"
+                sd = status_dims.get(sd_name.upper()) or status_dims.get(f"IS_{owner}".upper())
             if sd:
                 dims.append(sd["name"])
                 continue
@@ -482,11 +483,17 @@ def _validate(sql: str, model: Dict[str, Any], question: str = "", allow_current
 
 # ---------------------------------------------------------------- governed status dimensions
 
-def status_dimensions(model: Dict[str, Any]) -> List[Dict[str, Any]]:
+def status_dimensions(model: Dict[str, Any], *, enabled: bool = False,
+                      existing_columns: Optional[set] = None) -> List[Dict[str, Any]]:
+    if not enabled:
+        return []
+    taken = {str(c).upper() for c in (existing_columns or set())}
     out = []
-    for m in model["metrics"]:
+    for m in model.get("metrics", []):
         pred = m.get("filter")
         if not pred:
+            continue
+        if TODAY_FUNCS.search(_strip_literals(pred)):
             continue
         try:
             node = sqlglot.parse_one(pred, read=_dialect(model))
@@ -496,10 +503,16 @@ def status_dimensions(model: Dict[str, Any]) -> List[Dict[str, Any]]:
         if node.find(exp.AggFunc):
             continue
         cols = list(node.find_all(exp.Column))
-        table_cols = set(model["tables"].get(m["table"], {}).get("columns", []))
-        if not cols or any((c.table and c.table.upper() != m["table"]) or c.name.upper() not in table_cols for c in cols):
+        table_cols = set(model.get("tables", {}).get(m.get("table", ""), {}).get("columns", []))
+        if not cols or any((c.table and c.table.upper() != m.get("table", "").upper()) or c.name.upper() not in table_cols for c in cols):
             continue
-        out.append({"name": f"IS_{m['name']}", "table": m["table"], "predicate": pred})
+        raw_name = m.get("name", "")
+        base = _deployed_alias(raw_name) or raw_name
+        is_name = _deployed_alias(f"IS_{base}") or f"IS_{base}"
+        table_taken = taken | {str(c).upper() for c in table_cols}
+        if is_name.upper() in table_taken or any(d["name"].upper() == is_name.upper() for d in out):
+            continue
+        out.append({"name": is_name, "table": m["table"], "predicate": pred})
     return out
 
 
@@ -540,7 +553,8 @@ def metadata_from_domain(domain: Any, *, view: Optional[str] = None, platform: s
                          table_grain: Optional[Dict[str, Dict[str, Any]]] = None,
                          generated_objects: Optional[Dict[str, str]] = None,
                          period_metrics: Optional[Dict[str, Dict[str, str]]] = None,
-                         helper_metrics: Optional[List[str]] = None) -> Dict[str, Any]:
+                         helper_metrics: Optional[List[str]] = None,
+                         deployed_status_dimensions: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
     """Build validator metadata from an ontology domain (best effort, read-only).
 
     Everything model-specific comes from the caller's metadata, never from names:
@@ -550,6 +564,7 @@ def metadata_from_domain(domain: Any, *, view: Optional[str] = None, platform: s
       generated_objects: {OBJECT: SOURCE_TABLE} for objects SemaBridge created (enriched views etc.).
       period_metrics: {METRIC: {"base_metric", "shape"}} recorded by the time-intelligence translation.
       helper_metrics: metrics SemaBridge generated automatically (implicit aggregations).
+      deployed_status_dimensions: boolean status columns actually deployed by the emitter (IS_<METRIC>).
     """
     tables: Dict[str, Dict[str, Any]] = {k.upper(): dict(v) for k, v in (table_grain or {}).items()}
     metrics: List[Dict[str, Any]] = []
@@ -593,6 +608,15 @@ def metadata_from_domain(domain: Any, *, view: Optional[str] = None, platform: s
             if col and col not in cols:
                 cols.append(col)
             dims.append({"name": f"{tname.lower()}.{col.lower()}", "table": tname, "column": col})
+    if deployed_status_dimensions:
+        for sd in deployed_status_dimensions:
+            sd_name = sd.get("name") or ""
+            tname = (sd.get("table") or "").upper()
+            col = (sd.get("column") or sd_name.split(".")[-1]).upper()
+            dim_name = sd_name if "." in sd_name else f"{tname.lower()}.{col.lower()}"
+            dims.append({"name": dim_name, "table": tname, "column": col})
+            if tname in tables and col not in tables[tname].get("columns", []):
+                tables[tname].setdefault("columns", []).append(col)
     rels = []
     for r in getattr(domain, "relationships", []) or []:
         if getattr(r, "is_active", True) is False:
@@ -683,13 +707,31 @@ def _adapt_sml_model(sml: Any, **kwargs: Any) -> Dict[str, Any]:
             if cname and cname not in cols:
                 cols.append(cname)
             if getattr(c, "is_key", False):
-                rc = getattr(d, "row_count", 100) or 100
+                rc = getattr(d, "row_count", None) or 100
                 key_uniqueness.setdefault(f"{tname}.{cname}", {"rows": rc, "distinct": rc})
             if "date" in str(getattr(c, "data_type", "")).lower() or "date" in cname.lower():
                 date_cols.append(cname)
             dims.append({"name": f"{tname.lower()}.{cname.lower()}", "table": tname, "column": cname})
         if date_cols and "snapshot_date" not in tables[tname]:
             tables[tname]["snapshot_date"] = date_cols[0]
+        if getattr(d, "is_generated", False) or getattr(d, "generated", False):
+            src_t = getattr(d, "source_table", None)
+            tables[tname].update(generated=True, source_table=str(src_t).upper() if src_t else None)
+
+    for obj, src in (kwargs.get("generated_objects") or {}).items():
+        tables.setdefault(str(obj).upper(), {"grain": "unknown", "columns": []}).update(
+            generated=True, source_table=str(src).upper()
+        )
+
+    if kwargs.get("deployed_status_dimensions"):
+        for sd in kwargs["deployed_status_dimensions"]:
+            sd_name = sd.get("name") or ""
+            tname = (sd.get("table") or "").upper()
+            col = (sd.get("column") or sd_name.split(".")[-1]).upper()
+            dim_name = sd_name if "." in sd_name else f"{tname.lower()}.{col.lower()}"
+            dims.append({"name": dim_name, "table": tname, "column": col})
+            if tname in tables and col not in tables[tname].get("columns", []):
+                tables[tname].setdefault("columns", []).append(col)
 
     # Relationships define fact vs dimension: targets of relationships with multiple parents are facts
     rels = []
@@ -743,15 +785,6 @@ def _adapt_sml_model(sml: Any, **kwargs: Any) -> Dict[str, Any]:
             "synonyms": list(getattr(m, "synonyms", None) or []),
         })
 
-    for tname in list(tables.keys()):
-        if "_" in tname:
-            suffix = tname.split("_")[-1]
-            if len(suffix) > 3:
-                base_t = tname[: -(len(suffix) + 1)]
-                tables[tname].update(generated=True, source_table=base_t)
-                if base_t not in tables:
-                    tables[base_t] = {"grain": "unknown", "columns": []}
-
     return {
         "view": kwargs.get("semantic_view_name") or getattr(sml, "unique_name", None),
         "platform": kwargs.get("dialect", "snowflake"),
@@ -788,7 +821,7 @@ def validate_and_rewrite_generated_sql(
     effective_question = question or kwargs.get("prompt") or ""
     r = validate_sql(sql, effective_model, effective_question,
                      allow_current_date=allow_current_date, coverage=coverage)
-    flags = r[_KEY_FLAGS]
+    flags = r["flags"]
     res = SQLValidationResult(
         allowed=r["action"] != "refuse",
         query_path=r["path"],
@@ -802,7 +835,6 @@ def validate_and_rewrite_generated_sql(
         res.query_path = "semantic_view"
     elif r["path"] == "rewritten":
         res.query_path = "rewritten to governed"
-        res.is_certified_eligible = True
     elif r["path"] == "free_form":
         res.query_path = "free-form (not governed)"
     else:

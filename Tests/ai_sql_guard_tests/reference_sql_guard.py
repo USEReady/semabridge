@@ -459,11 +459,17 @@ def _validate(sql: str, model: Dict[str, Any], question: str = "", allow_current
 
 # ---------------------------------------------------------------- governed status dimensions
 
-def status_dimensions(model: Dict[str, Any]) -> List[Dict[str, Any]]:
+def status_dimensions(model: Dict[str, Any], *, enabled: bool = False,
+                      existing_columns: Optional[set] = None) -> List[Dict[str, Any]]:
+    if not enabled:
+        return []
+    taken = {str(c).upper() for c in (existing_columns or set())}
     out = []
-    for m in model["metrics"]:
+    for m in model.get("metrics", []):
         pred = m.get("filter")
         if not pred:
+            continue
+        if TODAY_FUNCS.search(_strip_literals(pred)):
             continue
         try:
             node = sqlglot.parse_one(pred, read=_dialect(model))
@@ -473,10 +479,16 @@ def status_dimensions(model: Dict[str, Any]) -> List[Dict[str, Any]]:
         if node.find(exp.AggFunc):
             continue
         cols = list(node.find_all(exp.Column))
-        table_cols = set(model["tables"].get(m["table"], {}).get("columns", []))
-        if not cols or any((c.table and c.table.upper() != m["table"]) or c.name.upper() not in table_cols for c in cols):
+        table_cols = set(model.get("tables", {}).get(m.get("table", ""), {}).get("columns", []))
+        if not cols or any((c.table and c.table.upper() != m.get("table", "").upper()) or c.name.upper() not in table_cols for c in cols):
             continue
-        out.append({"name": f"IS_{m['name']}", "table": m["table"], "predicate": pred})
+        raw_name = m.get("name", "")
+        base = _deployed_alias(raw_name) or raw_name
+        is_name = _deployed_alias(f"IS_{base}") or f"IS_{base}"
+        table_taken = taken | {str(c).upper() for c in table_cols}
+        if is_name.upper() in table_taken or any(d["name"].upper() == is_name.upper() for d in out):
+            continue
+        out.append({"name": is_name, "table": m["table"], "predicate": pred})
     return out
 
 
@@ -517,7 +529,8 @@ def metadata_from_domain(domain: Any, *, view: Optional[str] = None, platform: s
                          table_grain: Optional[Dict[str, Dict[str, Any]]] = None,
                          generated_objects: Optional[Dict[str, str]] = None,
                          period_metrics: Optional[Dict[str, Dict[str, str]]] = None,
-                         helper_metrics: Optional[List[str]] = None) -> Dict[str, Any]:
+                         helper_metrics: Optional[List[str]] = None,
+                         deployed_status_dimensions: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
     """Build validator metadata from an ontology domain (best effort, read-only).
 
     Everything model-specific comes from the caller's metadata, never from names:
@@ -527,6 +540,7 @@ def metadata_from_domain(domain: Any, *, view: Optional[str] = None, platform: s
       generated_objects: {OBJECT: SOURCE_TABLE} for objects SemaBridge created (enriched views etc.).
       period_metrics: {METRIC: {"base_metric", "shape"}} recorded by the time-intelligence translation.
       helper_metrics: metrics SemaBridge generated automatically (implicit aggregations).
+      deployed_status_dimensions: boolean status columns actually deployed by the emitter (IS_<METRIC>).
     """
     tables: Dict[str, Dict[str, Any]] = {k.upper(): dict(v) for k, v in (table_grain or {}).items()}
     metrics: List[Dict[str, Any]] = []
@@ -570,6 +584,15 @@ def metadata_from_domain(domain: Any, *, view: Optional[str] = None, platform: s
             if col and col not in cols:
                 cols.append(col)
             dims.append({"name": f"{tname.lower()}.{col.lower()}", "table": tname, "column": col})
+    if deployed_status_dimensions:
+        for sd in deployed_status_dimensions:
+            sd_name = sd.get("name") or ""
+            tname = (sd.get("table") or "").upper()
+            col = (sd.get("column") or sd_name.split(".")[-1]).upper()
+            dim_name = sd_name if "." in sd_name else f"{tname.lower()}.{col.lower()}"
+            dims.append({"name": dim_name, "table": tname, "column": col})
+            if tname in tables and col not in tables[tname].get("columns", []):
+                tables[tname].setdefault("columns", []).append(col)
     rels = []
     for r in getattr(domain, "relationships", []) or []:
         if getattr(r, "is_active", True) is False:

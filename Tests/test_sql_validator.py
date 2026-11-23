@@ -168,7 +168,7 @@ def test_governed_rewrite_success():
     assert "avg_age" in res.rewritten_sql
     assert "avg_tenure_days" in res.rewritten_sql
     assert "bu.bu" in res.rewritten_sql
-    assert res.is_certified_eligible is True
+    assert res.is_certified_eligible is False  # rewritten queries are not certifiable
     assert res.checks_passed is True
 
 

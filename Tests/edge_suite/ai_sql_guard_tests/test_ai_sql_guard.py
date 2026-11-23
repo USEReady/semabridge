@@ -290,20 +290,62 @@ def test_f05_helper_metric_not_flagged_without_alternative():
 
 
 # =============================================================================
-# G. Governed status dimensions from filtered measures (3)
+# G. Governed status dimensions from filtered measures (6)
 # =============================================================================
 
 def test_g01_row_level_filter_on_own_table_becomes_a_status_dimension():
-    dims = impl.status_dimensions(model())
+    dims = impl.status_dimensions(model(), enabled=True)
     assert {"name": "IS_ACTIVES", "table": "EMPLOYEE", "predicate": "TERMDATE IS NULL"} in dims
 
 
 def test_g02_filter_on_another_table_creates_no_dimension():
-    assert all(d["name"] != "IS_LATE_STARTERS" for d in impl.status_dimensions(model()))
+    assert all(d["name"] != "IS_LATE_STARTERS" for d in impl.status_dimensions(model(), enabled=True))
 
 
 def test_g03_aggregate_filter_creates_no_dimension():
-    assert all(d["name"] != "IS_MAX_AGE_FLAG" for d in impl.status_dimensions(model()))
+    assert all(d["name"] != "IS_MAX_AGE_FLAG" for d in impl.status_dimensions(model(), enabled=True))
+
+
+def test_g04_todays_date_predicate_creates_no_status_dimension():
+    m = model()
+    m["metrics"].append({
+        "name": "RECENT_HIRES",
+        "table": "HIRES",
+        "agg": "COUNT",
+        "column": None,
+        "filter": "HIREDATE >= DATEADD(YEAR, -1, CURRENT_DATE)",
+        "kind": "base",
+    })
+    dims = impl.status_dimensions(m, enabled=True)
+    assert all(d["name"] != "IS_RECENT_HIRES" for d in dims)
+
+
+def test_g05_flag_off_creates_no_status_dimensions_and_no_metadata_dimensions():
+    m = model()
+    assert impl.status_dimensions(m, enabled=False) == []
+    from types import SimpleNamespace
+    mock_domain = SimpleNamespace(metrics=[], concepts=[], relationships=[], semantic_view_name="DB.S.V")
+    meta = impl.metadata_from_domain(mock_domain, deployed_status_dimensions=None)
+    assert not any(d["name"].startswith("is_") or d["name"].split(".")[-1].startswith("is_") for d in meta["dimensions"])
+
+
+def test_g06_sanitizer_output_and_existing_column_clash_skipped():
+    m = model()
+    m["metrics"].append({
+        "name": "BadHire%ofActives",
+        "table": "EMPLOYEE",
+        "agg": "COUNT",
+        "column": None,
+        "filter": "TERMDATE IS NULL",
+        "kind": "base",
+    })
+    dims = impl.status_dimensions(m, enabled=True)
+    assert any(d["name"] == "IS_BADHIREPCTOFACTIVES" for d in dims)
+    assert not any("%" in d["name"] for d in dims)
+
+    # Clash with existing column is skipped
+    clash_dims = impl.status_dimensions(m, enabled=True, existing_columns={"IS_ACTIVES"})
+    assert all(d["name"] != "IS_ACTIVES" for d in clash_dims)
 
 
 # =============================================================================
