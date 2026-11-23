@@ -58,18 +58,58 @@ if not LIVE_TESTS_ENABLED:
         pass
 
 
+def _check_pbixray_support() -> tuple[bool, str]:
+    """Check once whether pbixray and its native extensions are loadable."""
+    try:
+        import pbixray
+        from pbixray import PBIXRay
+        import pbixray.core
+        return True, ""
+    except Exception as exc:
+        return False, f"pbixray native decoder is unavailable or blocked by Application Control ({exc})"
+
+
+PBIXRAY_AVAILABLE, PBIXRAY_SKIP_REASON = _check_pbixray_support()
+
+
 def pytest_collection_modifyitems(config: pytest.Config, items: list) -> None:
     """Skip ``live`` tests (real Fabric / Snowflake / login.microsoftonline.com)
     unless SEMABRIDGE_LIVE_TESTS=1, and ``slow`` (wall-clock) tests unless
-    SEMABRIDGE_SLOW_TESTS=1."""
+    SEMABRIDGE_SLOW_TESTS=1.
+
+    Also skip pbixray-dependent tests when native extensions are blocked, except in CI.
+    """
     run_slow = os.environ.get("SEMABRIDGE_SLOW_TESTS", "").strip().lower() in ("1", "true", "yes", "on")
     skip_live = pytest.mark.skip(reason="live service test: set SEMABRIDGE_LIVE_TESTS=1 to run")
     skip_slow = pytest.mark.skip(reason="wall-clock timing test: set SEMABRIDGE_SLOW_TESTS=1 to run")
+
+    is_ci = (
+        os.getenv("CI") == "true"
+        or os.getenv("GITHUB_ACTIONS") == "true"
+        or os.getenv("SEMABRIDGE_REQUIRE_REAL_PBIX") == "1"
+    )
+    skip_pbixray = pytest.mark.skip(reason=PBIXRAY_SKIP_REASON) if (not PBIXRAY_AVAILABLE and not is_ci) else None
+
     for item in items:
         if not LIVE_TESTS_ENABLED and "live" in item.keywords:
             item.add_marker(skip_live)
         if not run_slow and "slow" in item.keywords:
             item.add_marker(skip_slow)
+
+        if skip_pbixray is not None:
+            nodeid = item.nodeid.replace("\\", "/")
+            if "test_calculated_table_relationships.py" in nodeid:
+                if any(target in nodeid for target in (
+                    "test_a_keep_legitimate_calculated_table_relationship",
+                    "test_b_exclude_actual_auto_date_time_relationships",
+                    "test_c_inferred_column_name_fallback",
+                    "test_d_missing_endpoint_diagnostic",
+                )):
+                    item.add_marker(skip_pbixray)
+            elif "test_local_pbix_connector.py" in nodeid:
+                item.add_marker(skip_pbixray)
+            elif "pbixray" in item.keywords:
+                item.add_marker(skip_pbixray)
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -463,45 +503,5 @@ def dax_expressions():
     }
 
 
-# -----------------------------------------------------------------------------
-# pbixray Detection & Skip Hook for Restricted Environments (e.g. Windows WDAC)
-# -----------------------------------------------------------------------------
 
-def _check_pbixray_support() -> tuple[bool, str]:
-    """Check once whether pbixray and its native extensions are loadable."""
-    try:
-        import pbixray
-        from pbixray import PBIXRay
-        import pbixray.core
-        return True, ""
-    except Exception as exc:
-        return False, f"pbixray native decoder is unavailable or blocked by Application Control ({exc})"
-
-
-PBIXRAY_AVAILABLE, PBIXRAY_SKIP_REASON = _check_pbixray_support()
-
-
-def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Skip pbixray-dependent tests when native extensions are blocked, except in CI."""
-    is_ci = (
-        os.getenv("CI") == "true"
-        or os.getenv("GITHUB_ACTIONS") == "true"
-        or os.getenv("SEMABRIDGE_REQUIRE_REAL_PBIX") == "1"
-    )
-    if not PBIXRAY_AVAILABLE and not is_ci:
-        skip_pbixray = pytest.mark.skip(reason=PBIXRAY_SKIP_REASON)
-        for item in items:
-            nodeid = item.nodeid.replace("\\", "/")
-            if "test_calculated_table_relationships.py" in nodeid:
-                if any(target in nodeid for target in (
-                    "test_a_keep_legitimate_calculated_table_relationship",
-                    "test_b_exclude_actual_auto_date_time_relationships",
-                    "test_c_inferred_column_name_fallback",
-                    "test_d_missing_endpoint_diagnostic",
-                )):
-                    item.add_marker(skip_pbixray)
-            elif "test_local_pbix_connector.py" in nodeid:
-                item.add_marker(skip_pbixray)
-            elif "pbixray" in item.keywords:
-                item.add_marker(skip_pbixray)
 
