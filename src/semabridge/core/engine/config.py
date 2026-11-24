@@ -84,23 +84,19 @@ def _apply_mapping_overrides_from_config(
             target_cfg = targets_cfg[0]
     target_type = str(target_cfg.get("type") or "").strip().lower()
 
-    from semabridge.utils.identifiers import is_column_source_path, is_legacy_auto_column_name, snowflake_target_name
+    from semabridge.target_rules.naming import override_deploy_name
 
     overrides: Dict[str, str] = {}
     for row in raw_overrides:
         if not isinstance(row, dict):
             continue
         source_path = str(row.get("source_path") or "").strip()
-        target_name = str(row.get("target_name") or "").strip()
-        if target_type == "snowflake" and target_name:
-            if is_column_source_path(source_path) and is_legacy_auto_column_name(
-                source_path.split(".columns.", 1)[1], target_name
-            ):
-                # Only the old automatic name (e.g. COL_DATE): not a choice
-                # the user made, so the current rule applies (DATE).
-                continue
-            # Columns: semantic-name rules (DATE stays DATE); metrics: to_alias.
-            target_name = snowflake_target_name(target_name, source_path)
+        # The platform's naming rule (Snowflake: columns use semantic-name
+        # rules, DATE stays DATE; metrics: to_alias). None: only the old
+        # automatic name (e.g. COL_DATE), not a user choice -> current rule.
+        target_name = override_deploy_name(row.get("target_name"), source_path, target_type)
+        if target_name is None:
+            continue
         if source_path and target_name:
             overrides[source_path] = target_name
 

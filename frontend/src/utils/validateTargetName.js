@@ -14,6 +14,10 @@ import {
   toSnowflakeAlias,
 } from './collisionResolution.js';
 
+// Platforms that share Snowflake's naming rule (backend target_rules/*/naming.py).
+// Databricks quotes every identifier, so it has no reserved-keyword block.
+const PLATFORM_LABELS = { snowflake: 'Snowflake', databricks: 'Databricks' };
+
 function sanitizeIdentifier(value) {
   const raw = String(value || '').trim();
   if (!raw) return 'UNNAMED';
@@ -52,6 +56,9 @@ export function validateTargetName(value, targetPlatform, sourceType, targetType
 
   const platform = String(targetPlatform || '').toLowerCase();
   const isSnowflake = platform.includes('snowflake');
+  const isDatabricks = !isSnowflake && platform.includes('databricks');
+  const usesRule = isSnowflake || isDatabricks;
+  const label = PLATFORM_LABELS[isDatabricks ? 'databricks' : 'snowflake'];
   const rowKind = targetNameKind(kind);
   const upper = next.toUpperCase();
   const reserved = rowKind === 'metric' ? SNOWFLAKE_LEGACY_RESERVED_WORDS : SNOWFLAKE_RESERVED_WORDS;
@@ -65,12 +72,12 @@ export function validateTargetName(value, targetPlatform, sourceType, targetType
     };
   }
 
-  const sanitized = isSnowflake ? toSnowflakeAlias(next, rowKind) : sanitizeIdentifier(next);
-  if (isSnowflake && sanitized !== upper) {
+  const sanitized = usesRule ? toSnowflakeAlias(next, rowKind) : sanitizeIdentifier(next);
+  if (usesRule && sanitized !== upper) {
     return {
       isValid: false,
       code: 'UNSUPPORTED_CHARACTERS',
-      message: 'Target field has unsupported characters for Snowflake.',
+      message: `Target field has unsupported characters for ${label}.`,
       suggestion: sanitized,
     };
   }

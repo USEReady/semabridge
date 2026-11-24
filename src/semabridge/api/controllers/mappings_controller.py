@@ -33,6 +33,7 @@ from semabridge.api.services.pbix_source_validation import validate_pbix_model_l
 from semabridge.domain.exceptions import ValidationError
 from semabridge.connectors.snowflake_emitter import LIVE_SCHEMA_UNAVAILABLE
 from semabridge.connectors.table_binding_resolver import AMBIGUOUS_TABLE_BINDING
+from semabridge.target_backends.databricks.tables import LIVE_SCHEMA_UNAVAILABLE as DATABRICKS_LIVE_SCHEMA_UNAVAILABLE
 
 # --- Request Models ---
 
@@ -266,6 +267,11 @@ def _build_config_yaml_from_request(
         target_section["catalog"] = target_config["catalog"]
     if target_config.get("warehouse_id"):
         target_section["warehouse_id"] = target_config["warehouse_id"]
+    # Where to look for the real tables, and what to do when one is missing
+    # (Phase 3.4 / Jira CS-12).
+    for key in ("source_schemas", "on_missing_source", "table_mapping"):
+        if target_config.get(key):
+            target_section[key] = target_config[key]
 
     config = {
         "project_name": project_name,
@@ -477,6 +483,7 @@ def _saved_project_target(project_cfg: Dict[str, Any], requested: Dict[str, Any]
             for key in (
                 "identity_id", "account", "database", "schema", "warehouse", "role", "workspace_id",
                 "catalog", "warehouse_id",  # Databricks (Unity Catalog) targets
+                "source_schemas", "on_missing_source", "table_mapping",
             ):
                 value = target.get(key) or (target.get("schema_name") if key == "schema" else None)
                 if value:
@@ -776,7 +783,7 @@ async def _run_dry_run_pipeline(
                 for e in (summary.get("errors") or [])
                 if isinstance(e, dict) and any(
                     marker in str(e.get("message") or "")
-                    for marker in (LIVE_SCHEMA_UNAVAILABLE, AMBIGUOUS_TABLE_BINDING)
+                    for marker in (LIVE_SCHEMA_UNAVAILABLE, AMBIGUOUS_TABLE_BINDING, DATABRICKS_LIVE_SCHEMA_UNAVAILABLE)
                 )
             ),
             None,
@@ -1319,10 +1326,11 @@ async def deploy_mappings(
         source_path = str(mapping.get("source_path") or "").strip()
         source_name = str(mapping.get("source_name") or "").strip()
         target_name = str(mapping.get("target_name") or "").strip()
-        if target_connector_type == "snowflake" and target_name:
-            # Same rules the Snowflake emitter (and config overrides) use.
-            from semabridge.utils.identifiers import snowflake_target_name
-            target_name = snowflake_target_name(target_name, source_path, mapping.get("entity_kind"))
+        if target_name:
+            # Same rules the target's deploy (and config overrides) use:
+            # the platform's naming rule (unchanged for Snowflake).
+            from semabridge.target_rules.naming import normalize_user_target_name
+            target_name = normalize_user_target_name(target_name, target_connector_type, source_path, mapping.get("entity_kind"))
         mapping_id = str(mapping.get("id") or "").strip()
         if not mapping_id:
             seed = source_path or source_name or f"row-{idx}"

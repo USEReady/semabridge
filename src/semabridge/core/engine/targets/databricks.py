@@ -111,3 +111,120 @@ def _convert_to_databricks_target(self, context: RunContext) -> None:
         )
 
     context.target_artifact_path = str(yaml_path)
+
+
+# ---------------------------------------------------------------------------
+# Step 6b (Databricks planner path, Phase 3.4): Unity Catalog table matching
+# ---------------------------------------------------------------------------
+
+
+def _databricks_connection_for_run(context: RunContext):
+    """Connection details for this run, or None when none is configured.
+
+    Same credential order as the deploy step: the account linked at Step 3
+    (account_id), else the target's identity_id account, else the global
+    DATABRICKS_* settings. Catalog/schema come from the project's target."""
+    from semabridge.target_backends.databricks.auth import DatabricksConnectionInfo
+
+    target = getattr(context.config, "target", None)
+    catalog = str(getattr(target, "catalog", "") or "").strip() or None
+    schema = str(getattr(target, "schema", "") or getattr(target, "schema_name", "") or "").strip() or None
+
+    cfg = getattr(context.config, "_databricks", None)
+    identity_id = str(getattr(target, "identity_id", "") or "").strip()
+    if cfg is None and identity_id:
+        try:
+            from sqlalchemy import select
+            from semabridge.auth.credential_builder import build_databricks_config
+            from semabridge.repository.orm.models import Account
+            from semabridge.repository.orm.session_factory import db_manager
+
+            with db_manager.get_session() as session:
+                account = session.execute(
+                    select(Account).where(Account.connector_type == "DATABRICKS", Account.id == identity_id)
+                ).scalars().first()
+                if account is not None:
+                    cfg = build_databricks_config(account, session, context.config.databricks)
+        except Exception as exc:  # fall back to the global settings below
+            logger.info("Databricks account %s not usable for table matching (%s)", identity_id, type(exc).__name__)
+            cfg = None
+    if cfg is None:
+        try:
+            cfg = context.config.databricks
+        except Exception:
+            return None
+    try:
+        return DatabricksConnectionInfo.from_config(cfg, catalog=catalog, schema=schema)
+    except Exception:
+        return None
+
+
+def _step6b_databricks_tables(self, context: RunContext) -> None:
+    """Match the model's tables to Unity Catalog (bind / stub / skip) and
+    rewrite the measures' SQL to the real column names, BEFORE Step 7
+    persists the model -- so the snapshot (and the dry-run screen) shows the
+    names that will deploy. Read-only against Databricks.
+
+    No Databricks connection configured: the plan is reported as
+    unavailable and the measures keep their model column names. A configured
+    connection that fails, an ambiguous match, or missing tables with
+    on_missing_source=fail stop the run (never guess without the live schema).
+    """
+    from semabridge.target_backends.databricks.client import DatabricksSqlClient, DatabricksSqlError
+    from semabridge.target_backends.databricks.auth import DatabricksAuthError
+    from semabridge.target_backends.databricks.guard import DatabricksGuardError
+    from semabridge.target_backends.databricks.tables import (
+        LIVE_SCHEMA_UNAVAILABLE,
+        TableMatchingError,
+        parse_source_schemas,
+        plan_tables,
+        read_unity_catalog,
+        rewrite_measure_columns,
+    )
+    from semabridge.target_backends.databricks.warehouses import resolve_warehouse
+
+    if context.sml_model is None:
+        return
+    target = getattr(context.config, "target", None)
+    info = _databricks_connection_for_run(context)
+    if info is None:
+        context.table_binding_plan = {
+            "platform": "databricks", "tables": [], "error": None,
+            "warnings": ["No Databricks connection is configured: table plan unavailable; "
+                         "measures keep their model column names."],
+        }
+        return
+
+    schemas = parse_source_schemas(getattr(target, "source_schemas", None), info.catalog, info.schema)
+    mode = str(getattr(target, "on_missing_source", "") or "stub").strip().lower()
+    mapping = getattr(target, "table_mapping", None) or {}
+    client = DatabricksSqlClient(
+        info, deadline_seconds=180,
+        query_tags={"project_id": str(context.project_id), "run_id": str(context.run_id), "step": "table_matching"},
+    )
+    try:
+        if not client.warehouse_id:
+            choice = resolve_warehouse(client)
+            if choice["warehouse"] is None:
+                raise DatabricksSqlError(choice["message"])
+            client.warehouse_id = choice["warehouse"].id
+        catalog_meta = read_unity_catalog(client, schemas)
+    except (DatabricksSqlError, DatabricksAuthError, DatabricksGuardError) as exc:
+        raise ConversionError(f"{LIVE_SCHEMA_UNAVAILABLE} ({', '.join(f'{c}.{s}' for c, s in schemas)}): {exc}") from None
+    try:
+        plan = plan_tables(context.sml_model, catalog_meta, source_schemas=schemas,
+                           on_missing_source=mode, table_mapping=mapping if isinstance(mapping, dict) else {})
+    except TableMatchingError as exc:
+        raise ConversionError(str(exc)) from None
+
+    rewrite = plan.rewrite_map()
+    if rewrite:
+        for metric in getattr(context.sml_model, "metrics", []) or []:
+            metric.sql_expression = rewrite_measure_columns(metric.sql_expression, rewrite)
+    context.databricks_table_plan = plan
+    context.table_binding_plan = plan.as_dict()
+    bound = sum(1 for b in plan.bindings if b.action == "bind")
+    logger.info("Databricks table plan: %d bound, %d stub, %d skipped (sources %s)", bound,
+                sum(1 for b in plan.bindings if b.action == "stub"),
+                sum(1 for b in plan.bindings if b.action == "skip"),
+                ", ".join(f"{c}.{s}" for c, s in schemas))

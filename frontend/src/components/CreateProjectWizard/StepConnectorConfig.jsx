@@ -55,6 +55,8 @@ export function StepConnectorConfig({
   setDatabricksCatalog = () => {},
   databricksSchema = '',
   setDatabricksSchema = () => {},
+  databricksSourceSchemas = '',
+  setDatabricksSourceSchemas = () => {},
   targetAccount,
   setTargetAccount,
   targetWarehouse,
@@ -990,6 +992,19 @@ export function StepConnectorConfig({
                       <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: -4 }}>
                         Where metric views will be created. Leave blank to use the catalog and schema from Settings.
                       </p>
+                      <div>
+                        <label style={LABEL}>Source Schemas (where the data tables are)</label>
+                        <input
+                          type="text"
+                          value={databricksSourceSchemas}
+                          onChange={e => setDatabricksSourceSchemas(e.target.value)}
+                          placeholder="e.g. workspace.sb_tests, workspace.sales_data"
+                          style={INPUT}
+                        />
+                        <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
+                          Comma-separated catalog.schema list, searched in order to match the Power BI tables. Leave blank to search the target schema.
+                        </p>
+                      </div>
                     </div>
                   )}
 

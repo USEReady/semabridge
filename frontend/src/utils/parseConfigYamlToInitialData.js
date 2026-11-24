@@ -18,6 +18,7 @@ export function parseConfigYamlToInitialData(yamlText, projectMeta) {
     schema: '',
     target_database: '',
     target_catalog: '',
+    target_source_schemas: '',
     target_schema: '',
     target_account: '',
     target_warehouse: '',
@@ -80,6 +81,9 @@ export function parseConfigYamlToInitialData(yamlText, projectMeta) {
       schema: String(parsedSource.schema || ''),
       target_database: String(firstTarget.database || ''),
       target_catalog: String(firstTarget.catalog || ''),
+      target_source_schemas: Array.isArray(firstTarget.source_schemas)
+        ? firstTarget.source_schemas.map(String).join(', ')
+        : String(firstTarget.source_schemas || ''),
       target_schema: String(firstTarget.schema || ''),
       target_account: String(firstTarget.account || ''),
       target_warehouse: String(firstTarget.warehouse || ''),

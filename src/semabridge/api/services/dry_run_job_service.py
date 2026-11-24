@@ -910,28 +910,19 @@ def _plan_blockers(result: Dict[str, Any], overrides: List[Dict[str, Any]], targ
     from semabridge.api.services.mapping_service import _compat_collect_dry_run_blockers
 
     issues: List[str] = []
-    from semabridge.utils.identifiers import (
-        is_column_source_path,
-        is_legacy_auto_column_name,
-        snowflake_target_name,
-    )
+    from semabridge.target_rules.naming import override_deploy_name
 
-    is_snowflake = str(target_type or "").lower() == "snowflake"
     override_names: Dict[str, str] = {}
     for row in overrides or []:
         if isinstance(row, dict) and str(row.get("source_path") or "").strip() and str(row.get("target_name") or "").strip():
             source_path = str(row["source_path"]).strip()
-            name = str(row["target_name"]).strip()
-            if is_snowflake:
-                if is_column_source_path(source_path):
-                    # A saved COL_DATE for 'Date' is only the old automatic
-                    # name: the sync ignores it, so the gate must too.
-                    source_name = source_path.split(".columns.", 1)[1]
-                    if is_legacy_auto_column_name(source_name, name):
-                        continue
-                # Same rule the sync deploys with (columns: semantic alias,
-                # metrics: to_alias), so 'Value' clashes with VALUE here too.
-                name = snowflake_target_name(name, source_path)
+            # Same rule the sync deploys with (columns: semantic alias,
+            # metrics: to_alias), so 'Value' clashes with VALUE here too; a
+            # saved COL_DATE for 'Date' is only the old automatic name
+            # (Snowflake): the sync ignores it, so the gate must too.
+            name = override_deploy_name(row["target_name"], source_path, target_type)
+            if name is None:
+                continue
             override_names[source_path.lower()] = name
 
     rows = [r for r in (result.get("entity_mappings") or []) if isinstance(r, dict)]

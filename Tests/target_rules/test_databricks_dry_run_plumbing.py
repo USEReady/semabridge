@@ -82,3 +82,38 @@ def test_old_publisher_never_runs_on_planner_path_sql() -> None:
         engine._convert_to_databricks_target(_context(on=True))
     with pytest.raises(DeploymentError, match="not built yet"):
         engine._deploy_to_databricks(_context(on=True))
+
+
+# --- Phase 3.4 settings: source_schemas / on_missing_source / table_mapping --------------
+
+
+def test_dry_run_config_keeps_table_matching_settings() -> None:
+    text = _build_config_yaml_from_request(
+        {"type": "pbix"},
+        {"type": "databricks", "catalog": "workspace", "schema": "semabridge_dev",
+         "source_schemas": ["workspace.sb_tests"], "on_missing_source": "stub",
+         "table_mapping": {"Sales": "workspace.sb_tests.sales"}},
+        [],
+    )
+    t = _targets(text)
+    assert t["source_schemas"] == ["workspace.sb_tests"]
+    assert t["on_missing_source"] == "stub"
+    assert t["table_mapping"] == {"Sales": "workspace.sb_tests.sales"}
+    saved = _saved_project_target({"targets": [t]}, {"type": "databricks"})
+    assert saved["source_schemas"] == ["workspace.sb_tests"] and saved["on_missing_source"] == "stub"
+
+
+def test_fingerprint_follows_source_schemas_and_missing_table_mode() -> None:
+    job = {"multi_mode": False, "resolved_display_name": "Sales"}
+
+    def cfg(**extra):
+        return {"source": {"type": "pbix"},
+                "targets": [{"type": "databricks", "catalog": "workspace", "schema": "s", **extra}]}
+
+    base = model_config_fingerprint(cfg(), job, "databricks")
+    assert model_config_fingerprint(cfg(source_schemas=""), job, "databricks") == base  # unset == empty
+    one = model_config_fingerprint(cfg(source_schemas=["workspace.a"]), job, "databricks")
+    assert one != base
+    assert model_config_fingerprint(cfg(source_schemas="workspace.a"), job, "databricks") == one
+    assert model_config_fingerprint(cfg(source_schemas=["workspace.b"]), job, "databricks") != one
+    assert model_config_fingerprint(cfg(on_missing_source="fail"), job, "databricks") != base
