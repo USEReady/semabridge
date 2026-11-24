@@ -88,6 +88,10 @@ class RunContext:
     # "bind"|"create", table, matched_by, tie}], "error"} — see
     # SnowflakeSchemaManager.plan_source_tables.
     table_binding_plan: Optional[Dict[str, Any]] = None
+    # Databricks planner path (Phase 3.4): the bind / stub decision per
+    # table (target_backends/databricks/tables.TablePlan), used by the
+    # planner / YAML writer. Its dict form is table_binding_plan above.
+    databricks_table_plan: Optional[Any] = None
     # Dry run: Step 8 builds the target DDL (against the live schema) for
     # the preview but writes no target artifacts.
     dry_run: bool = False

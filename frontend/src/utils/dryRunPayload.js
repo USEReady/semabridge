@@ -11,6 +11,7 @@ export function buildDryRunPayload({
   databricksAccountId,
   databricksCatalog,
   databricksSchema,
+  databricksSourceSchemas,
   selectedModelNames,
   pbixPath,
 }) {
@@ -55,6 +56,8 @@ export function buildDryRunPayload({
     const schema = String(databricksSchema || '').trim();
     if (catalog) targetConfig.catalog = catalog;
     if (schema) targetConfig.schema = schema;
+    const sources = String(databricksSourceSchemas || '').split(',').map((s) => s.trim()).filter(Boolean);
+    if (sources.length) targetConfig.source_schemas = sources;
   }
 
   return { sourceConfig, targetConfig };
@@ -179,6 +182,7 @@ export function buildMappingSignature(input = {}) {
     databricksAccountId: input.databricksAccountId || '',
     databricksCatalog: input.databricksCatalog || '',
     databricksSchema: input.databricksSchema || '',
+    databricksSourceSchemas: input.databricksSourceSchemas || '',
     selectedModels: sorted(input.selectedModels),
     selectedModelNames: sorted(input.selectedModelNames),
     selectedDatabricksTables: sorted(input.selectedDatabricksTables),

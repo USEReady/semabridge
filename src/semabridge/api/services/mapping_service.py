@@ -39,11 +39,7 @@ def _raise_if_store_failed() -> None:
 
 
 from semabridge.domain.exceptions import ExternalServiceError, NotFoundError, ValidationError
-from semabridge.utils.identifiers import (
-    IdentifierSanitizer,
-    SNOWFLAKE_ALIAS_RESERVED_WORDS,
-    SNOWFLAKE_RESERVED_WORDS,
-)
+from semabridge.utils.identifiers import IdentifierSanitizer
 _SNOWFLAKE_SANITIZER = IdentifierSanitizer(force_uppercase=True, suppress_reserved=True)
 logger = logging.getLogger(__name__)
 
@@ -159,11 +155,11 @@ def _compat_sanitize_target_name_for_project(
     raw = str(target_name or "").strip()
     if not raw:
         return raw
-    if _compat_project_target_type(project_id) != "snowflake":
-        return raw
-    from semabridge.utils.identifiers import snowflake_target_name
+    # The target platform's naming rule (target_rules/<platform>/naming.py);
+    # kept as typed on platforms without one.
+    from semabridge.target_rules.naming import normalize_user_target_name
 
-    return snowflake_target_name(raw, source_path, entity_kind)
+    return normalize_user_target_name(raw, _compat_project_target_type(project_id), source_path, entity_kind)
 
 
 def _compat_collect_manual_mapping_overrides(project_id: str) -> List[Dict[str, str]]:
@@ -174,13 +170,14 @@ def _compat_collect_manual_mapping_overrides(project_id: str) -> List[Dict[str, 
 
     overrides: List[Dict[str, str]] = []
     # Target type resolved once (it parses the whole config), not per row.
-    sanitize = _compat_project_target_type(project_id) == "snowflake"
+    from semabridge.target_rules.naming import normalize_user_target_name
+
+    target_type = _compat_project_target_type(project_id)
     for row in list_overrides(str(project_id)):
         source_path = str(row.get("source_path") or "").strip()
         target_name = str(row.get("target_name") or "").strip()
-        if sanitize and target_name:
-            from semabridge.utils.identifiers import snowflake_target_name
-            target_name = snowflake_target_name(target_name, source_path)
+        if target_name:
+            target_name = normalize_user_target_name(target_name, target_type, source_path)
         if not source_path or not target_name:
             continue
         override = {
@@ -540,7 +537,9 @@ def _compat_build_project_entity_mappings(
     )
 
     persisted: List[Dict[str, Any]] = []
-    sanitize_targets = _compat_project_target_type(project_id) == "snowflake"
+    from semabridge.target_rules.naming import normalize_user_target_name
+
+    project_target_type = _compat_project_target_type(project_id)
     for mapping in built.get("mappings", []):
         mapping_id = str(mapping.get("id") or "")
         if not mapping_id:
@@ -550,10 +549,9 @@ def _compat_build_project_entity_mappings(
         override = table_overrides.get(str(mapping.get("source_path") or "").strip())
         if override:
             manual_target = str(override.get("target_name") or "").strip()
-            if sanitize_targets and manual_target:
-                from semabridge.utils.identifiers import snowflake_target_name
-                manual_target = snowflake_target_name(
-                    manual_target, mapping.get("source_path"), mapping.get("entity_kind"),
+            if manual_target:
+                manual_target = normalize_user_target_name(
+                    manual_target, project_target_type, mapping.get("source_path"), mapping.get("entity_kind"),
                 )
             if manual_target:
                 merged["target_name"] = manual_target
@@ -887,15 +885,18 @@ def _compat_serialize_auto_map_entity_mappings(
         row_kind = str(row.get("entity_kind") or "column").strip().lower() or "column"
         # Same lists the deploy uses (utils/identifiers): columns -> real
         # Snowflake reserved words only (DATE is fine), metrics -> legacy list.
-        reserved_words = SNOWFLAKE_ALIAS_RESERVED_WORDS if row_kind == "column" else SNOWFLAKE_RESERVED_WORDS
-        if connector == "snowflake" and target_name.lower() in reserved_words:
-            from semabridge.utils.identifiers import snowflake_target_name
+        # (Now asked of the platform's naming rule: Snowflake keeps these lists;
+        # platforms that quote every identifier, e.g. Databricks, have none.)
+        from semabridge.target_rules.naming import naming_for
 
-            suggested_target_name = snowflake_target_name(target_name, source_path, row_kind)
+        naming = naming_for(connector)
+        reserved_words = naming.reserved_words(row_kind) if naming is not None else frozenset()
+        if naming is not None and target_name.lower() in reserved_words:
+            suggested_target_name = naming.target_name(target_name, source_path, row_kind)
             collision_detected = True
             validation_status = "invalid"
             validation_code = "RESERVED_KEYWORD"
-            validation_message = f"'{source_name}' is a Snowflake reserved keyword."
+            validation_message = f"'{source_name}' is a {naming.platform_label} reserved keyword."
 
             import json
             _log_mapping_event(None, {

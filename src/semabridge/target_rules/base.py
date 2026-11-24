@@ -255,11 +255,43 @@ class SqlDialect(ABC):
         """Number of unit boundaries between start and end."""
 
 
+class TargetNaming:
+    """How field / measure names are made for one target platform.
+
+    ``target_name`` is the name a field deploys under, given the name chosen
+    for it (the source name, or a name the user typed). ``source_path``
+    (e.g. "Sales.columns.Order Date") or ``entity_kind`` ("column" /
+    "metric") tells columns from measures.
+    """
+
+    #: Shown in messages, e.g. "a Snowflake reserved keyword".
+    platform_label: str = ""
+    #: User-typed names are normalised to this rule before they are saved
+    #: and deployed (otherwise they are kept as typed).
+    normalizes_user_names: bool = True
+    #: Saved names equal to an older automatic name (e.g. COL_DATE for
+    #: 'Date') are ignored so the current rule applies.
+    ignores_legacy_auto_names: bool = False
+
+    def target_name(self, name: str, source_path: Optional[str] = None, entity_kind: Optional[str] = None) -> str:
+        raise NotImplementedError
+
+    def reserved_words(self, entity_kind: Optional[str] = None) -> frozenset:
+        """Names a field may not take on this platform (empty: none)."""
+        return frozenset()
+
+    def is_legacy_auto_name(self, source_path: Optional[str], name: str) -> bool:
+        return False
+
+
 @dataclass(frozen=True)
 class TargetRules:
-    """Policies, capabilities and dialect for one target platform."""
+    """Policies, capabilities, dialect and naming for one target platform."""
 
     target: str
     policies: TargetPolicies
     capabilities: TargetCapabilities
     dialect: SqlDialect
+    #: None: the platform has no naming rule of its own (callers keep their
+    #: generic behaviour).
+    naming: Optional[TargetNaming] = None

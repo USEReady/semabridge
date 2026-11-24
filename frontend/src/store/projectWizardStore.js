@@ -26,6 +26,8 @@ const DEFAULT_WIZARD_STATE = {
   // Snowflake target's database/schema above so the two never mix.
   databricksCatalog: '',
   databricksSchema: '',
+  // Where to look for the real tables (comma-separated catalog.schema list).
+  databricksSourceSchemas: '',
   targetAccount: '',
   targetWarehouse: '',
   modelQueryRegex: false,

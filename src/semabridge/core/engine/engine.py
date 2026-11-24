@@ -384,6 +384,15 @@ class ExecutionEngine:
             if target == "snowflake":
                 self._step6b_predict_anchor_flag_columns(context)
 
+            # Step 6b (Databricks planner path only): match the model's tables
+            # to Unity Catalog and put the real column names into the measure
+            # SQL before Step 7 persists the model. Read-only.
+            if target == "databricks":
+                from semabridge.core.engine.conversion.rules_choice import databricks_planner_enabled
+
+                if databricks_planner_enabled(context):
+                    self._step6b_databricks_tables(context)
+
             # Step 7: Persist Artifacts
             self._step7_persist_artifacts(context, tag)
             
@@ -576,6 +585,7 @@ ExecutionEngine._convert_to_fabric_target     = _tgt_fab._convert_to_fabric_targ
 ExecutionEngine._convert_to_snowflake_target  = _tgt_sf._convert_to_snowflake_target
 ExecutionEngine._convert_to_databricks_target = _tgt_db._convert_to_databricks_target
 ExecutionEngine._step6b_predict_anchor_flag_columns = _tgt_sf._step6b_predict_anchor_flag_columns
+ExecutionEngine._step6b_databricks_tables     = _tgt_db._step6b_databricks_tables
 
 from semabridge.core.engine.deployment import base as _dep_base
 from semabridge.core.engine.deployment import fabric as _dep_fab

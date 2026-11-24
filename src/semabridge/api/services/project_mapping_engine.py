@@ -31,12 +31,8 @@ def _log_mapping_event(project_id: Any, event: Dict[str, Any]) -> None:
         }, default=str),
     )
 
-from semabridge.utils.identifiers import (
-    IdentifierSanitizer,
-    SNOWFLAKE_ALIAS_RESERVED_WORDS,
-    SNOWFLAKE_RESERVED_WORDS,
-    snowflake_target_name,
-)
+from semabridge.utils.identifiers import IdentifierSanitizer
+from semabridge.target_rules.naming import naming_for
 from semabridge.core.drop_ledger import DropLedger, DropStage
 from semabridge.converter.dax_ast_parser import (
     ADVISORY_CATEGORY_UNREACHABLE_DIMENSION,
@@ -555,13 +551,15 @@ def _is_column_kind(entity_kind: Optional[str]) -> bool:
 def _default_target_identifier(
     source_name: str, target_connector: Optional[str], entity_kind: Optional[str] = None,
 ) -> str:
-    """The name a field deploys under. Snowflake columns (dimensions/facts)
-    use the semantic-name rules: only real Snowflake reserved words get COL_
-    ('Date' -> DATE). Metrics keep to_alias, which their SQL references use."""
-    connector = _normalize_connector_name(target_connector)
-    if connector == "snowflake":
-        # The one naming rule (utils/identifiers.snowflake_target_name).
-        return snowflake_target_name(source_name, entity_kind="column" if _is_column_kind(entity_kind) else "metric")
+    """The name a field deploys under, from the target platform's naming rule
+    (target_rules/<platform>/naming.py). Snowflake (and Databricks, which
+    reuses it): columns (dimensions/facts) use the semantic-name rules -- only
+    real Snowflake reserved words get COL_ ('Date' -> DATE); metrics keep
+    to_alias, which their SQL references use. Platforms without a naming
+    rule get the generic identifier."""
+    naming = naming_for(_normalize_connector_name(target_connector))
+    if naming is not None:
+        return naming.target_name(source_name, entity_kind="column" if _is_column_kind(entity_kind) else "metric")
     return sanitize_identifier(source_name)
 
 
@@ -573,7 +571,7 @@ def _validate_target_name(
     target_connector: Optional[str],
     entity_kind: Optional[str] = None,
 ) -> Dict[str, str]:
-    connector = _normalize_connector_name(target_connector)
+    naming = naming_for(_normalize_connector_name(target_connector))
     resolved_target = str(target_name or "").strip()
     fallback = _default_target_identifier(source_name, target_connector, entity_kind)
 
@@ -593,14 +591,14 @@ def _validate_target_name(
             "suggested_target_name": fallback,
         }
 
-    if connector == "snowflake":
+    if naming is not None and naming.normalizes_user_names:
         upper_name = resolved_target.upper()
-        reserved = SNOWFLAKE_ALIAS_RESERVED_WORDS if _is_column_kind(entity_kind) else SNOWFLAKE_RESERVED_WORDS
+        reserved = naming.reserved_words("column" if _is_column_kind(entity_kind) else "metric")
         if upper_name.lower() in reserved:
             return {
                 "validation_status": "invalid",
                 "validation_code": "RESERVED_KEYWORD",
-                "validation_message": "Target name is a Snowflake reserved keyword.",
+                "validation_message": f"Target name is a {naming.platform_label} reserved keyword.",
                 "suggested_target_name": _default_target_identifier(resolved_target, target_connector, entity_kind),
             }
 
@@ -609,7 +607,7 @@ def _validate_target_name(
             return {
                 "validation_status": "invalid",
                 "validation_code": "UNSUPPORTED_CHARACTERS",
-                "validation_message": "Target name has unsupported characters for Snowflake.",
+                "validation_message": f"Target name has unsupported characters for {naming.platform_label}.",
                 "suggested_target_name": sanitized,
             }
 

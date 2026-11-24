@@ -116,9 +116,19 @@ export function toGenericIdentifier(value) {
  */
 export function sanitizeMappingName(value, targetType = 'snowflake', kind = 'column') {
   if (!String(value ?? '').trim()) return '';
-  return String(targetType || 'snowflake').toLowerCase() === 'snowflake'
+  return usesSnowflakeNaming(targetType || 'snowflake')
     ? toSnowflakeAlias(value, kind)
     : toGenericIdentifier(value);
+}
+
+/**
+ * Targets whose names follow Snowflake's naming rule. Databricks reuses it
+ * (backend: target_rules/databricks/naming.py), so its target names match
+ * Snowflake's and "Margin" / "Margin %" never collide.
+ */
+export function usesSnowflakeNaming(targetType) {
+  const t = String(targetType || '').toLowerCase();
+  return t === 'snowflake' || t === 'databricks';
 }
 
 /**

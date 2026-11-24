@@ -502,11 +502,9 @@ def _merge_legacy_store_edits(project_id: str, session: Any, parsed_cfg: Dict[st
     target = parsed_cfg.get("target") if isinstance(parsed_cfg.get("target"), dict) else {}
     if not target and isinstance(parsed_cfg.get("targets"), list) and parsed_cfg["targets"]:
         target = parsed_cfg["targets"][0] if isinstance(parsed_cfg["targets"][0], dict) else {}
-    sanitize = None
-    if str((target or {}).get("type") or "").strip().lower() == "snowflake":
-        from semabridge.utils.identifiers import IdentifierSanitizer
+    from semabridge.target_rules.naming import normalize_user_target_name
 
-        sanitize = IdentifierSanitizer(force_uppercase=True, suppress_reserved=True).to_alias
+    target_type = str((target or {}).get("type") or "").strip().lower()
     edits: Dict[Tuple[str, str], Dict[str, Any]] = {}
     for mapping in list(ps._compat_mappings.values()):
         if not isinstance(mapping, dict) or str(mapping.get("project_id") or "") != project_id:
@@ -514,9 +512,9 @@ def _merge_legacy_store_edits(project_id: str, session: Any, parsed_cfg: Dict[st
         if not bool(mapping.get("is_user_edited")):
             continue
         target = str(mapping.get("target_name") or "").strip()
-        if sanitize is not None and target:
-            from semabridge.utils.identifiers import snowflake_target_name
-            target = snowflake_target_name(target, mapping.get("source_path"), mapping.get("entity_kind"))
+        if target:
+            # The target platform's naming rule (unchanged for Snowflake).
+            target = normalize_user_target_name(target, target_type, mapping.get("source_path"), mapping.get("entity_kind"))
         norm = _normalize_override_input({
             "source_path": mapping.get("source_path"), "target_name": target,
             "model": mapping.get("model"), "entity_kind": mapping.get("entity_kind"),

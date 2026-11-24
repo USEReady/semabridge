@@ -12,6 +12,7 @@ from __future__ import annotations
 from semabridge.target_rules.base import TargetRules
 from semabridge.target_rules.databricks.capabilities import DATABRICKS_CAPABILITIES
 from semabridge.target_rules.databricks.dialect import DatabricksDialect
+from semabridge.target_rules.databricks.naming import DatabricksNaming
 from semabridge.target_rules.databricks.policies import (
     BY_DESIGN_PREFIX,
     PLACEHOLDER_SQL,
@@ -24,6 +25,7 @@ DATABRICKS_RULES = TargetRules(
     policies=DATABRICKS_POLICIES,
     capabilities=DATABRICKS_CAPABILITIES,
     dialect=DatabricksDialect(),
+    naming=DatabricksNaming(),
 )
 
 register_target_rules(DATABRICKS_RULES)

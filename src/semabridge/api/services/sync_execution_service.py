@@ -537,6 +537,15 @@ def model_config_fingerprint(config: Dict[str, Any], job: Dict[str, Any], target
     catalog = str(target_cfg.get("catalog") or "").strip().upper()
     if catalog:
         payload["target"]["catalog"] = catalog
+    # Where the real tables are looked up, and what happens when one is
+    # missing, change what deploys (Phase 3.4); added only when set.
+    sources = target_cfg.get("source_schemas")
+    if sources:
+        items = sources.split(",") if isinstance(sources, str) else list(sources)
+        payload["target"]["source_schemas"] = [str(s).strip().upper() for s in items if str(s).strip()]
+    on_missing = str(target_cfg.get("on_missing_source") or "").strip().lower()
+    if on_missing:
+        payload["target"]["on_missing_source"] = on_missing
     return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
 
 
