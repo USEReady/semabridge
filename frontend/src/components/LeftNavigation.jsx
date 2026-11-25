@@ -52,21 +52,18 @@ export default function LeftNavigation({ onEmergencyReset, searchQuery = '' }) {
       items: [
         { to: '/projects', label: 'Projects',        icon: FolderOpen },
         { to: '/runs',     label: 'Runs',            icon: PlayCircle },
-        { to: '/drift',    label: 'Drift Monitoring', icon: Radio },
+        { to: '/drift',    label: 'Drift',           icon: Radio },
         { to: '/ask',      label: 'Ask AI',          icon: Sparkles },
       ],
     },
     {
       label: 'Semantic layer',
       items: [
-        { to: '/ontology',          label: 'Explorer',          icon: BookOpen },
-        { to: '/metric-comparator', label: 'Metric Comparator', icon: Activity },
-        { to: '/blast-radius',      label: 'Blast Radius',      icon: Zap },
-        { to: '/bi-truth',          label: 'BI-Truth Suite',    icon: ShieldCheck },
-        { to: '/cross-platform',    label: 'Cross-Platform',    icon: Layers },
-        { to: '/map',               label: 'Model map',         icon: Map },
-        { to: '/history',           label: 'History',           icon: HistoryIcon },
+        { to: '/ontology',          label: 'Catalog',           icon: BookOpen },
+        { to: '/verify',            label: 'Verify',            icon: ShieldCheck },
+        { to: '/blast-radius',      label: 'Impact',            icon: Zap },
         { to: '/compare',           label: 'Compare',           icon: Split },
+        { to: '/history',           label: 'History',           icon: HistoryIcon },
       ],
     },
   ];

@@ -34,11 +34,20 @@ const UnauthorizedPage   = lazy(() => import('./pages/UnauthorizedPage'));
 const AskAiPage          = lazy(() => import('./pages/AskAiPage'));
 const GovernanceSuitePage = lazy(() => import('./pages/GovernanceSuitePage'));
 const DriftMonitoringPage = lazy(() => import('./pages/DriftMonitoringPage'));
+const VerifyPage = lazy(() => import('./pages/VerifyPage'));
 
 // Old route names redirect to the new ones, keeping any ?query (bookmarks, links in run reports).
 function RedirectKeepQuery({ to }) {
   const { search } = useLocation();
   return <Navigate to={`${to}${search}`} replace />;
+}
+
+/** Old page URLs land on the matching tab of the page that replaced them. */
+function RedirectWithTab({ to, tab }) {
+  const { search } = useLocation();
+  const params = new URLSearchParams(search);
+  params.set('tab', tab);
+  return <Navigate to={`${to}?${params.toString()}`} replace />;
 }
 
 function PageFallback() {
@@ -114,14 +123,15 @@ export default function App() {
             <Route path="/explore"       element={<RedirectKeepQuery to="/map" />} />
             <Route path="/ask"           element={<ErrorBoundary><Suspense fallback={<PageFallback />}><AskAiPage /></Suspense></ErrorBoundary>} />
             <Route path="/ontology"          element={<ErrorBoundary><Suspense fallback={<PageFallback />}><OntologyPage mode="explorer" /></Suspense></ErrorBoundary>} />
-            <Route path="/metric-comparator" element={<ErrorBoundary><Suspense fallback={<PageFallback />}><OntologyPage mode="comparator" /></Suspense></ErrorBoundary>} />
+            <Route path="/verify"            element={<ErrorBoundary><Suspense fallback={<PageFallback />}><VerifyPage /></Suspense></ErrorBoundary>} />
+            <Route path="/metric-comparator" element={<RedirectWithTab to="/verify" tab="measures" />} />
             <Route path="/blast-radius"      element={<ErrorBoundary><Suspense fallback={<PageFallback />}><OntologyPage mode="blast-radius" /></Suspense></ErrorBoundary>} />
             <Route path="/drift"             element={<ErrorBoundary><Suspense fallback={<PageFallback />}><DriftMonitoringPage /></Suspense></ErrorBoundary>} />
             <Route path="/drift-monitoring"  element={<RedirectKeepQuery to="/drift" />} />
             <Route path="/data-monitoring"   element={<RedirectKeepQuery to="/drift" />} />
             <Route path="/reverse-sync"      element={<ErrorBoundary><Suspense fallback={<PageFallback />}><GovernanceSuitePage mode="reverse-sync" /></Suspense></ErrorBoundary>} />
-            <Route path="/bi-truth"          element={<ErrorBoundary><Suspense fallback={<PageFallback />}><GovernanceSuitePage mode="bi-truth" /></Suspense></ErrorBoundary>} />
-            <Route path="/cross-platform"    element={<ErrorBoundary><Suspense fallback={<PageFallback />}><GovernanceSuitePage mode="cross-platform" /></Suspense></ErrorBoundary>} />
+            <Route path="/bi-truth"          element={<RedirectWithTab to="/verify" tab="questions" />} />
+            <Route path="/cross-platform"    element={<RedirectWithTab to="/verify" tab="targets" />} />
             <Route path="/projects"      element={<ProjectsPage />} />
             <Route path="/projects/new"  element={<ErrorBoundary><Suspense fallback={<PageFallback />}><CreateProjectPage /></Suspense></ErrorBoundary>} />
             <Route path="/projects/:id" element={<ErrorBoundary><Suspense fallback={<PageFallback />}><ProjectDetailPage /></Suspense></ErrorBoundary>} />
