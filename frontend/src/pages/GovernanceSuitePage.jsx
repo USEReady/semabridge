@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { authFetch } from '../utils/api';
 import Modal from '../components/common/Modal';
 import { ImpactReport } from '../components/ontology/GovernancePanels';
+import { isDemoDataEnabled } from '../utils/demoMode';
 import {
   Play, Check, X, RefreshCw, Clock, Layers, ShieldCheck, ArrowLeftRight,
   Trash2, CheckCircle2, AlertTriangle, Code, Sparkles, HelpCircle,
@@ -146,7 +147,7 @@ export function DriftView({ projectId = '', targetType = 'snowflake' }) {
           target_type: tType,
           change_type: cType,
           project_id: projectId || undefined,
-          mock_mode: true,
+          mock_mode: isDemoDataEnabled(),
         }),
       });
       const data = await res.json();

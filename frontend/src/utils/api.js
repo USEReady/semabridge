@@ -669,6 +669,12 @@ export async function authFetch(url, options = {}) {
 }
 
 export const api = {
+    /** Whether this server allows demo data (live is always the default). */
+    async getDemoStatus() {
+        const res = await authFetch(`${API_BASE_URL}/system/demo-status`, { timeoutMs: 10000 });
+        return handleResponse(res);
+    },
+
     // ── Configuration ─────────────────────────────────────────────────────
     async getConfig() {
         const res = await authFetch(`${API_BASE_URL}/config`);

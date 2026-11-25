@@ -9,6 +9,8 @@ import {
 import { useAuth } from '../context/AuthContext';
 import ContextBadge from './ContextBadge';
 import StatusBar from './StatusBar';
+import { api } from '../utils/api';
+import { useDemoMode } from '../utils/demoMode';
 import './Sidebar.css';
 
 function SidebarNavIcon({ icon: Icon, active }) {
@@ -125,6 +127,7 @@ export default function LeftNavigation({ onEmergencyReset, searchQuery = '' }) {
               </>
             )}
           </NavLink>
+          <DemoDataSwitch collapsed={!isPinned} />
           <StatusBar variant="sidebar" collapsed={!isPinned} />
           <ContextBadge 
             variant="footer" 
@@ -154,3 +157,30 @@ export default function LeftNavigation({ onEmergencyReset, searchQuery = '' }) {
     </>
   );
 }
+
+
+const fetchDemoStatus = () => api.getDemoStatus();
+
+/* Shown only on servers that allow demo data; off (live data) by default. */
+function DemoDataSwitch({ collapsed }) {
+  const demo = useDemoMode(fetchDemoStatus);
+  if (!demo.available) return null;
+  return (
+    <label
+      title="Show demo data on drift, impact and comparison screens. Live data is the default."
+      style={{
+        display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', fontSize: 12,
+        color: demo.enabled ? 'var(--color-warning)' : 'var(--text-tertiary)', cursor: 'pointer',
+      }}
+    >
+      <input
+        id="demo-data-switch"
+        type="checkbox"
+        checked={demo.enabled}
+        onChange={(e) => demo.setEnabled(e.target.checked)}
+      />
+      {!collapsed && <span>{demo.enabled ? 'Demo data on' : 'Demo data'}</span>}
+    </label>
+  );
+}
+

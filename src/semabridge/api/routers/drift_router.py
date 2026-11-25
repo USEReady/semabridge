@@ -738,7 +738,7 @@ def refresh_drift_events(request: Request, project_id: str) -> Dict[str, Any]:
 
 
 @router.post("/events/seed-mock", response_model=Dict[str, Any])
-def seed_mock_events(request: Request, project_id: Optional[str] = "proj-comp") -> Dict[str, Any]:
+def seed_mock_events(request: Request, project_id: Optional[str] = None, include_demo: bool = False) -> Dict[str, Any]:
     """"Refresh drift logs": always runs real drift detection for the
     project; demo events are layered on top only when demo/mock-drift mode
     is enabled (SEMABRIDGE_DEMO_MODE / SEMABRIDGE_MOCK_DRIFT). Demo events
@@ -746,9 +746,14 @@ def seed_mock_events(request: Request, project_id: Optional[str] = "proj-comp") 
     from semabridge.core.demo_mode import demo_mode_globally_armed as is_demo_mode_enabled
     from semabridge.reconciliation.mock_parity import is_mock_drift_enabled
 
-    pid = project_id or "proj-comp"
+    pid = str(project_id or "").strip()
+    if not pid:
+        raise HTTPException(status_code=400, detail="project_id is required.")
     uid = getattr(request.state, "user_id", None)
     owner_id = str(uid) if uid else None
+    from semabridge.api.services.project_ownership_service import assert_project_access
+
+    assert_project_access(pid, owner_id, log_prefix="DriftAuth")
     target_type = _resolve_project_target_type(pid)
     check: Dict[str, Any] = {}
     try:
@@ -761,7 +766,8 @@ def seed_mock_events(request: Request, project_id: Optional[str] = "proj-comp") 
     except Exception as exc:
         logger.warning("Drift check during log refresh failed for %s: %s", pid, exc)
         check = {"error": str(exc), "target_type": target_type}
-    demo = is_mock_drift_enabled() or is_demo_mode_enabled()
+    # Demo events only when the server allows demo data AND the user asked for it.
+    demo = include_demo and (is_mock_drift_enabled() or is_demo_mode_enabled())
     if demo:
         seed_mock_drift_events(pid)
     events = list_drift_events(project_id=pid)
@@ -775,8 +781,17 @@ def seed_mock_events(request: Request, project_id: Optional[str] = "proj-comp") 
     }
 
 
+def _require_demo_mode() -> None:
+    """Simulating drift rewrites the ontology: demo servers only."""
+    from semabridge.core.demo_mode import demo_mode_globally_armed
+
+    if not demo_mode_globally_armed():
+        raise HTTPException(status_code=403, detail="Drift simulation is a demo feature; demo mode is off on this server.")
+
+
 @router.post("/simulate-change", response_model=Dict[str, Any])
 def simulate_change(req: SimulateMetricChangeRequest) -> Dict[str, Any]:
+    _require_demo_mode()
     try:
         res = simulate_metric_drift(
             project_id=req.project_id,
@@ -790,6 +805,7 @@ def simulate_change(req: SimulateMetricChangeRequest) -> Dict[str, Any]:
 
 @router.post("/reset-change", response_model=Dict[str, Any])
 def reset_change(req: ResetMetricChangeRequest) -> Dict[str, Any]:
+    _require_demo_mode()
     try:
         res = reset_simulated_metric_drift(
             project_id=req.project_id,

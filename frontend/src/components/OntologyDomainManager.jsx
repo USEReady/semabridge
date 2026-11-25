@@ -16,6 +16,7 @@ import HealthView from './ontology/HealthView';
 import { WhatIfSimulator, ParityPanel } from './ontology/GovernancePanels';
 import { Pill } from './ontology/ui';
 import { describeApiError, timeAgo, BTN, BTN_PRIMARY } from './ontology/styles';
+import { isDemoDataEnabled } from '../utils/demoMode';
 import {
   buildHealthResults,
   domainIssueCount,
@@ -580,7 +581,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
         change_type: changeType,
         table_context: tableCtx || undefined,
         project_id: effectiveGovProjectId || undefined,
-        mock_mode: true,
+        mock_mode: isDemoDataEnabled(),
       }),
     });
     const data = await res.json();
