@@ -38,6 +38,27 @@ export function StepSourceBrowser({
   const isSelected = (m) => isModelSelected({ id: m.id, name: m.name }, Array.from(selectedModels || []), selectedModelNameByKey);
   const isSaved = (m) => Boolean(savedModels?.has(m.id) || (m.name && (savedModels?.has(m.name) || savedModels?.has(m.name.trim()))));
 
+  if (sourceConnector === 'pbi_desktop') {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div>
+          <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Power BI Desktop Model Ready</h2>
+          <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>
+            Active semantic model discovered from running Power BI Desktop Analysis Services engine.
+          </p>
+        </div>
+        <div style={{ padding: '18px 20px', borderRadius: 12, border: '1px solid var(--border-main)', background: 'var(--bg-surface)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <UploadStatusIcon status="ready" size={14} />
+            <span style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 600 }}>
+              {selectedPbixFilePath || 'Open Desktop Semantic Model'}
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (sourceConnector === 'tableau') {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>

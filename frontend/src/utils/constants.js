@@ -10,6 +10,7 @@ export const STEPS = [
 ];
 
 export const CONNECTOR_TYPES = [
+  { value: 'pbi_desktop', label: 'Power BI Desktop (open file)' },
   { value: 'pbix', label: 'Local PBIX File' },
   { value: 'fabric', label: 'Microsoft Fabric' },
   { value: 'tableau', label: 'Tableau (.tds / .twb)' },

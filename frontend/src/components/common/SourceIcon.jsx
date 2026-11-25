@@ -4,7 +4,7 @@ import { Cloud, Snowflake, Database, BarChart3, Folder, PieChart } from 'lucide-
 export default function SourceIcon({ source, size = 14 }) {
   const normalizedSource = String(source || '').toLowerCase();
 
-  if (normalizedSource.includes('pbix') || normalizedSource.includes('powerbi')) {
+  if (normalizedSource.includes('pbix') || normalizedSource.includes('powerbi') || normalizedSource.includes('pbi_desktop')) {
     return <BarChart3 size={size} color="#F2C811" />;
   }
 

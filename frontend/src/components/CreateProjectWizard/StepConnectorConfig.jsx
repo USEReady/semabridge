@@ -4,6 +4,7 @@ import { api } from '../../utils/api';
 import SourceIcon from '../common/SourceIcon';
 import SearchableSelect from '../common/SearchableSelect';
 import MultiPbixUpload from './MultiPbixUpload';
+import PbiDesktopPicker from './PbiDesktopPicker';
 import { RemoveFileButton } from './uploadStatusUI';
 import { CONNECTOR_TYPES, TARGET_CONNECTOR_TYPES, PBIX_SOURCE_MODES } from '../../utils/constants';
 
@@ -474,6 +475,20 @@ export function StepConnectorConfig({
               )}
             </div>
           </div>
+        )}
+
+        {sourceConnector === 'pbi_desktop' && (
+          <PbiDesktopPicker
+            selectedInstance={selectedPbixFilePath ? { file_name: selectedPbixFilePath } : null}
+            onSelectInstance={(inst) => {
+              if (inst && onUploadSuccess) {
+                onUploadSuccess(inst.file_path || inst.file_name, inst.file_name);
+              }
+            }}
+            onSwitchToPbix={() => {
+              if (setPbixSourceMode) setPbixSourceMode('MANUAL');
+            }}
+          />
         )}
 
         {sourceConnector === 'pbix' && (() => {
