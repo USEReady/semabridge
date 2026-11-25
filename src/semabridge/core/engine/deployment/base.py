@@ -58,12 +58,9 @@ def _step9_deploy(self, context: RunContext) -> None:
     logger.info(f"Step 9: Deploying to {context.target_type}")
 
     try:
-        if context.target_type == "fabric":
-            self._deploy_to_fabric(context)
-        elif context.target_type == "snowflake":
-            self._deploy_to_snowflake(context)
-        elif context.target_type == "databricks":
-            self._deploy_to_databricks(context)
+        from semabridge.core.targets import get_target_adapter
+
+        get_target_adapter(context.target_type).deploy(self, context)
 
         self._record_step(
             9,
