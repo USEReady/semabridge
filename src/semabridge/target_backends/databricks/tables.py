@@ -254,8 +254,9 @@ def _match_column(model_col: str, table: UcTable) -> Tuple[Optional[str], str, L
       (legacy cleaned, naming v2, the resolver's normalised forms).
     Two or more candidates: (None, "ambiguous", candidates). The old X <-> X_ID
     suffix guess is gone: it could bind a name column to a key column."""
-    from semabridge.target_rules.databricks.naming import base_normalize
+    from semabridge.target_rules.databricks import DATABRICKS_RULES
 
+    base_normalize = DATABRICKS_RULES.naming.base_normalize
     reals = [real for real, _type in table.columns.values()]
     if model_col in reals:
         return model_col, "exact", [model_col]
@@ -355,8 +356,10 @@ def _stub_columns(dataset: Any, alias: str, numeric_refs: Dict[str, set]
                   ) -> Tuple[List[Tuple[str, str]], Dict[str, str]]:
     """The empty table's columns (naming v2 names, allocated per table, natural
     names first) and the converter-reference map to them (SANITIZED_UPPER -> name)."""
-    from semabridge.target_rules.databricks.naming import fit_length, normalize
+    from semabridge.target_rules.databricks import DATABRICKS_RULES
 
+    naming = DATABRICKS_RULES.naming
+    normalize, fit_length = naming.normalize, naming.fit_length
     used_numeric = numeric_refs.get(alias.upper(), set())
     cols = []
     seen_keys = set()

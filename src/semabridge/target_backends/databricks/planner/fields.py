@@ -23,8 +23,7 @@ def build_fields(source: str, joins: List[JoinPlan], where: Dict[str, str], grap
                  bindings: Bindings) -> Tuple[List[FieldPlan], List[str]]:
     """Fields with naming-v2 base names (allocated later in names.py), quoted
     expressions over the exact physical column, and the Power BI label kept."""
-    from semabridge.target_backends.databricks.planner.names import label_metadata
-    from semabridge.target_rules.databricks.naming import normalize
+    from semabridge.target_backends.databricks.planner.names import NAMING, label_metadata
 
     notes: List[str] = []
     places: List[Tuple[str, str]] = [(source, "source")]
@@ -51,7 +50,7 @@ def build_fields(source: str, joins: List[JoinPlan], where: Dict[str, str], grap
             label = str(getattr(col, "label", "") or name)
             original = str(getattr(col, "renamed_from", "") or name)
             sid = SourceId("field", dataset, name)
-            base, _reasons = normalize(original, "field", sid.key())
+            base, _reasons = NAMING.normalize(original, "field", sid.key())
             display, synonyms, label_notes = label_metadata(label, list(getattr(col, "synonyms", None) or []))
             notes += [f"{dataset}[{name}]: {n}" for n in label_notes]
             fields.append(FieldPlan(

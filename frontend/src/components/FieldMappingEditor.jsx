@@ -360,7 +360,7 @@ export default function FieldMappingEditor({
               </div>
             )}
             {/* What the rename does and does not change downstream. */}
-            <RenameImpactNote text={renameImpactNote(row, targetName)} />
+            <RenameImpactNote text={renameImpactNote(row, targetName, targetPlatform)} />
           </div>
 
           {/* target_data_type */}

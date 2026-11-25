@@ -8,15 +8,7 @@
  * legacy list (DATE -> COL_DATE).
  */
 
-import {
-  SNOWFLAKE_LEGACY_RESERVED_WORDS,
-  SNOWFLAKE_RESERVED_WORDS,
-  toSnowflakeAlias,
-} from './collisionResolution.js';
-
-// Platforms that share Snowflake's naming rule (backend target_rules/*/naming.py).
-// Databricks quotes every identifier, so it has no reserved-keyword block.
-const PLATFORM_LABELS = { snowflake: 'Snowflake', databricks: 'Databricks' };
+import { namingFor } from './targetNaming.js';
 
 function sanitizeIdentifier(value) {
   const raw = String(value || '').trim();
@@ -54,30 +46,28 @@ export function validateTargetName(value, targetPlatform, sourceType, targetType
     return { isValid: false, code: 'EMPTY_TARGET', message: 'Target field cannot be empty.', suggestion: 'UNNAMED' };
   }
 
-  const platform = String(targetPlatform || '').toLowerCase();
-  const isSnowflake = platform.includes('snowflake');
-  const isDatabricks = !isSnowflake && platform.includes('databricks');
-  const usesRule = isSnowflake || isDatabricks;
-  const label = PLATFORM_LABELS[isDatabricks ? 'databricks' : 'snowflake'];
+  // The platform's naming object (utils/targetNaming.js) owns the rule; this
+  // function only words the result. Platforms without a rule (Fabric, none)
+  // keep the generic identifier and are not checked.
+  const naming = namingFor(String(targetPlatform || ''));
   const rowKind = targetNameKind(kind);
   const upper = next.toUpperCase();
-  const reserved = rowKind === 'metric' ? SNOWFLAKE_LEGACY_RESERVED_WORDS : SNOWFLAKE_RESERVED_WORDS;
 
-  if (isSnowflake && reserved.has(upper.toLowerCase())) {
+  if (naming.reservedWords(rowKind).has(upper.toLowerCase())) {
     return {
       isValid: false,
       code: 'RESERVED_KEYWORD',
-      message: 'Target field is a Snowflake reserved keyword.',
+      message: `Target field is a ${naming.label} reserved keyword.`,
       suggestion: `COL_${upper}`,
     };
   }
 
-  const sanitized = usesRule ? toSnowflakeAlias(next, rowKind) : sanitizeIdentifier(next);
-  if (usesRule && sanitized !== upper) {
+  const sanitized = naming.checksNames ? naming.targetName(next, rowKind) : sanitizeIdentifier(next);
+  if (naming.checksNames && !naming.accepts(next, rowKind)) {
     return {
       isValid: false,
       code: 'UNSUPPORTED_CHARACTERS',
-      message: `Target field has unsupported characters for ${label}.`,
+      message: `Target field has unsupported characters for ${naming.label}.`,
       suggestion: sanitized,
     };
   }

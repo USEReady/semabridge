@@ -1,3 +1,4 @@
+import { namingFor } from './targetNaming.js';
 export function shortDeterministicHash(value) {
   let hash = 2166136261;
   const text = String(value || '');
@@ -116,19 +117,15 @@ export function toGenericIdentifier(value) {
  */
 export function sanitizeMappingName(value, targetType = 'snowflake', kind = 'column') {
   if (!String(value ?? '').trim()) return '';
-  return usesSnowflakeNaming(targetType || 'snowflake')
-    ? toSnowflakeAlias(value, kind)
-    : toGenericIdentifier(value);
+  return namingFor(targetType || 'snowflake').targetName(value, kind);
 }
 
 /**
- * Targets whose names follow Snowflake's naming rule. Databricks reuses it
- * (backend: target_rules/databricks/naming.py), so its target names match
- * Snowflake's and "Margin" / "Margin %" never collide.
+ * Targets whose names follow Snowflake's naming rule. Databricks has its own
+ * rule since 25 Nov 2026 (naming v2, utils/databricksNaming.js).
  */
 export function usesSnowflakeNaming(targetType) {
-  const t = String(targetType || '').toLowerCase();
-  return t === 'snowflake' || t === 'databricks';
+  return String(targetType || '').toLowerCase() === 'snowflake';
 }
 
 /**
@@ -137,8 +134,8 @@ export function usesSnowflakeNaming(targetType) {
  * can be typed) and does not apply reserved-word prefixes yet. The final
  * name is sanitizeMappingName(typed) -- see finalizeTypedName.
  */
-export function normalizeTypedName(value) {
-  return String(value ?? '').toUpperCase().replace(/[^A-Z0-9_]/g, '_');
+export function normalizeTypedName(value, targetType = 'snowflake') {
+  return namingFor(targetType || 'snowflake').normalizeTyped(value);
 }
 
 export function finalizeTypedName(value, targetType = 'snowflake', kind = 'column') {
@@ -252,19 +249,20 @@ export function applyHashDeduplication(mappings) {
  *    recommended, unique in the namespace) come first; local options are
  *    only a fallback when the backend sent none.
  */
-export function suggestCollisionResolutions(row, allRows) {
-  const baseTarget = sanitizeMappingName(row?.target_field || row?.target_name || row?.source_field || '');
+export function suggestCollisionResolutions(row, allRows, targetType = 'snowflake') {
+  const name = (value) => sanitizeMappingName(value, targetType);
+  const baseTarget = name(row?.target_field || row?.target_name || row?.source_field || '');
   const namespace = rowNamespace(row);
   const peers = (allRows || []).filter(
     r => r.id !== row.id &&
          rowNamespace(r) === namespace &&
-         sanitizeMappingName(r.target_field || r.target_name || r.source_field || '') === baseTarget
+         name(r.target_field || r.target_name || r.source_field || '') === baseTarget
   );
 
   const suggestions = [];
   const backend = Array.isArray(row?.resolution_suggestions) ? row.resolution_suggestions : [];
   backend.forEach((item, idx) => {
-    const label = sanitizeMappingName(item);
+    const label = name(item);
     if (label && !suggestions.some(s => s.label === label)) {
       suggestions.push({
         id: idx === 0 ? 'recommended' : `backend_${idx}`,
@@ -277,23 +275,23 @@ export function suggestCollisionResolutions(row, allRows) {
 
   const tbl = resolveColumnSourceTable(row) || row?.source_table_name || '';
   const field = row?.source_field || row?.target_field || '';
-  if (tbl && sanitizeMappingName(tbl) !== baseTarget) {
+  if (tbl && name(tbl) !== baseTarget) {
     suggestions.push({
       id: 'table_prefix',
-      label: sanitizeMappingName(`${tbl}_${field}`),
+      label: name(`${tbl}_${field}`),
       description: `Prefix with source table "${tbl}"`,
     });
   }
   const kind = String(row?.entity_kind || row?.field_type || 'col').toUpperCase();
   const kindPrefix = kind === 'MEASURE' || kind === 'METRIC' ? 'MSR' : 'COL';
-  const kindLabel = sanitizeMappingName(`${kindPrefix}_${baseTarget}`);
+  const kindLabel = name(`${kindPrefix}_${baseTarget}`);
   if (!suggestions.some(s => s.label === kindLabel)) {
     suggestions.push({ id: 'kind_prefix', label: kindLabel, description: `Prefix with entity type (${kindPrefix})` });
   }
   const hash = shortDeterministicHash(buildSourceFingerprint({}, row)).slice(0, 6);
   suggestions.push({
     id: 'hash',
-    label: sanitizeMappingName(`${baseTarget}_${hash}`),
+    label: name(`${baseTarget}_${hash}`),
     description: 'Append short unique hash (last resort)',
   });
   return { suggestions, peers };
@@ -304,7 +302,8 @@ export function suggestCollisionResolutions(row, allRows) {
  * names (unique within each row's namespace). Uses each row's backend
  * suggestions first. Returns a mapping of row.id -> candidateName.
  */
-export function resolveCollisionsForRows(rows) {
+export function resolveCollisionsForRows(rows, targetType = 'snowflake') {
+  const name = (value) => sanitizeMappingName(value, targetType);
   const mappings = Array.isArray(rows) ? rows : [];
   const collisionRows = mappings.filter(
     r => String(r?.status || '').toLowerCase() === 'collision'
@@ -327,15 +326,15 @@ export function resolveCollisionsForRows(rows) {
   const resolvedMap = {};
   collisionRows.forEach(row => {
     const used = taken(row);
-    const { suggestions } = suggestCollisionResolutions(row, mappings);
+    const { suggestions } = suggestCollisionResolutions(row, mappings, targetType);
     let candidate = suggestions.map(s => s.label).find(label => label && !used.has(label.toUpperCase()));
     if (!candidate) {
-      const base = suggestions[0]?.label || sanitizeMappingName(row.target_field || row.source_field || '') || 'FIELD';
+      const base = suggestions[0]?.label || name(row.target_field || row.source_field || '') || 'FIELD';
       const hash = shortDeterministicHash(buildSourceFingerprint({}, row)).slice(0, 6).toUpperCase();
-      candidate = sanitizeMappingName(`${base}_${hash}`);
+      candidate = name(`${base}_${hash}`);
       let counter = 2;
       while (used.has(candidate.toUpperCase())) {
-        candidate = sanitizeMappingName(`${base}_${hash}_${counter}`);
+        candidate = name(`${base}_${hash}_${counter}`);
         counter += 1;
       }
     }

@@ -23,6 +23,9 @@ function platformLabel(platform) {
 function useTargetLabel() {
   return platformLabel(useContext(TargetPlatformContext));
 }
+function useTargetPlatform() {
+  return useContext(TargetPlatformContext) || 'snowflake';
+}
 import { Edit2, GitMerge, Zap, CheckCircle, Tags, AlertTriangle, PlusCircle, SkipForward, X, ChevronRight, Info } from 'lucide-react';
 import StatusBadge from './common/StatusBadge';
 import DroppedFieldsPanel from './common/DroppedFieldsPanel';
@@ -143,6 +146,7 @@ function TableHeader() {
 // ─── Single mapping row ───────────────────────────────────────────────────────
 // ─── Single mapping row ───────────────────────────────────────────────────────
 function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpandedCollision, allRows, pendingRenames, setPendingRenames, applyingRename, onApplyRename }) {
+  const targetPlatform = useTargetPlatform();
   const [expandedMeasure, setExpandedMeasure] = useState(false);
   // Clicking the "N detected" pill is the explicit, deliberate action that
   // reveals non-report-alias synonyms (see MeasureTranslationPanel) --
@@ -267,7 +271,7 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
         </div>
         {isCollision && (() => {
           // Only show a suggestion chip if it differs from the conflicting target name
-          const { suggestions } = suggestCollisionResolutions(row, allRows);
+          const { suggestions } = suggestCollisionResolutions(row, allRows, targetPlatform);
           const best = suggestions.find(s => s.id !== 'hash');
           if (!best || best.label === row.target_field) return null;
           return (
@@ -989,7 +993,9 @@ function RelationshipsSection({ relationships }) {
 
 // ─── Collision resolution panel ───────────────────────────────────────────────
 function CollisionPanel({ row, allRows, pendingRename, onRenameChange, onApply, applying }) {
-  const { suggestions, peers } = suggestCollisionResolutions(row, allRows);
+  const targetPlatform = useTargetPlatform();
+  const targetLabel = useTargetLabel();
+  const { suggestions, peers } = suggestCollisionResolutions(row, allRows, targetPlatform);
   const peerLabel = peers.length > 0
     ? peers.map(p => `${p.source_table_name ? p.source_table_name + '.' : ''}${p.source_field}`).join(', ')
     : 'another field';
@@ -1068,7 +1074,7 @@ function CollisionPanel({ row, allRows, pendingRename, onRenameChange, onApply, 
         <input
           type="text"
           value={pendingRename}
-          onChange={e => onRenameChange(normalizeTypedName(e.target.value))}
+          onChange={e => onRenameChange(normalizeTypedName(e.target.value, targetPlatform))}
           placeholder="Or type a custom name…"
           style={{
             flex: 1,
@@ -1116,13 +1122,13 @@ function CollisionPanel({ row, allRows, pendingRename, onRenameChange, onApply, 
           Use only letters, numbers, and underscores. Must start with a letter or underscore.
         </div>
       )}
-      {pendingRename && inputValid && finalizeTypedName(pendingRename, 'snowflake', row.field_type || row.entity_kind) !== pendingRename.trim() && (
+      {pendingRename && inputValid && finalizeTypedName(pendingRename, targetPlatform, row.field_type || row.entity_kind) !== pendingRename.trim() && (
         <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-          Will be deployed as <code>{finalizeTypedName(pendingRename, 'snowflake', row.field_type || row.entity_kind)}</code> (Snowflake identifier rules).
+          Will be deployed as <code>{finalizeTypedName(pendingRename, targetPlatform, row.field_type || row.entity_kind)}</code> ({targetLabel} identifier rules).
         </div>
       )}
-      {pendingRename && inputValid && renameImpactNote(row, finalizeTypedName(pendingRename, 'snowflake', row.field_type || row.entity_kind)) && (
-        <RenameImpactNote text={renameImpactNote(row, finalizeTypedName(pendingRename, 'snowflake', row.field_type || row.entity_kind))} />
+      {pendingRename && inputValid && renameImpactNote(row, finalizeTypedName(pendingRename, targetPlatform, row.field_type || row.entity_kind), targetPlatform) && (
+        <RenameImpactNote text={renameImpactNote(row, finalizeTypedName(pendingRename, targetPlatform, row.field_type || row.entity_kind), targetPlatform)} />
       )}
     </div>
   );
@@ -1155,11 +1161,12 @@ const CHANGE_TONE = {
  */
 function NameChangesPanel({ rows, onEdit, deployedNamesKnown = false }) {
   const targetLabel = useTargetLabel();
+  const targetPlatform = useTargetPlatform();
   const [open, setOpen] = useState(false);
-  const changes = useMemo(() => collectNameChanges(rows), [rows]);
+  const changes = useMemo(() => collectNameChanges(rows, targetPlatform), [rows, targetPlatform]);
   // Columns renamed in Snowflake vs the last deploy (COL_DATE -> DATE): when
   // the last deployed names are unknown, one project-level note instead.
-  const legacyNote = useMemo(() => legacyNamingNote(rows, deployedNamesKnown), [rows, deployedNamesKnown]);
+  const legacyNote = useMemo(() => legacyNamingNote(rows, deployedNamesKnown, targetPlatform), [rows, deployedNamesKnown, targetPlatform]);
   const renamedInSnowflake = changes.filter(({ reason }) => reason.kind === 'renamed_in_snowflake').length;
   if (changes.length === 0 && !legacyNote) return null;
   return (
@@ -1454,7 +1461,7 @@ export default function DryRunMappingTable({
     // rules), so no later sanitization renames what the user picked.
     const renamedRow = mappings.find((r) => r.id === rowId);
     const newName = finalizeTypedName(
-      (pendingRenames[rowId] || '').trim(), 'snowflake', renamedRow?.field_type || renamedRow?.entity_kind,
+      (pendingRenames[rowId] || '').trim(), targetPlatform, renamedRow?.field_type || renamedRow?.entity_kind,
     );
     if (!newName) return;
     setApplyingRename(rowId);
@@ -1470,7 +1477,7 @@ export default function DryRunMappingTable({
     } finally {
       setApplyingRename(null);
     }
-  }, [pendingRenames, onEdit, mappings]);
+  }, [pendingRenames, onEdit, mappings, targetPlatform]);
 
   // ── Bulk resolve handler — uses table-prefix names, not hashes ──────────────
   const handleBulkResolve = useCallback(() => {
@@ -1483,7 +1490,7 @@ export default function DryRunMappingTable({
     setBulkToast(null);
 
     try {
-      const resolvedMap = resolveCollisionsForRows(mappings);
+      const resolvedMap = resolveCollisionsForRows(mappings, targetPlatform);
       onBulkResolved?.(resolvedMap);
       setBulkToast({
         type: 'success',
@@ -1495,7 +1502,7 @@ export default function DryRunMappingTable({
       setBulkResolving(false);
       setTimeout(() => setBulkToast(null), 6000);
     }
-  }, [mappings, onBulkResolved]);
+  }, [mappings, onBulkResolved, targetPlatform]);
 
   const openSynonymModal = useCallback(async (row) => {
     const tableName = row.source_table_name || row.measure_source_tables?.[0] || row.parent_table || '';

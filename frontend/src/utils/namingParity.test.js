@@ -22,11 +22,12 @@ for (const target of Object.keys(EXPECTED)) {
   }
 }
 
-test('databricks shares the snowflake naming rule; fabric does not', () => {
-  assert.equal(usesSnowflakeNaming('databricks'), true);
+test('databricks has its own naming rule (v2, 25 Nov 2026); snowflake keeps its own; fabric neither', () => {
+  assert.equal(usesSnowflakeNaming('databricks'), false);
   assert.equal(usesSnowflakeNaming('Snowflake'), true);
   assert.equal(usesSnowflakeNaming('fabric'), false);
-  assert.equal(sanitizeMappingName('Margin %', 'databricks', 'metric'), sanitizeMappingName('Margin %', 'snowflake', 'metric'));
+  assert.equal(sanitizeMappingName('Margin %', 'databricks', 'metric'), 'margin_pct');
+  assert.equal(sanitizeMappingName('Margin %', 'snowflake', 'metric'), 'MARGIN_PCT');
 });
 
 test('databricks has no reserved-keyword block, snowflake does', () => {
@@ -35,5 +36,11 @@ test('databricks has no reserved-keyword block, snowflake does', () => {
   const bad = validateTargetName('Margin %', 'databricks', '', '', 'metric');
   assert.equal(bad.code, 'UNSUPPORTED_CHARACTERS');
   assert.match(bad.message, /Databricks/);
+  assert.equal(bad.suggestion, 'margin_pct');
+  // A correct Databricks name is valid as it is (it once failed against Snowflake's upper case).
+  for (const name of ['district_id', 'total_sales_ly', 'gross_margin_this_year_pct', 'select_field', 'field_bdebd3de']) {
+    assert.equal(validateTargetName(name, 'databricks', '', '', 'column').code, 'OK', name);
+  }
+  assert.equal(validateTargetName('DISTRICT_ID', 'databricks', '', '', 'column').suggestion, 'district_id');
   assert.match(validateTargetName('Margin %', 'snowflake', '', '', 'metric').message, /Snowflake/);
 });
