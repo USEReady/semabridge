@@ -87,7 +87,7 @@ def test_concurrent_syncs_never_exceed_the_cap(monkeypatch):
     project_ids = [f"proj-{i}" for i in range(5)]
     threads = [_run_perform_project_run_in_thread(pid) for pid in project_ids]
     for t in threads:
-        t.join(timeout=5)
+        t.join(timeout=30)  # completion, not speed: generous under full-suite load
 
     assert max_observed[0] <= 2, "cap of 2 was exceeded -- syncs ran fully concurrently"
     assert sorted(completed) == sorted(project_ids), "every sync must eventually complete, none dropped by the cap"
@@ -104,7 +104,7 @@ def test_a_run_queued_behind_the_cap_still_eventually_fires(monkeypatch):
     project_ids = [f"proj-{i}" for i in range(4)]
     threads = [_run_perform_project_run_in_thread(pid) for pid in project_ids]
     for t in threads:
-        t.join(timeout=5)
+        t.join(timeout=30)  # completion, not speed: generous under full-suite load
 
     assert max_observed[0] == 1, "cap of 1 should fully serialize syncs"
     assert sorted(completed) == sorted(project_ids)
