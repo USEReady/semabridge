@@ -14,12 +14,17 @@ from semabridge.repository.orm.session_factory import db_manager, reset_engine
 
 @pytest.fixture(autouse=True)
 def setup_auth_and_db(monkeypatch, tmp_path):
+    orig_url = os.environ.get("SEMABRIDGE_DATABASE_URL")
+    orig_backend = os.environ.get("SEMABRIDGE_DB_BACKEND")
+
     monkeypatch.setenv("AUTH_ENABLED", "true")
     monkeypatch.setenv("JWT_SECRET_KEY", "test-jwt-secret-key-32-chars-long-1234")
     db_file = tmp_path / "test_ownership.db"
     monkeypatch.setenv("SEMABRIDGE_DATABASE_URL", f"sqlite:///{db_file}")
     monkeypatch.setenv("SEMABRIDGE_DB_BACKEND", "orm")
     monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-long-1234")
+
+    import semabridge.repository.orm
 
     reset_engine()
     db_manager.reset()
@@ -47,8 +52,20 @@ def setup_auth_and_db(monkeypatch, tmp_path):
 
     yield
 
+    db_manager.reset()
+    if orig_url is not None:
+        os.environ["SEMABRIDGE_DATABASE_URL"] = orig_url
+    else:
+        os.environ.pop("SEMABRIDGE_DATABASE_URL", None)
+    if orig_backend is not None:
+        os.environ["SEMABRIDGE_DB_BACKEND"] = orig_backend
+    else:
+        os.environ.pop("SEMABRIDGE_DB_BACKEND", None)
     reset_engine()
     db_manager.reset()
+    if orig_url:
+        restored_engine = db_manager.get_engine()
+        Base.metadata.create_all(bind=restored_engine)
 
 
 def _auth_headers(client: TestClient, user_id: int, role: str = "user") -> dict[str, str]:

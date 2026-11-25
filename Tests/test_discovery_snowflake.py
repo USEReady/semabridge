@@ -10,11 +10,8 @@ from semabridge.repository.orm.session_factory import db_manager, reset_engine
 
 def _prepare_db() -> None:
     os.environ['AUTH_ENABLED'] = 'false'
-    os.environ['SEMABRIDGE_DATABASE_URL'] = 'sqlite:///file::memory:?cache=shared&uri=true'
-    os.environ['SEMABRIDGE_DB_BACKEND'] = 'orm'
+    import semabridge.repository.orm
 
-    reset_engine()
-    db_manager.reset()
     engine = db_manager.get_engine()
     Base.metadata.create_all(bind=engine)
 

@@ -12,8 +12,8 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-os.environ["SEMABRIDGE_DATABASE_URL"] = "sqlite:///./test_run_model_results_and_logs.sqlite"
-os.environ["DATABASE_URL"] = "sqlite:///./test_run_model_results_and_logs.sqlite"
+os.environ.setdefault("SEMABRIDGE_DATABASE_URL", "sqlite:///./test_run_model_results_and_logs.sqlite")
+os.environ.setdefault("DATABASE_URL", "sqlite:///./test_run_model_results_and_logs.sqlite")
 os.environ.setdefault("AUTH_ENABLED", "false")
 
 if "psycopg2" not in sys.modules:

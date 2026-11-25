@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -47,6 +48,9 @@ def sample_rsa_key_pair():
 
 @pytest.fixture(autouse=True)
 def _setup_test_db(monkeypatch, tmp_path):
+    orig_url = os.environ.get("SEMABRIDGE_DATABASE_URL")
+    orig_backend = os.environ.get("SEMABRIDGE_DB_BACKEND")
+
     key_file = tmp_path / "walkthrough.key"
     key_file.write_text("walkthrough-secret-fernet-key-32chars!", encoding="utf-8")
     db_file = tmp_path / "walkthrough.db"
@@ -59,12 +63,27 @@ def _setup_test_db(monkeypatch, tmp_path):
     monkeypatch.delenv("FABRIC_CLIENT_ID", raising=False)
     _get_fernet.cache_clear()
 
+    import semabridge.repository.orm
+
     reset_engine()
     db_manager.reset()
     engine = db_manager.get_engine()
     Base.metadata.create_all(bind=engine)
     yield
     db_manager.reset()
+    if orig_url is not None:
+        os.environ["SEMABRIDGE_DATABASE_URL"] = orig_url
+    else:
+        os.environ.pop("SEMABRIDGE_DATABASE_URL", None)
+    if orig_backend is not None:
+        os.environ["SEMABRIDGE_DB_BACKEND"] = orig_backend
+    else:
+        os.environ.pop("SEMABRIDGE_DB_BACKEND", None)
+    reset_engine()
+    db_manager.reset()
+    if orig_url:
+        restored_engine = db_manager.get_engine()
+        Base.metadata.create_all(bind=restored_engine)
     _get_fernet.cache_clear()
 
 

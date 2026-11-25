@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import inspect, select, text
 
@@ -82,13 +83,33 @@ def _prepare_projects_missing_connection_tag_schema(engine):
         )
 
 
-def test_delete_account_detaches_linked_projects():
-    os.environ['AUTH_ENABLED'] = 'false'
-    os.environ['SEMABRIDGE_DATABASE_URL'] = 'sqlite:///file::memory:?cache=shared&uri=true'
-    os.environ['SEMABRIDGE_DB_BACKEND'] = 'orm'
-
+@pytest.fixture(autouse=True)
+def _isolate_delete_tests(tmp_path, monkeypatch):
+    orig_url = os.environ.get("SEMABRIDGE_DATABASE_URL")
+    orig_backend = os.environ.get("SEMABRIDGE_DB_BACKEND")
+    db_file = tmp_path / "test_account_delete.db"
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    monkeypatch.setenv("SEMABRIDGE_DATABASE_URL", f"sqlite:///{db_file}")
+    monkeypatch.setenv("SEMABRIDGE_DB_BACKEND", "orm")
     reset_engine()
     db_manager.reset()
+    yield
+    db_manager.reset()
+    if orig_url is not None:
+        os.environ["SEMABRIDGE_DATABASE_URL"] = orig_url
+    else:
+        os.environ.pop("SEMABRIDGE_DATABASE_URL", None)
+    if orig_backend is not None:
+        os.environ["SEMABRIDGE_DB_BACKEND"] = orig_backend
+    else:
+        os.environ.pop("SEMABRIDGE_DB_BACKEND", None)
+    reset_engine()
+    db_manager.reset()
+    if orig_url:
+        db_manager.get_engine()
+
+
+def test_delete_account_detaches_linked_projects():
     engine = db_manager.get_engine()
     Base.metadata.create_all(bind=engine)
 
@@ -127,12 +148,6 @@ def test_delete_account_detaches_linked_projects():
 
 
 def test_delete_account_repairs_legacy_projects_schema():
-    os.environ['AUTH_ENABLED'] = 'false'
-    os.environ['SEMABRIDGE_DATABASE_URL'] = 'sqlite:///file::memory:?cache=shared&uri=true'
-    os.environ['SEMABRIDGE_DB_BACKEND'] = 'orm'
-
-    reset_engine()
-    db_manager.reset()
     engine = db_manager.get_engine()
     _prepare_legacy_schema(engine)
 
@@ -165,12 +180,6 @@ def test_delete_account_repairs_legacy_projects_schema():
 
 
 def test_delete_account_with_projects_missing_connection_tag_column():
-    os.environ['AUTH_ENABLED'] = 'false'
-    os.environ['SEMABRIDGE_DATABASE_URL'] = 'sqlite:///file::memory:?cache=shared&uri=true'
-    os.environ['SEMABRIDGE_DB_BACKEND'] = 'orm'
-
-    reset_engine()
-    db_manager.reset()
     engine = db_manager.get_engine()
     _prepare_projects_missing_connection_tag_schema(engine)
 
@@ -220,12 +229,6 @@ def test_delete_account_with_projects_missing_connection_tag_column():
 
 
 def test_schema_compatibility_adds_missing_projects_connection_tag_column():
-    os.environ['AUTH_ENABLED'] = 'false'
-    os.environ['SEMABRIDGE_DATABASE_URL'] = 'sqlite:///file::memory:?cache=shared&uri=true'
-    os.environ['SEMABRIDGE_DB_BACKEND'] = 'orm'
-
-    reset_engine()
-    db_manager.reset()
     engine = db_manager.get_engine()
     _prepare_projects_missing_connection_tag_schema(engine)
 

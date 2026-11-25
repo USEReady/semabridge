@@ -8,7 +8,7 @@ import sys
 import types
 from datetime import datetime, timedelta, timezone
 
-os.environ["SEMABRIDGE_DATABASE_URL"] = "sqlite:///file::memory:?cache=shared&uri=true"
+os.environ.setdefault("SEMABRIDGE_DATABASE_URL", "sqlite:///file::memory:?cache=shared&uri=true")
 
 import pytest
 

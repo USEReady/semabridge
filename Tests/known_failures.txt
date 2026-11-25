@@ -4,4 +4,3 @@
 # - Single test per line (must contain '::' to identify a specific test, no files or wildcards).
 # - Reason required after '#' on each line.
 # - Passing tests must be removed immediately to lock in fixes.
-Tests/test_fabric_batch4_ontology.py::test_report_renames_reach_with_synonyms_and_flag_off_is_identical # asserts equality with characterization/snapshots/fabric.ddl.sql awaiting manual CI workflow_dispatch regeneration

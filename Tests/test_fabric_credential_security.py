@@ -20,19 +20,35 @@ from semabridge.domain.exceptions import AuthenticationError
 
 
 @pytest.fixture(autouse=True)
-def _setup_db(monkeypatch):
+def _setup_db(monkeypatch, tmp_path):
+    orig_url = os.environ.get("SEMABRIDGE_DATABASE_URL")
+    orig_backend = os.environ.get("SEMABRIDGE_DB_BACKEND")
+    db_file = tmp_path / "test_fabric_credential_security.db"
     monkeypatch.setenv("AUTH_ENABLED", "false")
-    monkeypatch.setenv("SEMABRIDGE_DATABASE_URL", "sqlite:///file::memory:?cache=shared&uri=true")
+    monkeypatch.setenv("SEMABRIDGE_DATABASE_URL", f"sqlite:///{db_file}")
     monkeypatch.setenv("SEMABRIDGE_DB_BACKEND", "orm")
-    # Ensure FABRIC_CLIENT_ID is not required
     monkeypatch.delenv("FABRIC_CLIENT_ID", raising=False)
 
     reset_engine()
     db_manager.reset()
     engine = db_manager.get_engine()
+    import semabridge.repository.orm
     Base.metadata.create_all(bind=engine)
     yield
     db_manager.reset()
+    if orig_url is not None:
+        os.environ["SEMABRIDGE_DATABASE_URL"] = orig_url
+    else:
+        os.environ.pop("SEMABRIDGE_DATABASE_URL", None)
+    if orig_backend is not None:
+        os.environ["SEMABRIDGE_DB_BACKEND"] = orig_backend
+    else:
+        os.environ.pop("SEMABRIDGE_DB_BACKEND", None)
+    reset_engine()
+    db_manager.reset()
+    if orig_url:
+        restored_engine = db_manager.get_engine()
+        Base.metadata.create_all(bind=restored_engine)
 
 
 def test_secrets_encrypted_in_credentials_table_and_not_leaked_in_api():

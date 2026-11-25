@@ -2,7 +2,6 @@
 clear error. It never falls back to a schema-less build, which would emit
 NULL placeholders and drop live-only columns."""
 
-import uuid
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -21,14 +20,12 @@ from semabridge.core.engine.targets.snowflake import _convert_to_snowflake_targe
 from semabridge.core.settings import SnowflakeConfig
 
 
-def _emitter(database: str = None):
-    db = database or f"DB_{uuid.uuid4().hex[:8]}"
-    return SnowflakeEmitter(SnowflakeConfig(account="acct", user="u", warehouse="WH", database=db))
+def _emitter(database: str = "DB"):
+    return SnowflakeEmitter(SnowflakeConfig(account="acct", user="u", warehouse="WH", database=database))
 
 
-def _model(name: str = None):
-    unique = name or f"model_{uuid.uuid4().hex[:8]}"
-    return SimpleNamespace(unique_name=unique, label=unique, datasets=[], metrics=[], relationships=[])
+def _model(name: str = "model"):
+    return SimpleNamespace(unique_name=name, label=name, datasets=[], metrics=[], relationships=[])
 
 
 def _no_connection(*_a, **_k):
@@ -58,8 +55,7 @@ def test_no_connection_stops_ddl_build(monkeypatch):
 
 
 def test_empty_live_schema_stops_ddl_build(monkeypatch):
-    db_name = f"DB_{uuid.uuid4().hex[:8]}"
-    emitter = _emitter(database=db_name)
+    emitter = _emitter()
     conn = MagicMock()
     monkeypatch.setattr(emitter.connection_manager, "get_connection", lambda: (conn, True))
     monkeypatch.setattr(emitter.schema_manager, "refresh_schema_cache", lambda: None)
@@ -73,13 +69,11 @@ def test_empty_live_schema_stops_ddl_build(monkeypatch):
     conn.close.assert_called_once()
 
 
-def _context(project_id: str = None, database: str = None):
-    pid = project_id or f"proj_{uuid.uuid4().hex[:8]}"
-    db = database or f"DB_{uuid.uuid4().hex[:8]}"
+def _context(project_id: str = "proj", database: str = "DB"):
     return SimpleNamespace(
         target_type="snowflake",
         config=SimpleNamespace(
-            snowflake=SnowflakeConfig(account="acct", user="u", warehouse="WH", database=db),
+            snowflake=SnowflakeConfig(account="acct", user="u", warehouse="WH", database=database),
             targets=[],
             target=None,
         ),
@@ -87,7 +81,7 @@ def _context(project_id: str = None, database: str = None):
         sml_model=_model(),
         drop_ledger=DropLedger(),
         config_payload={},
-        project_id=pid,
+        project_id=project_id,
         physical_namespace=None,
         dry_run=False,
     )
