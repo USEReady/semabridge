@@ -190,6 +190,8 @@ def _compat_collect_manual_mapping_overrides(project_id: str) -> List[Dict[str, 
         if model:
             # Multi-model edit: keep it scoped to its own model.
             override["model"] = model
+        if row.get("origin"):
+            override["origin"] = row["origin"]  # Databricks explicit-edit marker
         overrides.append(override)
     return overrides
 
@@ -232,6 +234,7 @@ def _compat_record_manual_mapping(project_id: str, mapping: Dict[str, Any], *, u
         entity_kind=mapping.get("entity_kind"),
         source_name=mapping.get("source_name"),
         user_id=user_id,
+        origin=mapping.get("origin"),
     )
     return True
 
@@ -1194,6 +1197,10 @@ async def auto_map_compat(payload: dict):
             if _col_name not in _missing_dims[_dataset or _col_name]:
                 _missing_dims[_dataset or _col_name].append(_col_name)
 
+    if str(target_connector or "").strip().lower() == "databricks":
+        # Snowflake-only advisory: its fix (ALTER TABLE on a Snowflake table)
+        # changes data, outside SemaBridge's semantic scope and not Databricks.
+        _missing_dims = {}
     for _ds_name, _cols in _missing_dims.items():
         for _col in _cols:
             schema_conflicts.append({
@@ -1313,6 +1320,8 @@ async def update_mapping_compat(mapping_id: str, payload: dict):
         )
         existing["status"] = "manual"
         existing["is_user_edited"] = True
+        if _compat_project_target_type(project_id) == "databricks":
+            existing["origin"] = "user"  # explicit edit marker (Databricks only)
         # The edit itself goes to the override table first: if it cannot be
         # saved the request fails instead of "succeeding" in memory only.
         _compat_record_manual_mapping(project_id, existing, user_id=incoming.get("user_id"))

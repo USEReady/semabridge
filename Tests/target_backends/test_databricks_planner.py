@@ -253,11 +253,17 @@ def test_strict_leaves_out_flagged_measure_and_dependants_with_root_cause():
     assert placed_in(r, "Total Revenue") == "sales_metrics"
 
 
-def test_user_excluded_does_not_drop_dependants():
+def test_user_excluded_also_excludes_dependants():
+    """Integration batch 2 (A6): unticking a measure leaves out every measure
+    built on it, with the unticked measure as the root cause (the earlier rule
+    kept dependants placed)."""
     r = plan_metric_views(store_sales([REVENUE, SALES_A, SALES_A_PCT]),
                           settings=PlannerSettings(excluded_measures=("Sales A",)))
     assert reason(r, "Sales A") == "user_excluded"
-    assert placed_in(r, "Sales A %") == "sales_metrics"
+    assert reason(r, "Sales A %") == "depends_on"
+    lo = next(x for x in r.left_out if x.measure == "Sales A %")
+    assert "Sales A" in (lo.root_cause or "")
+    assert placed_in(r, "Total Revenue") == "sales_metrics"
 
 
 def test_filter_removal_is_declined_in_both_modes():

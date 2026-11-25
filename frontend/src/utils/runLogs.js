@@ -1,4 +1,5 @@
 import { cleanPbixLabel } from './pbixLabel.js';
+import { platformTerms } from './platformTerms.js';
 
 const STORAGE_KEY = 'semabridge_run_logs_v1';
 
@@ -43,10 +44,12 @@ function levelFromStatus(status) {
   return 'INFO';
 }
 
-const LIVE_RUN_STAGES = [
+const runTarget = (run) => run?.target_type || run?.targetType || '';
+
+const liveRunStages = (run) => [
   'Validating source format...',
   'Converting metadata to SML...',
-  'Parsing semantic view...',
+  `Parsing ${platformTerms(runTarget(run)).view}...`,
   'Persisting generated artifacts...',
   'Generating TMSL payload...',
   'Deploying semantic model to Fabric...',
@@ -54,6 +57,7 @@ const LIVE_RUN_STAGES = [
 
 function buildProgressiveRunLogs(run = {}, seedLines = []) {
   if (normalizeStatus(run.status) !== 'running') return [];
+  const LIVE_RUN_STAGES = liveRunStages(run);
 
   const startedAtMs = run.started_at ? Date.parse(run.started_at) : NaN;
   const elapsedMs = Number.isFinite(startedAtMs) ? Math.max(0, Date.now() - startedAtMs) : 0;
@@ -141,7 +145,7 @@ export function buildMockRunLogs(run = {}) {
   const lines = [
     `INFO ${startedAt} Validating source format...`,
     `INFO ${startedAt} Converting metadata to SML...`,
-    `INFO ${startedAt} Parsing semantic view...`,
+    `INFO ${startedAt} Parsing ${platformTerms(runTarget(run)).view}...`,
     `INFO ${startedAt} Persisting generated artifacts...`,
     `INFO ${startedAt} Generating TMSL payload...`,
   ];

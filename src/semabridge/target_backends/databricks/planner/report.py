@@ -57,6 +57,25 @@ def render(plan: dict, title: str) -> str:
         for lo in plan["left_out"]:
             out.append(f"| {_cell(lo['measure'])} | {lo['reason']} | {_cell(lo['detail'])[:160]} | {_cell(lo['root_cause'])} |")
         out.append("")
+    if plan.get("blockers"):
+        out.append("## Publication blockers")
+        out.append("")
+        out.append("Deploy (3.8) refuses to publish while any of these remain.")
+        out.append("")
+        out += [f"- **{b['code']}**{' (' + b['view'] + ')' if b.get('view') else ''}: {_cell(b['message'])}"
+                for b in plan["blockers"]]
+        out.append("")
+    if plan.get("name_requests"):
+        out.append("## Saved names")
+        out.append("")
+        out.append("| Source | Requested | Kind | Result | Views (final name) | Why |")
+        out.append("|---|---|---|---|---|---|")
+        for r in plan["name_requests"]:
+            kind = "your edit (firm)" if r["origin"] == "user" else "saved earlier (soft)"
+            views = ", ".join(f"{v['view']}: {v['final']}" for v in r["views"]) or "-"
+            out.append(f"| {_cell(r['source_path'])} | {r['requested']} | {kind} | {r['status']} | {_cell(views)} | "
+                       f"{_cell(r['reason'])[:200]} |")
+        out.append("")
     if plan["renames"]:
         out.append("## Renames")
         out.append("")

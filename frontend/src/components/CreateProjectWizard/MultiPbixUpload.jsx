@@ -17,8 +17,9 @@ import { useCallback, useRef, useState } from 'react';
 import { Upload } from 'lucide-react';
 import { uploadStatusColors } from './uploadStatusColors';
 import { UploadStatusIcon, RemoveFileButton } from './uploadStatusUI';
+import { platformTerms } from '../../utils/platformTerms';
 
-export default function MultiPbixUpload({ entries = [], onAddFiles, onRemove, maxFiles = 10 }) {
+export default function MultiPbixUpload({ entries = [], onAddFiles, onRemove, maxFiles = 10, targetType = '' }) {
   const [dragging, setDragging] = useState(false);
   const [notice, setNotice] = useState('');
   const inputRef = useRef(null);
@@ -55,7 +56,7 @@ export default function MultiPbixUpload({ entries = [], onAddFiles, onRemove, ma
           Drag and drop .pbix files here or click to browse
         </div>
         <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
-          Up to {maxFiles} files — each becomes its own independent semantic view
+          Up to {maxFiles} files — each becomes its own independent {platformTerms(targetType).view}
         </div>
         <input
           ref={inputRef}

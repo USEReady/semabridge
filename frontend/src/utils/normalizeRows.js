@@ -126,6 +126,11 @@ export function normalizeRows(data) {
           ? row.resolution_suggestions.map(String).filter(Boolean)
           : [],
         mapping_scope: String(row?.mapping_scope || ''),
+        // Databricks only: provenance of a name saved earlier ('user' = explicit
+        // edit, 'unmarked' = saved before the marker existed) and that name, so
+        // a re-save keeps it with its marker (multiFileDryRunReadiness.js).
+        override_origin: String(row?.override_origin || ''),
+        saved_target_name: String(row?.saved_target_name || ''),
         // { from, to } when the column's Snowflake name differs from its
         // last deployed name (e.g. COL_DATE -> DATE); see nameChanges.js.
         deployed_name_change: (row?.deployed_name_change && row.deployed_name_change.from && row.deployed_name_change.to)

@@ -102,7 +102,24 @@ def _ensure_tables() -> None:
             tables=[ProjectConfigVersion.__table__, MappingOverride.__table__],
             checkfirst=True,
         )
+        _ensure_origin_column(engine)
         _tables_ready.add(key)
+
+
+def _ensure_origin_column(engine: Any) -> None:
+    """Existing SQLite / DuckDB databases (no Alembic) get the nullable
+    ``mapping_overrides.origin`` column (sb0006). On Postgres the Alembic chain
+    adds it at startup; this is then a no-op. Existing rows stay NULL."""
+    from sqlalchemy import inspect
+
+    try:
+        with engine.begin() as conn:
+            cols = {c["name"] for c in inspect(conn).get_columns("mapping_overrides")}
+            if "origin" not in cols:
+                conn.exec_driver_sql("ALTER TABLE mapping_overrides ADD COLUMN origin VARCHAR(32)")
+    except Exception as exc:
+        logger.error("Could not add mapping_overrides.origin: %s", exc)
+        raise
 
 
 def _sha(text: str) -> str:
@@ -167,6 +184,11 @@ def _override_row_to_dict(row: Any) -> Dict[str, Any]:
         out["entity_kind"] = row.entity_kind
     if row.source_name:
         out["source_name"] = row.source_name
+    origin = getattr(row, "origin", None)
+    if origin:
+        # Only marked rows carry the key, so unmarked rows (every Snowflake /
+        # Fabric / no-target row) render exactly as before.
+        out["origin"] = origin
     return out
 
 
@@ -207,7 +229,17 @@ def _normalize_override_input(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "target_name": target_name,
         "entity_kind": str(row.get("entity_kind") or "").strip().lower() or None,
         "source_name": str(row.get("source_name") or "").strip() or None,
+        "origin": normalize_origin(row.get("origin")),
     }
+
+
+OVERRIDE_ORIGIN_USER = "user"
+
+
+def normalize_origin(value: Any) -> Optional[str]:
+    """``"user"`` for an explicit user edit, else None (unmarked)."""
+    text = str(value or "").strip().lower()
+    return OVERRIDE_ORIGIN_USER if text == OVERRIDE_ORIGIN_USER else None
 
 
 def upsert_override(
@@ -220,15 +252,18 @@ def upsert_override(
     source_name: Any = None,
     user_id: Any = None,
     refresh: bool = True,
+    origin: Any = None,
 ) -> Dict[str, Any]:
-    """Insert or update one override (identity: project, model_key, source_path)."""
+    """Insert or update one override (identity: project, model_key, source_path).
+    ``origin="user"`` marks an explicit user edit (Databricks only); without it
+    an existing marker is kept, never cleared."""
     from sqlalchemy import select
     from semabridge.repository.orm.project_models import MappingOverride
 
     pid = str(project_id or "").strip()
     norm = _normalize_override_input({
         "source_path": source_path, "target_name": target_name, "model": model,
-        "entity_kind": entity_kind, "source_name": source_name,
+        "entity_kind": entity_kind, "source_name": source_name, "origin": origin,
     })
     if is_transient_project(pid) or norm is None:
         return {}
@@ -253,6 +288,8 @@ def upsert_override(
                     existing.entity_kind = norm["entity_kind"]
                 if norm["source_name"]:
                     existing.source_name = norm["source_name"]
+                if norm["origin"]:
+                    existing.origin = norm["origin"]
             existing.updated_at = _now()
             existing.updated_by = str(user_id).strip() if user_id else existing.updated_by
     except Exception as exc:
@@ -261,6 +298,33 @@ def upsert_override(
     if refresh:
         refresh_project_config(pid)
     return norm
+
+
+def delete_override(project_id: str, source_path: str, *, model: Any = None, refresh: bool = True) -> int:
+    """Remove ONE saved name (identity: project, model_key, source_path): the
+    field goes back to automatic naming. Returns the number of rows removed."""
+    from sqlalchemy import delete
+    from semabridge.repository.orm.project_models import MappingOverride
+
+    pid = str(project_id or "").strip()
+    path = str(source_path or "").strip()
+    if is_transient_project(pid) or not path:
+        return 0
+    _ensure_tables()
+    try:
+        with _write_lock, _session_manager().get_session() as session:
+            result = session.execute(delete(MappingOverride).where(
+                MappingOverride.project_id == pid,
+                MappingOverride.model_key == model_key_for(str(model or "").strip()),
+                MappingOverride.source_path == path,
+            ))
+            removed = int(result.rowcount or 0)
+    except Exception as exc:
+        logger.error("Failed to reset mapping override %s of %s: %s", path, pid, exc)
+        raise ConfigPersistenceError(f"Mapping reset for '{path}' could not be saved: {exc}") from exc
+    if refresh and removed:
+        refresh_project_config(pid)
+    return removed
 
 
 def delete_overrides(project_id: str, *, refresh: bool = True) -> int:
@@ -331,7 +395,8 @@ def replace_overrides(
                 continue
             row.position = order[key]
             dirty = False
-            for field in ("target_name", "model_ref", "entity_kind", "source_name"):
+            # origin: a row without the key never clears an existing marker.
+            for field in ("target_name", "model_ref", "entity_kind", "source_name", "origin"):
                 if norm[field] is not None and getattr(row, field) != norm[field]:
                     setattr(row, field, norm[field])
                     dirty = True
@@ -519,6 +584,9 @@ def _merge_legacy_store_edits(project_id: str, session: Any, parsed_cfg: Dict[st
             "source_path": mapping.get("source_path"), "target_name": target,
             "model": mapping.get("model"), "entity_kind": mapping.get("entity_kind"),
             "source_name": mapping.get("source_name"),
+            # The store's explicit edit flag is kept as a marker -- only for
+            # Databricks (other platforms never write the marker).
+            "origin": OVERRIDE_ORIGIN_USER if target_type == "databricks" else None,
         })
         if norm is None:
             continue
@@ -543,6 +611,7 @@ def _merge_legacy_store_edits(project_id: str, session: Any, parsed_cfg: Dict[st
             row.entity_kind = norm["entity_kind"] or row.entity_kind
             row.source_name = norm["source_name"] or row.source_name
             row.model_ref = row.model_ref or norm["model_ref"]
+            row.origin = norm["origin"] or row.origin
             row.updated_at = now
             row.updated_by = "migration:store"
     return len(edits)

@@ -37,7 +37,7 @@ import {
   buildDryRunPayload, resolveEffectiveSources, buildMappingSignature, MAX_MULTI_SOURCES,
 } from '../utils/dryRunPayload';
 import {
-  collectMappingOverrides, flattenSectionRows,
+  collectMappingOverrides, databricksEditOrigin, flattenSectionRows,
   buildDryRunMigrationFields,
 } from '../utils/multiFileDryRunReadiness';
 import {
@@ -481,6 +481,9 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   // Step 4 — dry-run → edit → deploy flow
   const [dryRunData, setDryRunData] = useState(null);
   const [editingRow, setEditingRow] = useState(null);
+  // Databricks: approximate/strict and unticked measures chosen on the plan
+  // panel; written to the project's target `planner` block on save.
+  const [databricksPlannerOptions, setDatabricksPlannerOptions] = useState(null);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [isDeploying, setIsDeploying] = useState(false);
   const [deployError, setDeployError] = useState('');
@@ -525,6 +528,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         if (initialData.target_catalog != null) setDatabricksCatalog(initialData.target_catalog);
         if (initialData.target_schema != null) setDatabricksSchema(initialData.target_schema);
         if (initialData.target_source_schemas != null) setDatabricksSourceSchemas(initialData.target_source_schemas);
+        if (initialData.target_planner) setDatabricksPlannerOptions(initialData.target_planner);
       }
       // sync/write strategy (copy | upsert)
       if (!editMode) {
@@ -1374,13 +1378,22 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         lines.push('    source_schemas:');
         target.source_schemas.forEach((s) => lines.push(`      - "${escapeYamlString(s)}"`));
       }
+      if (target.type === 'databricks' && databricksPlannerOptions) {
+        const { calculate_mode: calcMode, excluded_measures: excludedMeasures = [] } = databricksPlannerOptions;
+        lines.push('    planner:');
+        if (calcMode) lines.push(`      calculate_mode: "${escapeYamlString(calcMode)}"`);
+        lines.push(excludedMeasures.length ? '      excluded_measures:' : '      excluded_measures: []');
+        excludedMeasures.forEach((m) => lines.push(`        - "${escapeYamlString(m)}"`));
+      }
     });
 
     // Persist user-edited field/model names for later deploy runs. A
     // multi-model run writes the same entries, each keyed by its model
     // (`model:` = that model's entry in source.models).
     const mappingOverrides = collectMappingOverrides(
-      isMultiModelRun ? { sections: multiJob.sections } : { rows: detectedMappings || [] },
+      isMultiModelRun
+        ? { sections: multiJob.sections, targetType: [...targetConnectors][0] || '' }
+        : { rows: detectedMappings || [], targetType: [...targetConnectors][0] || '' },
     );
 
     if (mappingOverrides.length > 0) {
@@ -1389,6 +1402,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         lines.push(`  - source_path: "${escapeYamlString(row.source_path)}"`);
         lines.push(`    target_name: "${escapeYamlString(row.target_name)}"`);
         if (row.model) lines.push(`    model: "${escapeYamlString(row.model)}"`);
+        if (row.origin) lines.push(`    origin: "${escapeYamlString(row.origin)}"`);
       });
     }
 
@@ -1751,6 +1765,34 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     fileId ? (updater) => updateMultiFileRows(fileId, updater) : setDetectedMappings
   ), [updateMultiFileRows]);
 
+  // Databricks: put a renamed field back to automatic naming. A real project
+  // also removes its saved name on the server; in the wizard the row simply
+  // stops being an edit (so it is not saved with the project).
+  const handleResetRow = useCallback(async (rowId, fileId = null) => {
+    const row = rowsForModel(fileId).find((r) => r.id === rowId);
+    if (!row) return;
+    const section = fileId ? multiSections.find((s) => s.fileId === fileId) : null;
+    const realProjectId = createdProject?.id || createdProject?.project_id || '';
+    try {
+      if (realProjectId && !String(realProjectId).startsWith('preview') && row.source_path) {
+        await api.resetMappingOverride(realProjectId, row.source_path, section?.sourceRef || '');
+      }
+    } catch (err) {
+      setMappingError(err?.message || 'Could not reset the field to automatic naming.');
+      return;
+    }
+    const reset = (r) => (r.id === rowId
+      ? { ...r, target_field: r.suggested_target_name || r.target_field, status: 'auto',
+        override_origin: '', saved_target_name: '', isDirty: true }
+      : r);
+    setRowsForModel(fileId)((prev) => prev.map(reset));
+    if (!fileId) {
+      setDetectedEntityMappings((prev) => prev.map((m) => (m.id === rowId
+        ? { ...m, status: 'auto', is_user_edited: false, target_name: row.suggested_target_name || m.target_name }
+        : m)));
+    }
+  }, [rowsForModel, setRowsForModel, multiSections, createdProject]);
+
   // Opens the field editor for one model's row -- same behaviour as the
   // single-model table's onEdit (the editor validates and saves).
   const handleMultiEditRow = useCallback((fileId, rowId) => {
@@ -1895,6 +1937,8 @@ export default function CreateProjectPage({ editMode = false, initialData = null
 
     const projectId = createdProject?.id || createdProject?.project_id || 'preview';
 
+    const deployTarget = [...targetConnectors][0] || '';
+    const deployToDatabricks = String(deployTarget).toLowerCase().includes('databricks');
     const fieldMappings = detectedMappings.map(row => ({
       id: row.id,
       source_name: row.source_field,
@@ -1902,10 +1946,14 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       target_data_type: row.target_type,
       status: row.status,
       entity_kind: row.entity_kind,
+      // Databricks: the server saves only rows the user really edited.
+      ...(deployToDatabricks
+        ? { source_path: row.source_path, user_edited: databricksEditOrigin(row, row.target_field) === 'user' }
+        : {}),
     }));
 
     try {
-      const result = await api.deployMappings(projectId, fieldMappings);
+      const result = await api.deployMappings(projectId, fieldMappings, deployTarget);
 
       if (result?.success) {
         if (result.project_id) {
@@ -1930,7 +1978,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     } finally {
       setIsDeploying(false);
     }
-  }, [detectedMappings, createdProject, dryRunData]);
+  }, [detectedMappings, createdProject, dryRunData, targetConnectors]);
 
   const goNext = async () => {
     if (step === 6) { handleFinish(); return; }
@@ -2283,6 +2331,9 @@ export default function CreateProjectPage({ editMode = false, initialData = null
                 isDeploying={isDeploying}
                 deployError={deployError}
                 onFieldEdit={handleFieldEdit}
+                plannerOptions={databricksPlannerOptions}
+                onPlannerOptionsChange={setDatabricksPlannerOptions}
+                onResetRow={handleResetRow}
                 onDeployMappings={handleDeploy}
                 targetConnectors={targetConnectors}
                 onBulkResolved={handleBulkResolved}

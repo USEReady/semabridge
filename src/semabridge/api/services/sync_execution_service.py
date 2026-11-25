@@ -53,6 +53,27 @@ def _normalize_connector_type(raw_type: Any, default: str) -> str:
     key = str(raw_type or "").strip().lower()
     return _TYPE_ALIASES.get(key, key or default)
 
+
+# Settings only a Databricks target has. A target carrying any of them but no
+# `type` is a Databricks configuration with its type missing: it must never be
+# run as Snowflake (the legacy default for a type-less target).
+_DATABRICKS_ONLY_TARGET_KEYS = ("catalog", "source_schemas", "http_path")
+
+
+def resolve_target_type(target_cfg: Any, default: str = "snowflake") -> str:
+    """The target platform of a config. Missing type: the legacy default,
+    unless the target is recognisably Databricks -- then it is refused."""
+    cfg = target_cfg if isinstance(target_cfg, dict) else {}
+    raw = str(cfg.get("type") or "").strip()
+    if not raw and any(cfg.get(k) for k in _DATABRICKS_ONLY_TARGET_KEYS):
+        from semabridge.domain.exceptions import ValidationError
+
+        raise ValidationError(
+            "The target has Databricks settings but no target type; set target type 'databricks' "
+            "(it is never assumed to be Snowflake)."
+        )
+    return _normalize_connector_type(raw, default)
+
 def _resolve_models_path() -> Path:
     candidates = [
         Path.cwd() / "models",
@@ -189,7 +210,7 @@ def _build_sync_jobs(config: Dict[str, Any]) -> tuple[List[Dict[str, Any]], str,
     source_cfg = config.get("source", {}) or {}
     source_type = _normalize_connector_type(source_cfg.get("type", "fabric"), "fabric")
     target_cfg = _resolve_target_config(config)
-    target_type = _normalize_connector_type((target_cfg or {}).get("type", "snowflake"), "snowflake")
+    target_type = resolve_target_type(target_cfg or {}, "snowflake")
 
     sync_jobs: List[Dict[str, Any]] = []
 
@@ -857,6 +878,7 @@ def _run_single_job_impl(
                 "upsert_delta": summary_data.get("upsert_delta"),
                 "pbix_path": job.get("pbix_path"),
                 "view_name": _resolve_result_view_name(run_context, target_type),
+                **_planned_view_names(run_context, target_type),
                 "target_artifact_path": summary_data.get("target_artifact_path")
                 or getattr(run_context, "target_artifact_path", None),
                 "physical_namespace": job.get("physical_namespace"),
@@ -1023,6 +1045,17 @@ def _record_true_run_completion(repository: ModelRepository, summary_data: Dict[
         )
     except Exception as record_exc:
         logger.error("Failed to persist true run completion for run_id=%s: %s", run_id, record_exc)
+
+
+def _planned_view_names(run_context: Any, target_type: str) -> Dict[str, Any]:
+    """Databricks: EVERY planned metric view (a model plans several), reported
+    as planned -- not deployed (``view_name`` stays the deployed name, unknown
+    until 3.8 deploys). Other targets: nothing added."""
+    if str(target_type or "").lower() != "databricks" or run_context is None:
+        return {}
+    plan = getattr(run_context, "databricks_view_plan", None) or {}
+    names = [str(v.get("name")) for v in plan.get("views") or [] if isinstance(v, dict) and v.get("name")]
+    return {"planned_view_names": names, "view_status": "planned"} if plan else {}
 
 
 def _resolve_result_view_name(run_context: Any, target_type: str) -> Optional[str]:

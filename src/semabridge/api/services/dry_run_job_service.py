@@ -843,6 +843,7 @@ def _gate_jobs(config: Dict[str, Any]) -> tuple[List[Dict[str, Any]], str]:
         _assign_project_mode_naming,
         _build_sync_jobs,
         _normalize_connector_type,
+        resolve_target_type,
         _resolve_target_config,
     )
     from semabridge.utils.identifiers import clean_pbix_model_name
@@ -856,7 +857,7 @@ def _gate_jobs(config: Dict[str, Any]) -> tuple[List[Dict[str, Any]], str]:
         logger.info("Dry-run gate: sync jobs not resolvable (%s); naming configured entries directly.", exc)
     source_cfg = config.get("source") or {}
     source_type = _normalize_connector_type(source_cfg.get("type", "pbix"), "pbix")
-    target_type = _normalize_connector_type((_resolve_target_config(config) or {}).get("type"), "snowflake")
+    target_type = resolve_target_type(_resolve_target_config(config) or {}, "snowflake")
     entries = [model_entry_key(m) for m in (source_cfg.get("models") or [])]
     entries = [e for e in entries if e] or ([str(source_cfg["pbix_path"])] if source_cfg.get("pbix_path") else [])
     jobs = []

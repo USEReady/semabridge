@@ -50,7 +50,9 @@ export function changeReason(row, targetType = 'snowflake') {
       return {
         kind: 'clash_resolved',
         label: 'Clash resolved',
-        detail: `"${row.renamed_from}" clashed with another column of the same table in ${naming.label}; you chose ${target}.`,
+        detail: naming.id === 'databricks'
+          ? `"${row.renamed_from}" clashed with another name in the same metric view; you chose ${target}.`
+          : `"${row.renamed_from}" clashed with another column of the same table in ${naming.label}; you chose ${target}.`,
       };
     }
     return { kind: 'renamed_by_you', label: 'Renamed', detail: `You (or Resolve All) set this name to ${target}.` };

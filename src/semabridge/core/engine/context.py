@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as _dataclass_field
 from pathlib import Path
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 from semabridge.core.behavior import ConnectorBehavior
 from semabridge.core.settings import Settings
 from semabridge.core.source_format import SourceFormat
@@ -94,6 +94,12 @@ class RunContext:
     databricks_table_plan: Optional[Any] = None
     # Planner path (Phase 3.6): the metric-view plan (PlannerResult.as_dict()).
     databricks_view_plan: Optional[Dict[str, Any]] = None
+    # Planner path: saved names as planner requests (the model is not
+    # modified for Databricks); see config.collect_databricks_name_requests.
+    databricks_name_requests: Optional[List[Dict[str, Any]]] = None
+    # PBIX reader that produced the model: "schema" (DataModelSchema JSON,
+    # complete), "pbixray" (binary fallback) or "extract" (other path).
+    pbix_parser: Optional[str] = None
     # Dry run: Step 8 builds the target DDL (against the live schema) for
     # the preview but writes no target artifacts.
     dry_run: bool = False

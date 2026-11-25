@@ -61,7 +61,10 @@ class PlannerSettings:
     # {view source table: {SourceId: deployed name}} and {view source table: view name}.
     reserved_names: Mapping[str, Mapping["SourceId", str]] = field(default_factory=dict)
     reserved_view_names: Mapping[str, str] = field(default_factory=dict)
-    security_roles: Optional[int] = None           # roles found in the PBIX; None = not extracted
+    security_roles: Optional[int] = None           # roles found in the PBIX: 0 none, >0 found, None = unknown
+    # Saved names as planner requests: (source_path, name, origin). origin "user"
+    # = explicit edit (firm); None = unmarked / historical (soft).
+    requested_names: Tuple[Tuple[str, str, Optional[str]], ...] = ()
 
     def __post_init__(self) -> None:
         if self.calculate_mode not in CALCULATE_MODES:
@@ -84,6 +87,7 @@ class PlannerSettings:
             "excluded_measures": list(self.excluded_measures),
             "capabilities": sorted(self.capabilities),
             "security_roles": self.security_roles,
+            "requested_names": len(self.requested_names),
         }
 
 
@@ -223,12 +227,38 @@ class Rename:
 
 
 @dataclass
+class Blocker:
+    """A structured reason deploy (3.8) must refuse to publish. Never only text."""
+
+    code: str                        # name_override_conflict | security_roles_present | security_roles_unknown
+    message: str
+    view: Optional[str] = None
+    source_path: Optional[str] = None
+    details: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class NameRequestOutcome:
+    """What happened to one saved name (a firm user edit or a soft historical name)."""
+
+    source_path: str
+    requested: str
+    origin: str                      # user (firm) | unmarked (soft)
+    status: str                      # kept | conflict | changed | not_placed | not_applicable
+    source_id: Optional[SourceId] = None
+    views: List[Dict[str, Any]] = field(default_factory=list)   # [{view, final, status, reason}]
+    reason: str = ""
+
+
+@dataclass
 class PlannerResult:
     settings: PlannerSettings
     views: List[ViewPlan] = field(default_factory=list)
     left_out: List[LeftOut] = field(default_factory=list)
     renames: List[Rename] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
+    name_requests: List[NameRequestOutcome] = field(default_factory=list)
+    blockers: List[Blocker] = field(default_factory=list)
 
     def view(self, name: str) -> Optional[ViewPlan]:
         return next((v for v in self.views if v.name == name), None)
@@ -262,9 +292,12 @@ class PlannerResult:
                 "measures_left_out": len(self.left_out),
                 "approximate": sum(1 for v in self.views for m in v.measures if m.semantic_status == "approximate"),
                 "composed": sum(1 for v in self.views for m in v.measures if m.placement == "B"),
+                "publication_blocked": bool(self.blockers),
             },
             "views": [view_dict(v) for v in self.views],
             "left_out": [asdict(x) for x in self.left_out],
             "renames": [asdict(x) for x in self.renames],
             "notes": list(self.notes),
+            "name_requests": [asdict(x) for x in self.name_requests],
+            "blockers": [asdict(x) for x in self.blockers],
         }

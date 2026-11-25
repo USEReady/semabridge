@@ -855,6 +855,8 @@ def _flag_hidden_collisions(rows: List[Dict[str, Any]], target_connector: Option
     """
     naming = naming_for(_normalize_connector_name(target_connector))
     label = naming.platform_label if naming is not None else "Snowflake"
+    dbx = _normalize_connector_name(target_connector) == "databricks"
+    view_word = "metric view" if dbx else "semantic view"
     columns_by_table: Dict[Tuple[str, str], Set[str]] = {}
     for row in rows:
         if str(row.get("entity_kind") or "").lower() == "column":
@@ -869,6 +871,8 @@ def _flag_hidden_collisions(rows: List[Dict[str, Any]], target_connector: Option
         if not target:
             continue
         automatic = str(row.get("sanitized_name") or "").strip().upper()
+        # Databricks names are shown as given; Snowflake names are upper-case.
+        shown = str(row.get("target_name") or "").strip() if dbx else target
 
         # 1. Renamed during conversion and still carrying the automatic name.
         if kind == "column" and row.get("renamed_from") and target == automatic:
@@ -877,7 +881,7 @@ def _flag_hidden_collisions(rows: List[Dict[str, Any]], target_connector: Option
             _mark_collision(
                 row,
                 f"'{original}' and another column of {_table_label(row.get('parent_source_path'))} both become "
-                f"{clean} in {label}, so this one was renamed to {target} automatically. "
+                f"{clean} in {label}, so this one was renamed to {shown} automatically. "
                 "Pick a name (or Resolve All).",
             )
             continue
@@ -888,8 +892,8 @@ def _flag_hidden_collisions(rows: List[Dict[str, Any]], target_connector: Option
             if target in columns_by_table.get(home, set()):
                 _mark_collision(
                     row,
-                    f"Metric and column of {row['home_dataset']} are both named {target} in {label}; "
-                    "the column would be left out of the semantic view. Rename the metric (or Resolve All).",
+                    f"Metric and column of {row['home_dataset']} are both named {shown} in {label}; "
+                    f"the column would be left out of the {view_word}. Rename the metric (or Resolve All).",
                 )
 
     # 3. Same column name in several tables: advisory only.
@@ -902,14 +906,23 @@ def _flag_hidden_collisions(rows: List[Dict[str, Any]], target_connector: Option
         if str(row.get("entity_kind") or "").lower() != "column":
             continue
         name = str(row.get("target_name") or "").strip().upper()
+        shown = str(row.get("target_name") or "").strip() if dbx else name
         tables = sorted(tables_by_name.get((str(row.get("model_name") or ""), name), set()))
         if len(tables) > 1:
             row["shared_name_tables"] = tables
-            note = (
-                f"{name} also exists in {', '.join(t for t in tables if t != _table_label(row.get('parent_source_path')))}. "
-                f"It deploys fine as {_table_label(row.get('parent_source_path')).upper()}.{name}, but a bare {name} "
-                "is ambiguous when the view is queried without the table name."
-            )
+            others = ', '.join(t for t in tables if t != _table_label(row.get('parent_source_path')))
+            if dbx:
+                note = (
+                    f"{shown} also exists in {others}. "
+                    "In a Databricks metric view all names share one list, so the planner names one of them "
+                    f"{_table_label(row.get('parent_source_path')).lower()}_{shown}."
+                )
+            else:
+                note = (
+                    f"{name} also exists in {others}. "
+                    f"It deploys fine as {_table_label(row.get('parent_source_path')).upper()}.{name}, but a bare {name} "
+                    "is ambiguous when the view is queried without the table name."
+                )
             notes = row.setdefault("advisory_notes", [])
             if note not in notes:
                 notes.append(note)
@@ -989,7 +1002,7 @@ def build_entity_mappings(
         # and the user never manually edited it, clear it so collision detection re-runs with the
         # improved table-prefix logic (TABLE_FIELD). Hash suffixes are always exactly 4 or 8
         # uppercase hex chars appended after a single underscore.
-        if preferred_target_name and not is_manual:
+        if preferred_target_name and not is_manual and not existing_mapping.get("preserve_name"):
             _last_seg = preferred_target_name.rsplit("_", 1)
             if len(_last_seg) == 2 and re.fullmatch(r"[0-9A-F]{4}|[0-9A-F]{8}", _last_seg[1]):
                 preferred_target_name = ""
@@ -1242,6 +1255,11 @@ def build_entity_mappings(
             "renamed_from": entity.get("renamed_from"),
             "home_dataset": entity.get("home_dataset"),
         })
+        if existing_mapping.get("override_origin"):
+            # Databricks: provenance of the saved name ("user" = firm, "unmarked"
+            # = soft), so a re-save keeps the row and its marker.
+            generated[-1]["override_origin"] = existing_mapping["override_origin"]
+            generated[-1]["saved_target_name"] = existing_mapping.get("saved_target_name") or target_name
 
     # Pass 2: Declarative Validation (Option B)
     by_target_name: Dict[Tuple[str, str], List[int]] = {}

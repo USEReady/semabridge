@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from semabridge.target_backends.databricks.planner import anchors, checks, fields, joins, measures, names, views
+from semabridge.target_backends.databricks.planner import anchors, checks, fields, joins, measures, names, requests, views
 from semabridge.target_backends.databricks.planner.bindings import Bindings
 from semabridge.target_backends.databricks.planner.graph import ModelGraph
 from semabridge.target_backends.databricks.planner.model import (
@@ -33,6 +33,8 @@ def plan_metric_views(sml_model: Any, table_plan: Optional[Any] = None,
     placed: Dict[str, MeasurePlan] = {}
     order = list(graph.measures)
     measure_order = {m: i for i, m in enumerate(order)}
+    name_requests, unresolved = requests.resolve(settings, graph)                  # saved names -> identities
+    events: list = []
     vnames, vrenames = names.view_names(list(grouped), settings.reserved_view_names)   # Stage 6 (views)
     result.renames += vrenames
     for source in sorted(grouped, key=lambda s: vnames[s]):
@@ -64,7 +66,7 @@ def plan_metric_views(sml_model: Any, table_plan: Optional[Any] = None,
         view.measures = measures.build_measures(source, kept, where, graph, bindings, settings, placed)  # Stage 5
         reserved = (settings.reserved_names or {}).get(source, {})
         result.renames += names.assign_names(view, graph, reserved, [j.name.split(".")[-1] for j in join_list],
-                                             measure_order)                                # Stage 6
+                                             measure_order, name_requests, events)         # Stage 6
         if any(j.readiness == "structure_only" for j in join_list) or view.readiness == "structure_only":
             stubs = sorted({j.dataset for j in join_list if j.readiness == "structure_only"} |
                            ({source} if view.readiness == "structure_only" else set()))
@@ -78,6 +80,8 @@ def plan_metric_views(sml_model: Any, table_plan: Optional[Any] = None,
         d = decisions[name]
         if d.left_out is not None:
             result.left_out.append(d.left_out)
+    result.name_requests, name_blockers = requests.outcomes(name_requests, unresolved, events)
+    result.blockers = name_blockers + checks.security_blockers(settings)
     result.notes = checks.result_notes(result, settings, graph.two_way_notes, graph.skipped_relationships)
     checks.self_check(result, decisions)
     return result
