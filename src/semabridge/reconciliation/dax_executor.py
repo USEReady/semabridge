@@ -8,12 +8,15 @@ run without manual JSON exports.
 from __future__ import annotations
 
 import glob
+import json
 import os
 import re
+import socket
+import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Set
 
 import httpx
 
@@ -22,8 +25,56 @@ DaxBackendType = Literal["pbi_desktop", "rest_api", "xmla"]
 _PBI_PORT_PATTERNS = (
     r"%LOCALAPPDATA%\Microsoft\Power BI Desktop\AnalysisServicesWorkspaces\*\Data\msmdsrv.port.txt",
     r"%LOCALAPPDATA%\Packages\Microsoft.MicrosoftPowerBIDesktop_*\LocalState\AnalysisServicesWorkspaces\*\Data\msmdsrv.port.txt",
+    r"%USERPROFILE%\Microsoft\Power BI Desktop Store App\AnalysisServicesWorkspaces\*\Data\msmdsrv.port.txt",
 )
 _BRACKETED_COL_RE = re.compile(r"^(?:.*\[)([^\[\]]+)\]$")
+
+
+def _is_port_listening(port: int, host: str = "127.0.0.1", timeout: float = 0.2) -> bool:
+    """Check if a local TCP port is open and actively accepting connections."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _get_running_msmdsrv_workspaces() -> Optional[Set[str]]:
+    """Return lowercase names of workspaces currently hosted by active msmdsrv processes.
+
+    Returns None if process inspection cannot be performed (e.g. non-Windows or tool error),
+    allowing callers to fall back gracefully.
+    """
+    if os.name != "nt":
+        return None
+    try:
+        ps_cmd = (
+            "Get-CimInstance Win32_Process -Filter \"Name = 'msmdsrv.exe'\" | "
+            "Select-Object ProcessId, CommandLine | ConvertTo-Json -Compress"
+        )
+        res = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", ps_cmd],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            data = json.loads(res.stdout)
+            procs = [data] if isinstance(data, dict) else (data if isinstance(data, list) else [])
+            workspaces: Set[str] = set()
+            for p in procs:
+                cmd = str(p.get("CommandLine") or "")
+                m_s = re.search(r'-s\s+"?([^"]+)"?', cmd)
+                if m_s:
+                    ws_dir = Path(m_s.group(1).strip()).parent.name.lower()
+                    workspaces.add(ws_dir)
+                m_n = re.search(r'-n\s+"?([^"\s]+)"?', cmd)
+                if m_n:
+                    workspaces.add(m_n.group(1).strip().lower())
+            return workspaces
+        return set()
+    except Exception:
+        return None
 
 
 class DaxExecutionError(RuntimeError):
@@ -66,16 +117,23 @@ def normalize_dax_column_names(raw_columns: List[str]) -> List[str]:
     return final_cols
 
 
-def discover_local_pbi_ports() -> List[Dict[str, Any]]:
-    """Discover local Power BI Desktop Analysis Services workspace ports from ``msmdsrv.port.txt``."""
+def discover_local_pbi_ports(skip_stale: bool = True) -> List[Dict[str, Any]]:
+    """Discover local Power BI Desktop Analysis Services workspace ports from ``msmdsrv.port.txt``.
+
+    When ``skip_stale`` is True (default), workspaces are only included if the port
+    actively accepts a TCP connection AND its msmdsrv process is running.
+    """
     discovered: List[Dict[str, Any]] = []
     seen_ports: set[int] = set()
+    running_workspaces = _get_running_msmdsrv_workspaces() if skip_stale else None
+
     for pat in _PBI_PORT_PATTERNS:
         expanded = os.path.expandvars(pat)
         if "%" in expanded:
             continue
         for match in sorted(glob.glob(expanded)):
             p = Path(match)
+            ws_dir = p.parent.parent.name
             try:
                 raw_bytes = p.read_bytes()
                 # PBI writes msmdsrv.port.txt as UTF-16LE (sometimes UTF-8/ASCII)
@@ -89,11 +147,18 @@ def discover_local_pbi_ports() -> List[Dict[str, Any]]:
                 port_num = int(digits)
                 if port_num <= 0 or port_num in seen_ports:
                     continue
+
+                if skip_stale:
+                    if not _is_port_listening(port_num):
+                        continue
+                    if running_workspaces is not None and ws_dir.lower() not in running_workspaces:
+                        continue
+
                 seen_ports.add(port_num)
                 discovered.append(
                     {
                         "port": port_num,
-                        "workspace_dir": p.parent.parent.name,
+                        "workspace_dir": ws_dir,
                         "port_file": str(p),
                     }
                 )
@@ -115,6 +180,8 @@ def _open_adomd_connection(conn_str: str):
         import clr  # type: ignore
 
         dll_candidates = [
+            *glob.glob(r"C:\Program Files\Microsoft Power BI Desktop\bin\Microsoft.PowerBI.AdomdClient.dll"),
+            *glob.glob(r"C:\Program Files\WindowsApps\Microsoft.MicrosoftPowerBIDesktop_*\bin\Microsoft.PowerBI.AdomdClient.dll"),
             *glob.glob(r"C:\Program Files\Microsoft Power BI Desktop\bin\Microsoft.AnalysisServices.AdomdClient.dll"),
             *glob.glob(r"C:\Program Files (x86)\Microsoft.NET\ADOMD.NET\*\Microsoft.AnalysisServices.AdomdClient.dll"),
             *glob.glob(r"C:\Windows\Microsoft.NET\assembly\GAC_MSIL\Microsoft.AnalysisServices.AdomdClient\*\Microsoft.AnalysisServices.AdomdClient.dll"),
@@ -122,12 +189,19 @@ def _open_adomd_connection(conn_str: str):
         loaded = False
         for dll in dll_candidates:
             if Path(dll).exists():
-                clr.AddReference(dll)
-                loaded = True
-                break
+                try:
+                    clr.AddReference(dll)
+                    loaded = True
+                    break
+                except Exception:
+                    continue
         if not loaded:
             clr.AddReference("Microsoft.AnalysisServices.AdomdClient")
-        from Microsoft.AnalysisServices.AdomdClient import AdomdCommand, AdomdConnection  # type: ignore
+
+        try:
+            from Microsoft.AnalysisServices.AdomdClient import AdomdCommand, AdomdConnection  # type: ignore
+        except ImportError:
+            from Microsoft.PowerBI.AdomdClient import AdomdCommand, AdomdConnection  # type: ignore
 
         return ("clr", (AdomdConnection, AdomdCommand, conn_str))
     except Exception as exc:

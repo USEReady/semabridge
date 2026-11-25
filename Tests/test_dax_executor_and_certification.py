@@ -44,6 +44,11 @@ def test_discover_local_pbi_ports_utf16(tmp_path, monkeypatch):
         "semabridge.reconciliation.dax_executor._PBI_PORT_PATTERNS",
         (str(tmp_path / "AnalysisServicesWorkspaces" / "*" / "Data" / "msmdsrv.port.txt"),),
     )
+    monkeypatch.setattr("semabridge.reconciliation.dax_executor._is_port_listening", lambda p: True)
+    monkeypatch.setattr(
+        "semabridge.reconciliation.dax_executor._get_running_msmdsrv_workspaces",
+        lambda: {"analysisservicesworkspace123"},
+    )
     ports = discover_local_pbi_ports()
     assert len(ports) == 1
     assert ports[0]["port"] == 54321
