@@ -1435,6 +1435,11 @@ async def _sync_safety_checks(
     # keeps them, so it never asks).
     if mode == "copy" and not bool(payload.get("acknowledge_removed_fields", False)):
         findings = await asyncio.to_thread(dss.find_removed_fields, project_id, config_yaml, dry_run_project_id)
+        if findings:
+            # What depends on each removed field (live: metrics, AI queries, certifications).
+            from semabridge.governance.impact import annotate_removed_fields
+
+            findings = await asyncio.to_thread(annotate_removed_fields, project_id, findings)
         removed = [m for m in findings or [] if not m.get("unverifiable")]
         unverifiable = [m for m in findings or [] if m.get("unverifiable")]
         if removed or unverifiable:
