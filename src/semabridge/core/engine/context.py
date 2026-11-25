@@ -147,3 +147,13 @@ class RunContext:
     # "failed", row_count, reason}.
     data_backfill_results: list[Dict[str, Any]] = _dataclass_field(default_factory=list)
     cortex_validation_results: list[Dict[str, Any]] = _dataclass_field(default_factory=list)
+    # Fabric source row counts (COUNTROWS, behind features.fabric_real_row_counts).
+    # For row-count parity only -- never used to classify fact vs dimension.
+    source_row_counts: Optional[Dict[str, int]] = None
+    source_row_count_errors: list[str] = _dataclass_field(default_factory=list)
+    # Non-fatal source warnings shown on the run (e.g. a Fabric report the
+    # identity cannot read). Empty unless a source adds one.
+    source_warnings: list[str] = _dataclass_field(default_factory=list)
+    # Target credential origin (account tag / ambient config) and warnings
+    target_credential_origin: Optional[str] = None
+    target_warnings: list[str] = _dataclass_field(default_factory=list)

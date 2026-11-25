@@ -1,0 +1,149 @@
+name: Characterization (golden snapshots)
+
+# PBIX / Fabric / Snowflake-source conversion + DDL output is pinned by
+# Tests/characterization. The real sample reports (Examples/**/*.pbix) need
+# pbixray's native decoder, so they are generated and checked here on Linux.
+#
+#  bootstrap : on manual workflow_dispatch, generates the real-PBIX
+#              snapshots from the BASE -- the commit this branch forked from
+#              integrate/relationship-direction-fixes (git merge-base) -- by
+#              running this branch's builder against the base's src/.
+#  check     : on every PR and push, runs Tests/characterization against the
+#              BRANCH's code with SEMABRIDGE_REQUIRE_REAL_PBIX=1 -> a skip, a
+#              missing snapshot or any difference from the base output fails.
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [main, master]
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Force regeneration even if BASE_COMMIT matches"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: characterization-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  BASE_BRANCH: dev
+  SNAP_DIR: Tests/characterization/snapshots/real_pbix
+
+jobs:
+  bootstrap:
+    name: "Generate real-PBIX snapshots from the base commit"
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Find the base commit
+        id: base
+        run: |
+          git fetch origin "$BASE_BRANCH"
+          BASE_SHA=$(git merge-base HEAD "origin/$BASE_BRANCH")
+          echo "sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
+          RECORDED=$(cat "$SNAP_DIR/BASE_COMMIT" 2>/dev/null || true)
+          if [ "${{ github.event.inputs.force }}" = "false" ] && [ "$RECORDED" = "$BASE_SHA" ]; then
+            echo "regen=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "regen=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "base=$BASE_SHA recorded=${RECORDED:-none}"
+
+      - name: Install (branch package + base requirements)
+        if: steps.base.outputs.regen == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          git worktree add /tmp/base "${{ steps.base.outputs.sha }}"
+          pip install -e .
+          pip install -r requirements.txt
+          pip install -r /tmp/base/requirements.txt
+
+      - name: Generate snapshots with the base commit's code
+        if: steps.base.outputs.regen == 'true'
+        env:
+          PYTHONHASHSEED: "0"
+          PYTHONPATH: /tmp/base/src
+        run: |
+          rm -f Tests/characterization/snapshots/*.osi.json Tests/characterization/snapshots/*.sml.json Tests/characterization/snapshots/*.ddl.sql
+          rm -f "$SNAP_DIR"/*.osi.json "$SNAP_DIR"/*.sml.json "$SNAP_DIR"/*.ddl.sql
+          python Tests/characterization/_build.py
+          python Tests/characterization/_build_real_pbix.py | tee /tmp/build.log
+          grep -q "semabridge loaded from: /tmp/base/src/semabridge" /tmp/build.log
+          echo "${{ steps.base.outputs.sha }}" > "$SNAP_DIR/BASE_COMMIT"
+
+      - name: Upload characterization snapshots artifact
+        if: steps.base.outputs.regen == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: characterization-snapshots
+          path: Tests/characterization/snapshots
+          if-no-files-found: error
+
+  check:
+    name: "Golden gate (fixture + real PBIX vs base)"
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install -r requirements.txt
+
+      - name: Characterization snapshots (branch code vs base snapshots)
+        env:
+          PYTHONHASHSEED: "0"
+          SEMABRIDGE_REQUIRE_REAL_PBIX: "1"
+        run: python -m pytest Tests/characterization -v -o addopts="--import-mode=importlib"
+
+      - name: Build snapshots from merge-base with origin/dev
+        if: always()
+        env:
+          PYTHONHASHSEED: "0"
+          PYTHONPATH: /tmp/base/src
+        run: |
+          git fetch origin "$BASE_BRANCH"
+          BASE_SHA=$(git merge-base HEAD "origin/$BASE_BRANCH")
+          echo "base=$BASE_SHA"
+          git worktree add /tmp/base "$BASE_SHA"
+          pip install -r /tmp/base/requirements.txt
+          rm -f Tests/characterization/snapshots/*.osi.json Tests/characterization/snapshots/*.sml.json Tests/characterization/snapshots/*.ddl.sql
+          rm -f "$SNAP_DIR"/*.osi.json "$SNAP_DIR"/*.sml.json "$SNAP_DIR"/*.ddl.sql
+          python Tests/characterization/_build.py
+          python Tests/characterization/_build_real_pbix.py | tee /tmp/build.log
+          grep -q "semabridge loaded from: /tmp/base/src/semabridge" /tmp/build.log
+          echo "$BASE_SHA" > "$SNAP_DIR/BASE_COMMIT"
+
+      - name: Upload characterization snapshots artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: characterization-snapshots
+          path: Tests/characterization/snapshots
+          if-no-files-found: error

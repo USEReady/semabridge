@@ -199,3 +199,38 @@ def validate_source_paths(config: Any, roots: Optional[List[Path]] = None) -> No
         if effective_roots is None:
             effective_roots = allowed_source_roots()
         resolve_allowed_path(raw_path, expect="any", roots=effective_roots)
+
+
+def validate_file_path(
+    raw: Optional[str],
+    *,
+    expect: str = "any",
+    field: str = "path",
+    roots: Optional[List[Path]] = None,
+    allowed_suffixes: Optional[Iterable[str]] = None,
+) -> Optional[str]:
+    """Resolve and validate a user-supplied path against allowed roots.
+
+    Returns the resolved string path (or None if raw is empty).
+    Raises HTTPException(403) on DomainPermissionError.
+    Raises HTTPException(400) on DomainValidationError.
+    """
+    if raw is None or not str(raw).strip():
+        return None
+    from fastapi import HTTPException
+    from semabridge.domain.exceptions import PermissionError as DomainPermissionError
+    from semabridge.domain.exceptions import ValidationError as DomainValidationError
+
+    try:
+        resolved = resolve_allowed_path(
+            os.path.expandvars(os.path.expanduser(str(raw))),
+            expect=expect,
+            roots=roots,
+            allowed_suffixes=allowed_suffixes,
+        )
+        return str(resolved)
+    except DomainPermissionError as exc:
+        raise HTTPException(status_code=403, detail=f"{field}: {exc}" if field else str(exc)) from exc
+    except DomainValidationError as exc:
+        raise HTTPException(status_code=400, detail=f"{field}: {exc}" if field else str(exc)) from exc
+

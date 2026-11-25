@@ -11,12 +11,20 @@ from typing import Any, Dict, List, Optional, Tuple
 
 def is_mock_parity_enabled() -> bool:
     """Return True if mock parity / comparative analysis is enabled via server environment."""
+    from semabridge.core.demo_mode import demo_mode_globally_armed
+
+    if not demo_mode_globally_armed():
+        return False
     val = os.getenv("SEMABRIDGE_MOCK_PARITY", "").strip().lower()
     return val in ("1", "true", "yes", "on")
 
 
 def is_mock_drift_enabled() -> bool:
     """Return True if mock drift detection is explicitly enabled via SEMABRIDGE_MOCK_DRIFT."""
+    from semabridge.core.demo_mode import demo_mode_globally_armed
+
+    if not demo_mode_globally_armed():
+        return False
     val = os.getenv("SEMABRIDGE_MOCK_DRIFT", "").strip().lower()
     return val in ("1", "true", "yes", "on")
 
@@ -83,4 +91,3 @@ def generate_mock_comparative_data(
             dax_rows.append(row_dax)
 
     return sql_rows, dax_rows
-

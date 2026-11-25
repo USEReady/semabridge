@@ -1074,36 +1074,47 @@ async def auto_map_compat(payload: dict):
     # project already has mappings) must still be able to build from the
     # latest snapshot instead of raising UnboundLocalError.
     preferred_snapshot_id = ""
-    if project_id and not preview_mode:
-        from semabridge.api.services.core_domain_service import sync_models
+    parsed_config = {}
+    if config_yaml:
         try:
-            sync_mode = (payload or {}).get("sync_mode")
-            sync_models_payload = {
-                "project_id": project_id,
-                "content": config_yaml or None,
-                "dry_run": True,
-                "user_id": user_id,
-            }
-            if sync_mode:
-                sync_models_payload["sync_mode"] = sync_mode
-            sync_result = await sync_models(sync_models_payload)
-            preferred_snapshot_id = _compat_preferred_snapshot_id_from_sync_result(sync_result, selected_model_names)
+            parsed_config = yaml.safe_load(config_yaml) or {}
         except Exception as exc:
-            has_existing_project_mappings = any(
-                str(mapping.get("project_id") or "") == project_id
-                for mapping in _compat_mappings.values()
-                if isinstance(mapping, dict)
-            )
-            if not has_existing_project_mappings:
-                logger.warning("Auto-map pre-sync failed for project %s: %s", project_id, exc)
-                raise ExternalServiceError(
-                    f"Dry-run sync failed before auto-map for project '{project_id}': {exc}"
+            logger.debug("Failed to parse config_yaml for source check: %s", exc)
+    cfg_source_type = str((parsed_config.get("source") or {}).get("type") or "").strip().lower() if isinstance(parsed_config.get("source"), dict) else ""
+
+    if project_id and not preview_mode:
+        # The dry-run gate and duplicate check never call Fabric and need no workspace.
+        # Fabric extraction/validation only runs during real execution, not during auto-map pre-sync.
+        if cfg_source_type != "fabric":
+            from semabridge.api.services.core_domain_service import sync_models
+            try:
+                sync_mode = (payload or {}).get("sync_mode")
+                sync_models_payload = {
+                    "project_id": project_id,
+                    "content": config_yaml or None,
+                    "dry_run": True,
+                    "user_id": user_id,
+                }
+                if sync_mode:
+                    sync_models_payload["sync_mode"] = sync_mode
+                sync_result = await sync_models(sync_models_payload)
+                preferred_snapshot_id = _compat_preferred_snapshot_id_from_sync_result(sync_result, selected_model_names)
+            except Exception as exc:
+                has_existing_project_mappings = any(
+                    str(mapping.get("project_id") or "") == project_id
+                    for mapping in _compat_mappings.values()
+                    if isinstance(mapping, dict)
                 )
-            logger.warning(
-                "Auto-map pre-sync failed for project %s; falling back to existing mapping state: %s",
-                project_id,
-                exc,
-            )
+                if not has_existing_project_mappings:
+                    logger.warning("Auto-map pre-sync failed for project %s: %s", project_id, exc)
+                    raise ExternalServiceError(
+                        f"Dry-run sync failed before auto-map for project '{project_id}': {exc}"
+                    )
+                logger.warning(
+                    "Auto-map pre-sync failed for project %s; falling back to existing mapping state: %s",
+                    project_id,
+                    exc,
+                )
 
         if not dry_run:
             # Reset: the user's names are removed from the override table

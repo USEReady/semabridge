@@ -12,8 +12,8 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-os.environ["SEMABRIDGE_DATABASE_URL"] = "sqlite:///./test_run_model_results_and_logs.sqlite"
-os.environ["DATABASE_URL"] = "sqlite:///./test_run_model_results_and_logs.sqlite"
+os.environ.setdefault("SEMABRIDGE_DATABASE_URL", "sqlite:///./test_run_model_results_and_logs.sqlite")
+os.environ.setdefault("DATABASE_URL", "sqlite:///./test_run_model_results_and_logs.sqlite")
 os.environ.setdefault("AUTH_ENABLED", "false")
 
 if "psycopg2" not in sys.modules:
@@ -56,8 +56,10 @@ from semabridge.api.main import app
 
 def test_concurrent_models_log_lines_never_mix(tmp_path, monkeypatch):
     """Run two jobs in concurrent threads with different model scopes, verify logs do not mix."""
+    logging.disable(logging.NOTSET)
     monkeypatch.setattr("semabridge.core.run_model_logs.RUN_LOGS_ROOT", tmp_path / "runs")
     logger = logging.getLogger("semabridge.test_logger")
+    logger.setLevel(logging.INFO)
 
     project_id = "test_project_concurrency"
     run_id = "run_123"

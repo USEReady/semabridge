@@ -1,19 +1,12 @@
 """
 Sync API Router.
 
-FastAPI endpoints for the bidirectional synchronization engine.
+FastAPI endpoints for model mappings and schema evolution.
 
 Endpoints:
-    POST   /sync/jobs          — Start a new sync job
-    GET    /sync/jobs          — List sync jobs
-    GET    /sync/jobs/{id}     — Get sync job status
-    POST   /sync/jobs/{id}/cancel   — Cancel a running job
-    POST   /sync/jobs/{id}/resume   — Resolve conflicts and resume
-    GET    /sync/jobs/{id}/conflicts — Get conflicts for a job
-    POST   /sync/conflicts/{id}/resolve — Resolve a single conflict (bulk)
-    PATCH  /sync/jobs/{id}/conflicts/{cid} — Approve/reject/escalate a single conflict
     GET    /sync/mappings      — List model mappings
     GET    /sync/schema/{model}/history — Schema version history
+    POST   /sync/schema/add-missing-column — Auto-add missing dimension column
 """
 
 from __future__ import annotations
@@ -22,17 +15,11 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from semabridge.sync.models import (
-    ConflictResolution,
-    SyncConfig,
-    SyncDirection,
-    SyncJobStatus,
-)
-from semabridge.sync.orchestrator import SyncOrchestrator
+from semabridge.sync.models import ConflictResolution, SyncDirection
 from semabridge.sync.repository import SyncRepository
-from semabridge.sync.artifact_exporter import ArtifactExportService
 
 logger = logging.getLogger("semabridge.api.sync")
 
@@ -40,7 +27,6 @@ router = APIRouter(prefix="/sync", tags=["sync"])
 
 # Lazy-initialised singleton
 _repo: Optional[SyncRepository] = None
-_orchestrator: Optional[SyncOrchestrator] = None
 
 
 def _get_repo() -> SyncRepository:
@@ -48,20 +34,6 @@ def _get_repo() -> SyncRepository:
     if _repo is None:
         _repo = SyncRepository()
     return _repo
-
-
-def _get_orchestrator() -> SyncOrchestrator:
-    global _orchestrator
-    if _orchestrator is None:
-        repo = _get_repo()
-        exporter = ArtifactExportService(root_output_dir="output")
-        _orchestrator = SyncOrchestrator(repository=repo, artifact_exporter=exporter)
-    return _orchestrator
-
-
-# =============================================================================
-# Request / Response schemas
-# =============================================================================
 
 
 class StartSyncRequest(BaseModel):
@@ -84,252 +56,42 @@ class StartSyncRequest(BaseModel):
     max_data_rows: int = Field(default=10_000, ge=0)
 
 
-class ResolveConflictRequest(BaseModel):
-    """Request to resolve a single conflict (bulk endpoint)."""
+from semabridge.auth.file_access import validate_file_path
 
-    resolution: ConflictResolution
-    resolved_by: str = "user"
+_validated_path = validate_file_path
 
 
-class PatchConflictRequest(BaseModel):
-    """Per-conflict approval/rejection request (fine-grained PATCH endpoint).
-
-    resolution must be one of: source_wins, target_wins, merge, human_review.
-    human_review blocks the deploy until a user with admin access clears it.
-    """
-
-    resolution: ConflictResolution
-    resolved_by: str = "user"
-    resolution_note: Optional[str] = Field(
-        default=None, description="Optional explanation for audit trail"
+def _gone_response(removed_path: str, replacement: str) -> JSONResponse:
+    """Return 410 Gone with a body pointing to the replacement endpoint."""
+    return JSONResponse(
+        status_code=410,
+        content={
+            "detail": f"Endpoint {removed_path} has been removed. Use {replacement} instead.",
+            "replacement": replacement,
+        },
     )
-
-
-class ResumeJobRequest(BaseModel):
-    """Request to resolve all conflicts and resume a job."""
-
-    resolution: ConflictResolution
-    resolved_by: str = "user"
-
-
-# =============================================================================
-# Job Endpoints
-# =============================================================================
-
-
-def _validated_path(raw: Optional[str], *, expect: str, field: str) -> Optional[str]:
-    """Resolve a user-supplied path against the file-access allow-list.
-
-    Returns the resolved path (symlinks followed) or ``None`` when not given.
-    Raises 403 when it lies outside every allowed root, 400 when malformed.
-    """
-    if raw is None or not str(raw).strip():
-        return None
-    from semabridge.auth import file_access
-    from semabridge.domain.exceptions import PermissionError as DomainPermissionError
-    from semabridge.domain.exceptions import ValidationError as DomainValidationError
-
-    try:
-        return str(file_access.resolve_allowed_path(str(raw), expect=expect))
-    except DomainPermissionError as exc:
-        raise HTTPException(status_code=403, detail=f"{field}: {exc}") from exc
-    except DomainValidationError as exc:
-        raise HTTPException(status_code=400, detail=f"{field}: {exc}") from exc
 
 
 @router.post("/jobs")
-def start_sync_job(request: StartSyncRequest) -> Dict[str, Any]:
-    """Start a new synchronization job."""
-    pbix_folder = _validated_path(request.pbix_folder, expect="dir", field="pbix_folder")
-    source_field = "source_path" if request.source_path else "file_path"
-    source_path = _validated_path(
-        request.source_path or request.file_path, expect="any", field=source_field
-    )
-    config = SyncConfig(
-        direction=request.direction,
-        conflict_resolution=request.conflict_resolution,
-        pbix_folder=pbix_folder,
-        source_path=source_path,
-        pbix_pattern=request.pbix_pattern,
-        snowflake_database=request.snowflake_database,
-        snowflake_schema=request.snowflake_schema or request.target_snowflake_schema,
-        fabric_workspace_id=request.fabric_workspace_id,
-        max_workers=request.max_workers,
-        enable_parallel=request.enable_parallel,
-        incremental=request.incremental,
-        include_data=request.include_data,
-        max_data_rows=request.max_data_rows,
-    )
-
-    try:
-        orchestrator = _get_orchestrator()
-        job = orchestrator.run(config, initiated_by="api")
-        return {
-            "job_id": job.job_id,
-            "status": job.status.value,
-            "total_items": job.total_items,
-            "completed_items": job.completed_items,
-            "failed_items": job.failed_items,
-            "duration_ms": job.duration_ms,
-        }
-    except Exception as e:
-        logger.error(f"Failed to start sync job: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @router.get("/jobs")
-def list_sync_jobs(
-    status: Optional[str] = None,
-    limit: int = 50,
-) -> List[Dict[str, Any]]:
-    """List sync jobs, optionally filtered by status."""
-    repo = _get_repo()
-    filter_status = SyncJobStatus(status) if status else None
-    jobs = repo.list_jobs(status=filter_status, limit=limit)
-    return [
-        {
-            "job_id": j.job_id,
-            "direction": j.direction.value,
-            "status": j.status.value,
-            "created_at": j.created_at,
-            "total_items": j.total_items,
-            "completed_items": j.completed_items,
-            "failed_items": j.failed_items,
-            "duration_ms": j.duration_ms,
-        }
-        for j in jobs
-    ]
+def gone_sync_jobs() -> JSONResponse:
+    return _gone_response("/sync/jobs", "/api/sync")
 
 
 @router.get("/jobs/{job_id}")
-def get_sync_job(job_id: str) -> Dict[str, Any]:
-    """Get detailed status of a sync job."""
-    try:
-        orchestrator = _get_orchestrator()
-        return orchestrator.get_status(job_id)
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
-
 @router.post("/jobs/{job_id}/cancel")
-def cancel_sync_job(job_id: str) -> Dict[str, Any]:
-    """Cancel a running or paused sync job."""
-    try:
-        orchestrator = _get_orchestrator()
-        job = orchestrator.cancel(job_id)
-        return {"job_id": job.job_id, "status": job.status.value}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
 @router.post("/jobs/{job_id}/resume")
-def resume_sync_job(
-    job_id: str, request: ResumeJobRequest
-) -> Dict[str, Any]:
-    """Resolve all conflicts and resume a paused sync job."""
-    try:
-        orchestrator = _get_orchestrator()
-        job = orchestrator.resolve_and_resume(
-            job_id, request.resolution, request.resolved_by
-        )
-        return {
-            "job_id": job.job_id,
-            "status": job.status.value,
-            "total_items": job.total_items,
-            "completed_items": job.completed_items,
-            "failed_items": job.failed_items,
-        }
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-# =============================================================================
-# Conflict Endpoints
-# =============================================================================
-
-
 @router.get("/jobs/{job_id}/conflicts")
-def get_conflicts(job_id: str) -> List[Dict[str, Any]]:
-    """Get all conflicts for a sync job."""
-    repo = _get_repo()
-    conflicts = repo.get_conflicts_for_job(job_id)
-    return [c.model_dump() for c in conflicts]
+def gone_sync_job_detail(job_id: str) -> JSONResponse:
+    return _gone_response(f"/sync/jobs/{job_id}", "/api/runs")
 
 
+@router.get("/conflicts")
+@router.get("/conflicts/{conflict_id}")
 @router.post("/conflicts/{conflict_id}/resolve")
-def resolve_conflict(
-    conflict_id: str, request: ResolveConflictRequest
-) -> Dict[str, str]:
-    """Resolve a single conflict (legacy bulk-style endpoint)."""
-    try:
-        repo = _get_repo()
-        repo.resolve_conflict(
-            conflict_id, request.resolution, request.resolved_by
-        )
-        return {"conflict_id": conflict_id, "status": "resolved"}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
 @router.patch("/jobs/{job_id}/conflicts/{conflict_id}")
-def patch_conflict(
-    job_id: str,
-    conflict_id: str,
-    request: PatchConflictRequest,
-) -> Dict[str, Any]:
-    """Approve, reject, or escalate a single conflict.
-
-    - resolution=source_wins / target_wins / merge  →  resolve and potentially auto-resume
-    - resolution=human_review  →  escalate (sets escalated=True); blocks deploy until cleared
-
-    Returns:
-        conflict_id, status, auto_resumed (True if all criticals are now resolved).
-    """
-    from semabridge.sync.models import ConflictResolution, ConflictSeverity
-
-    try:
-        repo = _get_repo()
-
-        # Resolve with note + escalated flag
-        is_escalated = request.resolution == ConflictResolution.HUMAN_REVIEW
-        repo.resolve_conflict_detailed(
-            conflict_id=conflict_id,
-            resolution=request.resolution,
-            resolved_by=request.resolved_by,
-            resolution_note=request.resolution_note,
-            escalated=is_escalated,
-        )
-
-        # Check if all CRITICAL conflicts for this job are now resolved
-        # (auto-resume when no more critical blockers remain)
-        remaining_criticals = [
-            c for c in repo.get_unresolved_conflicts(job_id)
-            if c.severity == ConflictSeverity.CRITICAL
-        ]
-        auto_resumed = False
-        if not remaining_criticals:
-            # No critical blockers — check if job is paused and resume it
-            try:
-                job = repo.get_job(job_id)
-                from semabridge.sync.models import SyncJobStatus
-                if job and job.status == SyncJobStatus.PAUSED:
-                    repo.update_job_status(job_id, SyncJobStatus.PENDING)
-                    auto_resumed = True
-                    logger.info(
-                        f"Job {job_id} auto-resumed: all critical conflicts resolved"
-                    )
-            except Exception as resume_err:
-                logger.warning(f"Could not auto-resume job {job_id}: {resume_err}")
-
-        return {
-            "conflict_id": conflict_id,
-            "job_id": job_id,
-            "status": "escalated" if is_escalated else "resolved",
-            "auto_resumed": auto_resumed,
-            "remaining_critical_conflicts": len(remaining_criticals),
-        }
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+def gone_conflicts(conflict_id: str = "", job_id: str = "") -> JSONResponse:
+    return _gone_response("/sync/conflicts", "/api/runs/resolve")
 
 
 # =============================================================================

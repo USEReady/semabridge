@@ -24,10 +24,11 @@ def test_execute_sync_request_exposes_routing_summary(monkeypatch) -> None:
 
     monkeypatch.setattr(ses, "reload_settings", lambda: None)
     monkeypatch.setattr(ses, "_load_config", lambda payload, normalizer: ("semabridge.yaml", {}))
+    monkeypatch.setattr(ses, "_attach_fabric_identities", lambda config, sc, jobs, *a, **kw: jobs)
     monkeypatch.setattr(
         ses,
         "_build_sync_jobs",
-        lambda config: (
+        lambda config, **kw: (
             [{"dataset_id": "model-1", "pbix_path": None, "model_label": "model-1"}],
             "fabric",
             "databricks",
@@ -73,10 +74,11 @@ def test_execute_sync_request_exposes_routing_summary(monkeypatch) -> None:
 def test_execute_sync_request_returns_none_routing_summary_when_missing(monkeypatch) -> None:
     monkeypatch.setattr(ses, "reload_settings", lambda: None)
     monkeypatch.setattr(ses, "_load_config", lambda payload, normalizer: ("semabridge.yaml", {}))
+    monkeypatch.setattr(ses, "_attach_fabric_identities", lambda config, sc, jobs, *a, **kw: jobs)
     monkeypatch.setattr(
         ses,
         "_build_sync_jobs",
-        lambda config: (
+        lambda config, **kw: (
             [{"dataset_id": "model-1", "pbix_path": None, "model_label": "model-1"}],
             "fabric",
             "databricks",
@@ -120,10 +122,11 @@ def test_execute_sync_request_returns_none_routing_summary_when_missing(monkeypa
 def test_execute_sync_request_forwards_requested_project_id(monkeypatch) -> None:
     monkeypatch.setattr(ses, "reload_settings", lambda: None)
     monkeypatch.setattr(ses, "_load_config", lambda payload, normalizer: ("semabridge.yaml", {}))
+    monkeypatch.setattr(ses, "_attach_fabric_identities", lambda config, sc, jobs, *a, **kw: jobs)
     monkeypatch.setattr(
         ses,
         "_build_sync_jobs",
-        lambda config: (
+        lambda config, **kw: (
             [{"dataset_id": "Competitive Marketing Analysis", "pbix_path": None, "model_label": "Competitive Marketing Analysis"}],
             "fabric",
             "snowflake",
@@ -165,13 +168,13 @@ def test_execute_sync_request_forwards_requested_project_id(monkeypatch) -> None
 @pytest.mark.parametrize(
     "source_cfg, expected_models",
     [
-        ({"type": "fabric", "model": "LegacyModel"}, ["LegacyModel"]),
-        ({"type": "fabric", "models": ["ModelA", "ModelB"]}, ["ModelA", "ModelB"]),
+        ({"type": "fabric", "workspace_id": "ws-1", "model": "LegacyModel"}, ["LegacyModel"]),
+        ({"type": "fabric", "workspace_id": "ws-1", "models": ["ModelA", "ModelB"]}, ["ModelA", "ModelB"]),
     ],
 )
 def test_build_sync_jobs_accepts_fabric_model_fallbacks(source_cfg, expected_models):
     jobs, source_type, target_type, resolved_source_cfg, resolved_target_cfg = ses._build_sync_jobs(
-        {"source": source_cfg, "targets": [{"type": "snowflake"}]}
+        {"source": source_cfg, "targets": [{"type": "snowflake"}]}, model_resolver=_echo_resolver
     )
 
     assert source_type == "fabric"
@@ -294,3 +297,17 @@ def test_build_config_yaml_from_request_propagates_pbix_path():
     assert config["source"]["pbix_path"] == "C:/Reports/Sales.pbix"
     assert config["source"]["pbix_folder"] == "C:/Reports"
 
+
+
+def _echo_resolver(refs, workspace_id, identity_id):
+    """Test resolver (no network): every ref is its own model id."""
+    from semabridge.sources.base import ModelIdentity
+    from semabridge.sources.fabric.validation import FabricModelCheck
+
+    by_ref, ids = {}, []
+    for r in refs:
+        ident = next((i for i in ids if i.model_id.lower() == r.lower()), None) or ModelIdentity("fabric", r, r, workspace_id)
+        if ident not in ids:
+            ids.append(ident)
+        by_ref[r] = ident
+    return FabricModelCheck(ids, [], by_ref)

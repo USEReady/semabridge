@@ -416,6 +416,36 @@ class FeatureFlags(BaseModel):
         ),
     )
 
+    # Fabric -> Snowflake parity switches. All default OFF: with every one off,
+    # PBIX / Snowflake-source / Fabric output is byte-identical to before
+    # (Tests/characterization). Each is turned on per project via
+    # behavior.features.<name> once its batch has been validated.
+    fabric_report_layer: bool = Field(
+        default=False,
+        description="Fetch the Fabric report definitions bound to a model for field aliases / report-field warnings",
+    )
+    fabric_real_row_counts: bool = Field(
+        default=False,
+        description="Fabric row counts via COUNTROWS (informational only; facts come from relationships)",
+    )
+    fabric_live_drift: bool = Field(
+        default=False,
+        description="Drift compares the live Fabric model definition with the last synced snapshot",
+    )
+    fabric_strict_workspace: bool = Field(
+        default=False,
+        description="Fabric projects never fall back to the server's .env / stored workspace",
+    )
+    skip_unchanged_sources: bool = Field(
+        default=False,
+        description="Scheduled runs skip models whose source fingerprint is unchanged since the last success",
+    )
+    bind_from_m_source: bool = Field(
+        default=False,
+        description="Use the Power Query (M) partition source as the top table-binding hint",
+    )
+
+
 class DateDimensionBehavior(BaseModel):
     """Configuration for date/calendar dimensions used in time intelligence."""
     date_table_names: List[str] = Field(

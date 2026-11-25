@@ -53,7 +53,9 @@ def test_run_dax_pbi_desktop_and_xmla_mocked():
     with patch(
         "semabridge.reconciliation.dax_executor._run_adomd_query",
         return_value=(["Agent", "Case Count"], [{"Agent": "Alice", "Case Count": 42}]),
-    ) as mock_adomd:
+    ) as mock_adomd, patch(
+        "semabridge.reconciliation.dax_executor._acquire_powerbi_token", return_value="sp-token"
+    ):
         rows_desktop = run_dax("EVALUATE ROW(\"Case Count\", [Case Count])", backend="pbi_desktop", port=51234)
         assert rows_desktop == [{"Agent": "Alice", "Case Count": 42}]
         assert "Data Source=localhost:51234" in mock_adomd.call_args[0][0]
@@ -70,6 +72,45 @@ def test_run_dax_pbi_desktop_and_xmla_mocked():
         assert rows_xmla == [{"Agent": "Alice", "Case Count": 42}]
         assert "powerbi://api.powerbi.com/v1.0/myorg/FinanceWS" in mock_adomd.call_args[0][0]
         assert "Initial Catalog=AISample" in mock_adomd.call_args[0][0]
+        assert "sec-1" not in mock_adomd.call_args[0][0]
+
+
+def test_xmla_uses_model_name_and_token_never_the_secret(monkeypatch):
+    """XMLA Initial Catalog is the model NAME (GUIDs are resolved); the connection carries a token."""
+    import pytest
+
+    import semabridge.reconciliation.dax_executor as dx
+
+    guid = "11111111-2222-3333-4444-555555555555"
+    seen = {}
+
+    class _Client:
+        def __init__(self, timeout=None):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get(self, url, headers=None):
+            seen["url"], seen["auth"] = url, headers["Authorization"]
+            return MagicMock(is_success=True, status_code=200, json=lambda: {"id": guid, "name": "Sales Model"})
+
+    monkeypatch.setattr(dx.httpx, "Client", _Client)
+    monkeypatch.setattr(dx, "_acquire_powerbi_token", lambda *a: (_ for _ in ()).throw(AssertionError("SP flow used")))
+    monkeypatch.setattr(dx, "_run_adomd_query", lambda conn, q: (seen.__setitem__("conn", conn), ([], []))[1])
+
+    res = dx.execute_dax("EVALUATE {1}", backend="xmla", workspace="FinanceWS", workspace_id="ws-guid",
+                         dataset_id=guid, client_secret="super-secret", access_token="user-token")
+    assert seen["url"].endswith(f"/groups/ws-guid/datasets/{guid}") and seen["auth"] == "Bearer user-token"
+    assert "Initial Catalog=Sales Model;" in seen["conn"] and guid not in seen["conn"]
+    assert "Password=user-token;" in seen["conn"] and "super-secret" not in seen["conn"]
+    assert res.metadata["catalog"] == "Sales Model"
+
+    with pytest.raises(dx.DaxExecutionError, match="Pass workspace_id"):
+        dx.execute_dax("EVALUATE {1}", backend="xmla", workspace="FinanceWS", dataset_id=guid, access_token="t")
 
 
 def test_run_dax_rest_api_mocked():

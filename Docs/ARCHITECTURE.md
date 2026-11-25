@@ -307,7 +307,7 @@ semabridge_fix/
 | `src/semabridge/connectors/` | Metadata extraction & Snowflake/Databricks DDL clause building | `snowflake_emitter.py`, `fabric_extractor.py`, `metrics_clause_builder.py` | `core/engine/` extraction & target steps | **Live** |
 | `src/semabridge/converter/` | DAX AST parsing, hazard safety classification, time-intelligence shapes | `dax_ast_parser.py`, `tiered_safety.py`, `time_intelligence_shapes.py` | `dax_translation/tiers_1_4.py`, `connectors/snowflake_emitter.py` | **Live** |
 | `src/semabridge/core/engine/` | Modular 10-step Execution Engine package | `engine.py`, `config.py`, `auth.py`, `finalize.py` | `api/services/sync_execution_service.py`, `cli/main.py` | **Live** |
-| `src/semabridge/core/engine.py` | Legacy monolithic single-file engine | `engine.py` | None (Superseded by `core/engine/`) | **Legacy / Shim** |
+| ~~`src/semabridge/core/engine.py`~~ | Removed (was the legacy single-file engine; shadowed by the `core/engine/` package and never imported) | — | — | **Removed** |
 | `src/semabridge/core/execution_engine.py` | Backward-compatibility shim | `execution_engine.py` | `api/websocket_alerts.py`, legacy imports | **Legacy / Shim** |
 | `src/semabridge/dax_translation/` | Consolidated 5-Tier DAX translation pipeline | `tiers_1_4.py`, `tier5/service.py`, `tier5/config.py` | `connectors/snowflake_emitter.py`, `api/services/` | **Live** |
 | `src/semabridge/distributed/` | Ray distributed execution stubs | `ray/actor_diff.py`, `ray/coordinator.py` | None | **Dead** |
@@ -935,7 +935,7 @@ The codebase contains legacy shims and unused modules from earlier architectural
 
 | Module / File Path | Current Status | Replaced By / Live Path | Safe to Remove? | Architectural Debt Notes |
 | :--- | :--- | :--- | :--- | :--- |
-| `src/semabridge/core/engine.py` | **Legacy** | [src/semabridge/core/engine/engine.py](file:///src/semabridge/core/engine/engine.py) | Yes | 1,120-line single-file engine. Kept for historical reference. |
+| ~~`src/semabridge/core/engine.py`~~ | **Removed** | [src/semabridge/core/engine/engine.py](file:///src/semabridge/core/engine/engine.py) | — | Legacy 1,120-line single-file engine, removed: the `core/engine/` package always shadowed it. See git history. |
 | `src/semabridge/core/execution_engine.py` | **Legacy Shim** | [src/semabridge/core/engine/engine.py](file:///src/semabridge/core/engine/engine.py) | No (Re-exports) | Re-exports classes for legacy imports and dynamic string references. |
 | `src/semabridge/core/executor.py` | **Legacy Shim** | `ExecutionEngine` | Yes | Legacy `CLIExecutor` wrapper. |
 | `src/semabridge/storage/orm.py` | **Dead** | [src/semabridge/repository/orm/models.py](file:///src/semabridge/repository/orm/models.py) | Yes | Superseded by the `repository/orm/` package. |

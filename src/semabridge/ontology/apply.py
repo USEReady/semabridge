@@ -838,6 +838,11 @@ def apply_ontology_for_run(engine: Any, context: Any) -> None:
             getattr(context, "resolved_pbix_display_name", None),
             getattr(context, "semantic_view_name_override", None),
         ]
+        if getattr(context, "source_type", None) == "fabric":
+            # A Fabric model is the same model by GUID or by display name: an
+            # override saved under either applies to a run by the other.
+            sf = getattr(context, "source_format", None)
+            names += [getattr(sf, "dataset_id", None), getattr(sf, "dataset_name", None)]
         # The model file THIS job was extracted from identifies the project
         # model, so only that model's domain (+ shared ones) is applied.
         pbix_path = getattr(context, "pbix_path", None)

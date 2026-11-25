@@ -124,8 +124,30 @@ def test_build_config_yaml_from_request_preserves_fabric_identity_id():
 #      Validates: Requirements 1.1
 # ===========================================================================
 
-from hypothesis import given, settings
-from hypothesis import strategies as st
+try:
+    from hypothesis import HealthCheck, given, settings
+    from hypothesis import strategies as st
+    HAS_HYPOTHESIS = True
+except (ImportError, OSError):
+    HAS_HYPOTHESIS = False
+
+if not HAS_HYPOTHESIS:
+    if os.getenv("CI") == "true" or os.getenv("GITHUB_ACTIONS") == "true":
+        pytest.fail("Hypothesis is required in CI but failed to import")
+    pytestmark = pytest.mark.skip(
+        reason="Hypothesis C-extension DLL blocked by Windows Application Control policy (must run in CI)"
+    )
+    given = lambda *a, **k: (lambda f: f)
+    settings = lambda *a, **k: (lambda f: f)
+    class _DummyHealthCheck:
+        too_slow = "too_slow"
+        def __getattr__(self, name):
+            return name
+    HealthCheck = _DummyHealthCheck()
+    class _DummySt:
+        def __getattr__(self, name):
+            return lambda *a, **k: self
+    st = _DummySt()
 
 # Strategy: generate a list of entity_mapping dicts with mixed entity_kind values
 _entity_kind_st = st.sampled_from(list(ALL_KINDS))
@@ -148,7 +170,9 @@ _mapping_st = st.fixed_dictionaries(
 
 
 @given(entity_mappings=st.lists(_mapping_st, min_size=0, max_size=30))
-@settings(max_examples=200)
+# Same 200 examples; only the timing checks are relaxed for this test, which
+# generates large dicts and tripped HealthCheck.too_slow under parallel CPU load.
+@settings(max_examples=200, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 def test_property1_field_only_invariant(entity_mappings):
     """
     **Validates: Requirements 1.1**

@@ -20,12 +20,12 @@ from semabridge.core.engine.targets.snowflake import _convert_to_snowflake_targe
 from semabridge.core.settings import SnowflakeConfig
 
 
-def _emitter():
-    return SnowflakeEmitter(SnowflakeConfig(account="acct", user="u", warehouse="WH", database="DB"))
+def _emitter(database: str = "DB"):
+    return SnowflakeEmitter(SnowflakeConfig(account="acct", user="u", warehouse="WH", database=database))
 
 
-def _model():
-    return SimpleNamespace(unique_name="model", label="model", datasets=[], metrics=[], relationships=[])
+def _model(name: str = "model"):
+    return SimpleNamespace(unique_name=name, label=name, datasets=[], metrics=[], relationships=[])
 
 
 def _no_connection(*_a, **_k):
@@ -69,11 +69,11 @@ def test_empty_live_schema_stops_ddl_build(monkeypatch):
     conn.close.assert_called_once()
 
 
-def _context():
+def _context(project_id: str = "proj", database: str = "DB"):
     return SimpleNamespace(
         target_type="snowflake",
         config=SimpleNamespace(
-            snowflake=SnowflakeConfig(account="acct", user="u", warehouse="WH", database="DB"),
+            snowflake=SnowflakeConfig(account="acct", user="u", warehouse="WH", database=database),
             targets=[],
             target=None,
         ),
@@ -81,7 +81,7 @@ def _context():
         sml_model=_model(),
         drop_ledger=DropLedger(),
         config_payload={},
-        project_id="proj",
+        project_id=project_id,
         physical_namespace=None,
         dry_run=False,
     )

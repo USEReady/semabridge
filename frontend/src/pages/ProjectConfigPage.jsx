@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
+import FabricModelPicker from '../components/FabricModelPicker';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { 
   ArrowLeft, Save, Play, CalendarClock, CalendarDays, Settings2, FileCode2, 
@@ -3115,10 +3116,21 @@ function FormEditor({
         )}
       </div>
 
-      <div>
-        <label style={LABEL}>Allow Models (comma-separated)</label>
-        <input value={value.allow_models} onChange={e => patch('allow_models', e.target.value)} style={INPUT} placeholder="SalesModel, FinanceModel" />
-      </div>
+      {value.source_type === 'fabric' ? (
+        <FabricModelPicker
+          workspaceId={value.workspace_id}
+          connectionId={value.identity_id}
+          value={value.allow_models}
+          onChange={(next) => patch('allow_models', next)}
+          inputStyle={INPUT}
+          labelStyle={LABEL}
+        />
+      ) : (
+        <div>
+          <label style={LABEL}>Allow Models (comma-separated)</label>
+          <input value={value.allow_models} onChange={e => patch('allow_models', e.target.value)} style={INPUT} placeholder="SalesModel, FinanceModel" />
+        </div>
+      )}
       <div>
         <label style={LABEL}>Block Models (comma-separated)</label>
         <input value={value.block_models} onChange={e => patch('block_models', e.target.value)} style={INPUT} placeholder="LegacyModel, TestModel" />

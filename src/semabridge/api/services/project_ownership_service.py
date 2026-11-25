@@ -383,6 +383,8 @@ def validate_project_connector_accounts_belong_to_user(user_id: str | None, payl
     normalized_user_id = _normalize_owner_user_id(user_id)
     if not auth_is_enabled() or not normalized_user_id:
         return
+    if _is_admin_user(normalized_user_id):
+        return
 
     account_ids: set[str] = set()
 
@@ -404,6 +406,25 @@ def validate_project_connector_accounts_belong_to_user(user_id: str | None, payl
     if isinstance(targets, list):
         for target_cfg in targets:
             _scan_dict(target_cfg)
+
+    config_yaml = payload.get("config_yaml")
+    if config_yaml:
+        try:
+            if isinstance(config_yaml, str):
+                import yaml
+                yaml_cfg = yaml.safe_load(config_yaml) or {}
+            else:
+                yaml_cfg = config_yaml
+            if isinstance(yaml_cfg, dict):
+                _add(yaml_cfg.get("account_id"))
+                _scan_dict(yaml_cfg.get("source"))
+                _scan_dict(yaml_cfg.get("target"))
+                yaml_targets = yaml_cfg.get("targets")
+                if isinstance(yaml_targets, list):
+                    for t in yaml_targets:
+                        _scan_dict(t)
+        except Exception as exc:
+            logger.debug("Failed to parse config_yaml for account ids: %s", exc)
 
     if not account_ids:
         return

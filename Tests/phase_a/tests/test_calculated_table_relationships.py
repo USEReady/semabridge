@@ -408,6 +408,8 @@ def test_g_sync_execution_pipeline_preserves_calculated_tables():
     life_exp_pbix = downloads_dir / "Life expectancy v202009.pbix"
 
     if not life_exp_pbix.exists():
+        if os.getenv("CI") == "true" or os.getenv("GITHUB_ACTIONS") == "true":
+            pytest.fail("Life expectancy pbix not available in CI (set SEMABRIDGE_PBIX_DIR)")
         pytest.skip("Life expectancy pbix not available (set SEMABRIDGE_PBIX_DIR)")
 
     from semabridge.core.execution_engine import ExecutionEngine

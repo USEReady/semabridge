@@ -37,6 +37,11 @@ export function StepConnectorConfig({
   fabricAccounts,
   fabricWorkspaceId,
   setFabricWorkspaceId,
+  // Fabric TARGET identity/workspace: separate from the source's (above).
+  targetFabricAccountId = '',
+  setTargetFabricAccountId = () => {},
+  targetFabricWorkspaceId = '',
+  setTargetFabricWorkspaceId = () => {},
   snowflakeAccountId,
   setSnowflakeAccountId,
   snowflakeAccounts,
@@ -864,11 +869,11 @@ export function StepConnectorConfig({
                       <div>
                         <label style={LABEL}>Fabric Account</label>
                         <select
-                          value={fabricAccountId}
+                          value={targetFabricAccountId}
                           onChange={e => {
                             const nextAccountId = e.target.value;
-                            setFabricAccountId(nextAccountId);
-                            setFabricWorkspaceId('');
+                            setTargetFabricAccountId(nextAccountId);
+                            setTargetFabricWorkspaceId('');
                             fetchFabricWorkspaces(nextAccountId);
                           }}
                           style={INPUT}
@@ -890,14 +895,14 @@ export function StepConnectorConfig({
                           <label style={{ ...LABEL, margin: 0 }}>Target Fabric Workspace</label>
                           <div style={{ flex: 1 }} />
                           <button
-                            onClick={() => fetchFabricWorkspaces(fabricAccountId)}
-                            disabled={isRefreshingWorkspaces || !fabricAccountId}
+                            onClick={() => fetchFabricWorkspaces(targetFabricAccountId)}
+                            disabled={isRefreshingWorkspaces || !targetFabricAccountId}
                             style={{
                               display: 'flex', alignItems: 'center', gap: 4,
-                              background: 'none', border: 'none', cursor: (isRefreshingWorkspaces || !fabricAccountId) ? 'not-allowed' : 'pointer',
+                              background: 'none', border: 'none', cursor: (isRefreshingWorkspaces || !targetFabricAccountId) ? 'not-allowed' : 'pointer',
                               fontSize: 11, color: 'var(--text-tertiary)', padding: '2px 6px',
                               borderRadius: 4, transition: 'all 0.2s ease',
-                              opacity: (isRefreshingWorkspaces || !fabricAccountId) ? 0.6 : 1
+                              opacity: (isRefreshingWorkspaces || !targetFabricAccountId) ? 0.6 : 1
                             }}
                             title="Refresh workspaces"
                           >
@@ -907,16 +912,16 @@ export function StepConnectorConfig({
                         </div>
 
                         <SearchableSelect
-                          key={`fabric-target-${fabricAccountId || 'none'}-${workspaces.length}-${isRefreshingWorkspaces ? 'loading' : 'ready'}`}
+                          key={`fabric-target-${targetFabricAccountId || 'none'}-${workspaces.length}-${isRefreshingWorkspaces ? 'loading' : 'ready'}`}
                           items={workspaces}
                           displayKey="name"
                           valueKey="id"
                           searchFields={['name', 'id', 'workspace_id']}
                           placeholder={isRefreshingWorkspaces ? 'Refreshing...' : 'Choose a target workspace'}
-                          value={fabricWorkspaceId}
+                          value={targetFabricWorkspaceId}
                           onChange={item => {
                             const newId = item?.id || '';
-                            setFabricWorkspaceId(newId);
+                            setTargetFabricWorkspaceId(newId);
                           }}
                           loading={workspacesLoading || isRefreshingWorkspaces}
                           clearable={false}

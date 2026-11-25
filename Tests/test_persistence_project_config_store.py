@@ -128,6 +128,12 @@ def test_save_store_failure_is_logged_and_reported(monkeypatch, caplog):
     def _boom(path, text):
         raise OSError("disk full")
 
+    # Patch the module-level store state BEFORE the failing save so teardown
+    # restores the clean values. (Patching after the failure recorded the
+    # failed state as the "original" and leaked "disk full" into later tests
+    # on the same xdist worker.)
+    monkeypatch.setattr(ps, "_compat_store_dirty", False)
+    monkeypatch.setattr(ps, "_compat_store_last_error", None)
     monkeypatch.setattr(ps, "_compat_atomic_write_text", _boom)
     monkeypatch.setattr(ps, "_compat_schedule_store_flush", lambda delay=1.0: None)
     with caplog.at_level("ERROR"):
@@ -135,8 +141,6 @@ def test_save_store_failure_is_logged_and_reported(monkeypatch, caplog):
     assert any("Failed to persist compat store" in r.message for r in caplog.records)
     with pytest.raises(ps.CompatStorePersistenceError):
         ps._compat_raise_if_store_failed()
-    monkeypatch.setattr(ps, "_compat_store_dirty", False)
-    monkeypatch.setattr(ps, "_compat_store_last_error", None)
 
 
 def test_preview_cleanup_report_mode_never_deletes():

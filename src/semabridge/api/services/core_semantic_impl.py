@@ -129,6 +129,7 @@ async def semantic_sync(request_body: SemanticSyncRequest):
         direction=request_body.direction,
         conflict_resolution=request_body.conflict_resolution,
         fabric_workspace_id=request_body.fabric_workspace_id,
+        fabric_identity_id=request_body.fabric_identity_id,
         snowflake_schema=request_body.snowflake_schema,
         fabric_model_names=request_body.fabric_model_names,
         snowflake_semantic_views=request_body.snowflake_semantic_views,

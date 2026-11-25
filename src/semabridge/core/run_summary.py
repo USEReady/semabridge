@@ -151,6 +151,20 @@ class RunSummary(BaseModel):
     # SourceFormat.ambiguous_report_aliases and LocalPBIXConnector.discover()).
     ambiguous_report_aliases: List[Dict[str, Any]] = Field(default_factory=list)
 
+    # Non-fatal source warnings (e.g. a Fabric report the identity cannot
+    # read); empty unless a source adds one.
+    source_warnings: List[str] = Field(default_factory=list)
+
+    # Target credential origin (account tag / ambient config) and warnings
+    target_credential_origin: Optional[str] = Field(
+        default=None,
+        description="Origin of target credentials (account tag / ambient config)",
+    )
+    target_warnings: List[str] = Field(
+        default_factory=list,
+        description="Non-fatal warnings for the target deployment/credentials",
+    )
+
     # Effective demo_mode for this run (server env var AND project opt-in
     # both true — see core/demo_mode.resolve_effective_demo_mode). Stamped
     # once at finalize time from the resolved ConnectorBehavior actually
@@ -251,6 +265,16 @@ class RunSummary(BaseModel):
             lines.append("\n[bold red]Errors:[/bold red]")
             for err in self.errors:
                 lines.append(f"  [red]Step {err.step_number}[/red]: {err.error_type}: {err.message}")
+
+        # Warnings
+        all_warnings = list(self.source_warnings)
+        for tw in self.target_warnings:
+            if tw not in all_warnings:
+                all_warnings.append(tw)
+        if all_warnings:
+            lines.append("\n[bold yellow]Warnings:[/bold yellow]")
+            for w in all_warnings:
+                lines.append(f"  [yellow]⚠[/yellow] {w}")
         
         # Artifacts
         lines.append("\n[bold]Artifacts:[/bold]")

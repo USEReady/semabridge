@@ -333,8 +333,55 @@ async def test_auto_map_skip_sync_flag_is_ignored_for_project_pipeline(monkeypat
 
 
 
+@pytest.fixture
+def auto_map_db(tmp_path):
+    import os
+    from semabridge.repository.orm.session_factory import db_manager, reset_engine
+    from semabridge.repository.orm.base import Base
+    import semabridge.repository.orm
+    from semabridge.repository.orm.models import Project
+
+    orig_url = os.environ.get("SEMABRIDGE_DATABASE_URL")
+    orig_backend = os.environ.get("SEMABRIDGE_DB_BACKEND")
+
+    db_file = tmp_path / "test_auto_map.db"
+    os.environ["SEMABRIDGE_DATABASE_URL"] = f"sqlite:///{db_file}"
+    os.environ["SEMABRIDGE_DB_BACKEND"] = "orm"
+    reset_engine()
+    db_manager.reset()
+    engine = db_manager.get_engine()
+    Base.metadata.create_all(bind=engine)
+
+    with db_manager.get_session() as session:
+        proj = Project(
+            project_id="project-1",
+            name="p1",
+            workspace_id="ws-1",
+            adapter="fabric",
+        )
+        session.add(proj)
+        session.commit()
+
+    yield db_manager
+
+    db_manager.reset()
+    if orig_url is not None:
+        os.environ["SEMABRIDGE_DATABASE_URL"] = orig_url
+    else:
+        os.environ.pop("SEMABRIDGE_DATABASE_URL", None)
+    if orig_backend is not None:
+        os.environ["SEMABRIDGE_DB_BACKEND"] = orig_backend
+    else:
+        os.environ.pop("SEMABRIDGE_DB_BACKEND", None)
+    reset_engine()
+    db_manager.reset()
+    if orig_url:
+        restored_engine = db_manager.get_engine()
+        Base.metadata.create_all(bind=restored_engine)
+
+
 @pytest.mark.asyncio
-async def test_auto_map_forwards_user_id_to_sync_models(monkeypatch):
+async def test_auto_map_forwards_user_id_to_sync_models(monkeypatch, auto_map_db):
     captured = {}
 
     async def fake_sync_models(payload):

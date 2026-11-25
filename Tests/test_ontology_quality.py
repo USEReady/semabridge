@@ -210,7 +210,9 @@ def client_and_store(tmp_path, monkeypatch):
     from semabridge.ontology.store import ontology_store
 
     orig_domains, orig_dir = ontology_store.domains, ontology_store.storage_dir
+    orig_proj = dict(getattr(ontology_store, "_project_domains", {}))
     ontology_store.domains, ontology_store.storage_dir = {}, tmp_path
+    ontology_store._project_domains = {}
     ontology_store.add_or_update_domain(_finance(), save_to_disk=False)
 
     async def fake_read(source_config, selected_sources, project_id=None):
@@ -221,6 +223,7 @@ def client_and_store(tmp_path, monkeypatch):
         yield TestClient(app), ontology_store
     finally:
         ontology_store.domains, ontology_store.storage_dir = orig_domains, orig_dir
+        ontology_store._project_domains = orig_proj
         ontology_store._refresh_index()
 
 
