@@ -6,9 +6,10 @@ inputs:
 
 * Snowflake, Fabric and "no target" must be byte-identical to the baseline,
   at every naming call site and for every dry-run row of real models;
-* Databricks (decided: Snowflake's naming) must produce Snowflake's names,
-  never block reserved words (every identifier is backtick-quoted), and no
-  longer collide on "%" names.
+* Databricks uses its own naming policy (revision 2, 25 Nov 2026: lowercase
+  snake_case), pinned by fixtures/naming_v2_databricks.json; every naming
+  call site must give exactly the rulebook's name, never block reserved words
+  (every identifier is backtick-quoted), and no longer collide on "%" names.
 """
 
 from __future__ import annotations
@@ -28,12 +29,23 @@ HERE = Path(__file__).resolve().parent
 BASE = json.loads((HERE / "fixtures" / "naming_baseline.json").read_text(encoding="utf-8"))
 NAMES, PATHS, SITES = BASE["names"], BASE["paths"], BASE["sites"]
 UNCHANGED = ["snowflake", "fabric", ""]
+V2 = json.loads((HERE / "fixtures" / "naming_v2_databricks.json").read_text(encoding="utf-8"))
 KINDS = ["column", "metric", None]
 _AI_ENV_MARKERS = ("OPENAI", "GEMINI", "FEATHERLESS", "ANTHROPIC", "LLM", "API_KEY")
 
 
 def _k(kind: Any) -> str:
     return str(kind)
+
+
+def _v2(name: str, path: Any = None, kind: Any = None) -> str:
+    return DATABRICKS_RULES.naming.target_name(name, path or None, kind)
+
+
+def _generated(name: str) -> bool:
+    from semabridge.target_rules.databricks.naming import is_generated_name
+
+    return is_generated_name(name)
 
 
 # --- the rulebook part itself ---------------------------------------------------------
@@ -50,7 +62,11 @@ def test_rulebooks_carry_naming() -> None:
             for kind in KINDS:
                 expected = snowflake_target_name(name, path or None, kind)
                 assert SNOWFLAKE_RULES.naming.target_name(name, path or None, kind) == expected
-                assert DATABRICKS_RULES.naming.target_name(name, path or None, kind) == expected
+    for path in PATHS:   # Databricks: independent policy, pinned
+        for kind in KINDS:
+            got = [DATABRICKS_RULES.naming.target_name(n, path or None, kind) for n in NAMES]
+            assert got == V2["target_name"][path or "<none>"][str(kind)], (path, kind)
+            assert all(_generated(g) for g in got)
     assert DATABRICKS_RULES.naming.reserved_words("column") == frozenset()
     assert "select" in SNOWFLAKE_RULES.naming.reserved_words("column")
 
@@ -65,7 +81,9 @@ def test_default_target_identifier() -> None:
     for kind in KINDS:
         for t in UNCHANGED:
             assert [_default_target_identifier(n, t, kind) for n in NAMES] == site[t][_k(kind)], (t, kind)
-        assert [_default_target_identifier(n, "databricks", kind) for n in NAMES] == site["snowflake"][_k(kind)]
+        dbx = [_default_target_identifier(n, "databricks", kind) for n in NAMES]
+        site_kind = "column" if kind == "column" else "metric"   # the site maps a missing kind to metric
+        assert [d for n, d in zip(NAMES, dbx) if n.strip()] == [_v2(n.strip(), None, site_kind) for n in NAMES if n.strip()]
 
 
 def test_validate_target_name() -> None:
@@ -82,11 +100,8 @@ def test_validate_target_name() -> None:
                 ]
             for t in UNCHANGED:
                 assert run(t) == site[t][_k(kind)][str(collided)], (t, kind, collided)
-            for snow, dbx in zip(site["snowflake"][_k(kind)][str(collided)], run("databricks")):
+            for dbx in run("databricks"):
                 assert dbx["validation_code"] != "RESERVED_KEYWORD"
-                if snow["validation_code"] != "RESERVED_KEYWORD":
-                    expected = dict(snow, validation_message=snow["validation_message"].replace("Snowflake", "Databricks"))
-                    assert dbx == expected
 
 
 def test_sanitize_for_project(monkeypatch) -> None:
@@ -95,11 +110,14 @@ def test_sanitize_for_project(monkeypatch) -> None:
     site = SITES["sanitize_for_project"]
     for t in UNCHANGED + ["databricks"]:
         monkeypatch.setattr(mapping_service, "_compat_project_target_type", lambda pid, _t=t: _t)
-        expected_from = "snowflake" if t == "databricks" else t
         for path in PATHS:
             for kind in KINDS:
                 got = [mapping_service._compat_sanitize_target_name_for_project("p", n, path or None, kind) for n in NAMES]
-                assert got == site[expected_from][path][_k(kind)], (t, path, kind)
+                if t != "databricks":
+                    assert got == site[t][path][_k(kind)], (t, path, kind)
+                else:
+                    assert [g for n, g in zip(NAMES, got) if n.strip()] == \
+                        [_v2(n.strip(), path, kind) for n in NAMES if n.strip()], (path, kind)
 
 
 def test_serialize_reserved_check() -> None:
@@ -126,7 +144,8 @@ def test_naming_preview() -> None:
     for kind in ("column", "metric"):
         snow = [preview_name(name=n or "x", kind=kind, target="snowflake")["name"] for n in NAMES]
         assert snow == SITES["naming_preview_snowflake"][kind]
-        assert [preview_name(name=n or "x", kind=kind, target="databricks")["name"] for n in NAMES] == snow
+        dbx = [preview_name(name=n or "x", kind=kind, target="databricks")["name"] for n in NAMES]
+        assert all(_generated(d) for d in dbx) and dbx != snow
 
 
 @pytest.mark.parametrize("site_name", ["config_py", "dry_run_gate"])
@@ -142,9 +161,10 @@ def test_override_deploy_name(site_name) -> None:
         for t in UNCHANGED:
             got = [override_deploy_name(NAMES[i], path, t) for i in reachable]
             assert [("<SKIPPED>" if g is None else g) for g in got] == [site[t][path][i] for i in reachable], (t, path)
-        # Databricks: Snowflake's names, without the Snowflake-only legacy skip.
-        expected = [snowflake_target_name(n.strip(), path) if n.strip() else "" for n in NAMES]
-        assert [override_deploy_name(n, path, "databricks") for n in NAMES] == expected
+        # Databricks: its own rule (no Snowflake legacy COL_ skip).
+        expected = [_v2(n.strip(), path) if n.strip() else "" for n in NAMES]
+        got = [override_deploy_name(n, path, "databricks") for n in NAMES]
+        assert [("" if g is None else g) for g in got] == expected
 
 
 def test_user_names_with_and_without_kind() -> None:
@@ -153,7 +173,8 @@ def test_user_names_with_and_without_kind() -> None:
             assert [normalize_user_target_name(n, t, path) for n in NAMES] == SITES["manual_overrides"][t][path]
             for kind in KINDS:
                 assert [normalize_user_target_name(n, t, path, kind) for n in NAMES] == SITES["with_kind"][t][path][_k(kind)]
-        assert [normalize_user_target_name(n, "databricks", path) for n in NAMES] == SITES["manual_overrides"]["snowflake"][path]
+        got = [normalize_user_target_name(n, "databricks", path) for n in NAMES]
+        assert [g for n, g in zip(NAMES, got) if n.strip()] == [_v2(n.strip(), path) for n in NAMES if n.strip()]
 
 
 # --- every dry-run row of real models -----------------------------------------------------
@@ -209,6 +230,11 @@ def test_dry_run_rows_of_real_models(model, hermetic) -> None:
     for t in UNCHANGED:
         assert rows(t) == BASE["models"][model][t], (model, t)
     dbx, snow = rows("databricks"), BASE["models"][model]["snowflake"]
-    assert [(r["source_path"], r["target_name"]) for r in dbx] == [(r["source_path"], r["target_name"]) for r in snow]
-    # Before: Store Sales had 8 collisions on Databricks, Competitive Marketing 2 (the generic rule dropped '%').
-    assert sum(1 for r in dbx if r["collision_detected"]) == 0
+    assert [r["source_path"] for r in dbx] == [r["source_path"] for r in snow]      # same rows
+    assert all(_generated(r["target_name"]) for r in dbx)                            # v2 names
+    # Naming v2 splits camelCase, so names Snowflake kept apart can meet: Competitive Marketing's
+    # Date[RunningMonths] and Date[Running Months] are both running_months (Snowflake:
+    # RUNNINGMONTHS / RUNNING_MONTHS). Known and intended; the planner allocator resolves it in
+    # the plan (natural name first, then <table>_ prefix); the dry-run preview follows in P1.
+    known = {"competitive_marketing": {"datasets.Date.columns.RunningMonths", "datasets.Date.columns.Running Months"}}
+    assert {r["source_path"] for r in dbx if r["collision_detected"]} == known.get(model, set())

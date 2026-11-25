@@ -14,6 +14,8 @@ import { useState, useMemo, useCallback, createContext, useContext } from 'react
 // The project's target platform: labels say "Databricks SQL" for a Databricks
 // target and "Snowflake SQL" otherwise (Snowflake stays the default).
 const TargetPlatformContext = createContext('snowflake');
+// The SQL dialect the measures were translated to (backend `sql_dialect`); falls back to the target.
+const SqlDialectContext = createContext(null);
 const PLATFORM_LABELS = { snowflake: 'Snowflake', databricks: 'Databricks', fabric: 'Fabric' };
 function platformLabel(platform) {
   return PLATFORM_LABELS[String(platform || '').toLowerCase()] || 'Snowflake';
@@ -613,6 +615,8 @@ function synonymSourceLabel(source) {
 
 function MeasureTranslationPanel({ row, forceRevealSynonyms = false }) {
   const targetLabel = useTargetLabel();
+  const sqlDialect = useContext(SqlDialectContext);
+  const sqlLabel = sqlDialect ? platformLabel(sqlDialect) : targetLabel;
   const isMeasure = String(row.field_type || row.entity_kind || '').toLowerCase() === 'measure';
   const hasTargetExpr = Boolean(String(row.target_expression || '').trim());
   const isFailed = row.sync_enabled === false || !!row.sync_failure_reason || (isMeasure && !hasTargetExpr);
@@ -678,7 +682,7 @@ function MeasureTranslationPanel({ row, forceRevealSynonyms = false }) {
             fontWeight: 600,
           }}>
             <CheckCircle size={13} style={{ flexShrink: 0 }} />
-            <span>Translated successfully to {targetLabel} SQL</span>
+            <span>Translated successfully to {sqlLabel} SQL</span>
           </div>
         )
       )}
@@ -816,7 +820,7 @@ function MeasureTranslationPanel({ row, forceRevealSynonyms = false }) {
 
           {/* Target SQL */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{targetLabel} Translation (SQL)</span>
+            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{sqlLabel} Translation (SQL)</span>
             <div style={{
               fontFamily: 'monospace',
               fontSize: 11,
@@ -1265,6 +1269,7 @@ export default function DryRunMappingTable({
   droppedEntities = [],       // DropRecord[] — entities excluded from deployed DDL (see DropLedger)
   deployedNamesKnown = false, // backend read the last deploy's names (rows carry deployed_name_change)
   targetPlatform = 'snowflake', // the project's target: drives the "<Platform> SQL" labels
+  sqlDialect = null,            // the dialect actually used (dry-run `sql_dialect`); overrides the SQL labels
   unresolvedReportFieldReferences = [], // [{field, field_type, table, occurrences}] — report queries a name absent from the current schema (see LocalPBIXConnector._detect_unresolved_field_references); table-scoped only, never auto-attached to a specific column
 }) {
   // ── Dev-only guardrail: catch un-normalized rows reaching this component ────
@@ -1584,6 +1589,7 @@ export default function DryRunMappingTable({
 
   return (
     <TargetPlatformContext.Provider value={targetPlatform}>
+    <SqlDialectContext.Provider value={sqlDialect}>
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
 
       {/* ── Compatibility score bar ─────────────────────────────────────────── */}
@@ -2019,6 +2025,7 @@ export default function DryRunMappingTable({
         onSave={handleSynonymSave}
       />
     </div>
+    </SqlDialectContext.Provider>
     </TargetPlatformContext.Provider>
   );
 }

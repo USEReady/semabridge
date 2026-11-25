@@ -24,6 +24,7 @@ from semabridge.target_rules.databricks.capabilities import DATABRICKS_CAPABILIT
 
 AMBIGUOUS = "ambiguous_path"
 KEY_TYPES = "join_key_type_mismatch"
+KEY_UNBOUND = "join_key_unbound"
 
 
 def _quote(name: str) -> str:
@@ -39,10 +40,17 @@ class _Keys:
         self.types: List[Tuple[str, str]] = []
         self.warnings: List[str] = []
         self.blocked: Optional[str] = None
+        self.code = KEY_TYPES
+        self.relationship = (edge.many, tuple(edge.many_cols), edge.one, tuple(edge.one_cols))
         terms: List[str] = []
         for many_col, one_col in zip(edge.many_cols, edge.one_cols):
             sides = [(edge.many, many_col), (edge.one, one_col)]
             (p_ds, p_col), (c_ds, c_col) = (sides[1], sides[0]) if parent_is_one else (sides[0], sides[1])
+            for ds, col in ((p_ds, p_col), (c_ds, c_col)):
+                status = bindings.column_status(ds, col)
+                if status != "ok" and not self.blocked:
+                    self.blocked = f"{ds}[{col}]: {status}"
+                    self.code = KEY_UNBOUND
             p_real, c_real = bindings.real_column(p_ds, p_col), bindings.real_column(c_ds, c_col)
             p_type = bindings.column_type(p_ds, p_col, graph.column(p_ds, p_col)) or "unknown"
             c_type = bindings.column_type(c_ds, c_col, graph.column(c_ds, c_col)) or "unknown"
@@ -51,7 +59,7 @@ class _Keys:
             left, right = f"{parent_path}.{_quote(p_real)}", f"{child_path}.{_quote(c_real)}"
             verdict, cast_side = keytypes.decide(p_type, c_type)
             label = f"{p_ds}[{p_col}] ({p_type}) = {c_ds}[{c_col}] ({c_type})"
-            if verdict == keytypes.BLOCK:
+            if verdict == keytypes.BLOCK and not self.blocked:
                 self.blocked = f"{label}: these types can't be compared on Databricks"
             elif verdict == keytypes.CAST:
                 if cast_side == "left":
@@ -69,9 +77,18 @@ class _Keys:
 
 def build_joins(source: str, decisions: List[Decision], graph: ModelGraph, bindings: Bindings
                 ) -> Tuple[List[JoinPlan], Dict[str, str], List[str], Dict[str, str]]:
-    """(joins, {table: expression path}, notes, {blocked table: reason code})."""
+    """(joins, {table: quoted expression path}, notes, {blocked table: reason code}).
+
+    Join aliases are naming-v2 names, unique within the view (`source` reserved);
+    expression paths quote every component: `store`.`district`. `source` itself
+    is the metric view's own keyword and stays bare."""
+    from semabridge.target_backends.databricks.planner.names import join_aliases
+
     notes: List[str] = []
     paths = graph.paths_from(source)
+    children = {c for d in decisions if d.placement == "B" for c, _e in d.children}
+    alias = join_aliases(sorted(set(paths) | children))
+    plain: Dict[str, str] = {source: "source"}
     blocked: Dict[str, str] = {t: AMBIGUOUS for t, ps in paths.items() if len(ps) > 1}
     for t in sorted(blocked):
         notes.append(f"{t} is reachable from {source} in more than one way: not joined; "
@@ -106,21 +123,23 @@ def build_joins(source: str, decisions: List[Decision], graph: ModelGraph, bindi
         parent = where.get(edge.many)
         if parent is None:
             continue
-        name = graph.alias(target).lower()
-        full = name if parent == "source" else f"{parent}.{name}"
-        keys = _Keys(edge, parent_is_one=False, parent_path=parent, child_path=full, graph=graph, bindings=bindings)
+        name = alias[target]
+        full = name if parent == "source" else f"{plain[edge.many]}.{name}"
+        qpath = _quote(name) if parent == "source" else f"{parent}.{_quote(name)}"
+        keys = _Keys(edge, parent_is_one=False, parent_path=parent, child_path=qpath, graph=graph, bindings=bindings)
         if keys.blocked:
-            blocked[target] = KEY_TYPES
+            blocked[target] = keys.code
             notes.append(f"{target} not joined: {keys.blocked}; fields and measures that need it are left out")
             continue
         joins.append(JoinPlan(
-            name=full, dataset=target, uc_table=bindings.uc_table(target), parent=parent,
+            name=full, dataset=target, uc_table=bindings.uc_table(target), parent=plain[edge.many],
             on=keys.pairs, reason="measure_dependency" if target in needed else "business_dimension",
             readiness=bindings.readiness(target), on_expr=keys.on_expr, key_types=keys.types,
-            warnings=keys.warnings,
+            warnings=keys.warnings, relationship=keys.relationship,
         ))
         notes += [f"join {full}: {w}" for w in keys.warnings]
-        where[target] = full
+        where[target] = qpath
+        plain[target] = full
 
     # Composed measures: their other tables, joined one-to-many straight under the source.
     for d in decisions:
@@ -129,20 +148,22 @@ def build_joins(source: str, decisions: List[Decision], graph: ModelGraph, bindi
         for child, edge in d.children:
             if child in where or child in blocked:
                 continue  # already joined (another composed measure) or not joinable
-            name = graph.alias(child).lower()
-            keys = _Keys(edge, parent_is_one=True, parent_path="source", child_path=name, graph=graph, bindings=bindings)
+            name = alias[child]
+            keys = _Keys(edge, parent_is_one=True, parent_path="source", child_path=_quote(name), graph=graph,
+                         bindings=bindings)
             if keys.blocked:
-                blocked[child] = KEY_TYPES
+                blocked[child] = keys.code
                 notes.append(f"{child} not joined: {keys.blocked}; composed measures that need it are left out")
                 continue
             joins.append(JoinPlan(
                 name=name, dataset=child, uc_table=bindings.uc_table(child), parent="source",
                 on=keys.pairs, cardinality="one_to_many", reason="measure_dependency",
                 readiness=bindings.readiness(child), on_expr=keys.on_expr, key_types=keys.types,
-                warnings=keys.warnings,
+                warnings=keys.warnings, relationship=keys.relationship,
             ))
             notes += [f"join {name}: {w}" for w in keys.warnings]
-            where[child] = name
+            where[child] = _quote(name)
+            plain[child] = name
     for e in graph.edges:
         if e.two_way and (e.many in where and e.one in where):
             notes.append(f"{e.many} -> {e.one} filters both ways in Power BI; filters on {e.many} don't reach {e.one} here")

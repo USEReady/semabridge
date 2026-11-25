@@ -740,6 +740,7 @@ export function StepMappingOptions({
               droppedEntities={dryRunData?.dropped_entities || []}
               unresolvedReportFieldReferences={dryRunData?.unresolved_report_field_references || []}
               targetPlatform={primaryTargetConnector || 'snowflake'}
+              sqlDialect={dryRunData?.sql_dialect || null}
             />
           </UpsertChangesView>
         </div>

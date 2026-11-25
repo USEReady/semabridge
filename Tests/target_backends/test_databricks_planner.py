@@ -95,8 +95,8 @@ def reason(result, name: str) -> Optional[str]:
 
 def test_sum_over_fact_goes_to_fact_view_with_store_dimension():
     r = plan_metric_views(store_sales([REVENUE]))
-    assert placed_in(r, "Total Revenue") == "SALES_METRICS"
-    v = r.view("SALES_METRICS")
+    assert placed_in(r, "Total Revenue") == "sales_metrics"
+    v = r.view("sales_metrics")
     assert {j.dataset for j in v.joins} == {"Store", "Product"}
     assert r.placed("Total Revenue")[1].expr == "SUM(source.`AMOUNT`::DOUBLE)"
 
@@ -106,7 +106,7 @@ def test_store_aggregates_use_their_own_population():
     dc = measure("Store Names", "Sales", "DISTINCTCOUNT(Store[StoreName])", "COUNT(DISTINCT STORE.`STORENAME`)")
     r = plan_metric_views(store_sales([CAPACITY, mx, dc, STORES]))
     for name in ("Total Capacity", "Max Capacity", "Store Names", "Total Stores"):
-        assert placed_in(r, name) == "STORE_METRICS", name  # grain, not home table
+        assert placed_in(r, name) == "store_metrics", name  # grain, not home table
 
 
 def test_sumx_with_related_is_one_grain():
@@ -114,14 +114,14 @@ def test_sumx_with_related_is_one_grain():
                 "SUM(SALES.`QTY`::DOUBLE * PRODUCT.`PRICE`::DOUBLE)")
     r = plan_metric_views(store_sales([m]))
     view, plan = r.placed("Revenue X")
-    assert view.name == "SALES_METRICS"
-    assert plan.expr == "SUM(source.`QTY`::DOUBLE * product.`PRICE`::DOUBLE)"
+    assert view.name == "sales_metrics"
+    assert plan.expr == "SUM(source.`QTY`::DOUBLE * `product`.`PRICE`::DOUBLE)"
 
 
 def test_countrows_erased_table_is_taken_from_the_tree():
     r = plan_metric_views(store_sales([STORES, measure("Number of Sales", "Store", "COUNTROWS(Sales)", "COUNT(*)")]))
-    assert placed_in(r, "Total Stores") == "STORE_METRICS"
-    assert placed_in(r, "Number of Sales") == "SALES_METRICS"
+    assert placed_in(r, "Total Stores") == "store_metrics"
+    assert placed_in(r, "Number of Sales") == "sales_metrics"
 
 
 def test_tree_and_sql_disagreeing_is_left_out():
@@ -147,17 +147,17 @@ def test_mixed_grain_is_left_out_until_composition_is_proven():
     lo = r.left_out_reason("Revenue Plus Capacity")
     assert lo.reason == "mixed_grain_needs_composition"
     assert any("Sales" in c for c in lo.components) and any("Store" in c for c in lo.components)
-    assert placed_in(r, "Total Revenue") == "SALES_METRICS" and placed_in(r, "Total Capacity") == "STORE_METRICS"
+    assert placed_in(r, "Total Revenue") == "sales_metrics" and placed_in(r, "Total Capacity") == "store_metrics"
 
 
 def test_revenue_plus_capacity_composed_in_store_view():
     r = plan_metric_views(store_sales([PLUS]), settings=PlannerSettings(capabilities=B_ON))
     view, plan = r.placed("Revenue Plus Capacity")
-    assert view.name == "STORE_METRICS" and plan.placement == "B" and view.version == "1.1"
+    assert view.name == "store_metrics" and plan.placement == "B" and view.version == "1.1"
     sales = next(j for j in view.joins if j.dataset == "Sales")
     assert sales.cardinality == "one_to_many" and sales.parent == "source"
     assert sales.on == [("STOREID", "STOREID")]
-    assert "sales.`AMOUNT`" in plan.expr and "source.`CAPACITY`" in plan.expr
+    assert "`sales`.`AMOUNT`" in plan.expr and "source.`CAPACITY`" in plan.expr
     assert "IS NULL AND" in plan.expr  # both blank stays blank (converter's DAX handling kept)
     assert not any(f.path == "sales" for f in view.fields)  # no fields from one-to-many tables
 
@@ -165,7 +165,7 @@ def test_revenue_plus_capacity_composed_in_store_view():
 def test_revenue_per_store_counts_root_rows():
     r = plan_metric_views(store_sales([PER_STORE]), settings=PlannerSettings(capabilities=B_ON))
     view, plan = r.placed("Revenue Per Store")
-    assert view.name == "STORE_METRICS"
+    assert view.name == "store_metrics"
     assert "COUNT(*)" in plan.expr  # root rows = stores, Gamma included
     assert "NULLIF" in plan.expr     # DIVIDE's zero-denominator handling kept
 
@@ -175,8 +175,8 @@ def test_child_row_count_uses_join_key_marker():
                 "(COUNT(*)) / NULLIF((SUM(STORE.`CAPACITY`::DOUBLE)), 0)")
     r = plan_metric_views(store_sales([m]), settings=PlannerSettings(capabilities=B_ON))
     view, plan = r.placed("Sales per Capacity")
-    assert view.name == "STORE_METRICS"
-    assert plan.expr.startswith("(NULLIF(COUNT(sales.`STOREID`), 0))")
+    assert view.name == "store_metrics"
+    assert plan.expr.startswith("(NULLIF(COUNT(`sales`.`STOREID`), 0))")
 
 
 def test_budget_variance_composes_under_shared_dimension():
@@ -188,7 +188,7 @@ def test_budget_variance_composes_under_shared_dimension():
     )
     assert reason(plan_metric_views(mdl), "Budget Variance") == "mixed_grain_needs_composition"
     view, plan = plan_metric_views(mdl, settings=PlannerSettings(capabilities=B_ON)).placed("Budget Variance")
-    assert view.name == "CALENDAR_METRICS"
+    assert view.name == "calendar_metrics"
     assert {(j.dataset, j.cardinality) for j in view.joins} == {("Sales", "one_to_many"), ("Budget", "one_to_many")}
 
 
@@ -217,12 +217,12 @@ def test_two_facts_never_joined_directly():
 def test_mixed_view_needs_its_own_proof():
     s = PlannerSettings(capabilities=B_ON)
     r = plan_metric_views(store_sales([CAPACITY, PLUS]), settings=s)
-    assert placed_in(r, "Total Capacity") == "STORE_METRICS"
+    assert placed_in(r, "Total Capacity") == "store_metrics"
     assert reason(r, "Revenue Plus Capacity") == "mixed_view_unproven"
     s2 = PlannerSettings(capabilities=B_ON | {Capability.MIXED_ROOT_VIEWS})
     r2 = plan_metric_views(store_sales([CAPACITY, PLUS]), settings=s2)
-    assert placed_in(r2, "Revenue Plus Capacity") == "STORE_METRICS"
-    assert placed_in(r2, "Total Capacity") == "STORE_METRICS"
+    assert placed_in(r2, "Revenue Plus Capacity") == "store_metrics"
+    assert placed_in(r2, "Total Capacity") == "store_metrics"
 
 
 # --- CALCULATE, filters, dependencies ---------------------------------------------------------
@@ -241,8 +241,8 @@ def test_approximate_is_default_and_propagates_with_warning():
     pct = r.placed("Sales A %")[1]
     assert a.semantic_status == "approximate" and a.comment and "CALCULATE" in a.comment
     assert pct.semantic_status == "approximate"
-    assert any(c["kind"] == "conflicting_filter" and c["measure"] == pct.name for c in r.view("SALES_METRICS").checks)
-    assert "product.`CATEGORY` = 'A'" in a.expr
+    assert any(c["kind"] == "conflicting_filter" and c["measure"] == pct.name for c in r.view("sales_metrics").checks)
+    assert "`product`.`CATEGORY` = 'A'" in a.expr
 
 
 def test_strict_leaves_out_flagged_measure_and_dependants_with_root_cause():
@@ -250,14 +250,14 @@ def test_strict_leaves_out_flagged_measure_and_dependants_with_root_cause():
     assert reason(r, "Sales A") == "filter_semantics_differ"
     lo = r.left_out_reason("Sales A %")
     assert lo.reason == "depends_on" and "Sales A" in lo.root_cause
-    assert placed_in(r, "Total Revenue") == "SALES_METRICS"
+    assert placed_in(r, "Total Revenue") == "sales_metrics"
 
 
 def test_user_excluded_does_not_drop_dependants():
     r = plan_metric_views(store_sales([REVENUE, SALES_A, SALES_A_PCT]),
                           settings=PlannerSettings(excluded_measures=("Sales A",)))
     assert reason(r, "Sales A") == "user_excluded"
-    assert placed_in(r, "Sales A %") == "SALES_METRICS"
+    assert placed_in(r, "Sales A %") == "sales_metrics"
 
 
 def test_filter_removal_is_declined_in_both_modes():
@@ -296,7 +296,7 @@ TARGET = measure("New Stores Target", "Store", "14", "MAX(14)")
 def test_constant_goes_to_home_view_with_zero_row_warning():
     r = plan_metric_views(store_sales([TARGET]))
     view, plan = r.placed("New Stores Target")
-    assert view.name == "STORE_METRICS" and plan.expr == "MAX(14)" and plan.semantic_status == "approximate"
+    assert view.name == "store_metrics" and plan.expr == "MAX(14)" and plan.semantic_status == "approximate"
     assert any(c["kind"] == "zero_row_behaviour" for c in view.checks)
 
 
@@ -321,8 +321,8 @@ def test_ambiguous_region_blocks_only_region():
                           "SUM(CASE WHEN REGION.`NAME` = 'North' THEN SALES.`AMOUNT`::DOUBLE END)", [CALC])],
     )
     r = plan_metric_views(mdl)
-    v = r.view("SALES_METRICS")
-    assert placed_in(r, "Total Revenue") == "SALES_METRICS"
+    v = r.view("sales_metrics")
+    assert placed_in(r, "Total Revenue") == "sales_metrics"
     assert "Region" not in {j.dataset for j in v.joins}
     assert {"Customer", "Store"} <= {j.dataset for j in v.joins}
     assert reason(r, "North Sales") == "ambiguous_path"
@@ -335,7 +335,7 @@ def test_inactive_and_two_way_relationships_are_noted():
     mdl2 = model([table("Sales", "StoreID", "Amount"), table("Store", "StoreID")],
                  [rel("Sales", "StoreID", "Store", "StoreID", both=True)], [REVENUE])
     r2 = plan_metric_views(mdl2)
-    assert any("both ways" in n for n in r2.notes) and any("both ways" in n for n in r2.view("SALES_METRICS").notes)
+    assert any("both ways" in n for n in r2.notes) and any("both ways" in n for n in r2.view("sales_metrics").notes)
 
 
 def test_hidden_and_calculated_columns():
@@ -343,7 +343,7 @@ def test_hidden_and_calculated_columns():
                 [REVENUE, measure("Profit Sum", "Sales", "SUM(Sales[Profit])", "SUM(SALES.`PROFIT`::DOUBLE)")])
     # no table plan: a calculated column can't be read
     r = plan_metric_views(mdl)
-    names = {f.column for f in r.view("SALES_METRICS").fields}
+    names = {f.column for f in r.view("sales_metrics").fields}
     assert "Secret" not in names and "Profit" not in names and "Amount" in names
     assert r.placed("Profit Sum")[1].source_verification == "unverified"
     # bound table with a real PROFIT column: kept, unverified
@@ -352,30 +352,40 @@ def test_hidden_and_calculated_columns():
     b = TableBinding("Sales", "SALES", "bind", uc, "name", column_map={"STOREID": "StoreID", "AMOUNT": "Amount",
                                                                         "SECRET": "Secret", "PROFIT": "Profit"})
     r2 = plan_metric_views(mdl, TablePlan(bindings=[b]))
-    profit = next(f for f in r2.view("SALES_METRICS").fields if f.column == "Profit")
+    profit = next(f for f in r2.view("sales_metrics").fields if f.column == "Profit")
     assert profit.source_verification == "unverified" and profit.expr == "source.`Profit`"
-    assert r2.view("SALES_METRICS").source_table == "workspace.src.sales"
+    assert r2.view("sales_metrics").source_table == "workspace.src.sales"
 
 
 def test_stub_tables_mark_readiness_per_object():
     mdl = store_sales([REVENUE, CAPACITY])
-    binds = [TableBinding("Sales", "SALES", "bind", UcTable("w", "s", "sales"), "name"),
-             TableBinding("Store", "STORE", "stub", stub_columns=[("StoreID", "INT")]),
-             TableBinding("Product", "PRODUCT", "bind", UcTable("w", "s", "product"), "name")]
-    r = plan_metric_views(mdl, TablePlan(bindings=binds))
+    from semabridge.target_backends.databricks.tables import plan_tables
+
+    uc = {("w", "s"): {"SALES": UcTable("w", "s", "sales", columns={"SALEID": ("SaleID", "BIGINT"), "STOREID": ("StoreID", "BIGINT"),
+                                          "PRODUCTID": ("ProductID", "BIGINT"), "AMOUNT": ("Amount", "DOUBLE"),
+                                          "QTY": ("Qty", "BIGINT")}),
+                       "PRODUCT": UcTable("w", "s", "product", columns={"PRODUCTID": ("ProductID", "BIGINT"), "CATEGORY": ("Category", "STRING"),
+                                              "PRICE": ("Price", "DOUBLE")})}}
+    r = plan_metric_views(mdl, plan_tables(mdl, uc, source_schemas=[("w", "s")], on_missing_source="stub"))
     assert r.placed("Total Revenue")[1].readiness == "real"
     assert r.placed("Total Capacity")[1].readiness == "structure_only"
-    sales = r.view("SALES_METRICS")
+    sales = r.view("sales_metrics")
     assert next(j for j in sales.joins if j.dataset == "Store").readiness == "structure_only"
     assert any("partly stub" in n for n in sales.notes)
 
 
 def test_skipped_table_leaves_out_measures_that_need_it():
-    binds = [TableBinding("Sales", "SALES", "bind", UcTable("w", "s", "sales"), "name"),
-             TableBinding("Store", "STORE", "skip"), TableBinding("Product", "PRODUCT", "bind", UcTable("w", "s", "p"), "name")]
-    r = plan_metric_views(store_sales([REVENUE, CAPACITY]), TablePlan(bindings=binds))
+    from semabridge.target_backends.databricks.tables import plan_tables
+
+    mdl = store_sales([REVENUE, CAPACITY])
+    uc = {("w", "s"): {"SALES": UcTable("w", "s", "sales", columns={"SALEID": ("SaleID", "BIGINT"), "STOREID": ("StoreID", "BIGINT"),
+                                          "PRODUCTID": ("ProductID", "BIGINT"), "AMOUNT": ("Amount", "DOUBLE"),
+                                          "QTY": ("Qty", "BIGINT")}),
+                       "PRODUCT": UcTable("w", "s", "product", columns={"PRODUCTID": ("ProductID", "BIGINT"), "CATEGORY": ("Category", "STRING"),
+                                              "PRICE": ("Price", "DOUBLE")})}}
+    r = plan_metric_views(mdl, plan_tables(mdl, uc, source_schemas=[("w", "s")], on_missing_source="skip"))
     assert reason(r, "Total Capacity") == "table_skipped"
-    assert "Store" not in {j.dataset for j in r.view("SALES_METRICS").joins}
+    assert "Store" not in {j.dataset for j in r.view("sales_metrics").joins}
 
 
 def test_name_clashes_and_reserved_names():
@@ -386,20 +396,23 @@ def test_name_clashes_and_reserved_names():
         [REVENUE, measure("Amount", "Sales", "SUM(Sales[Amount])", "SUM(SALES.`AMOUNT`::DOUBLE)")],
     )
     r = plan_metric_views(mdl)
-    v = r.view("SALES_METRICS")
+    v = r.view("sales_metrics")
     names = [x.name for x in v.fields + v.measures]
     assert len(names) == len({n.upper() for n in names})
     by = {(f.dataset, f.column): f.name for f in v.fields}
-    assert by[("Sales", "DistrictID")] == "DISTRICTID"          # nearest the source keeps it
-    assert by[("Store", "DistrictID")] == "STORE_DISTRICTID"
-    assert by[("District", "DistrictID")] == "DISTRICT_DISTRICTID"
-    assert by[("Sales", "Amount")] == "SALES_AMOUNT"              # the measure keeps AMOUNT
-    # resync: a new source column must not take an already deployed name
-    reserved = {"SALES_METRICS": {"field:Store.DistrictID": "DISTRICTID"}}
+    assert by[("Sales", "DistrictID")] == "district_id"          # nearest the source keeps it
+    assert by[("Store", "DistrictID")] == "store_district_id"
+    assert by[("District", "DistrictID")] == "district_district_id"
+    assert by[("Sales", "Amount")] == "sales_amount"              # the measure keeps amount
+    assert {m.name for m in v.measures} == {"total_revenue", "amount"}
+    # resync: an already deployed name stays with its source object (structured identity)
+    from semabridge.target_backends.databricks.planner import SourceId
+
+    reserved = {"Sales": {SourceId("field", "Store", "DistrictID"): "district_id"}}
     r2 = plan_metric_views(mdl, settings=PlannerSettings(reserved_names=reserved))
-    by2 = {(f.dataset, f.column): f.name for f in r2.view("SALES_METRICS").fields}
-    assert by2[("Store", "DistrictID")] == "DISTRICTID"
-    assert by2[("Sales", "DistrictID")] == "SALES_DISTRICTID"
+    by2 = {(f.dataset, f.column): f.name for f in r2.view("sales_metrics").fields}
+    assert by2[("Store", "DistrictID")] == "district_id"
+    assert by2[("Sales", "DistrictID")] == "sales_district_id"
 
 
 def test_view_modes():
@@ -407,7 +420,7 @@ def test_view_modes():
     with pytest.raises(PlannerError):
         plan_metric_views(mdl, settings=PlannerSettings(view_mode="primary_fact_only"))
     r = plan_metric_views(mdl, settings=PlannerSettings(view_mode="primary_fact_only", primary_fact="Sales"))
-    assert [v.name for v in r.views] == ["SALES_METRICS"] and reason(r, "Total Capacity") == "view_not_selected"
+    assert [v.name for v in r.views] == ["sales_metrics"] and reason(r, "Total Capacity") == "view_not_selected"
 
 
 def test_settings_validation_and_result_dict():
@@ -438,9 +451,9 @@ def test_composed_measure_built_from_measure_references():
     s = PlannerSettings(capabilities=B_ON | {Capability.MIXED_ROOT_VIEWS})
     r = plan_metric_views(store_sales([REVENUE, STORES, per_store]), settings=s)
     view, plan = r.placed("Revenue Per Store")
-    assert view.name == "STORE_METRICS" and plan.placement == "B"
+    assert view.name == "store_metrics" and plan.placement == "B"
     assert plan.depends_on == ["Total Revenue", "Total Stores"]
-    assert placed_in(r, "Total Stores") == "STORE_METRICS" and placed_in(r, "Total Revenue") == "SALES_METRICS"
+    assert placed_in(r, "Total Stores") == "store_metrics" and placed_in(r, "Total Revenue") == "sales_metrics"
 
 
 def test_engine_settings_from_behavior_and_project_override():
@@ -475,7 +488,7 @@ def test_real_model_patterns_countax_keepfilters_and_row_functions():
     ]
     r = plan_metric_views(model([opp], [], ms))
     for name in ("Opportunity Count", "Count of Won", "Pipeline"):
-        assert placed_in(r, name) == "OPPORTUNITIES_METRICS", name
+        assert placed_in(r, name) == "opportunities_metrics", name
     assert reason(r, "Pick") == "unrecognised_pattern"  # depends on the report selection
     assert "'Won'" in r.placed("Count of Won")[1].expr
 
@@ -503,9 +516,9 @@ def test_key_type_decisions():
 def test_text_against_number_is_compared_as_text():
     mdl = model([table("Sales", typed("PeriodID", "string"), "Amount"), table("Time", typed("PeriodID", "integer"), "Year")],
                 [rel("Sales", "PeriodID", "Time", "PeriodID")], [REVENUE])
-    v = plan_metric_views(mdl).view("SALES_METRICS")
+    v = plan_metric_views(mdl).view("sales_metrics")
     j = next(j for j in v.joins if j.dataset == "Time")
-    assert j.on_expr == "source.`PERIODID` = CAST(time.`PERIODID` AS STRING)"
+    assert j.on_expr == "source.`PERIODID` = CAST(`time`.`PERIODID` AS STRING)"
     assert j.warnings and "compared as text" in j.warnings[0]
     assert any(c["kind"] == "key_types" for c in v.checks)
 
@@ -514,7 +527,7 @@ def test_date_time_against_date_is_kept_with_warning():
     mdl = model([table("Cases", typed("Created", "datetime"), "Amount"), table("Cal", typed("Date", "date"))],
                 [rel("Cases", "Created", "Cal", "Date")],
                 [measure("Total", "Cases", "SUM(Cases[Amount])", "SUM(CASES.`AMOUNT`)")])
-    j = plan_metric_views(mdl).view("CASES_METRICS").joins[0]
+    j = plan_metric_views(mdl).view("cases_metrics").joins[0]
     assert "CAST" not in j.on_expr and "midnight" in j.warnings[0]
 
 
@@ -528,9 +541,9 @@ def test_incomparable_keys_block_only_that_table():
                  "SUM(CASE WHEN CAL.`MONTH` = 'Jan' THEN OPP.`AMOUNT` END)", [CALC])],
     )
     r = plan_metric_views(mdl)
-    v = r.view("OPP_METRICS")
+    v = r.view("opp_metrics")
     assert {j.dataset for j in v.joins} == {"Product"}
-    assert placed_in(r, "Total") == "OPP_METRICS"
+    assert placed_in(r, "Total") == "opp_metrics"
     assert reason(r, "This Month") == "join_key_type_mismatch"
     assert any("can't be compared" in n for n in v.notes)
 
@@ -542,8 +555,8 @@ def test_real_types_from_unity_catalog_win_over_the_model():
                           "name", column_map={"PERIODID": "PeriodID", "AMOUNT": "Amount"}),
              TableBinding("Time", "TIME", "bind", UcTable("w", "s", "time", columns={"PERIODID": ("PeriodID", "BIGINT")}),
                           "name", column_map={"PERIODID": "PeriodID"})]
-    j = plan_metric_views(mdl, TablePlan(bindings=binds)).view("SALES_METRICS").joins[0]
-    assert j.on_expr == "source.`PeriodID` = time.`PeriodID`" and not j.warnings
+    j = plan_metric_views(mdl, TablePlan(bindings=binds)).view("sales_metrics").joins[0]
+    assert j.on_expr == "source.`PeriodID` = `time`.`PeriodID`" and not j.warnings
 
 
 def test_stub_key_takes_the_type_it_joins_to():
@@ -555,6 +568,201 @@ def test_stub_key_takes_the_type_it_joins_to():
     uc = {("w", "s"): {"SALES": UcTable("w", "s", "sales", columns={"PERIODID": ("PeriodID", "STRING"), "AMOUNT": ("Amount", "DOUBLE")})}}
     plan = plan_tables(mdl, uc, source_schemas=[("w", "s")], on_missing_source="stub")
     time = next(b for b in plan.bindings if b.dataset == "Time")
-    assert dict(time.stub_columns)["PERIODID"] == "STRING"     # aligned with Sales' real STRING key
-    j = plan_metric_views(mdl, plan).view("SALES_METRICS").joins[0]
+    assert dict(time.stub_columns)["period_id"] == "STRING"    # aligned with Sales' real STRING key
+    j = plan_metric_views(mdl, plan).view("sales_metrics").joins[0]
     assert "CAST" not in j.on_expr and not j.warnings
+
+
+def test_two_stubs_keep_power_bi_types_so_the_planner_still_checks():
+    from semabridge.target_backends.databricks.tables import plan_tables
+
+    mdl = model([table("Opp", typed("CloseDate", "date"), typed("Amount", "float")),
+                 table("Cal", typed("DAY", "integer"), typed("Month", "string")),
+                 table("Camp", typed("CampaignSeq", "integer")),
+                 table("Opp2", typed("CampaignSeq", "string"), typed("Amount", "float"))],
+                [rel("Opp", "CloseDate", "Cal", "DAY"), rel("Opp2", "CampaignSeq", "Camp", "CampaignSeq")],
+                [measure("Total", "Opp", "SUM(Opp[Amount])", "SUM(OPP.`AMOUNT`)"),
+                 measure("Total2", "Opp2", "SUM(Opp2[Amount])", "SUM(OPP2.`AMOUNT`)")])
+    plan = plan_tables(mdl, {("w", "s"): {}}, source_schemas=[("w", "s")], on_missing_source="stub")
+    assert dict(next(b for b in plan.bindings if b.dataset == "Opp").stub_columns)["close_date"] == "DATE"
+    r = plan_metric_views(mdl, plan)
+    assert not r.view("opp_metrics").joins and any("can't be compared" in n for n in r.view("opp_metrics").notes)
+    j = r.view("opp2_metrics").joins[0]
+    assert "CAST(" in j.on_expr
+
+
+def test_field_names_use_databricks_naming_v2():
+    """Lowercase snake_case; ordinary words (date, value) stay; keywords get a suffix."""
+    mdl = model([table("Sales", "Date", "Value", "Amount", "Select", "OrderDate")], [], [REVENUE])
+    names = {f.column: f.name for f in plan_metric_views(mdl).view("sales_metrics").fields}
+    assert names == {"Date": "date", "Value": "value", "Amount": "amount", "Select": "select_field",
+                     "OrderDate": "order_date"}
+
+
+# --- naming v2 and binding safety (Databricks naming policy revision 2) ------------------------
+
+NORMALISER_CASES = [
+    ("TotalSales", "measure", "total_sales"), ("Total Sales", "measure", "total_sales"),
+    ("TotalSalesLY", "measure", "total_sales_ly"), ("Gross Margin This Year %", "measure", "gross_margin_this_year_pct"),
+    ("Avg $/Unit TY", "measure", "avg_dollars_unit_ty"), ("# Orders", "measure", "num_orders"),
+    ("R&D", "field", "r_and_d"), ("Age>=18", "field", "age_gte_18"), ("Sales [USD]", "field", "sales_usd"),
+    ("SKUs Sold", "field", "skus_sold"), ("IDs", "field", "ids"), ("KPIs", "field", "kpis"),
+    ("URLsVisited", "field", "urls_visited"), ("xCoordinate", "field", "x_coordinate"), ("yAxis", "field", "y_axis"),
+    ("iPhone Sales", "field", "iphone_sales"), ("eBay Orders", "field", "ebay_orders"),
+    ("HTTPStatusCode", "field", "http_status_code"), ("DistrictID", "field", "district_id"), ("DM_Pic", "field", "dm_pic"),
+    ("Café Résumé", "field", "cafe_resume"), ("Straße", "field", "strasse"), ("2024 Sales", "measure", "measure_2024_sales"),
+    ("Current Date", "field", "field_current_date"), ("Select", "field", "select_field"), ("Order", "field", "order_field"),
+    ("Date", "field", "date"), ("Value", "field", "value"), ("Count", "field", "count"), ("TOTALSALES", "measure", "totalsales"),
+    ("AddressLine2", "field", "address_line2"), ("Q1Revenue", "field", "q1_revenue"),
+    ("Customer's Name", "field", "customers_name"), ("Revenue: Actual", "field", "revenue_actual"),
+    ("Gross___Margin", "field", "gross_margin"), ("SellingAreaSize", "field", "selling_area_size"),
+]
+
+
+@pytest.mark.parametrize("label,kind,expected", NORMALISER_CASES)
+def test_normaliser_pinned_names(label, kind, expected):
+    from semabridge.target_rules.databricks.naming import normalize
+
+    assert normalize(label, kind)[0] == expected
+
+
+def test_normaliser_properties():
+    from semabridge.target_rules.databricks.naming import is_generated_name, normalize
+
+    labels = [c[0] for c in NORMALISER_CASES] + ["日本", "日本 Sales", "", "   ", "%%%", "a" * 400, "Ünïcode Name", "_metadata"]
+    for label in labels:
+        name, _ = normalize(label, "field", ("field", "T", label))
+        assert is_generated_name(name), (label, name)
+        assert normalize(label, "field", ("field", "T", label))[0] == name            # deterministic
+    for label in [c[0] for c in NORMALISER_CASES]:
+        name = normalize(label, "field")[0]
+        assert normalize(name, "field")[0] == name                                     # idempotent
+    a, _ = normalize("日本", "field", ("field", "T", "日本"))
+    b, _ = normalize("中国", "field", ("field", "T", "中国"))
+    assert a != b and a.startswith("field_")                                           # identity hash, not one fallback
+    assert normalize("日本 Sales", "field", 1)[0].startswith("sales_")                 # readable part kept
+    assert len(normalize("a" * 400, "field")[0]) == 255
+
+
+def test_databricks_naming_is_independent_of_snowflake():
+    from semabridge.target_rules import DATABRICKS_RULES, SNOWFLAKE_RULES
+
+    assert DATABRICKS_RULES.naming.target_name("Gross Margin %", entity_kind="metric") == "gross_margin_pct"
+    assert SNOWFLAKE_RULES.naming.target_name("Gross Margin %", entity_kind="metric") == "GROSS_MARGIN_PCT"
+    assert DATABRICKS_RULES.naming.target_name("Date", entity_kind="column") == "date"
+
+
+def _uc(name, *cols, types=None):
+    types = types or {}
+    return UcTable("w", "s", name, columns={c.upper(): (c, types.get(c, "STRING")) for c in cols})
+
+
+def _plan(mdl, *tables, mode="stub"):
+    from semabridge.target_backends.databricks.tables import plan_tables
+
+    return plan_tables(mdl, {("w", "s"): {t.name.upper(): t for t in tables}}, source_schemas=[("w", "s")],
+                       on_missing_source=mode)
+
+
+def test_two_physical_candidates_are_ambiguous_not_guessed():
+    mdl = model([table("Sales", "Sales Amount", "Qty", "ID", "Extra1", "Extra2")], [],
+                [measure("Total", "Sales", "SUM(Sales[Sales Amount])", "SUM(SALES.`SALES_AMOUNT`::DOUBLE)")])
+    tp = _plan(mdl, _uc("sales", "SalesAmount", "sales_amount", "Qty", "ID", "Extra1", "Extra2"))
+    b = tp.bindings[0]
+    assert b.action == "bind" and b.ambiguous_columns["Sales Amount"] == ["SalesAmount", "sales_amount"]
+    r = plan_metric_views(mdl, tp)
+    lo = r.left_out_reason("Total")
+    assert lo.reason == "ambiguous_binding" and "SalesAmount" in lo.detail
+
+
+def test_no_id_suffix_guess():
+    mdl = model([table("Sales", "Store", "Amount", "A", "B", "C")], [],
+                [measure("Stores", "Sales", "COUNT(Sales[Store])", "COUNT(SALES.`STORE`)")])
+    tp = _plan(mdl, _uc("sales", "STORE_ID", "Amount", "A", "B", "C"))
+    b = tp.bindings[0]
+    assert "Store" in b.missing_columns and "STORE" not in b.column_map
+    assert reason(plan_metric_views(mdl, tp), "Stores") == "column_missing_in_table"
+
+
+def test_reverse_binding_two_sources_one_physical_column():
+    mdl2 = model([table("Sales", "Revenue %", "Revenue_PCT", "Amount", "K1", "K2")], [], [REVENUE])
+    b2 = _plan(mdl2, _uc("sales", "revenue_pct", "Amount", "K1", "K2", "Other")).bindings[0]
+    assert set(b2.ambiguous_columns) == {"Revenue %", "Revenue_PCT"}       # two sources, one column: neither bound
+    mdl3 = model([table("Sales", "revenue_pct", "Revenue %", "Amount", "K1", "K2")], [], [REVENUE])
+    b3 = _plan(mdl3, _uc("sales", "revenue_pct", "Amount", "K1", "K2", "Other")).bindings[0]
+    assert b3.column_match["revenue_pct"] == "exact" and "Revenue %" in b3.ambiguous_columns  # exact wins
+
+
+def test_shared_converter_alias_is_declined():
+    mdl = model([table("Sales Fact", "Amount"), table("Sales_Fact", "Amount")], [],
+                [measure("T", "Sales Fact", "SUM('Sales Fact'[Amount])", "SUM(SALES_FACT.`AMOUNT`)")])
+    r = plan_metric_views(mdl)
+    assert reason(r, "T") == "ambiguous_table_alias"
+
+
+def test_stub_references_resolve_to_allocated_columns():
+    from semabridge.target_backends.databricks.tables import rewrite_measure_columns
+
+    mdl = store_sales([REVENUE, CAPACITY])
+    tp = _plan(mdl)  # nothing in Unity Catalog: all stubs
+    rmap = tp.rewrite_map()
+    for m in mdl.metrics:
+        m.sql_expression = rewrite_measure_columns(m.sql_expression, rmap)   # what Step 6b does
+    r = plan_metric_views(mdl, tp)
+    assert r.placed("Total Revenue")[1].expr == "SUM(source.`amount`::DOUBLE)"
+    store = next(b for b in tp.bindings if b.dataset == "Store")
+    assert ("capacity", "DOUBLE") in store.stub_columns
+    j = next(j for j in r.view("sales_metrics").joins if j.dataset == "Store")
+    assert j.on_expr == "source.`store_id` = `store`.`store_id`"
+
+
+def test_natural_names_first_and_deterministic():
+    m1 = measure("TotalSales", "Sales", "SUM(Sales[Amount])", "SUM(SALES.`AMOUNT`)")
+    m2 = measure("Total Sales", "Sales", "SUM(Sales[Amount])", "SUM(SALES.`AMOUNT`)")
+    m3 = measure("Total Sales 2", "Sales", "SUM(Sales[Qty])", "SUM(SALES.`QTY`)")
+    r = plan_metric_views(store_sales([m1, m2, m3]))
+    names = {m.source_name: m.name for m in r.view("sales_metrics").measures}
+    assert names == {"TotalSales": "total_sales", "Total Sales 2": "total_sales_2", "Total Sales": "total_sales_3"}
+    dup = r.placed("Total Sales")[1]
+    assert any("possible duplicate" in n for n in dup.notes)                 # kept, not merged
+    r2 = plan_metric_views(store_sales([m3, m2, m1]))
+    names2 = {m.source_name: m.name for m in r2.view("sales_metrics").measures}
+    assert names2["Total Sales 2"] == "total_sales_2"                          # natural name never stolen
+
+
+def test_implicit_measure_identity_and_name():
+    from semabridge.sml.models import AggregationType
+
+    s = SMLMetric(unique_name="SUM_OF_SELLINGAREASIZE", label="SUM_OF_SELLINGAREASIZE", dataset="Sales",
+                  source_column="SellingAreaSize", aggregation=AggregationType.SUM,
+                  expression="SUM(Sales[SellingAreaSize])",
+                  sql_expression="SUM(SALES.`SELLINGAREASIZE`::DOUBLE)")
+    r = plan_metric_views(model([table("Sales", "Amount", "SellingAreaSize")], [], [s]))
+    m = r.placed("SUM_OF_SELLINGAREASIZE")[1]
+    assert m.name == "sum_of_selling_area_size" and m.source_id.kind == "implicit_measure"
+    assert (m.source_id.table, m.source_id.name, m.source_id.aggregation) == ("Sales", "SellingAreaSize", "SUM")
+
+
+def test_join_alias_keyword_and_quoted_physical_names():
+    mdl = model([table("Sales", "OrderKey", "Amount"), table("Order", "OrderKey", "Weird`Name")],
+                [rel("Sales", "OrderKey", "Order", "OrderKey")], [REVENUE])
+    v = plan_metric_views(mdl).view("sales_metrics")
+    j = v.joins[0]
+    assert j.name == "order_join" and j.on_expr == "source.`ORDERKEY` = `order_join`.`ORDERKEY`"
+    f = next(f for f in v.fields if f.column == "Weird`Name")
+    assert f.expr.startswith("`order_join`.`") and f.name == "weird_name"
+
+
+def test_labels_respect_yaml_limits():
+    from semabridge.target_backends.databricks.planner.names import label_metadata
+
+    display, syns, notes = label_metadata("x" * 300, ["a", "A", "b" * 300] + [f"s{i}" for i in range(12)])
+    assert len(display) == 255 and all(len(s) <= 255 for s in syns) and len(syns) == 10
+    assert any("omitted" in n for n in notes) and any("shortened" in n for n in notes)
+    assert sum(1 for s in syns if s.lower() == "a") == 1
+
+
+def test_every_view_is_yaml_1_1():
+    r = plan_metric_views(store_sales([REVENUE, CAPACITY]))
+    assert {v.version for v in r.views} == {"1.1"}
+    assert r.as_dict()["naming_policy_revision"] == 2

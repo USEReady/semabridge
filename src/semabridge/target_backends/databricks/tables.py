@@ -159,8 +159,14 @@ class TableBinding:
     action: str                                   # bind | stub | skip
     table: Optional[UcTable] = None
     matched_by: Optional[str] = None
-    column_map: Dict[str, str] = field(default_factory=dict)       # SANITIZED_UPPER -> real column name
+    # converter reference (SANITIZED_UPPER) -> physical column: the real name for a
+    # bound table, the allocated (naming v2) stub column for a stub.
+    column_map: Dict[str, str] = field(default_factory=dict)
+    column_match: Dict[str, str] = field(default_factory=dict)     # model column -> how it was matched
     missing_columns: List[str] = field(default_factory=list)       # model columns the real table lacks
+    # model column -> candidate real columns (several possible, or several model
+    # columns wanting the same real one): not bound, never guessed.
+    ambiguous_columns: Dict[str, List[str]] = field(default_factory=dict)
     stub_columns: List[Tuple[str, str]] = field(default_factory=list)   # (column name, Spark type)
     # Power BI calculated columns the real table has a column of the same name
     # for: usable, but unverified (the values may not match the DAX).
@@ -181,6 +187,10 @@ class TableBinding:
         }
         if self.missing_columns:
             out["missing_columns"] = list(self.missing_columns)
+        if self.ambiguous_columns:
+            out["ambiguous_columns"] = {k: list(v) for k, v in self.ambiguous_columns.items()}
+        if self.column_match:
+            out["column_match"] = dict(self.column_match)
         if self.stub_columns:
             out["stub_columns"] = [{"name": n, "type": t} for n, t in self.stub_columns]
         if self.unverified_calculated:
@@ -207,9 +217,20 @@ class TablePlan:
             "error": self.error,
         }
 
+    def ambiguous_aliases(self) -> List[str]:
+        """Converter aliases shared by more than one table: their references can't be told apart."""
+        seen: Dict[str, int] = {}
+        for b in self.bindings:
+            seen[b.alias.upper()] = seen.get(b.alias.upper(), 0) + 1
+        return sorted(a for a, n in seen.items() if n > 1)
+
     def rewrite_map(self) -> Dict[str, Dict[str, str]]:
-        """{TABLE_ALIAS: {SANITIZED_COLUMN_UPPER: real column}} for bound tables."""
-        return {b.alias.upper(): dict(b.column_map) for b in self.bindings if b.action == "bind" and b.column_map}
+        """{TABLE_ALIAS: {SANITIZED_COLUMN_UPPER: physical column}} for bound tables and
+        stubs. Aliases shared by two tables are left out: rewriting them would point
+        one table's references at the other (the planner declines those measures)."""
+        shared = set(self.ambiguous_aliases())
+        return {b.alias.upper(): dict(b.column_map) for b in self.bindings
+                if b.action in ("bind", "stub") and b.column_map and b.alias.upper() not in shared}
 
 
 def physical_columns(dataset: Any) -> List[Any]:
@@ -227,22 +248,74 @@ def physical_columns(dataset: Any) -> List[Any]:
     return cols
 
 
-def _real_column(model_col: str, table: UcTable) -> Optional[str]:
-    """The real column for a model column: case-insensitive, then the resolver's
-    cleaned / normalised names, then its key-suffix rule (X <-> X_ID)."""
-    hit = table.columns.get(model_col.upper()) or table.columns.get(sanitize_column(model_col).upper())
-    if hit:
-        return hit[0]
-    clean = clean_ident(model_col)
-    norm = normalize_col_name(model_col)
-    for upper, (real, _type) in table.columns.items():
-        if clean_ident(real) == clean or normalize_col_name(real) == norm:
-            return real
-    for upper, (real, _type) in table.columns.items():
-        c = clean_ident(real)
-        if c == clean + "ID" or (clean.endswith("ID") and c == clean[:-2]):
-            return real
-    return None
+def _match_column(model_col: str, table: UcTable) -> Tuple[Optional[str], str, List[str]]:
+    """(real column, method, candidates) for a model column. Never guesses:
+      exact name -> unique case-insensitive match -> unique cleaned match
+      (legacy cleaned, naming v2, the resolver's normalised forms).
+    Two or more candidates: (None, "ambiguous", candidates). The old X <-> X_ID
+    suffix guess is gone: it could bind a name column to a key column."""
+    from semabridge.target_rules.databricks.naming import base_normalize
+
+    reals = [real for real, _type in table.columns.values()]
+    if model_col in reals:
+        return model_col, "exact", [model_col]
+    ci = [r for r in reals if r.lower() == model_col.lower()]
+    if len(ci) == 1:
+        return ci[0], "case_insensitive", ci
+    if len(ci) > 1:
+        return None, "ambiguous", sorted(ci)
+    legacy = sanitize_column(model_col).upper()
+    v2 = base_normalize(model_col)[0]
+    clean, norm = clean_ident(model_col), normalize_col_name(model_col)
+    cands = sorted({r for r in reals
+                    if sanitize_column(r).upper() == legacy or base_normalize(r)[0] == v2
+                    or clean_ident(r) == clean or normalize_col_name(r) == norm})
+    if len(cands) == 1:
+        return cands[0], "cleaned", cands
+    if len(cands) > 1:
+        return None, "ambiguous", cands
+    return None, "missing", []
+
+
+def _bind_columns(binding: "TableBinding", model_cols: List[str], calculated: List[str]) -> None:
+    """Fill column_map / column_match / missing / ambiguous for a bound table, with the
+    reverse check: two model columns never silently share one real column."""
+    found: Dict[str, Tuple[str, str]] = {}
+    for col in model_cols + calculated:
+        real, method, cands = _match_column(col, binding.table)
+        if real is None and method == "ambiguous":
+            binding.ambiguous_columns[col] = cands
+        elif real is None:
+            if col in model_cols:
+                binding.missing_columns.append(col)
+        else:
+            found[col] = (real, method)
+    by_real: Dict[str, List[str]] = {}
+    for col, (real, _m) in found.items():
+        by_real.setdefault(real.lower(), []).append(col)
+    for cols in by_real.values():
+        if len(cols) < 2:
+            continue
+        exact = [c for c in cols if found[c][1] == "exact"]
+        losers = [c for c in cols if c not in exact] if len(exact) == 1 else list(cols)
+        reals = sorted({found[x][0] for x in cols})
+        for c in losers:
+            binding.ambiguous_columns[c] = reals
+            found.pop(c)
+    keys: Dict[str, List[str]] = {}
+    for col in found:
+        keys.setdefault(sanitize_column(col).upper(), []).append(col)
+    for cols in keys.values():
+        if len(cols) > 1:  # two model columns behind one converter reference: can't tell apart
+            reals = sorted({found[x][0] for x in cols})
+            for c in cols:
+                binding.ambiguous_columns[c] = reals
+                found.pop(c)
+    for col, (real, method) in found.items():
+        binding.column_map[sanitize_column(col).upper()] = real
+        binding.column_match[col] = method
+        if col in calculated:
+            binding.unverified_calculated.append(col)
 
 
 def _aggregated_refs(sql_texts: Iterable[str]) -> Dict[str, set]:
@@ -278,23 +351,48 @@ def _aggregated_refs(sql_texts: Iterable[str]) -> Dict[str, set]:
     return found
 
 
-def _stub_columns(dataset: Any, alias: str, numeric_refs: Dict[str, set]) -> List[Tuple[str, str]]:
+def _stub_columns(dataset: Any, alias: str, numeric_refs: Dict[str, set]
+                  ) -> Tuple[List[Tuple[str, str]], Dict[str, str]]:
+    """The empty table's columns (naming v2 names, allocated per table, natural
+    names first) and the converter-reference map to them (SANITIZED_UPPER -> name)."""
+    from semabridge.target_rules.databricks.naming import fit_length, normalize
+
     used_numeric = numeric_refs.get(alias.upper(), set())
-    out: List[Tuple[str, str]] = []
-    seen = set()
+    cols = []
+    seen_keys = set()
     for col in physical_columns(dataset):
-        name = sanitize_column(col.unique_name)
-        if name.upper() in seen:
+        key = sanitize_column(col.unique_name).upper()
+        if key in seen_keys:
+            continue  # the converter can't reference both: keep the first, as before
+        seen_keys.add(key)
+        name = normalize(col.unique_name, "column", ("stub_column", dataset.unique_name, col.unique_name))[0]
+        cols.append((col, key, name))
+    taken = set()
+    final: Dict[str, str] = {}
+    for _col, key, name in cols:           # natural names first
+        if name not in taken:
+            taken.add(name)
+            final[key] = name
+    for col, key, name in cols:            # then numbered candidates
+        if key in final:
             continue
-        seen.add(name.upper())
+        n = 2
+        cand = fit_length(f"{name}_{n}", (dataset.unique_name, col.unique_name, n))
+        while cand in taken:
+            n += 1
+            cand = fit_length(f"{name}_{n}", (dataset.unique_name, col.unique_name, n))
+        taken.add(cand)
+        final[key] = cand
+    out: List[Tuple[str, str]] = []
+    for col, key, _name in cols:
         dtype = str(getattr(getattr(col, "data_type", None), "value", getattr(col, "data_type", "")) or "").lower()
         spark = _SPARK_TYPES.get(dtype, "STRING")
-        if name.upper() in used_numeric and spark not in ("BIGINT", "DOUBLE"):
+        if key in used_numeric and spark not in ("BIGINT", "DOUBLE"):
             spark = "DOUBLE"  # CS-12: numeric aggregates must never read a STRING column
-        out.append((name, spark))
+        out.append((final[key], spark))
     if not out:
-        out.append(("_sb_stub", "INT"))
-    return out
+        out.append(("sb_stub", "INT"))
+    return out, final
 
 
 def _explicit_table(value: str, catalog_meta: Mapping[Tuple[str, str], Mapping[str, UcTable]],
@@ -378,25 +476,21 @@ def plan_tables(
                     )
 
         if binding is not None:
-            for col in cols:
-                real = _real_column(col, binding.table)
-                if real is None:
-                    binding.missing_columns.append(col)
-                else:
-                    binding.column_map[sanitize_column(col).upper()] = real
-            for col in getattr(ds, "columns", []) or []:
-                if getattr(col, "is_calculated", False) and col.unique_name not in cols:
-                    real = _real_column(col.unique_name, binding.table)
-                    if real is not None:
-                        binding.column_map.setdefault(sanitize_column(col.unique_name).upper(), real)
-                        binding.unverified_calculated.append(col.unique_name)
+            calculated = [c.unique_name for c in getattr(ds, "columns", []) or []
+                          if getattr(c, "is_calculated", False) and c.unique_name not in cols]
+            _bind_columns(binding, cols, calculated)
+            parts = []
             if binding.missing_columns:
-                binding.note = f"{len(binding.missing_columns)} column(s) not in {binding.table.full_name}"
+                parts.append(f"{len(binding.missing_columns)} column(s) not in {binding.table.full_name}")
+            if binding.ambiguous_columns:
+                parts.append(f"{len(binding.ambiguous_columns)} column(s) ambiguous (not bound)")
+            binding.note = "; ".join(parts)
         else:
             missing.append(name)
             if mode == "stub":
+                stub_cols, stub_map = _stub_columns(ds, alias, numeric_refs)
                 binding = TableBinding(name, alias, "stub", matched_by=None,
-                                       stub_columns=_stub_columns(ds, alias, numeric_refs),
+                                       stub_columns=stub_cols, column_map=stub_map,
                                        note="table not found yet: empty table (created at deploy) until it exists")
             else:
                 binding = TableBinding(name, alias, "skip", note="table not found: skipped (on_missing_source=skip)")
@@ -411,39 +505,39 @@ def plan_tables(
 
 
 def _align_stub_key_types(sml_model: Any, plan: TablePlan) -> None:
-    """A stub's join-key column takes the type of the column it joins to, so the
-    join compares like with like (we create the stub, so we choose its types).
-    Against a real table that is its Unity Catalog type; between two stubs, the
-    lookup (one) side's type."""
+    """A stub's join-key column takes the type of the REAL Unity Catalog column it
+    joins to, when the two are compatible (same family, or text vs number), so the
+    join compares like with like. Nothing else changes: between two stubs, or when
+    the types can't be compared (date vs number), the Power BI types stay, and the
+    planner casts, warns or blocks exactly as it does without a connection."""
+    from semabridge.target_backends.databricks.planner.keytypes import NUMBER, STRING, family
+
     by_dataset = {b.dataset: b for b in plan.bindings}
 
-    def key_type(binding: TableBinding, column: str) -> Optional[str]:
-        clean = sanitize_column(column).upper()
-        if binding.action == "bind" and binding.table is not None:
-            real = binding.column_map.get(clean)
-            hit = binding.table.columns.get(real.upper()) if real else None
-            return str(hit[1]).upper() if hit else None
-        if binding.action == "stub":
-            return next((t for n, t in binding.stub_columns if n.upper() == clean), None)
-        return None
+    def real_type(binding: TableBinding, column: str) -> Optional[str]:
+        real = binding.column_map.get(sanitize_column(column).upper())
+        hit = binding.table.columns.get(real.upper()) if real and binding.table is not None else None
+        return str(hit[1]).upper() if hit else None
 
-    def set_type(binding: TableBinding, column: str, spark: str) -> None:
-        clean = sanitize_column(column).upper()
-        binding.stub_columns = [(n, spark if n.upper() == clean else t) for n, t in binding.stub_columns]
+    def align(stub: TableBinding, stub_col: str, real: Optional[str]) -> None:
+        if not real:
+            return
+        stub_name = stub.column_map.get(sanitize_column(stub_col).upper())
+        current = next((t for n, t in stub.stub_columns if n == stub_name), None)
+        a, b = family(current), family(real)
+        if a is None or b is None or not (a == b or {a, b} == {STRING, NUMBER}):
+            return
+        stub.stub_columns = [(n, real if n == stub_name else t) for n, t in stub.stub_columns]
 
     for rel in getattr(sml_model, "relationships", []) or []:
         many, one = by_dataset.get(rel.from_dataset), by_dataset.get(rel.to_dataset)
         if many is None or one is None:
             continue
         for m_col, o_col in zip(rel.from_columns, rel.to_columns):
-            if many.action == "stub" and one.action in ("bind", "stub"):
-                t = key_type(one, o_col)
-                if t:
-                    set_type(many, m_col, t)
+            if many.action == "stub" and one.action == "bind":
+                align(many, m_col, real_type(one, o_col))
             elif one.action == "stub" and many.action == "bind":
-                t = key_type(many, m_col)
-                if t:
-                    set_type(one, o_col, t)
+                align(one, o_col, real_type(many, m_col))
 
 
 # --- measure SQL to real column names ---------------------------------------------------------

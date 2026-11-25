@@ -1091,6 +1091,10 @@ async def _run_dry_run_pipeline(
         "table_binding_plan": table_binding_plan,
         # Databricks planner path only (Phase 3.6); None otherwise.
         "databricks_view_plan": databricks_view_plan,
+        # The SQL dialect the measures were actually translated to: a Databricks
+        # project without the planner path still uses the Snowflake rules.
+        "sql_dialect": ("databricks" if databricks_view_plan is not None
+                        else "snowflake" if target_connector in ("snowflake", "databricks") else None),
         "summary": {
             "total_fields": len(filtered_mappings),
             "auto_mapped": auto_count,

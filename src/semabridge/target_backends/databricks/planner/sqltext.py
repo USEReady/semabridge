@@ -71,3 +71,12 @@ def aliases(sql: str) -> Set[str]:
 
 def count_star(sql: str) -> int:
     return sum(len(COUNT_STAR.findall(text)) for is_lit, text in segments(sql or "") if not is_lit)
+
+
+def refs(sql: str) -> List[Tuple[str, str]]:
+    """(ALIAS_UPPER, column) for every ALIAS.`column` in code (not in string literals)."""
+    out: List[Tuple[str, str]] = []
+    for is_lit, text in segments(sql or ""):
+        if not is_lit:
+            out += [(m.group(1).upper(), m.group(2).replace("``", "`")) for m in REF.finditer(text)]
+    return out

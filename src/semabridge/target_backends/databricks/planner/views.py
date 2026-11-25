@@ -15,9 +15,10 @@ from semabridge.target_backends.databricks.planner.model import (
 
 
 def view_name(graph: ModelGraph, source: str) -> str:
-    from semabridge.target_rules.databricks import DATABRICKS_RULES
+    """The natural view name (allocation against other views happens in names.py)."""
+    from semabridge.target_rules.databricks.naming import normalize
 
-    return DATABRICKS_RULES.naming.target_name(f"{source} METRICS", entity_kind="view")
+    return f"{normalize(source, 'view', ('view', source))[0]}_metrics"
 
 
 def group(decisions: Dict[str, Decision], graph: ModelGraph, settings: PlannerSettings) -> Dict[str, List[Decision]]:

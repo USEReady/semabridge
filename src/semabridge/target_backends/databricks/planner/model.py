@@ -6,6 +6,27 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Tuple
 
 
+@dataclass(frozen=True)
+class SourceId:
+    """Structured source identity (never a joined string). Name-based today:
+    SemaBridge does not carry Power BI lineage tags into the model; when it does,
+    `lineage` takes precedence. A renamed source object therefore shows up as a
+    new identity; resync reports it, it is not guessed."""
+
+    kind: str                          # field | measure | implicit_measure | table
+    table: str = ""
+    name: str = ""
+    aggregation: Optional[str] = None  # implicit measures: SUM / AVG / ... of the column
+    lineage: Optional[str] = None
+
+    def key(self) -> Tuple[str, str, str, str, str]:
+        return (self.kind, self.table, self.name, self.aggregation or "", self.lineage or "")
+
+    @property
+    def identity_basis(self) -> str:
+        return "lineage" if self.lineage else "name"
+
+
 class PlannerError(ValueError):
     """The planner cannot run with these settings (e.g. primary_fact_only without a fact)."""
 
@@ -36,9 +57,10 @@ class PlannerSettings:
     primary_fact: Optional[str] = None             # primary_fact_only: the user's chosen table
     excluded_measures: Tuple[str, ...] = ()        # the user unticked these (left out: user_excluded)
     capabilities: FrozenSet[str] = frozenset()
-    # Names already deployed, kept on resync: {view name: {object id: target name}};
-    # object ids are "measure:<Power BI name>" and "field:<table>.<column>".
-    reserved_names: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
+    # Names already deployed, kept on resync (3.8 reads them from the deployed views):
+    # {view source table: {SourceId: deployed name}} and {view source table: view name}.
+    reserved_names: Mapping[str, Mapping["SourceId", str]] = field(default_factory=dict)
+    reserved_view_names: Mapping[str, str] = field(default_factory=dict)
     security_roles: Optional[int] = None           # roles found in the PBIX; None = not extracted
 
     def __post_init__(self) -> None:
@@ -118,6 +140,8 @@ class JoinPlan:
     reason: str = "business_dimension"   # or measure_dependency
     readiness: str = "real"          # real | structure_only | unbound
     on_expr: str = ""                # the join condition as written in YAML (with any casts)
+    # identity: the relationship, not the generated alias
+    relationship: Tuple[str, Tuple[str, ...], str, Tuple[str, ...]] = ("", (), "", ())
     key_types: List[Tuple[str, str]] = field(default_factory=list)   # (parent type, child type) per key
     warnings: List[str] = field(default_factory=list)
 
@@ -133,6 +157,10 @@ class FieldPlan:
     synonyms: List[str] = field(default_factory=list)
     readiness: str = "real"
     source_verification: str = "verified"    # verified | unverified (name-matched calculated column)
+    source_id: Optional[SourceId] = None
+    match_method: Optional[str] = None       # exact | case_insensitive | cleaned (bound tables)
+    source_format: Optional[str] = None      # kept internally; emitted only where Databricks supports it
+    name_generated: bool = True              # False for a preserved (deployed) name
 
 
 @dataclass
@@ -151,6 +179,10 @@ class MeasurePlan:
     depends_on: List[str] = field(default_factory=list)
     synonyms: List[str] = field(default_factory=list)
     comment: Optional[str] = None
+    source_id: Optional[SourceId] = None
+    source_format: Optional[str] = None
+    name_generated: bool = True
+    notes: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -158,7 +190,7 @@ class ViewPlan:
     name: str
     source_dataset: str
     source_table: Optional[str]
-    version: str = "0.1"
+    version: str = "1.1"
     readiness: str = "real"
     joins: List[JoinPlan] = field(default_factory=list)
     fields: List[FieldPlan] = field(default_factory=list)
@@ -183,10 +215,11 @@ class LeftOut:
 @dataclass
 class Rename:
     view: str
-    kind: str                        # measure | field
+    kind: str                        # measure | field | join | view
     original: str
     final: str
     why: str
+    source_id: Optional[SourceId] = None
 
 
 @dataclass
@@ -221,6 +254,7 @@ class PlannerResult:
         placed = sum(len(v.measures) for v in self.views)
         return {
             "platform": "databricks",
+            "naming_policy_revision": 2,
             "settings": self.settings.as_dict(),
             "summary": {
                 "views": len(self.views),

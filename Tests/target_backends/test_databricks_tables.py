@@ -132,7 +132,10 @@ def test_stub_columns_have_spark_types_and_numeric_aggregates_are_never_strings(
     sql = ["SUM(SALES.`REGION`::DOUBLE)", "COUNT(DISTINCT SALES.`LOCATIONID`)"]
     plan = plan_tables(model([SALES], sql), {}, source_schemas=SRC)
     stub = dict(plan.bindings[0].stub_columns)
-    assert stub == {"LOCATIONID": "BIGINT", "SCENARIOID": "BIGINT", "SUM_REGULAR_SALES_DOLLARS": "DOUBLE", "REGION": "DOUBLE"}
+    # naming v2: stub columns get lowercase snake_case names; the converter's references map to them
+    assert stub == {"location_id": "BIGINT", "scenario_id": "BIGINT", "sum_regular_sales_dollars": "DOUBLE", "region": "DOUBLE"}
+    assert plan.bindings[0].column_map["LOCATIONID"] == "location_id"
+    assert plan.rewrite_map()["SALES"]["REGION"] == "region"
 
 
 def test_search_order_first_schema_wins() -> None:
@@ -197,7 +200,7 @@ def test_plan_dict_for_the_dry_run_panel() -> None:
     actions = {t["dataset"]: t["action"] for t in d["tables"]}
     assert actions == {"Sales": "bind", "Store": "stub"}
     stub = next(t for t in d["tables"] if t["dataset"] == "Store")
-    assert stub["stub_columns"] == [{"name": "STORETYPE", "type": "STRING"}]
+    assert stub["stub_columns"] == [{"name": "store_type", "type": "STRING"}]
 
 
 # --- measure SQL rewrite ----------------------------------------------------------------------

@@ -26,6 +26,7 @@ from semabridge.target_backends.databricks.planner.model import (
     PlannerSettings,
 )
 from semabridge.target_backends.databricks.planner import sqltext
+from semabridge.utils.naming import sanitize_column
 from semabridge.target_backends.databricks.planner.semantics import CYCLE, SemanticsReader, count_grains, cross_check
 
 CALC_FLAG = "calculate_filter_semantics_difference"
@@ -147,6 +148,11 @@ def _decide(name: str, graph: ModelGraph, reader: SemanticsReader, bindings: Bin
     if mismatch is not None:
         return _out(name, mismatch[0], mismatch[1], sem=sem)
 
+    # every SQL reference must resolve to exactly one table and one physical column
+    bad = _reference_problem(metric.sql_expression, graph, bindings)
+    if bad is not None:
+        return _out(name, bad[0], bad[1], sem=sem)
+
     # 3. filter removal (ALL / REMOVEFILTERS / ALLEXCEPT): no Databricks equivalent
     if sem.filter_removal:
         return _out(name, "filter_removal_unsupported",
@@ -214,6 +220,26 @@ def _decide(name: str, graph: ModelGraph, reader: SemanticsReader, bindings: Bin
                     f"counts {sorted(grains)} at different grains; composed views are not enabled yet",
                     components=components, sem=sem)
     return _place_b(name, sem, graph, approximate, warnings, components, str(metric.sql_expression))
+
+
+def _reference_problem(sql: str, graph: ModelGraph, bindings: Bindings) -> Optional[Tuple[str, str]]:
+    shared = set(graph.ambiguous_aliases) | set(bindings.ambiguous_aliases)
+    for alias, col in sqltext.refs(sql):
+        if alias in shared:
+            return "ambiguous_table_alias", f"tables {sorted(graph.by_alias.get(alias, []))} share the SQL alias {alias}"
+        table = graph.table_for_alias(alias)
+        if table is None:
+            continue  # cross_check already covers unknown aliases
+        status = bindings.reference_status(table, col)
+        if status != "ok":
+            b = bindings.binding(table)
+            cands = ""
+            if status == "ambiguous_binding" and b is not None:
+                hit = next((v for k, v in (b.ambiguous_columns or {}).items()
+                            if sanitize_column(k).upper() == col.upper()), None)
+                cands = f"; candidates {hit}" if hit else ""
+            return status, f"{table}[{col}]{cands}"
+    return None
 
 
 def _place_b(name: str, sem: MeasureSemantics, graph: ModelGraph, approximate: bool,
