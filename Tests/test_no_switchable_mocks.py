@@ -90,6 +90,9 @@ def test_drift_refresh_no_switchable_mocks(monkeypatch, tmp_path):
     real = {"id": "real-1", "project_id": "p1", "metric_name": "Y", "status": "pending", "proposed_snowflake_definition": "SUM(Y)"}
     state.write_text(json.dumps({"schedules": [], "events": [legacy_demo, real]}))
     monkeypatch.setattr(drift_service, "_state_path", lambda: state)
+    # Read events from this test's JSON file only, never from drift rows other tests left in the shared DB.
+    monkeypatch.setattr(drift_service, "_db_load_events", lambda: None)
+    monkeypatch.setattr(drift_service, "_db_save_events", lambda *a, **k: False)
     monkeypatch.setattr(drift_router, "run_drift_check", lambda **kw: {"drift_detected": 0, "snowflake_connected": False})
 
     # 1. Demo Flag OFF: drops mock events, no demo events
