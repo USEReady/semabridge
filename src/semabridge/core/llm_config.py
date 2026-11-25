@@ -9,6 +9,7 @@ which handles semabridge.yaml for the sync engine.
 """
 
 from __future__ import annotations
+from semabridge.core.run_secrets import get_secret
 
 import os
 from dataclasses import dataclass, field
@@ -36,7 +37,7 @@ class LLMConfig:
     @property
     def api_key(self) -> Optional[str]:
         """Resolve API key from environment variable. Never logged or stored."""
-        return os.environ.get(self.api_key_env)
+        return get_secret(self.api_key_env)
 
     def validate(self) -> None:
         """

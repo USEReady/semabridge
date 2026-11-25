@@ -10,6 +10,7 @@ Deployment produces three layers:
 """
 
 from __future__ import annotations
+from semabridge.core.run_secrets import get_secret
 
 import json
 import os
@@ -4769,7 +4770,7 @@ class DatabricksPublisher(DatabricksSourceResolutionMixin):
         schema_context: dict[str, list[str]],
     ) -> Optional[str]:
         """Translate DAX with OpenAI when OPENAI_API_KEY is configured."""
-        api_key = os.getenv("OPENAI_API_KEY")
+        api_key = get_secret("OPENAI_API_KEY")
         if not api_key:
             return None
 

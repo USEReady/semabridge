@@ -18,6 +18,7 @@ lower than a real score would be, rather than inventing a heuristic that
 was never there.
 """
 from __future__ import annotations
+from semabridge.core.run_secrets import get_secret
 
 import os
 import time
@@ -60,12 +61,12 @@ class OpenAIAdapter:
         self.settings = settings
 
     def is_available(self) -> bool:
-        return bool(self.settings.api_key or os.getenv(self.settings.enabled_env))
+        return bool(self.settings.api_key or get_secret(self.settings.enabled_env))
 
     def translate(
         self, prompt: str, system_message: str, max_tokens: Optional[int] = None
     ) -> Optional[RawResult]:
-        api_key = self.settings.api_key or os.getenv(self.settings.enabled_env)
+        api_key = self.settings.api_key or get_secret(self.settings.enabled_env)
         if not api_key:
             return None
 

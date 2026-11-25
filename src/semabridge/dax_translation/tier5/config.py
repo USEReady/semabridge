@@ -7,6 +7,7 @@ defines the shape and a sensible default; a YAML file can be layered on
 top later via ProviderConfig.load(path=...) without changing callers.
 """
 from __future__ import annotations
+from semabridge.core.run_secrets import get_secret
 
 import os
 from dataclasses import dataclass, field
@@ -36,7 +37,7 @@ class ProviderSettings:
     api_key: Optional[str] = field(default=None, repr=False)
 
     def is_enabled(self) -> bool:
-        return bool(self.api_key) or bool(os.getenv(self.enabled_env))
+        return bool(self.api_key) or bool(get_secret(self.enabled_env))
 
 
 @dataclass

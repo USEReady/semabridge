@@ -6,6 +6,7 @@ current emitter-like delegate. It acts as a stable injection point for
 future refactors that move translation logic out of the emitter.
 """
 from __future__ import annotations
+from semabridge.core.run_secrets import get_secret
 
 from typing import Any, Dict, Optional, Set, Tuple, List
 import re
@@ -578,7 +579,7 @@ class MetricExpressionTranslator:
             return
         self._openai_prefetch_done = True
 
-        api_key = os.getenv("OPENAI_API_KEY")
+        api_key = get_secret("OPENAI_API_KEY")
         if not api_key or _openai_key_rejected():
             return
         try:
@@ -705,7 +706,7 @@ class MetricExpressionTranslator:
         table_alias: str,
         dataset_col_lookup: Dict[str, set[str]],
     ) -> Optional[str]:
-        api_key = os.getenv("OPENAI_API_KEY")
+        api_key = get_secret("OPENAI_API_KEY")
         if not api_key or _openai_key_rejected():
             return None
 

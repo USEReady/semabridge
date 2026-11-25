@@ -152,6 +152,16 @@ def inject_user_credentials(
     return injected
 
 
+def user_secret_values(user_id: int, service: str, db: Optional[Session] = None) -> Dict[str, str]:
+    """The user's stored credentials for ``service`` keyed by their
+    environment-variable names (e.g. {"OPENAI_API_KEY": "..."}), for a
+    run-scoped ``core.run_secrets.run_secrets`` block. Nothing is written to
+    os.environ."""
+    credentials = get_user_credentials(user_id, service, db)
+    env_map = _ENV_MAP.get(service.lower(), {})
+    return {env_map[k]: v for k, v in credentials.items() if k in env_map and v}
+
+
 class _EnvScopeGate:
     """Process-wide gate for os.environ-mutating credential scopes.
 

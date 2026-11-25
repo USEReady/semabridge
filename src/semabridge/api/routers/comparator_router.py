@@ -13,6 +13,7 @@ Industry patterns applied:
 """
 
 from __future__ import annotations
+from semabridge.core.run_secrets import get_secret
 
 import hashlib
 import json
@@ -126,7 +127,7 @@ def _call_llm(
     """
     # ── Anthropic (uses its own SDK, not OpenAI-compatible) ────────────────
     if provider == "anthropic":
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        api_key = get_secret("ANTHROPIC_API_KEY")
         if not api_key:
             raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY is not set in your .env file.")
         from anthropic import Anthropic  # lightweight, fast import

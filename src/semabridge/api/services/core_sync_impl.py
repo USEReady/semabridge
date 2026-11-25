@@ -45,21 +45,18 @@ async def sync_models(payload: Dict[str, Any]):
             _validate_account_ownership(account_id, int(user_id))
 
         def _execute() -> Dict[str, Any]:
-            # Warehouse/BI connector credentials already travel in the run's
-            # own config (account_id -> Account row, resolved per connector).
-            # What scoped_user_env still injects is the user's LLM provider
-            # API keys ("api_secrets": OPENAI_API_KEY, ANTHROPIC_API_KEY, ...),
-            # which the LLM client libraries read from os.environ at call time
-            # deep inside the translators; threading them through every call
-            # site is not achievable without rewriting those clients. The
-            # process-wide gate (auth/user_credentials._EnvScopeGate) therefore
-            # stays: runs of DIFFERENT users are serialized for the duration of
-            # the section, runs with identical keys share it, and process-
-            # executor children (spawned inside the section) inherit the keys.
+            # Warehouse/BI connector credentials travel in the run's own
+            # config (account_id -> Account row). The user's LLM provider API
+            # keys are scoped to THIS run (core/run_secrets, a ContextVar read
+            # by every LLM key lookup), so runs of different users execute
+            # concurrently and never see each other's keys. (Previously they
+            # were injected into os.environ behind a process-wide gate that
+            # serialized different users' runs.)
             if user_id and auth_enabled():
-                from semabridge.auth.user_credentials import scoped_user_env
+                from semabridge.auth.user_credentials import user_secret_values
+                from semabridge.core.run_secrets import run_secrets
 
-                with scoped_user_env(int(user_id), "api_secrets"):
+                with run_secrets(user_secret_values(int(user_id), "api_secrets")):
                     return execute_sync_request(
                         payload,
                         _normalize_yaml_windows_path_fields,

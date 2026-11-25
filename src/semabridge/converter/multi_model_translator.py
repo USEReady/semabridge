@@ -1,6 +1,7 @@
 """Multi-model DAX to SQL translator using LangChain with Featherless."""
 
 from __future__ import annotations
+from semabridge.core.run_secrets import get_secret
 
 import os
 import re
@@ -21,7 +22,7 @@ class MultiModelDAXTranslator:
     def _initialize_clients(self) -> None:
         """Initialize all model clients."""
         # 1. Initialize Featherless DeepSeek-V4-Pro Client
-        featherless_key = os.getenv("FEATHERLESS_API_KEY") or os.getenv("Feather-Api-Key")
+        featherless_key = get_secret("FEATHERLESS_API_KEY") or os.getenv("Feather-Api-Key")
         if featherless_key:
             try:
                 from langchain_openai import ChatOpenAI
@@ -38,7 +39,7 @@ class MultiModelDAXTranslator:
                 logger.warning("Failed to initialize deepseek-v4 via Featherless: %s", e)
 
         # 2. Initialize Groq LangChain Client (if API key exists)
-        groq_key = os.getenv("GROQ_API_KEY")
+        groq_key = get_secret("GROQ_API_KEY")
         if groq_key:
             try:
                 from langchain_groq import ChatGroq
@@ -159,7 +160,7 @@ class MultiModelDAXTranslator:
                 logger.warning("Groq ChatGroq failed for '%s': %s", metric_name, e)
 
         # Try direct openai client fallback for Groq
-        groq_key = os.getenv("GROQ_API_KEY")
+        groq_key = get_secret("GROQ_API_KEY")
         if not groq_key:
             return None
 

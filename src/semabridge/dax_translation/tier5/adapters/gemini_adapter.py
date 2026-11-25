@@ -18,6 +18,8 @@ Gemini-specific), so it's copied here as a free function rather than
 requiring the whole class.
 """
 from __future__ import annotations
+from semabridge.core.run_secrets import get_secret
+import threading
 
 import re
 from typing import Optional
@@ -33,6 +35,9 @@ from semabridge.dax_translation.tier5.adapters.base import (
 from semabridge.dax_translation.tier5.config import ProviderSettings
 
 logger = get_logger(__name__)
+
+
+_GENAI_CONFIGURE_LOCK = threading.Lock()
 
 
 def list_available_models(api_key: str):
@@ -100,7 +105,7 @@ class GeminiAdapter:
 
     def is_available(self) -> bool:
         import os
-        return bool(self.settings.api_key) or bool(os.getenv(self.settings.enabled_env))
+        return bool(self.settings.api_key) or bool(get_secret(self.settings.enabled_env))
 
     def translate(
         self, prompt: str, system_message: str, max_tokens: Optional[int] = None
@@ -119,7 +124,13 @@ class GeminiAdapter:
         # tokens for gemini-1.5-flash) -- unlike the other four adapters'
         # flat 500-token default, Gemini was never exposed to the real
         # incident this parameter exists to fix.
-        if self.settings.api_key:
+        # A run-scoped key (the signed-in user's own key, core/run_secrets)
+        # takes the explicit path too: the shared singleton below is built
+        # once per process from os.environ and must never serve a user key.
+        from semabridge.core.run_secrets import current_secrets
+
+        explicit_key = self.settings.api_key or current_secrets().get(self.settings.enabled_env)
+        if explicit_key:
             # A Settings-configured key bypasses the shared
             # get_gemini_service() singleton entirely, for two reasons:
             # (1) that singleton reads GEMINI_API_KEY from os.environ at
@@ -134,10 +145,13 @@ class GeminiAdapter:
             try:
                 import google.generativeai as genai
 
-                genai.configure(api_key=self.settings.api_key)
-                model_name = self.settings.model or "gemini-1.5-flash"
-                model = genai.GenerativeModel(model_name)
-                response = model.generate_content(full_prompt, stream=False)
+                # genai.configure() is module-global: serialize configure +
+                # call so concurrent runs with different keys cannot mix.
+                with _GENAI_CONFIGURE_LOCK:
+                    genai.configure(api_key=explicit_key)
+                    model_name = self.settings.model or "gemini-1.5-flash"
+                    model = genai.GenerativeModel(model_name)
+                    response = model.generate_content(full_prompt, stream=False)
                 text = response.text if response else None
             except Exception as exc:
                 if is_auth_error(exc):

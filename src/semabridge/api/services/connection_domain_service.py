@@ -1241,12 +1241,15 @@ async def save_connection(service: str, payload: Dict[str, Any], user_id: int = 
             }
 
         saved = cm.save_credentials(service, payload, user_id=user_id)
-        # Inject to os.environ using the full precedence chain so that
-        # connectors initialised in this process pick up the new values.
-        # For user-scoped saves, we inject the user's credentials (not global)
-        # so that the in-process settings.reload() picks them up correctly.
-        cm.inject_credentials_to_env(service, user_id=user_id)
-        reload_settings()
+        # Single-user mode: inject so connectors initialised in this process
+        # pick up the new values. With sign-in on, the process environment
+        # is shared by every user, so a user's credentials are never written
+        # there (runs resolve them from the stored, encrypted rows).
+        from semabridge.auth.flags import auth_enabled as _auth_enabled
+
+        if not (user_id and _auth_enabled()):
+            cm.inject_credentials_to_env(service, user_id=user_id)
+            reload_settings()
         return {
             "status": "saved",
             "service": service,
@@ -1290,6 +1293,28 @@ async def test_connection(service: str, user_id: int = 0):
     from semabridge.repository.credential_manager import CredentialManager, CredentialDecryptionError
 
     cm = CredentialManager()
+
+    # The checks below read the injected values from the environment; put
+    # back whatever was there afterwards so one user's test never leaves
+    # their credentials in the shared process environment.
+    from semabridge.repository.credential_manager import _ENV_MAP as _CRED_ENV_MAP
+
+    env_vars = list((_CRED_ENV_MAP.get(service) or {}).values())
+    saved_env = {var: os.environ.get(var) for var in env_vars}
+    try:
+        return await _test_connection_with_env(cm, service, user_id)
+    finally:
+        for var, original in saved_env.items():
+            if original is None:
+                os.environ.pop(var, None)
+            else:
+                os.environ[var] = original
+        if env_vars:
+            reload_settings()
+
+
+async def _test_connection_with_env(cm: Any, service: str, user_id: int) -> Dict[str, Any]:
+    from semabridge.repository.credential_manager import CredentialDecryptionError
 
     try:
         cm.inject_credentials_to_env(service, user_id=user_id)

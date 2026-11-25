@@ -1372,7 +1372,14 @@ def _run_parallel_jobs(
         return per_model_results
 
     executor_cls = ProcessPoolExecutor if executor_kind == "process" else ThreadPoolExecutor
-    with executor_cls(max_workers=effective_parallelism) as executor:
+    executor_kwargs: Dict[str, Any] = {"max_workers": effective_parallelism}
+    if executor_kind == "process":
+        # Child processes do not inherit ContextVars: hand them this run's
+        # secrets explicitly (each child serves only this run).
+        from semabridge.core.run_secrets import current_secrets, install_in_process
+
+        executor_kwargs.update(initializer=install_in_process, initargs=(current_secrets(),))
+    with executor_cls(**executor_kwargs) as executor:
         # Use contextvars.copy_context() for thread-based executors so that
         # observability context (run_id, user_id) propagates to child threads.
         if executor_kind == "thread":

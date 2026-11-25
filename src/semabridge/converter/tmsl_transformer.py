@@ -11,6 +11,7 @@ Responsibilities:
 """
 
 from __future__ import annotations
+from semabridge.core.run_secrets import get_secret
 
 import json
 import os
@@ -129,7 +130,7 @@ def translate_complex_measure_to_cube(
                 details={"hint": "Install the openai package to enable this fallback."},
             ) from exc
 
-        api_key = os.getenv("OPENAI_API_KEY")
+        api_key = get_secret("OPENAI_API_KEY")
         openai_client = OpenAI(api_key=api_key) if api_key else OpenAI()
 
     user_prompt = (

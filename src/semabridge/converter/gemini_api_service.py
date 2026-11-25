@@ -10,6 +10,7 @@ This module provides:
 - Optional toggle via USE_GEMINI environment variable
 """
 
+from semabridge.core.run_secrets import get_secret
 import os
 import time
 import logging
@@ -94,7 +95,7 @@ class GeminiAPIService:
     def __init__(self):
         """Initialize Gemini API service."""
         self.use_gemini = os.getenv("USE_GEMINI", "true").lower() in ("true", "1", "yes")
-        self.api_key = os.getenv("GEMINI_API_KEY")
+        self.api_key = get_secret("GEMINI_API_KEY")
         self.last_request_time = None
         self.is_available = False
         

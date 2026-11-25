@@ -43,6 +43,7 @@ real API key will say so in the logs, not just leave a comment for someone
 to stumble on later.
 """
 from __future__ import annotations
+from semabridge.core.run_secrets import get_secret
 
 import os
 import time
@@ -188,7 +189,7 @@ class AnthropicAdapter:
         self._resolved_model: Optional[str] = None
 
     def is_available(self) -> bool:
-        return bool(self.settings.api_key or os.getenv(self.settings.enabled_env))
+        return bool(self.settings.api_key or get_secret(self.settings.enabled_env))
 
     def _resolve_model(self, client_cls, api_key: str, timeout: float) -> str:
         if self.settings.model:
@@ -236,7 +237,7 @@ class AnthropicAdapter:
     def translate(
         self, prompt: str, system_message: str, max_tokens: Optional[int] = None
     ) -> Optional[RawResult]:
-        api_key = self.settings.api_key or os.getenv(self.settings.enabled_env)
+        api_key = self.settings.api_key or get_secret(self.settings.enabled_env)
         if not api_key:
             return None
 

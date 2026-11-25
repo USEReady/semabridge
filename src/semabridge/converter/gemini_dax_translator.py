@@ -9,6 +9,7 @@ Uses centralized Gemini API service (gemini_api_service.py) for:
 - Hard fallback support
 - Centralized logging
 """
+from semabridge.core.run_secrets import get_secret
 import os
 import json
 import logging
@@ -95,7 +96,7 @@ class GeminiDAXTranslator:
     
     def __init__(self):
         """Initialize Gemini translator with centralized API service."""
-        self.api_key = os.getenv("GEMINI_API_KEY")
+        self.api_key = get_secret("GEMINI_API_KEY")
         self.use_gemini = os.getenv("USE_GEMINI", "true").lower() in ("true", "1", "yes")
         
         # Use centralized service
