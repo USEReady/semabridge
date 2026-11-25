@@ -193,6 +193,7 @@ def _step6b_databricks_tables(self, context: RunContext) -> None:
             "warnings": ["No Databricks connection is configured: table plan unavailable; "
                          "measures keep their model column names."],
         }
+        _run_databricks_planner(self, context, None)
         return
 
     schemas = parse_source_schemas(getattr(target, "source_schemas", None), info.catalog, info.schema)
@@ -228,3 +229,69 @@ def _step6b_databricks_tables(self, context: RunContext) -> None:
                 sum(1 for b in plan.bindings if b.action == "stub"),
                 sum(1 for b in plan.bindings if b.action == "skip"),
                 ", ".join(f"{c}.{s}" for c, s in schemas))
+    _run_databricks_planner(self, context, plan)
+
+
+# ---------------------------------------------------------------------------
+# Step 6b (Databricks planner path, Phase 3.6): the metric-view plan
+# ---------------------------------------------------------------------------
+
+
+def databricks_planner_settings(context: RunContext):
+    """Planner settings: global behavior (behavior.databricks.planner_*), overridden
+    per project by the target's optional `planner` block (calculate_mode,
+    view_mode, selected_tables, primary_fact, excluded_measures)."""
+    from semabridge.target_backends.databricks.planner import PlannerSettings
+
+    db = getattr(getattr(context, "behavior", None), "databricks", None)
+    values: Dict[str, Any] = {
+        "calculate_mode": str(getattr(db, "planner_calculate_mode", "approximate") or "approximate").strip().lower(),
+        "view_mode": str(getattr(db, "planner_view_mode", "separate_views") or "separate_views").strip().lower(),
+        "capabilities": frozenset(getattr(db, "planner_capabilities", None) or []),
+    }
+    target = getattr(context.config, "target", None)
+    project = getattr(target, "planner", None) or {}
+    if not isinstance(project, dict):
+        project = getattr(project, "__dict__", {}) or {}
+    for key in ("calculate_mode", "view_mode", "primary_fact"):
+        if project.get(key):
+            values[key] = str(project[key]).strip()
+    for key in ("selected_tables", "excluded_measures"):
+        if project.get(key):
+            values[key] = tuple(str(x) for x in project[key])
+    return PlannerSettings(**values)
+
+
+def _run_databricks_planner(self, context: RunContext, table_plan) -> None:
+    """Plan the metric views (offline, read-only) so Step 7 saves the plan and the
+    dry run shows it. Settings errors and self-check failures stop the run.
+
+    The plan is also written next to the run's other Databricks artifacts:
+    output/databricks/<project>/databricks_view_plan.json and .md."""
+    from semabridge.target_backends.databricks.planner import (
+        PlannerError,
+        PlannerInvariantError,
+        plan_metric_views,
+    )
+
+    try:
+        result = plan_metric_views(context.sml_model, table_plan, databricks_planner_settings(context))
+    except (PlannerError, PlannerInvariantError) as exc:
+        raise ConversionError(f"Databricks planner: {exc}") from None
+    context.databricks_view_plan = result.as_dict()
+    summary = context.databricks_view_plan["summary"]
+    logger.info("Databricks view plan: %d view(s), %d measure(s) placed, %d left out (%d approximate)",
+                summary["views"], summary["measures_placed"], summary["measures_left_out"], summary["approximate"])
+    try:
+        from semabridge.target_backends.databricks.planner.report import render
+
+        out_dir = self._model_output_dir("databricks", model_name=context.project_id,
+                                         model_subdir=getattr(context, "physical_namespace", None))
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "databricks_view_plan.json").write_text(
+            json.dumps(context.databricks_view_plan, indent=2, ensure_ascii=False), encoding="utf-8")
+        (out_dir / "databricks_view_plan.md").write_text(
+            render(context.databricks_view_plan, str(context.project_id)), encoding="utf-8")
+        logger.info("Databricks view plan written to %s", out_dir / "databricks_view_plan.md")
+    except Exception as exc:  # non-fatal: the plan is in the run summary either way
+        logger.warning("Could not write the Databricks view plan file: %s", exc)

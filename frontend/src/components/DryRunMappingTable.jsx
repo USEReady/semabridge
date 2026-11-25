@@ -9,7 +9,18 @@
  *   summary       : { total_fields, auto_mapped, unmapped, collisions }
  *   relationships : Array<{ source, target, joinType, condition, confidence }>
  */
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, createContext, useContext } from 'react';
+
+// The project's target platform: labels say "Databricks SQL" for a Databricks
+// target and "Snowflake SQL" otherwise (Snowflake stays the default).
+const TargetPlatformContext = createContext('snowflake');
+const PLATFORM_LABELS = { snowflake: 'Snowflake', databricks: 'Databricks', fabric: 'Fabric' };
+function platformLabel(platform) {
+  return PLATFORM_LABELS[String(platform || '').toLowerCase()] || 'Snowflake';
+}
+function useTargetLabel() {
+  return platformLabel(useContext(TargetPlatformContext));
+}
 import { Edit2, GitMerge, Zap, CheckCircle, Tags, AlertTriangle, PlusCircle, SkipForward, X, ChevronRight, Info } from 'lucide-react';
 import StatusBadge from './common/StatusBadge';
 import DroppedFieldsPanel from './common/DroppedFieldsPanel';
@@ -601,6 +612,7 @@ function synonymSourceLabel(source) {
 }
 
 function MeasureTranslationPanel({ row, forceRevealSynonyms = false }) {
+  const targetLabel = useTargetLabel();
   const isMeasure = String(row.field_type || row.entity_kind || '').toLowerCase() === 'measure';
   const hasTargetExpr = Boolean(String(row.target_expression || '').trim());
   const isFailed = row.sync_enabled === false || !!row.sync_failure_reason || (isMeasure && !hasTargetExpr);
@@ -666,7 +678,7 @@ function MeasureTranslationPanel({ row, forceRevealSynonyms = false }) {
             fontWeight: 600,
           }}>
             <CheckCircle size={13} style={{ flexShrink: 0 }} />
-            <span>Translated successfully to Snowflake SQL</span>
+            <span>Translated successfully to {targetLabel} SQL</span>
           </div>
         )
       )}
@@ -804,7 +816,7 @@ function MeasureTranslationPanel({ row, forceRevealSynonyms = false }) {
 
           {/* Target SQL */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Snowflake Translation (SQL)</span>
+            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{targetLabel} Translation (SQL)</span>
             <div style={{
               fontFamily: 'monospace',
               fontSize: 11,
@@ -1138,6 +1150,7 @@ const CHANGE_TONE = {
  * renames), why, and an Edit action that opens the normal field editor.
  */
 function NameChangesPanel({ rows, onEdit, deployedNamesKnown = false }) {
+  const targetLabel = useTargetLabel();
   const [open, setOpen] = useState(false);
   const changes = useMemo(() => collectNameChanges(rows), [rows]);
   // Columns renamed in Snowflake vs the last deploy (COL_DATE -> DATE): when
@@ -1169,7 +1182,7 @@ function NameChangesPanel({ rows, onEdit, deployedNamesKnown = false }) {
         <ChevronRight size={14} style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }} />
         Name changes ({changes.length})
         <span style={{ fontWeight: 400, color: 'var(--text-tertiary)', fontSize: 12 }}>
-          — fields that will appear under a different name in Snowflake. Any of them can be edited.
+          — fields that will appear under a different name in {targetLabel}. Any of them can be edited.
         </span>
       </button>
       {open && (
@@ -1251,6 +1264,7 @@ export default function DryRunMappingTable({
   onReSync,                   // () => void — trigger a re-sync after auto-add
   droppedEntities = [],       // DropRecord[] — entities excluded from deployed DDL (see DropLedger)
   deployedNamesKnown = false, // backend read the last deploy's names (rows carry deployed_name_change)
+  targetPlatform = 'snowflake', // the project's target: drives the "<Platform> SQL" labels
   unresolvedReportFieldReferences = [], // [{field, field_type, table, occurrences}] — report queries a name absent from the current schema (see LocalPBIXConnector._detect_unresolved_field_references); table-scoped only, never auto-attached to a specific column
 }) {
   // ── Dev-only guardrail: catch un-normalized rows reaching this component ────
@@ -1569,6 +1583,7 @@ export default function DryRunMappingTable({
       }`;
 
   return (
+    <TargetPlatformContext.Provider value={targetPlatform}>
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
 
       {/* ── Compatibility score bar ─────────────────────────────────────────── */}
@@ -2004,5 +2019,6 @@ export default function DryRunMappingTable({
         onSave={handleSynonymSave}
       />
     </div>
+    </TargetPlatformContext.Provider>
   );
 }

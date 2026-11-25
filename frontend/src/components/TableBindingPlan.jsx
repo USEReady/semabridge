@@ -119,7 +119,7 @@ const MATCHED_BY = {
 /**
  * Databricks planner path (backend: target_backends/databricks/tables.py):
  * each Power BI table is bound to an existing Unity Catalog table, or uses an
- * inline stub (no rows, nothing created in Databricks) until the real table
+ * empty table (created at deploy, nothing during a dry run) until the real table
  * exists, or is skipped -- per the project's on_missing_source setting.
  */
 function DatabricksTablePlan({ plan, style }) {
@@ -171,7 +171,7 @@ function DatabricksTablePlan({ plan, style }) {
       {stubs.length > 0 && (
         <div style={{ marginTop: 4 }}>
           <div style={{ color: 'var(--text-primary)' }}>
-            No matching table yet: inline stub (empty, nothing created in Databricks); binds automatically on a later sync once the table exists:
+            No matching table yet: an empty table is created at deploy (nothing is created during a dry run); load data into it, or a later sync uses the real table once it exists:
           </div>
           {stubs.map((t) => (
             <div key={`s-${t.dataset}`} style={{ fontFamily: MONO, fontSize: 11, paddingLeft: 14 }}>
