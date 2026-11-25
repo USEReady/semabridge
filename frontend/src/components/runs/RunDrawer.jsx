@@ -417,6 +417,23 @@ export default function RunDrawer({
               </div>
             )}
 
+            {run.verification && (
+              <>
+                <SectionLabel>Verify (certified measures vs Power BI)</SectionLabel>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  <Pill color="var(--color-success)" bg="var(--color-success-bg)">{run.verification.matched} match</Pill>
+                  {run.verification.mismatch > 0 && (
+                    <Pill color="var(--color-error)" bg="var(--color-error-bg)">{run.verification.mismatch} different</Pill>
+                  )}
+                  {run.verification.unverified > 0 && (
+                    <Pill title={(run.verification.results || []).filter(r => r.verdict === 'unverified').map(r => `${r.metric_name}: ${r.detail}`).join('\n')}>
+                      {run.verification.unverified} not compared
+                    </Pill>
+                  )}
+                </div>
+              </>
+            )}
+
             {counts?.counts && (
               <>
                 <SectionLabel>Result</SectionLabel>

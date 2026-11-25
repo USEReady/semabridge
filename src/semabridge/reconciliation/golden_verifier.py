@@ -277,6 +277,25 @@ ROW(
             body = "\n    ".join(sv_clauses)
             return f"SELECT *\nFROM SEMANTIC_VIEW(\n    {body}\n);"
 
+        if (target_kind or "").strip().lower() == "metric_view":
+            # Databricks Unity Catalog metric view: MEASURE() + GROUP BY.
+            def _bt(name: str) -> str:
+                return ".".join(f"`{p.strip().strip('`').strip(chr(34))}`" for p in str(name).split("."))
+
+            expr_clean = (metric_sql_expression or "").strip()
+            if expr_clean and "(" not in expr_clean:
+                measure = expr_clean.split(".")[-1]
+            else:
+                # Metric view measures use identifier-safe names (Total Revenue -> total_revenue).
+                measure = re.sub(r"[^0-9A-Za-z_]+", "_", metric_name).strip("_").lower()
+            select_items = [f"    {_bt(d.split('.')[-1])}" for d in dims]
+            select_items.append(f"    MEASURE({_bt(measure.strip().strip('`').strip(chr(34)))}) AS {_bt(metric_name)}")
+            cleaned_filters = [f.strip() for f in (filters or []) if f and f.strip()]
+            where_clause = f"\nWHERE {' AND '.join(cleaned_filters)}" if cleaned_filters else ""
+            group_by = f"\nGROUP BY {', '.join(str(i) for i in range(1, len(dims) + 1))}" if dims else ""
+            select_clause = ",\n".join(select_items)
+            return f"SELECT\n{select_clause}\nFROM {_bt(target_table_or_view)}{where_clause}{group_by};"
+
         dim_cols = [_format_sql_identifier(d) for d in dims]
         select_parts = [f"    {d}" for d in dim_cols]
         alias = _quote_sql_alias(metric_name)

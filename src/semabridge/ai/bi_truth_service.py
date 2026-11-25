@@ -610,7 +610,7 @@ def run_truth_suite(
     project_id: Optional[str] = None,
     owner_id: Optional[str] = None,
     max_cases: int = 50,
-    live_parity: bool = False,
+    live_parity: bool = True,
     dax_executor: Optional[Any] = None,
     sql_executor: Optional[Any] = None,
 ) -> Dict[str, Any]:
@@ -682,6 +682,7 @@ def run_truth_suite(
         err = None
         row_count: Optional[int] = None
         sf = None  # set on the Snowflake path; live parity reads it on every path
+        warehouse_rows: Optional[List[Dict[str, Any]]] = None  # Databricks result rows
 
         try:
             if project_target == "DATABRICKS":
@@ -704,6 +705,9 @@ def run_truth_suite(
                     if exec_res.get("success"):
                         mode = "databricks_sql"
                         row_count = exec_res.get("row_count", 0)
+                        from semabridge.reconciliation.project_verify import rows_as_dicts as _rows
+
+                        warehouse_rows = _rows(exec_res.get("rows") or [], exec_res.get("columns"))
                         if not generated_sql or is_refusal:
                             generated_sql = sql_to_run
                     elif exec_res.get("not_configured"):
@@ -742,54 +746,55 @@ def run_truth_suite(
         except Exception as exc:
             err = str(exc)
 
-        ok = bool(generated_sql) and not generated_sql.lstrip().startswith("-- SemaBridge AI Query Refusal") and not err
+        from semabridge.reconciliation import project_verify as pv
 
-        if live_parity:
+        refused = generated_sql.lstrip().startswith("-- SemaBridge AI Query Refusal")
+        # No AI answer: the case's known-good SQL is still compared (the
+        # Databricks path above already executes it the same way).
+        if (not generated_sql or refused) and (c.get("expected_sql") or "").strip() and not err:
+            generated_sql = (c.get("expected_sql") or "").strip()
+            refused = False
+        if err or not generated_sql or refused:
+            verdict = pv.Verdict(pv.FAILED, err or ("refused: " + generated_sql[:200] if refused else "no SQL generated"))
+        elif not live_parity:
+            verdict = pv.Verdict(pv.UNVERIFIED, "comparison with Power BI was not requested")
+        else:
+            # A pass means the numbers match Power BI, never "SQL was generated".
             dax_query = (c.get("expected_dax") or "").strip()
-            sql_query = generated_sql or (c.get("expected_sql") or "").strip()
-            if not dax_query or not sql_query:
-                ok = False
-                err = err or "Missing DAX or SQL query for live parity check"
-            else:
-                try:
-                    if dax_executor:
-                        dax_rows = dax_executor(dax_query)
-                    else:
-                        from semabridge.reconciliation.dax_executor import execute_dax
-                        dax_res = execute_dax(dax_query, project_id=pid)
-                        dax_rows = dax_res.rows if hasattr(dax_res, "rows") else (dax_res.get("rows") if isinstance(dax_res, dict) else [])
+            sql_query = generated_sql
+            try:
+                if dax_executor:
+                    dax_rows = pv.rows_as_dicts(dax_executor(dax_query))
+                else:
+                    dax_rows = pv.run_project_dax(pid, dax_query)
+                if sql_executor:
+                    sql_rows = pv.rows_as_dicts(sql_executor(sql_query))
+                elif project_target == "DATABRICKS":
+                    if warehouse_rows is None:
+                        raise pv.VerificationUnavailable("the Databricks warehouse did not return rows")
+                    sql_rows = warehouse_rows
+                elif sf is not None:
+                    import snowflake.connector
+                    from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
 
-                    if sql_executor:
-                        sql_rows = sql_executor(sql_query)
-                    elif sf:
-                        import snowflake.connector
-                        from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
-                        conn_kwargs = get_snowflake_connect_kwargs(sf)
-                        with snowflake.connector.connect(**conn_kwargs) as conn:
-                            cur = conn.cursor()
-                            cur.execute(sql_query)
-                            cols = [d[0] for d in cur.description]
-                            sql_rows = [dict(zip(cols, row)) for row in cur.fetchall()]
-                    else:
-                        sql_rows = []
-
-                    from semabridge.reconciliation.golden_verifier import GoldenQueryVerifier
-                    verifier = GoldenQueryVerifier()
-                    mname = c.get("metric_name") or "metric"
-                    v_res = verifier.reconcile_data(
-                        metric_name=mname,
-                        dax_rows=dax_rows,
-                        sql_rows=sql_rows,
-                        dimension_keys=[],
-                        dax_query=dax_query,
-                        sql_query=sql_query,
-                    )
-                    ok = (v_res.status == "CERTIFIED")
-                    if not ok:
-                        err = f"Parity mismatch: {v_res.certification_badge}"
-                except Exception as eval_exc:
-                    ok = False
-                    err = f"Live verification error: {eval_exc}"
+                    with snowflake.connector.connect(**get_snowflake_connect_kwargs(sf)) as conn:
+                        cur = conn.cursor()
+                        cur.execute(sql_query)
+                        cols = [d[0] for d in cur.description]
+                        sql_rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+                else:
+                    raise pv.VerificationUnavailable("no Snowflake connection for this project")
+                verdict = pv.compare(c.get("metric_name") or "metric", dax_rows, sql_rows,
+                                     dax_query=dax_query, sql_query=sql_query)
+            except pv.VerificationUnavailable as exc:
+                verdict = pv.Verdict(pv.UNVERIFIED, str(exc))
+            except Exception as exc:  # noqa: BLE001 -- recorded on the case
+                verdict = pv.Verdict(pv.UNVERIFIED, f"comparison could not run: {exc}")
+        ok = verdict.passed
+        if verdict.verdict == pv.MISMATCH:
+            err = err or f"Parity mismatch: {verdict.detail}"
+        elif verdict.verdict == pv.FAILED:
+            err = err or verdict.detail
 
         result_item: Dict[str, Any] = {
             "case_id": c["id"],
@@ -798,6 +803,8 @@ def run_truth_suite(
             "expected_sql": c.get("expected_sql") or "",
             "expected_dax": c.get("expected_dax") or "",
             "passed": ok,
+            "verdict": verdict.verdict,
+            "verdict_detail": verdict.detail,
             "mode": mode,
             "target": project_target,
             "generated_sql": generated_sql,
@@ -815,15 +822,20 @@ def run_truth_suite(
     else:
         results = [_evaluate_case(c) for c in approved]
 
-    passed = sum(1 for r in results if r["passed"])
+    from semabridge.reconciliation.project_verify import summarize
+
+    summary = summarize(results)
+    passed = summary["matched"]
     total = len(approved)
-    accuracy = round((100.0 * passed / total), 2) if total else 0.0
     run_rec = {
         "id": f"trun-{uuid.uuid4().hex[:8]}",
         "project_id": project_id,
         "total": total,
         "passed": passed,
-        "accuracy_pct": accuracy,
+        # Only cases actually compared with Power BI count toward accuracy.
+        "accuracy_pct": summary["accuracy_pct"],
+        "coverage_pct": summary["coverage_pct"],
+        "verdicts": {k: summary[k] for k in ("matched", "mismatch", "unverified", "failed")},
         "results": results,
         "ran_at": datetime.now(timezone.utc).isoformat(),
     }

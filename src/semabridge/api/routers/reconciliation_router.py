@@ -557,6 +557,14 @@ def certify_metric_end_to_end(req: CertifyMetricRequest, request: Request) -> Di
     # actually be queried (and every dimension) must exist in the selected project's semantic model.
     _validate_certify_request(req, sql_metric_token)
 
+    # The project's own warehouse: Databricks projects verify against their
+    # Unity Catalog metric view, Snowflake projects against the semantic view.
+    from semabridge.ai.bi_truth_service import _detect_project_target
+
+    warehouse_target = _detect_project_target(req.project_id)
+    target_kind = req.target_kind
+    if warehouse_target == "DATABRICKS" and (target_kind or "semantic_view") == "semantic_view":
+        target_kind = "metric_view"
     if req.custom_sql_query and req.custom_sql_query.strip():
         sql_query = req.custom_sql_query.strip()
     else:
@@ -566,7 +574,7 @@ def certify_metric_end_to_end(req: CertifyMetricRequest, request: Request) -> Di
             target_table_or_view=req.target_table_or_view,
             dimensions=req.dimensions,
             filters=req.filters,
-            target_kind=req.target_kind,
+            target_kind=target_kind,
         )
     pbi_dims = req.pbi_dimension_columns or req.dimensions
     dax_query = verifier.generate_dax_query(
@@ -598,12 +606,12 @@ def certify_metric_end_to_end(req: CertifyMetricRequest, request: Request) -> Di
         dax_backend_used = "mock_fabric_analysis"
     else:
         # Real connection execution path
-        # 1. Execute Snowflake / SQL query live (non-simulated)
+        # 1. Execute the query live on the PROJECT'S target (non-simulated)
         uid = getattr(request.state, "user_id", None)
         exec_resp = execute_semantic_query(
             ExecuteQueryRequest(
                 sql=sql_query,
-                target="SNOWFLAKE",
+                target=warehouse_target,
                 project_id=req.project_id,
                 limit=100000,
                 allow_simulated=False,
@@ -613,7 +621,7 @@ def certify_metric_end_to_end(req: CertifyMetricRequest, request: Request) -> Di
         if not exec_resp.success or exec_resp.is_simulated:
             raise HTTPException(
                 status_code=400,
-                detail=f"Live Snowflake execution failed: {exec_resp.error or exec_resp.message or 'unknown error'}",
+                detail=f"Live {warehouse_target.title()} execution failed: {exec_resp.error or exec_resp.message or 'unknown error'}",
             )
 
         raw_sf_rows = [dict(zip(exec_resp.columns, r)) for r in exec_resp.rows]
@@ -694,7 +702,7 @@ def certify_metric_end_to_end(req: CertifyMetricRequest, request: Request) -> Di
         verified_entry = save_verified_query_record(
             question=question_text,
             sql=sql_query,
-            target="SNOWFLAKE",
+            target=warehouse_target,
             project_id=req.project_id,
             domain=req.domain,
         )

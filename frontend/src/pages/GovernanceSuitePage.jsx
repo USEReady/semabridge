@@ -1313,10 +1313,15 @@ function BiTruthView({ projectId, targetType = 'snowflake' }) {
               )}
               <div>
                 <div style={{ fontSize: 13.5, fontWeight: 700 }}>
-                  Truth Suite Accuracy: <span style={{ color: latest.accuracy_pct >= 90 ? 'var(--color-success)' : 'var(--color-warning)' }}>{latest.accuracy_pct}%</span>
+                  Matches Power BI:{' '}
+                  <span style={{ color: latest.accuracy_pct >= 90 ? 'var(--color-success)' : 'var(--color-warning)' }}>
+                    {latest.accuracy_pct == null ? 'not compared yet' : `${latest.accuracy_pct}%`}
+                  </span>
                 </div>
                 <div style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>
-                  {latest.passed} out of {latest.total} approved questions verified accurately against {targetMeta.isDatabricks ? 'Databricks Unity Catalog & Genie' : 'Snowflake & Cortex'} semantic layer.
+                  {latest.verdicts
+                    ? `${latest.verdicts.matched} matched, ${latest.verdicts.mismatch} different, ${latest.verdicts.unverified} not compared, ${latest.verdicts.failed} unanswered (of ${latest.total}) on ${targetMeta.isDatabricks ? 'Databricks' : 'Snowflake'}.`
+                    : `${latest.passed} of ${latest.total} questions passed.`}
                 </div>
               </div>
             </div>
@@ -1629,10 +1634,15 @@ A: SELECT (SUM(margin) / NULLIF(SUM(revenue), 0)) * 100 FROM sales_fact;`
                             fontWeight: 700,
                             padding: '1px 6px',
                             borderRadius: 4,
-                            background: runRes.passed ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)',
-                            color: runRes.passed ? 'var(--color-success)' : 'var(--color-error)',
-                          }}>
-                            {runRes.passed ? '✓ PASSED' : '✕ FAILED'}
+                            background: runRes.passed ? 'rgba(34,197,94,0.2)' : runRes.verdict === 'unverified' ? 'rgba(148,163,184,0.2)' : 'rgba(239,68,68,0.2)',
+                            color: runRes.passed ? 'var(--color-success)' : runRes.verdict === 'unverified' ? 'var(--text-secondary)' : 'var(--color-error)',
+                          }}
+                          title={runRes.verdict_detail || undefined}
+                          >
+                            {runRes.passed ? '✓ MATCHES POWER BI'
+                              : runRes.verdict === 'mismatch' ? '✕ DIFFERENT FROM POWER BI'
+                              : runRes.verdict === 'unverified' ? '○ NOT COMPARED'
+                              : '✕ NOT ANSWERED'}
                           </span>
                         )}
                       </div>

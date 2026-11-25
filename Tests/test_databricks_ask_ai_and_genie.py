@@ -389,11 +389,16 @@ def test_bi_truth_executes_against_databricks_sql_warehouse(tmp_path, monkeypatc
     ):
         run = run_truth_suite(project_id="proj-dbx", owner_id="1")
 
+    # The SQL ran on the warehouse, but the case has no Power BI (DAX) query,
+    # so nothing was compared: "unverified", never counted as a pass.
     assert run["total"] == 1
-    assert run["passed"] == 1
-    assert run["accuracy_pct"] == 100.0
+    assert run["passed"] == 0
+    assert run["accuracy_pct"] is None
+    assert run["verdicts"]["unverified"] == 1
     res = run["results"][0]
-    assert res["passed"] is True
+    assert res["passed"] is False
+    assert res["verdict"] == "unverified"
+    assert "no Power BI (DAX) query" in res["verdict_detail"]
     assert res["mode"] == "databricks_sql"
     assert res["target"] == "DATABRICKS"
     assert res["row_count"] == 1

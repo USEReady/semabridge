@@ -935,6 +935,24 @@ async def _perform_project_run_impl(run: dict, project_cfg: str, started: float)
         if current_fingerprint:
             run["source_fingerprint"] = current_fingerprint
 
+        # Verify: after a successful sync, re-check the project's certified
+        # measures against Power BI. Non-fatal; a mismatch is a run warning.
+        if run["status"] in ("success", "warning"):
+            try:
+                from semabridge.reconciliation import post_sync_verify
+
+                if post_sync_verify.enabled():
+                    verification = post_sync_verify.verify_certified_measures(
+                        project_id, owner_id=str(run.get("user_id")) if run.get("user_id") else None,
+                    )
+                    if verification is not None:
+                        run["verification"] = verification
+                        warning = post_sync_verify.warning_for(verification)
+                        if warning and isinstance(run.get("summary"), dict):
+                            run["summary"].setdefault("target_warnings", []).append(warning)
+            except Exception as _verify_exc:  # noqa: BLE001
+                logger.warning("[%s] Post-sync verification skipped: %s", project_id, _verify_exc)
+
         # Post-deploy reconciliation: verify every Stage 6 snapshot metric is
         # either live in the deployed semantic view or already recorded in
         # dropped_entities above. Best-effort and non-fatal on purpose — a

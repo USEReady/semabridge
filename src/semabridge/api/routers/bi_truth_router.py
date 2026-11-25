@@ -61,6 +61,9 @@ class ImportDocTextRequest(BaseModel):
 
 class RunTruthSuiteRequest(BaseModel):
     project_id: Optional[str] = None
+    # Compare each answer with Power BI's numbers (the point of the suite).
+    # False only reports whether SQL could be generated ("unverified").
+    compare_with_power_bi: bool = True
 
 
 @router.post("/generate", response_model=Dict[str, Any])
@@ -164,7 +167,11 @@ def delete_cases(project_id: Optional[str] = None) -> Dict[str, Any]:
 @router.post("/run", response_model=Dict[str, Any])
 def execute_truth_suite(req: RunTruthSuiteRequest, request: Request) -> Dict[str, Any]:
     uid = getattr(request.state, "user_id", None)
-    return run_truth_suite(project_id=req.project_id, owner_id=str(uid) if uid else None)
+    return run_truth_suite(
+        project_id=req.project_id,
+        owner_id=str(uid) if uid else None,
+        live_parity=req.compare_with_power_bi,
+    )
 
 
 @router.get("/runs", response_model=Dict[str, Any])

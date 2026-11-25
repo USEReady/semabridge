@@ -81,3 +81,23 @@ def test_bi_truth_live_dax_vs_sql_parity():
     finally:
         clear_truth_cases(test_proj)
 
+
+
+def test_bi_truth_databricks_rows_are_compared_with_power_bi():
+    from semabridge.reconciliation import project_verify as pv
+
+    rows = pv.rows_as_dicts([["North", "1500.00"]], ["Region", "total_revenue"])
+    assert rows == [{"Region": "North", "total_revenue": "1500.00"}]
+    assert pv.compare("Revenue", [{"Revenue": 1500.0}], [{"REVENUE": 1500.0}]).verdict == pv.MATCHED
+    assert pv.compare("Revenue", [{"Revenue": 1500.0}], [{"REVENUE": 1400.0}]).verdict == pv.MISMATCH
+    summary = pv.summarize([{"verdict": "matched"}, {"verdict": "mismatch"}, {"verdict": "unverified"}, {"verdict": "failed"}])
+    assert summary["accuracy_pct"] == 50.0 and summary["coverage_pct"] == 50.0
+
+
+def test_run_project_dax_without_power_bi_is_unverified(monkeypatch):
+    import pytest
+
+    from semabridge.reconciliation import project_verify as pv
+
+    with pytest.raises(pv.VerificationUnavailable, match="no Power BI"):
+        pv.run_project_dax("p", "")
