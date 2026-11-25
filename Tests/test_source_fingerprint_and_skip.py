@@ -148,7 +148,10 @@ async def test_scheduler_skip_unchanged_logic():
         }
         p_cfg = yaml.safe_dump(p_cfg_dict)
 
-        combined_fp = compute_combined_fingerprint(raw_fp, p_cfg_dict)
+        # Source + project config + the global behavior.yaml (it changes output too).
+        from semabridge.api.services.run_service import _behavior_file_hash
+
+        combined_fp = f"{compute_combined_fingerprint(raw_fp, p_cfg_dict)}|bh:{_behavior_file_hash()}"
 
         run_rec = {
             "id": "run-scheduled-1",

@@ -1109,6 +1109,12 @@ async def auto_map_compat(payload: dict):
             sync_result = await sync_models(sync_models_payload)
             preferred_snapshot_id = _compat_preferred_snapshot_id_from_sync_result(sync_result, selected_model_names)
         except Exception as exc:
+            if (payload or {}).get("gate"):
+                # The sync readiness gate must judge the model as it is now:
+                # never approve a sync from the last stored state.
+                raise ExternalServiceError(
+                    f"Dry run before sync failed for project '{project_id}': {exc}"
+                ) from exc
             has_existing_project_mappings = any(
                 str(mapping.get("project_id") or "") == project_id
                 for mapping in _compat_mappings.values()
@@ -1296,7 +1302,41 @@ async def auto_map_compat(payload: dict):
         "upsert_delta": (sync_result.get("results") or [{}])[0].get("upsert_delta") if isinstance(sync_result, dict) else None,
         "results": sync_result.get("results") if isinstance(sync_result, dict) else [],
         "status": "ok",
+        # Outcome of the live dry run this auto-map ran (None when it ran none,
+        # e.g. preview mode or the fallback). The sync readiness gate blocks on
+        # "failed": mapping rows built from a failed run cannot be trusted.
+        "dry_run_status": _dry_run_status(sync_result),
+        "dry_run_errors": _dry_run_errors(sync_result),
     }
+
+
+def _dry_run_status(sync_result: Any) -> Optional[str]:
+    if not isinstance(sync_result, dict) or not sync_result:
+        return None
+    from semabridge.core.run_helpers import resolve_run_status
+
+    return resolve_run_status(sync_result)
+
+
+def _dry_run_errors(sync_result: Any) -> List[str]:
+    """Readable engine errors from a dry-run result (first few, per model)."""
+    if not isinstance(sync_result, dict):
+        return []
+    messages: List[str] = []
+    for result in sync_result.get("results") or []:
+        if not isinstance(result, dict):
+            continue
+        summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+        for err in summary.get("errors") or []:
+            text = str((err or {}).get("message") if isinstance(err, dict) else err or "").strip()
+            if text:
+                model = str(result.get("model") or "").strip()
+                messages.append(f"{model}: {text}" if model else text)
+        if not summary.get("errors") and str(result.get("status") or "").lower() in ("failed", "error"):
+            text = str(result.get("error") or result.get("message") or "").strip()
+            if text:
+                messages.append(text)
+    return messages[:5]
 
 
 async def update_mapping_compat(mapping_id: str, payload: dict):

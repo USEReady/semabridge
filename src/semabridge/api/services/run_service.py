@@ -548,6 +548,98 @@ def _is_run_active(run_id: Any) -> bool:
     return run_coordination.is_live_here(run_id)
 
 
+def _project_fingerprint(project_id: str, parsed_cfg: Dict[str, Any]) -> Optional[str]:
+    """Fingerprint of the source content + the project config, or None when
+    the source cannot be fingerprinted cheaply (then nothing is cached or
+    skipped: the safe answer is "changed")."""
+    source_cfg = parsed_cfg.get("source") if isinstance(parsed_cfg.get("source"), dict) else {}
+    stype = str(source_cfg.get("type") or "fabric").lower()
+    try:
+        from semabridge.sources.base import get_source_adapter
+        from semabridge.sources.fabric.fingerprint import compute_combined_fingerprint
+
+        adapter = get_source_adapter("pbix" if stype in ("local_pbix", "powerbi") else stype)
+        payload = (
+            source_cfg.get("pbix_path")
+            or source_cfg.get("path")
+            or source_cfg.get("model_payload")
+            or source_cfg.get("lastModifiedDateTime")
+        )
+        raw_fp = adapter.fingerprint(payload) if payload else None
+        if raw_fp:
+            combined = compute_combined_fingerprint(source_fingerprint=raw_fp, project_cfg=parsed_cfg)
+            # The global behavior.yaml changes the output too.
+            return f"{combined}|bh:{_behavior_file_hash()}" if combined else None
+    except Exception as fp_err:  # noqa: BLE001
+        logger.debug("[%s] Fingerprint computation skipped: %s", project_id, fp_err)
+    return None
+
+
+def _behavior_file_hash() -> str:
+    import hashlib
+
+    try:
+        from semabridge.core.config_loader import get_project_file_path
+
+        path = get_project_file_path("behavior.yaml")
+        return hashlib.sha256(path.read_bytes()).hexdigest()[:12] if path.exists() else "none"
+    except Exception:  # noqa: BLE001
+        return "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Readiness reuse ("plan once"): a clean readiness result is stored against
+# the source+config fingerprint; a sync of the identical content reuses it
+# instead of extracting and converting the source a second time.
+# ---------------------------------------------------------------------------
+
+_READINESS_COLLECTION = "readiness"
+
+
+def _readiness_cache_hours() -> float:
+    try:
+        return max(0.0, float(os.environ.get("SEMABRIDGE_READINESS_CACHE_HOURS", "24")))
+    except ValueError:
+        return 24.0
+
+
+def _cached_readiness(project_id: str, fingerprint: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not fingerprint or _readiness_cache_hours() <= 0:
+        return None
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+
+    from semabridge.repository import state_store
+
+    entry = state_store.load_keys(_READINESS_COLLECTION, [project_id]).get(project_id)
+    if not isinstance(entry, dict) or entry.get("fingerprint") != fingerprint:
+        return None
+    try:
+        at = _dt.fromisoformat(str(entry.get("at")).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if _dt.now(_tz.utc) - at > _td(hours=_readiness_cache_hours()):
+        return None
+    return entry
+
+
+def _store_readiness(project_id: str, fingerprint: Optional[str], preview_id: Optional[str]) -> None:
+    if not fingerprint:
+        return
+    from datetime import datetime as _dt, timezone as _tz
+
+    from semabridge.repository import state_store
+
+    state_store.apply_changes([(_READINESS_COLLECTION, project_id, {
+        "fingerprint": fingerprint, "preview_id": preview_id, "at": _dt.now(_tz.utc).isoformat(),
+    })])
+
+
+def _forget_readiness(project_id: str) -> None:
+    from semabridge.repository import state_store
+
+    state_store.apply_changes([(_READINESS_COLLECTION, project_id, None)])
+
+
 def _persist_run(run: Dict[str, Any]) -> None:
     """Write the run to the compat store AND its authoritative runs row."""
     _compat_save_store()
@@ -659,30 +751,7 @@ async def _perform_project_run_impl(run: dict, project_cfg: str, started: float)
         parsed_pcfg = _compat_parse_project_cfg_dict(project_cfg)
         features = ((parsed_pcfg.get("behavior") or {}).get("features") or {}) if isinstance(parsed_pcfg.get("behavior"), dict) else {}
         skip_unchanged = bool(features.get("skip_unchanged_sources"))
-        current_fingerprint = None
-        source_cfg = parsed_pcfg.get("source") if isinstance(parsed_pcfg.get("source"), dict) else {}
-        stype = str(source_cfg.get("type") or "fabric").lower()
-
-        try:
-            from semabridge.sources.base import get_source_adapter
-            from semabridge.sources.fabric.fingerprint import compute_combined_fingerprint
-
-            adapter_stype = "pbix" if stype in ("local_pbix", "powerbi") else stype
-            adapter = get_source_adapter(adapter_stype)
-            payload = (
-                source_cfg.get("pbix_path")
-                or source_cfg.get("path")
-                or source_cfg.get("model_payload")
-                or source_cfg.get("lastModifiedDateTime")
-            )
-            raw_fp = adapter.fingerprint(payload) if payload else None
-            if raw_fp:
-                current_fingerprint = compute_combined_fingerprint(
-                    source_fingerprint=raw_fp,
-                    project_cfg=parsed_pcfg,
-                )
-        except Exception as fp_err:
-            logger.debug("[%s] Fingerprint computation skipped: %s", project_id, fp_err)
+        current_fingerprint = _project_fingerprint(project_id, parsed_pcfg)
 
         if is_scheduled and skip_unchanged and current_fingerprint:
             try:
@@ -1117,7 +1186,14 @@ async def _assert_sync_ready(project_id: str, config_yaml: str, *, force: bool =
     # bounded pipeline pool -- never on the API event loop -- and is bounded
     # by SEMABRIDGE_READINESS_TIMEOUT_SECONDS (default 300). A timeout is a
     # 503 telling the user to run a dry run first; nothing is deployed.
-    payload = {"project_id": project_id, "dry_run": True, "config_yaml": config_yaml}
+    fingerprint = _project_fingerprint(project_id, parsed_cfg)
+    cached = _cached_readiness(project_id, fingerprint)
+    if cached is not None:
+        logger.info("[%s] Sync readiness reused: source and config unchanged since the last clean dry run", project_id)
+        preview = str(cached.get("preview_id") or "").strip()
+        return preview or None
+
+    payload = {"project_id": project_id, "dry_run": True, "config_yaml": config_yaml, "gate": True}
     timeout_s = _readiness_timeout_seconds()
     try:
         auto_map_res = await run_coordination.run_blocking(
@@ -1134,8 +1210,23 @@ async def _assert_sync_ready(project_id: str, config_yaml: str, *, force: bool =
                 ),
             },
         )
+    if isinstance(auto_map_res, dict) and str(auto_map_res.get("dry_run_status") or "").lower() == "failed":
+        _forget_readiness(project_id)
+        errors = [e for e in (auto_map_res.get("dry_run_errors") or []) if e]
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "status": "blocked",
+                "mode": "DRY_RUN",
+                "blocking_issue_count": max(1, len(errors)),
+                "blockers": [{"validation_code": "DRY_RUN_FAILED", "validation_message": e} for e in errors],
+                "message": "The dry run before this sync failed, so the sync was not started."
+                + (f" {errors[0]}" if errors else " Run a dry run to see why."),
+            },
+        )
     blockers = collect_blockers_fn(auto_map_res)
     if blockers:
+        _forget_readiness(project_id)
         raise HTTPException(
             status_code=409,
             detail={
@@ -1149,7 +1240,9 @@ async def _assert_sync_ready(project_id: str, config_yaml: str, *, force: bool =
     # The dry run just run for this sync: its snapshot is the content about
     # to be deployed (used by the removed-fields check).
     preview_id = str((auto_map_res or {}).get("project_id") or "").strip() if isinstance(auto_map_res, dict) else ""
-    return preview_id if preview_id and preview_id != project_id else None
+    result = preview_id if preview_id and preview_id != project_id else None
+    _store_readiness(project_id, fingerprint, result)
+    return result
 
 
 def _models_needing_initial_copy(project_id: str, config_yaml: str) -> Optional[List[str]]:
@@ -1355,6 +1448,9 @@ async def _gated_project_run(run: dict, project_cfg: str, started: float) -> dic
     lease = _acquire_project_lease(project_id, run_id)
     if not lease:
         return _mark_run_skipped(run, started, lease)
+    if _skip_unchanged_scheduled_run(run, project_cfg, started):
+        run_coordination.release_leases(run_id=run_id)
+        return run
     try:
         with run_coordination.live_run(run_id):
             dry_run_project_id = await _assert_sync_ready(project_id, project_cfg)
@@ -1442,6 +1538,44 @@ def _job_project_run(payload: dict, ctx: "job_queue.JobContext", *, gated: bool)
 
 job_queue.register_handler(JOB_PROJECT_RUN, lambda p, c: _job_project_run(p, c, gated=False))
 job_queue.register_handler(JOB_GATED_PROJECT_RUN, lambda p, c: _job_project_run(p, c, gated=True))
+
+
+def _skip_unchanged_scheduled_run(run: dict, project_cfg: str, started: float) -> bool:
+    """A scheduled run of an unchanged source (skip_unchanged_sources) ends as
+    "skipped" BEFORE the readiness dry run, which would otherwise extract and
+    convert the source for nothing. True when the run was skipped."""
+    schedule_label = str(run.get("schedule") or run.get("run_type") or "Manual").lower()
+    if "scheduled" not in schedule_label and "cron" not in schedule_label:
+        return False
+    parsed = _compat_parse_project_cfg_dict(project_cfg)
+    features = ((parsed.get("behavior") or {}).get("features") or {}) if isinstance(parsed.get("behavior"), dict) else {}
+    if not features.get("skip_unchanged_sources"):
+        return False
+    project_id = str(run.get("project_id") or "")
+    fingerprint = _project_fingerprint(project_id, parsed)
+    if not fingerprint:
+        return False
+    try:
+        last_success = next(
+            (r for r in (list_project_runs(project_id) or [])
+             if str(r.get("status", "")).lower() == "success" and r.get("source_fingerprint")),
+            None,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[%s] Unchanged-source check failed: %s", project_id, exc)
+        return False
+    if not last_success or last_success.get("source_fingerprint") != fingerprint:
+        return False
+    run.update({
+        "status": "skipped",
+        "message": "skipped, unchanged",
+        "source_fingerprint": fingerprint,
+        "duration_ms": elapsed_ms(started),
+        "completed_at": _compat_now_iso(),
+        "logs": [*run.get("logs", []), "skipped, unchanged"],
+    })
+    _persist_run(run)
+    return True
 
 
 def _run_project_background(run: dict, project_cfg: str, started: float) -> None:
