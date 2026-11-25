@@ -176,9 +176,25 @@ FLAGS: List[FeatureFlag] = [
     FeatureFlag("SEMABRIDGE_BIND_FROM_M_SOURCE", "bool", "false",
                 "Use the Power Query (M) partition source as the table-binding hint after saved per-project bindings.",
                 "connectors/table_binding_resolver.py"),
+    FeatureFlag("pbi_desktop_source", "bool", "false",
+                "Enable Power BI Desktop live semantic model source adapter.",
+                "sources/pbi_desktop/adapter.py"),
+    FeatureFlag("SEMABRIDGE_PBI_DESKTOP_SOURCE", "bool", "false",
+                "Enable Power BI Desktop live semantic model source adapter (alias).",
+                "sources/pbi_desktop/adapter.py"),
 ]
 
 _BY_NAME = {flag.name: flag for flag in FLAGS}
+
+
+def is_pbi_desktop_source_enabled() -> bool:
+    """Return True if pbi_desktop_source feature flag is enabled."""
+    val = (
+        os.environ.get("pbi_desktop_source")
+        or os.environ.get("PBI_DESKTOP_SOURCE")
+        or os.environ.get("SEMABRIDGE_PBI_DESKTOP_SOURCE", "")
+    ).strip().lower()
+    return val in _TRUE
 
 
 def get_flag(name: str) -> Optional[FeatureFlag]:

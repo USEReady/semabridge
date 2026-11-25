@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, Optional
 
-SourceType = Literal["fabric", "pbix", "snowflake"]
+SourceType = Literal["fabric", "pbix", "snowflake", "pbi_desktop"]
 CredentialOrigin = Literal["identity", "account", "interactive", "extractor_default"]
 
 
@@ -210,4 +210,10 @@ def _init_default_adapters() -> None:
 
     register_source_adapter("fabric", FabricAdapter())
     register_source_adapter("pbix", PbixAdapter())
+
+    try:
+        from semabridge.sources.pbi_desktop.adapter import PbiDesktopAdapter
+        register_source_adapter("pbi_desktop", PbiDesktopAdapter())
+    except ImportError:
+        pass
 
