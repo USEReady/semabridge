@@ -101,6 +101,7 @@ def outcomes(requests: Dict[SourceId, NameRequest], unresolved: List[NameRequest
                     f"your name {req.name} for {req.source_path} cannot be used in {ev['view']}: {ev['reason']}",
                     view=ev["view"], source_path=req.source_path,
                     details={"requested": req.name, "used_instead": ev["final"], "holder": ev.get("holder", "")},
+                    scope="view", views=[ev["view"]],
                 ))
     out += unresolved
     out.sort(key=lambda o: o.source_path)

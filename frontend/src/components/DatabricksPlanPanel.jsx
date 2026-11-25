@@ -44,6 +44,17 @@ const BTN = {
   fontSize: 11, fontWeight: 600, cursor: 'pointer',
 };
 
+const TABLE_STATUS = {
+  bound: 'exists (bound)',
+  proposed_not_created: 'proposed — not created',
+  unchecked: 'proposed — not checked (no Databricks connection)',
+};
+
+const PRE = {
+  margin: 0, padding: '8px 10px', background: 'var(--bg-surface-raised)', border: '1px solid var(--border-subtle)',
+  borderRadius: 6, fontSize: 11, lineHeight: 1.45, overflowX: 'auto', whiteSpace: 'pre', color: 'var(--text-primary)',
+};
+
 const REQUEST_LABEL = {
   kept: 'kept', changed: 'could not be kept', conflict: 'conflict (blocks publishing)',
   not_placed: 'not in any view', not_applicable: 'not applicable on Databricks',
@@ -166,6 +177,23 @@ export default function DatabricksPlanPanel({
         </span>
       </div>
 
+      <div style={{ ...ROW, color: 'var(--text-tertiary)' }}>
+        <Info size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+        <span>
+          Optional Databricks features in this plan:{' '}
+          {(settings.capabilities || []).length
+            ? settings.capabilities.map((c) => c.replace(/_/g, ' ')).join(', ')
+            : 'none'}
+          {settings.evidence?.status === 'valid'
+            ? ` — capability proof from ${String(settings.evidence.completed_at || '').slice(0, 10)}`
+              + (settings.evidence.dbsql_version ? `, DBSQL ${settings.evidence.dbsql_version}` : '')
+              + ' (not re-checked during preview; checked again before deploying)'
+              + (settings.evidence.not_enabled_by_admin?.length
+                ? `; proven but not enabled by the admin: ${settings.evidence.not_enabled_by_admin.join(', ')}` : '')
+            : settings.evidence?.reason ? ` — ${settings.evidence.reason}` : ''}
+        </span>
+      </div>
+
       {blockers.length > 0 && (
         <Section title="Publication blockers" count={blockers.length} defaultOpen tone="#f87171">
           {blockers.map((b, i) => (
@@ -173,7 +201,8 @@ export default function DatabricksPlanPanel({
               <AlertTriangle size={13} style={{ flexShrink: 0, marginTop: 1, color: '#f87171' }} />
               <span>
                 <strong style={{ color: 'var(--text-primary)' }}>{b.code.replace(/_/g, ' ')}</strong>
-                {b.view ? ` (${b.view})` : ''}: {b.message}
+                {b.scope === 'table' && b.views?.length ? ` (table ${b.table}; views: ${b.views.join(', ')})`
+                  : b.view ? ` (${b.view})` : b.scope === 'model' ? ' (whole plan)' : ''}: {b.message}
               </span>
             </div>
           ))}
@@ -182,12 +211,71 @@ export default function DatabricksPlanPanel({
 
       <Section title="Views" count={(plan.views || []).length}>
         {(plan.views || []).map((v) => (
-          <div key={v.name} style={ROW}>
-            <code style={{ color: 'var(--text-primary)', flexShrink: 0 }}>{v.name}</code>
-            <span style={{ overflowWrap: 'anywhere' }}>
-              {v.measures.length} measure{v.measures.length === 1 ? '' : 's'}: {v.measures.map((m) => m.name).join(', ')}
-              {' · '}{v.fields.length} field{v.fields.length === 1 ? '' : 's'}
-            </span>
+          <div key={v.name} style={{ ...ROW, flexDirection: 'column' }}>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <code style={{ color: 'var(--text-primary)', flexShrink: 0 }}>{v.name}</code>
+              <span style={{ overflowWrap: 'anywhere' }}>
+                {v.measures.length} measure{v.measures.length === 1 ? '' : 's'} · {v.fields.length} field{v.fields.length === 1 ? '' : 's'}
+              </span>
+            </div>
+            {v.measures.length > 0 && (
+              <details>
+                <summary style={{ cursor: 'pointer', fontSize: 11 }}>Measures with their final Databricks SQL</summary>
+                {v.measures.map((m) => (
+                  <div key={m.name} style={{ fontSize: 11, padding: '3px 0', overflowWrap: 'anywhere' }}>
+                    <code style={{ color: 'var(--text-primary)' }}>{m.name}</code>
+                    <span style={{ color: 'var(--text-tertiary)' }}> ({m.source_name}) = </span>
+                    <code>{m.expr}</code>
+                  </div>
+                ))}
+              </details>
+            )}
+          </div>
+        ))}
+      </Section>
+
+      {(plan.tables || []).length > 0 && (
+        <Section title="Tables" count={plan.tables.length}>
+          {plan.tables.map((t) => (
+            <div key={t.dataset} style={ROW}>
+              <span style={{ flex: '0 0 30%', overflowWrap: 'anywhere' }}><strong>{t.dataset}</strong></span>
+              <code style={{ flex: '1 1 40%', overflowWrap: 'anywhere' }}>
+                {[t.catalog, t.schema, t.name].filter(Boolean).join('.') || '(no location)'}
+              </code>
+              <span style={{ flex: '0 0 30%', color: t.status === 'bound' ? 'inherit' : '#fbbf24' }}>
+                {TABLE_STATUS[t.status] || t.status}
+              </span>
+            </div>
+          ))}
+        </Section>
+      )}
+
+      <Section title="View definitions (YAML)" count={(plan.definitions || []).length}>
+        {plan.meta?.definitions?.status && plan.meta.definitions.status !== 'written' ? (
+          <div style={{ ...ROW, color: '#fca5a5' }}>
+            <AlertTriangle size={13} style={{ flexShrink: 0, marginTop: 1 }} />
+            <span>Not written: {plan.meta.definitions.error}</span>
+          </div>
+        ) : (
+          <div style={{ ...ROW, color: 'var(--text-tertiary)' }}>
+            <Info size={13} style={{ flexShrink: 0, marginTop: 1 }} />
+            <span>Exactly what would be sent to Databricks. Nothing is created until deploy.</span>
+          </div>
+        )}
+        {(plan.definitions || []).map((d) => (
+          <div key={d.view} style={{ ...ROW, flexDirection: 'column' }}>
+            <details>
+              <summary style={{ cursor: 'pointer' }}>
+                <code style={{ color: 'var(--text-primary)' }}>{d.fqn}</code>
+                {d.warnings?.length ? <span style={{ color: '#fbbf24' }}> · {d.warnings.length} note(s)</span> : null}
+              </summary>
+              {d.warnings?.length > 0 && (
+                <ul style={{ margin: '6px 0', paddingLeft: 18, fontSize: 11 }}>
+                  {d.warnings.map((w) => <li key={w}>{w}</li>)}
+                </ul>
+              )}
+              <pre style={PRE}>{d.create_sql}</pre>
+            </details>
           </div>
         ))}
       </Section>

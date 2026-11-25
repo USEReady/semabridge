@@ -100,6 +100,10 @@ class RunContext:
     # PBIX reader that produced the model: "schema" (DataModelSchema JSON,
     # complete), "pbixray" (binary fallback) or "extract" (other path).
     pbix_parser: Optional[str] = None
+    # Objects already in the Databricks output schema (lowercase), listed by Step 6b.
+    databricks_existing_objects: Optional[Any] = None
+    # {"host", "warehouse_id"} the dry run talked to (probe evidence lookup, 3.5).
+    databricks_target: Optional[Dict[str, Any]] = None
     # Dry run: Step 8 builds the target DDL (against the live schema) for
     # the preview but writes no target artifacts.
     dry_run: bool = False

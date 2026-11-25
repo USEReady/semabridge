@@ -66,5 +66,6 @@ def build_fields(source: str, joins: List[JoinPlan], where: Dict[str, str], grap
                 source_id=sid,
                 match_method=bindings.match_method(dataset, name),
                 source_format=getattr(col, "format_string", None),
+                description=str(getattr(col, "description", "") or ""),
             ))
     return fields, notes

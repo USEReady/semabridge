@@ -295,6 +295,48 @@ async def save_planner_options(project_id: str, request: Request, body: PlannerO
     return {"success": True, "planner": planner, "config_version": saved.get("version")}
 
 
+class ProbeRunRequest(BaseModel):
+    # An EXISTING schema for the synthetic probe objects (nothing is created besides them).
+    probe_catalog: str
+    probe_schema: str
+
+
+@router.post('/api/projects/{project_id}/databricks/probes')
+async def run_databricks_probes(project_id: str, request: Request, body: ProbeRunRequest):
+    """Phase 3.5: run the capability probes with this project's Databricks connection.
+    Explicit action only (never part of a dry run). Creates and drops only its own
+    synthetic metric views; records the evidence; returns the report."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from semabridge.core.engine.targets.databricks import _databricks_connection_for_run
+    from semabridge.core.settings import get_settings
+    from semabridge.target_backends.databricks.probes.executor import run_probes
+
+    user_id = require_request_user_id(request)
+    if project_id in ("preview", "") or _is_preview_project_id(project_id):
+        raise HTTPException(status_code=400, detail="run probes for a saved Databricks project")
+    _assert_project_access(project_id, user_id)
+    cfg = _stored_config(project_id)
+    _require_databricks(project_id, cfg)
+    target = dict(_target_block(cfg))
+    target.update(catalog=body.probe_catalog, schema=body.probe_schema)
+    try:
+        global_cfg = get_settings().databricks
+    except Exception:
+        global_cfg = None   # no global settings: the project's linked account (identity_id) must supply it
+    ctx = SimpleNamespace(config=SimpleNamespace(target=SimpleNamespace(**target), _databricks=None,
+                                                 databricks=global_cfg))
+    info = _databricks_connection_for_run(ctx)
+    if info is None:
+        raise HTTPException(status_code=400, detail="no Databricks connection is configured for this project")
+    try:
+        return await asyncio.to_thread(run_probes, info, probe_catalog=body.probe_catalog,
+                                       probe_schema=body.probe_schema, created_by=user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
 @router.delete('/api/mappings')
 async def delete_mappings(request: Request, project_id: Optional[str] = None):
     user_id = require_request_user_id(request)

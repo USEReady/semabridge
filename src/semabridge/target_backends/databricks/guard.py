@@ -34,6 +34,7 @@ from typing import FrozenSet, Iterable, List, Optional, Tuple
 
 READ = "read"
 WRITE = "write"
+PROBE_PREFIX = "semabridge_probe_"
 
 
 class DatabricksGuardError(PermissionError):
@@ -46,13 +47,19 @@ class WritePlan:
 
     views          -- metric views the run creates or alters;
     staging_views  -- their staging copies (may also be dropped);
-    grant_views    -- views whose captured grants may be re-applied.
+    grant_views    -- views whose captured grants may be re-applied;
+    probe_views    -- 3.5 capability probes: synthetic metric views this probe run
+                      may CREATE (plain CREATE, never OR REPLACE) and DROP;
+    probe_plain_views -- 3.5 fallback only: plain views over inline VALUES this
+                      probe run may CREATE (plain) and DROP. Table DDL stays refused.
     Names are compared case-insensitively, without backticks.
     """
 
     views: FrozenSet[str] = field(default_factory=frozenset)
     staging_views: FrozenSet[str] = field(default_factory=frozenset)
     grant_views: FrozenSet[str] = field(default_factory=frozenset)
+    probe_views: FrozenSet[str] = field(default_factory=frozenset)
+    probe_plain_views: FrozenSet[str] = field(default_factory=frozenset)
 
     @staticmethod
     def of(views: Iterable[str] = (), staging_views: Iterable[str] = (), grant_views: Iterable[str] = ()) -> "WritePlan":
@@ -61,6 +68,15 @@ class WritePlan:
             staging_views=frozenset(normalize_name(v) for v in staging_views),
             grant_views=frozenset(normalize_name(v) for v in grant_views),
         )
+
+    @staticmethod
+    def for_probes(probe_views: Iterable[str] = (), probe_plain_views: Iterable[str] = ()) -> "WritePlan":
+        """A probe run's plan: only its own named synthetic objects (3.5)."""
+        names = [normalize_name(v) for v in (*probe_views, *probe_plain_views)]
+        if any(not n.split(".")[-1].startswith(PROBE_PREFIX) for n in names):
+            raise ValueError(f"probe objects must be named {PROBE_PREFIX}*")
+        return WritePlan(probe_views=frozenset(normalize_name(v) for v in probe_views),
+                         probe_plain_views=frozenset(normalize_name(v) for v in probe_plain_views))
 
 
 @dataclass(frozen=True)
@@ -294,7 +310,8 @@ def validate_databricks_sql(sql: str, mode: str = READ, plan: Optional[WritePlan
     # Write statements: only planned objects.
     if head == "CREATE":
         i = 1
-        if toks[i:i + 2] == ["OR", "REPLACE"]:
+        replace = toks[i:i + 2] == ["OR", "REPLACE"]
+        if replace:
             i += 2
         if i < len(toks) and toks[i] == "VIEW":
             i += 1
@@ -304,6 +321,8 @@ def validate_databricks_sql(sql: str, mode: str = READ, plan: Optional[WritePlan
             if name is None:
                 raise _refuse("CREATE VIEW without a name", sql)
             _require_qualified(name, sql)
+            if name in plan.probe_views or name in plan.probe_plain_views:
+                return _probe_create(name, toks[after:], replace, name in plan.probe_views, sql)
             if name not in plan.views and name not in plan.staging_views:
                 raise _refuse(f"view {name} is not in this run's plan", sql)
             head_part = toks[after:]
@@ -333,10 +352,12 @@ def validate_databricks_sql(sql: str, mode: str = READ, plan: Optional[WritePlan
         if name is None:
             raise _refuse("DROP VIEW without a name", sql)
         _require_qualified(name, sql)
-        if name not in plan.staging_views:
-            raise _refuse(f"only this run's staging views may be dropped, not {name}", sql)
         if after != len(toks):
             raise _refuse("unexpected text after DROP VIEW", sql)
+        if name in plan.probe_views or name in plan.probe_plain_views:
+            return GuardDecision(kind="DROP_PROBE_VIEW", object_name=name)
+        if name not in plan.staging_views:
+            raise _refuse(f"only this run's staging views may be dropped, not {name}", sql)
         return GuardDecision(kind="DROP_STAGING_VIEW", object_name=name)
 
     if head == "GRANT":
@@ -356,6 +377,24 @@ def validate_databricks_sql(sql: str, mode: str = READ, plan: Optional[WritePlan
         return GuardDecision(kind="GRANT", object_name=name)
 
     raise _refuse(f"{head} is not allowed", sql)
+
+
+def _probe_create(name: str, rest: List[str], replace: bool, metric: bool, sql: str) -> GuardDecision:
+    """3.5 probe objects: plain CREATE only (never OR REPLACE -- an existing object
+    is never replaced). A probe metric view must be WITH METRICS; a fallback plain
+    view must be ``AS SELECT ... / AS VALUES ...`` with no write keyword."""
+    if replace:
+        raise _refuse("probe objects are created with plain CREATE, never CREATE OR REPLACE", sql)
+    body_at = rest.index("$$BODY$$") if "$$BODY$$" in rest else len(rest)
+    if metric:
+        if not _has_pair(rest[:body_at], "WITH", "METRICS"):
+            raise _refuse("probe views must be metric views (WITH METRICS)", sql)
+        return GuardDecision(kind="CREATE_PROBE_VIEW", object_name=name)
+    if not rest or rest[0] != "AS" or len(rest) < 2 or rest[1] not in ("SELECT", "VALUES", "("):
+        raise _refuse("a probe plain view must be CREATE VIEW <name> AS SELECT/VALUES ...", sql)
+    if "$$BODY$$" in rest or any(t in _WRITE_WORDS for t in rest):
+        raise _refuse("a probe plain view may only select inline data", sql)
+    return GuardDecision(kind="CREATE_PROBE_PLAIN_VIEW", object_name=name)
 
 
 def _has_pair(tokens: List[str], a: str, b: str) -> bool:

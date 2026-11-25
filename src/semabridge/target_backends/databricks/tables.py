@@ -149,6 +149,16 @@ def read_unity_catalog(client: Any, schemas: Sequence[Tuple[str, str]]) -> Dict[
     return out
 
 
+def read_existing_objects(client: Any, catalog: str, schema: str) -> frozenset:
+    """Names (lowercase) of every object already in ``catalog.schema`` -- tables,
+    views and metric views alike (one relation namespace). Read-only."""
+    info = f"{_quote(catalog)}.information_schema"
+    rows = client.execute(
+        f"SELECT table_name FROM {info}.tables WHERE lower(table_schema) = {_sql_text(schema.lower())}"
+    ).rows
+    return frozenset(str(r.get("table_name") or "").lower() for r in rows if r.get("table_name"))
+
+
 # --- the plan ---------------------------------------------------------------------------
 
 

@@ -76,6 +76,10 @@ def name_blockers(p: Dict) -> List[Dict]:
     return [b for b in p["blockers"] if b["code"] == "name_override_conflict"]
 
 
+def security_codes(p: Dict) -> List[str]:
+    return [b["code"] for b in p["blockers"] if b["code"].startswith("security_roles")]
+
+
 # --- firm requests (explicit user edits) ------------------------------------------------------
 
 def test_firm_field_rename_changes_the_name_and_keeps_the_power_bi_label():
@@ -159,7 +163,7 @@ def test_soft_request_never_displaces_another_natural_name_and_is_reported():
     assert field(v, "Sales", "Qty")["name"] == "qty"
     o = outcome(p, "datasets.Sales.columns.Qty")
     assert o["status"] == "changed" and "natural name" in o["reason"]
-    assert p["blockers"] == []                      # soft: reported, not blocking
+    assert name_blockers(p) == []                   # soft: reported, not blocking
 
 
 def test_soft_request_loses_to_a_firm_request():
@@ -190,7 +194,7 @@ def test_requests_match_case_insensitively_when_unique():
 
 def test_no_requests_plan_is_unchanged():
     a, b = plan(store_sales()), plan(store_sales(), [])
-    assert a["views"] == b["views"] and a["name_requests"] == [] and b["blockers"] == []
+    assert a["views"] == b["views"] and a["name_requests"] == [] and name_blockers(b) == []
 
 
 # --- security roles ----------------------------------------------------------------------------
@@ -198,16 +202,18 @@ def test_no_requests_plan_is_unchanged():
 @pytest.mark.parametrize("roles, code", [(None, "security_roles_unknown"), (2, "security_roles_present"), (0, None)])
 def test_security_role_states_are_structured_blockers(roles, code):
     p = plan(store_sales(), roles=roles)
-    codes = [b["code"] for b in p["blockers"]]
-    assert codes == ([code] if code else [])
-    assert p["summary"]["publication_blocked"] is bool(code)
-    if roles:
-        assert p["blockers"][0]["details"]["security_roles"] == roles
+    assert security_codes(p) == ([code] if code else [])
+    if code:
+        assert p["summary"]["publication_blocked"] is True
+        b = next(x for x in p["blockers"] if x["code"] == code)
+        assert b["scope"] == "model"
+        if roles:
+            assert b["details"]["security_roles"] == roles
 
 
 def test_default_settings_treat_roles_as_unknown():
     p = plan_metric_views(store_sales(), None, PlannerSettings()).as_dict()
-    assert [b["code"] for b in p["blockers"]] == ["security_roles_unknown"]
+    assert security_codes(p) == ["security_roles_unknown"]
 
 
 def _ctx(source="pbix", roles=None, tmsl=None, parser=None):
@@ -320,4 +326,4 @@ def test_full_planner_run_with_saved_names_end_to_end():
     assert field(v, "Store", "StoreName")["name"] == "store_name"
     assert outcome(p, "datasets.Store.columns.StoreName")["status"] == "changed"
     assert outcome(p, "datasets.Sales.columns.Price")["status"] == "not_applicable"
-    assert p["blockers"] == []
+    assert name_blockers(p) == [] and security_codes(p) == []

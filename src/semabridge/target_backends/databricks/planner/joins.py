@@ -35,8 +35,15 @@ class _Keys:
     """The checked join condition for one edge."""
 
     def __init__(self, edge: Edge, parent_is_one: bool, parent_path: str, child_path: str,
-                 graph: ModelGraph, bindings: Bindings) -> None:
+                 graph: ModelGraph, bindings: Bindings, parent_local: str = "source",
+                 child_local: Optional[str] = None) -> None:
         self.pairs: List[Tuple[str, str]] = []
+        # Per key: which side (if any) is compared as text -- the structured form the
+        # writer renders with LOCAL aliases (nested joins name their parent by its join
+        # name, YAML 1.1), while on_expr keeps the full expression paths.
+        self.casts: List[Optional[str]] = []
+        local_terms: List[str] = []
+        child_local = child_local or child_path
         self.types: List[Tuple[str, str]] = []
         self.warnings: List[str] = []
         self.blocked: Optional[str] = None
@@ -58,21 +65,27 @@ class _Keys:
             self.types.append((p_type, c_type))
             left, right = f"{parent_path}.{_quote(p_real)}", f"{child_path}.{_quote(c_real)}"
             verdict, cast_side = keytypes.decide(p_type, c_type)
+            l_left, l_right = f"{parent_local}.{_quote(p_real)}", f"{child_local}.{_quote(c_real)}"
             label = f"{p_ds}[{p_col}] ({p_type}) = {c_ds}[{c_col}] ({c_type})"
             if verdict == keytypes.BLOCK and not self.blocked:
                 self.blocked = f"{label}: these types can't be compared on Databricks"
             elif verdict == keytypes.CAST:
                 if cast_side == "left":
                     left = f"CAST({left} AS STRING)"
+                    l_left = f"CAST({l_left} AS STRING)"
                 else:
                     right = f"CAST({right} AS STRING)"
+                    l_right = f"CAST({l_right} AS STRING)"
                 self.warnings.append(f"{label}: compared as text; values that differ only in format "
                                      "(e.g. leading zeros) won't match (checked in 3.9)")
             elif verdict == keytypes.WARN:
                 self.warnings.append(f"{label}: date-time against date only matches times at midnight, "
                                      "as in Power BI")
             terms.append(f"{left} = {right}")
+            local_terms.append(f"{l_left} = {l_right}")
+            self.casts.append(cast_side if verdict == keytypes.CAST else None)
         self.on_expr = " AND ".join(terms)
+        self.on_local = " AND ".join(local_terms)
 
 
 def build_joins(source: str, decisions: List[Decision], graph: ModelGraph, bindings: Bindings
@@ -126,7 +139,9 @@ def build_joins(source: str, decisions: List[Decision], graph: ModelGraph, bindi
         name = alias[target]
         full = name if parent == "source" else f"{plain[edge.many]}.{name}"
         qpath = _quote(name) if parent == "source" else f"{parent}.{_quote(name)}"
-        keys = _Keys(edge, parent_is_one=False, parent_path=parent, child_path=qpath, graph=graph, bindings=bindings)
+        parent_local = "source" if parent == "source" else _quote(plain[edge.many].split(".")[-1])
+        keys = _Keys(edge, parent_is_one=False, parent_path=parent, child_path=qpath, graph=graph, bindings=bindings,
+                     parent_local=parent_local, child_local=_quote(name))
         if keys.blocked:
             blocked[target] = keys.code
             notes.append(f"{target} not joined: {keys.blocked}; fields and measures that need it are left out")
@@ -136,6 +151,8 @@ def build_joins(source: str, decisions: List[Decision], graph: ModelGraph, bindi
             on=keys.pairs, reason="measure_dependency" if target in needed else "business_dimension",
             readiness=bindings.readiness(target), on_expr=keys.on_expr, key_types=keys.types,
             warnings=keys.warnings, relationship=keys.relationship,
+            alias=name, parent_alias=parent_local.strip("`").replace("``", "`") if parent_local != "source" else "source",
+            on_local=keys.on_local, key_casts=list(keys.casts),
         ))
         notes += [f"join {full}: {w}" for w in keys.warnings]
         where[target] = qpath
@@ -150,7 +167,7 @@ def build_joins(source: str, decisions: List[Decision], graph: ModelGraph, bindi
                 continue  # already joined (another composed measure) or not joinable
             name = alias[child]
             keys = _Keys(edge, parent_is_one=True, parent_path="source", child_path=_quote(name), graph=graph,
-                         bindings=bindings)
+                         bindings=bindings, parent_local="source", child_local=_quote(name))
             if keys.blocked:
                 blocked[child] = keys.code
                 notes.append(f"{child} not joined: {keys.blocked}; composed measures that need it are left out")
@@ -160,6 +177,7 @@ def build_joins(source: str, decisions: List[Decision], graph: ModelGraph, bindi
                 on=keys.pairs, cardinality="one_to_many", reason="measure_dependency",
                 readiness=bindings.readiness(child), on_expr=keys.on_expr, key_types=keys.types,
                 warnings=keys.warnings, relationship=keys.relationship,
+                alias=name, parent_alias="source", on_local=keys.on_local, key_casts=list(keys.casts),
             ))
             notes += [f"join {name}: {w}" for w in keys.warnings]
             where[child] = _quote(name)
