@@ -1542,6 +1542,8 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
     # must diff against the real project's last deployed snapshot.
     if payload.get("binding_project_id") and isinstance(config, dict):
         config["binding_project_id"] = str(payload["binding_project_id"])
+    if isinstance(payload.get("ontology_domain_ids"), list) and isinstance(config, dict):
+        config["ontology_domain_ids"] = [str(d) for d in payload["ontology_domain_ids"] if str(d or "").strip()]
     if payload.get("delta_baseline_project_id") and isinstance(config, dict):
         config["delta_baseline_project_id"] = str(payload["delta_baseline_project_id"])
         if isinstance(payload.get("delta_preview_overrides"), dict):

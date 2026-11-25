@@ -42,6 +42,15 @@ class DryRunRequest(BaseModel):
     selected_sources: List[str]
     # Sync mode chosen in the wizard (copy/upsert); overrides the saved one.
     sync_mode: Optional[str] = None
+    # Ontology domains saved in Step 4 before the project exists yet.
+    ontology_domain_ids: Optional[List[str]] = None
+
+
+class PreFlightDuplicateCheckRequest(BaseModel):
+    source_config: Dict[str, Any]
+    target_config: Dict[str, Any]
+    selected_sources: List[str] = []
+    project_name: Optional[str] = None
 
 class UpdateMappingRequest(BaseModel):
     target_name: Optional[str] = None
@@ -301,6 +310,7 @@ _DRY_RUN_DROPPED_CONFIG_KEYS = (
     "delta_baseline_project_id",
     "delta_preview_overrides",
     "binding_project_id",
+    "ontology_domain_ids",
 )
 
 
@@ -592,6 +602,7 @@ async def _run_dry_run_pipeline(
     selected_sources: List[str],
     sync_mode_override: Optional[str] = None,
     all_sources: Optional[List[str]] = None,
+    ontology_domain_ids: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """The actual dry-run pipeline: builds a preview project, runs the real
     extraction -> OSI -> SML pipeline with dry_run=True, builds entity
@@ -721,6 +732,8 @@ async def _run_dry_run_pipeline(
         "delta_preview_overrides": delta_preview_overrides,
         # Table-binding preview reads the real project's saved bindings.
         "binding_project_id": project_id,
+        # Ontology domains saved in Step 4 before project creation.
+        "ontology_domain_ids": list(ontology_domain_ids) if ontology_domain_ids else None,
         # Run only the dry-run model; naming is computed over every model.
         "scope_source_refs": scope_source_refs,
         # Pass account_id and user_id so credential scoping works for the
@@ -1144,6 +1157,70 @@ async def _run_dry_run_pipeline(
     }
 
 
+@router.post("/api/projects/{project_id}/duplicate-check")
+async def preflight_duplicate_check(
+    project_id: str,
+    http_request: Request,
+    request: PreFlightDuplicateCheckRequest,
+):
+    """Fast pre-Step-4 check: are any selected models already synced (or being
+    synced / dry-run) by another project to the same target database/schema?
+    """
+    import asyncio
+    from semabridge.api.services import duplicate_sync_service as dss
+
+    request_user_id = require_request_user_id(http_request)
+    validate_project_connector_accounts_belong_to_user(
+        request_user_id,
+        {
+            "source": request.source_config,
+            "target": request.target_config,
+            "targets": [request.target_config],
+        },
+    )
+    is_preview = _is_preview_project_id(project_id)
+    if not is_preview:
+        _assert_project_access(project_id, request_user_id)
+
+    selected = [str(s).strip() for s in (request.selected_sources or []) if str(s or "").strip()]
+    _, saved_cfg = _project_sync_settings(project_id) if not is_preview else ("copy", {})
+    planned_cfg, _ = _dry_run_config(
+        project_cfg=saved_cfg,
+        source_config=request.source_config or {},
+        target_config=request.target_config or {},
+        selected_sources=selected,
+        all_sources=selected if len(selected) > 1 else None,
+        keep_saved_target=False,
+    )
+    if request.project_name and str(request.project_name).strip():
+        planned_cfg["project_name"] = str(request.project_name).strip()
+
+    effective_pid = "" if is_preview else str(project_id).strip()
+    duplicates = await asyncio.to_thread(dss.find_duplicate_deployments, effective_pid, planned_cfg, False)
+    models = sorted({str(d.get("model") or "") for d in duplicates if d.get("model")})
+    others = sorted({str(d.get("other_project_name") or d.get("other_project_id") or "") for d in duplicates if (d.get("other_project_name") or d.get("other_project_id"))})
+    target_labels = sorted({str(d.get("target_label") or "") for d in duplicates if d.get("target_label")})
+    target_locs = sorted({str(d.get("target") or "").strip(".") for d in duplicates if str(d.get("target") or "").strip(".")})
+    target_phrase = ""
+    if target_labels and target_locs:
+        target_phrase = f" to {', '.join(target_labels)} ({', '.join(target_locs)})"
+    elif target_labels:
+        target_phrase = f" to {', '.join(target_labels)}"
+    elif target_locs:
+        target_phrase = f" to {', '.join(target_locs)}"
+    message = (
+        f"{len(models)} model(s) selected ({', '.join(models)}) are already synced{target_phrase} by {', '.join(others)}. "
+        "Review them before continuing, or change your selection."
+        if duplicates
+        else ""
+    )
+    return {
+        "has_duplicates": bool(duplicates),
+        "duplicates": duplicates,
+        "message": message,
+    }
+
+
 @router.post("/api/projects/{project_id}/dry-run")
 async def dry_run_mapping(
     project_id: str,
@@ -1202,6 +1279,7 @@ async def dry_run_mapping(
             target_config=request.target_config,
             selected_sources=selected_sources,
             sync_mode_override=request.sync_mode,
+            ontology_domain_ids=request.ontology_domain_ids,
         )
 
     except ValidationError as e:

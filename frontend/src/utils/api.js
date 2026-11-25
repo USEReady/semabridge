@@ -1825,6 +1825,16 @@ export const api = {
         }
     },
 
+    async checkDuplicateModels(projectId = 'preview', payload = {}) {
+        const pid = encodeURIComponent(projectId || 'preview');
+        const res = await authFetch(`${API_BASE_URL}/projects/${pid}/duplicate-check`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return handleResponse(res);
+    },
+
     /**
      * Multi-PBIX background dry-run jobs — background-job-plus-polling
      * pattern so an N-file batch never risks the HTTP timeout a single

@@ -46,6 +46,7 @@ class DryRunJobRequest(BaseModel):
     source_config: Dict[str, Any]
     target_config: Dict[str, Any]
     selected_sources: List[str]
+    ontology_domain_ids: Optional[List[str]] = None
 
 
 def _is_preview_path(project_id: str) -> bool:
@@ -97,12 +98,14 @@ async def create_dry_run_job_endpoint(
     if not _is_preview_path(project_id):
         _assert_project_access(project_id, request_user_id)
 
+    job_options = {"ontology_domain_ids": list(request.ontology_domain_ids)} if request.ontology_domain_ids else None
     job = create_dry_run_job(
         project_id=project_id,
         source_config=request.source_config,
         target_config=request.target_config,
         selected_sources=request.selected_sources,
         requested_by_user_id=request_user_id,
+        options=job_options,
     )
     background_tasks.add_task(run_dry_run_job, job["job_id"])
     job["status"] = "running"

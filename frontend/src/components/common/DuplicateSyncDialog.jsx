@@ -16,6 +16,8 @@ const REASON_LABELS = {
   same_content: 'Same metrics and columns',
   same_file_in_progress: 'Same PBIX file — another project is syncing it right now',
   same_file_dry_run: 'Same PBIX file — dry-run by another project, not synced yet',
+  same_model_in_progress: 'Same model — another project is syncing it right now',
+  same_model_dry_run: 'Same model — dry-run by another project, not synced yet',
 };
 
 const TITLES = {
@@ -120,7 +122,9 @@ function DuplicateBody({ duplicates, message, overwrites }) {
                 </td>
                 <td style={CELL}>
                   {d.other_project_name}
-                  <div style={{ color: 'var(--text-tertiary)', fontSize: 11.5 }}>{d.target}.{d.other_view_name}</div>
+                  <div style={{ color: 'var(--text-tertiary)', fontSize: 11.5 }}>
+                    {d.other_view_name ? `${d.target}.${d.other_view_name}` : d.target}
+                  </div>
                 </td>
                 <td style={CELL}>
                   {(d.reasons || []).map((r) => <div key={r}>{REASON_LABELS[r] || r}</div>)}
@@ -247,11 +251,16 @@ export default function DuplicateSyncDialog() {
       </>
     );
   } else {
+    const isWizardPrecheck = detail?.stage === 'wizard';
     footer = (
       <>
-        <button type="button" style={SECONDARY_BTN} onClick={() => answer('cancel')}>Cancel sync</button>
+        <button type="button" style={SECONDARY_BTN} onClick={() => answer('cancel')}>
+          {isWizardPrecheck ? 'Change selection' : 'Cancel sync'}
+        </button>
         <button type="button" style={PRIMARY_BTN} onClick={() => answer('confirm')}>
-          {overwrites ? 'Overwrite and sync' : 'Sync anyway'}
+          {isWizardPrecheck
+            ? (overwrites ? 'Continue (will overwrite)' : 'Continue anyway')
+            : (overwrites ? 'Overwrite and sync' : 'Sync anyway')}
         </button>
       </>
     );

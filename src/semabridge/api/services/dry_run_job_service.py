@@ -301,6 +301,7 @@ def _run_one_file_sync(
     target_config: Dict[str, Any],
     pbix_path: str,
     all_sources: Optional[List[str]] = None,
+    ontology_domain_ids: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Runs _run_dry_run_pipeline() for exactly one source (``pbix_path`` is
     the generic per-file source reference -- a .pbix path or a model name;
@@ -329,6 +330,7 @@ def _run_one_file_sync(
         # Every model of this job: a new (wizard) multi-model project's dry
         # run names each model exactly as project creation will.
         all_sources=list(all_sources or []),
+        ontology_domain_ids=list(ontology_domain_ids) if ontology_domain_ids else None,
     )
 
 
@@ -554,6 +556,7 @@ def run_dry_run_job(job_id: str) -> None:
                 target_config=target_config,
                 pbix_path=claim["source_ref"],
                 all_sources=all_sources,
+                ontology_domain_ids=options.get("ontology_domain_ids") if isinstance(options, dict) else None,
             ): claim
             for claim in claimed
         }

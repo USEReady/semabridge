@@ -36,7 +36,7 @@ import DraftBanner from '../components/common/DraftBanner';
 import ErrorBoundary from '../components/ErrorBoundary';
 import DryRunMappingTable, { isBlockingRow as isDryRunBlockingRow } from '../components/DryRunMappingTable';
 import {
-  buildDryRunPayload, resolveEffectiveSources, buildMappingSignature, MAX_MULTI_SOURCES,
+  buildDryRunPayload, resolveEffectiveSources, buildMappingSignature, extractSavedOntologyDomainIds, MAX_MULTI_SOURCES,
 } from '../utils/dryRunPayload';
 import {
   collectMappingOverrides, flattenSectionRows,
@@ -62,6 +62,13 @@ import { EMPTY_REVIEW } from '../components/CreateProjectWizard/ontologyReviewSt
 import { WizardHeader } from '../components/CreateProjectWizard/WizardHeader';
 import { WizardFooter } from '../components/CreateProjectWizard/WizardFooter';
 import { useConnectorAccounts } from '../hooks/useConnectorAccounts';
+import {
+  canJumpToWizardStep,
+  resolveWizardStepJump,
+  buildDuplicateCheckSignature,
+  hasSelectedWizardSource,
+} from '../utils/wizardStepNavigation';
+import { requestDuplicateSyncConfirmation } from '../utils/duplicateSyncPrompt';
 
 const STEPS = [
   { id: 1, label: 'Basic Info' },
@@ -290,6 +297,9 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   const [discoveryNonce, setDiscoveryNonce] = useState(0);
   // Step 4 (Ontology review) state; kept here so Back/Next preserves decisions.
   const [ontologyReview, setOntologyReview] = useState(EMPTY_REVIEW);
+  // Early pre-Step-4 "Model already synced" check state & acknowledgement.
+  const [duplicatePreview, setDuplicatePreview] = useState({ checking: false, duplicates: [], message: '', signature: '' });
+  const [acknowledgedDuplicateSig, setAcknowledgedDuplicateSig] = useState('');
   const isHydratedRef = useRef(false);
   const prevWorkspaceIdRef = useRef(null);
   const prevSourceConnectorRef = useRef(null);
@@ -731,6 +741,10 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     pbixUploadPath, selectedPbixFilePath, selectedModelNames,
   ]);
   const resolvedPbixPath = effectiveSources.singlePbixPath;
+  const savedOntologyDomainIds = useMemo(
+    () => extractSavedOntologyDomainIds(ontologyReview?.saved),
+    [ontologyReview?.saved],
+  );
 
   const currentMappingSignature = useMemo(() => buildMappingSignature({
     sourceConnector,
@@ -755,12 +769,14 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     pbixMultiFileMode,
     pbixFilePaths,
     effectiveSources: effectiveSources.sources,
+    ontologyDomainIds: savedOntologyDomainIds,
   }), [
     databricksAccountId, fabricAccountId, fabricWorkspaceId, intermediateFormat,
     resolvedPbixPath, selectedConnectionId, selectedDatabricksTables, selectedModelNames,
     selectedModels, snowflakeAccountId, snowflakeDatabase, snowflakeSchema,
     sourceConnector, targetAccount, targetConnectors, targetDatabase, targetSchema,
     targetWarehouse, pbixSourceMode, pbixMultiFileMode, pbixFilePaths, effectiveSources,
+    savedOntologyDomainIds,
   ]);
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -1122,14 +1138,14 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       setCreatedProject(project);
       const projectId = project?.id || project?.project_id;
 
-      // Attach the domain saved in the Ontology review step to the new project.
-      const reviewedDomainId = ontologyReview?.saved?.id;
-      if (projectId && reviewedDomainId) {
+      // Attach the domain(s) saved in the Ontology review step to the new project.
+      if (projectId && savedOntologyDomainIds.length > 0) {
         try {
           const current = await api.getProjectOntologyDomains(projectId);
           const ids = (current?.domains || []).map(d => d.id);
-          if (!ids.includes(reviewedDomainId)) {
-            await api.setProjectOntologyDomains(projectId, [...ids, reviewedDomainId]);
+          const toAttach = savedOntologyDomainIds.filter(id => !ids.includes(id));
+          if (toAttach.length > 0) {
+            await api.setProjectOntologyDomains(projectId, [...ids, ...toAttach]);
           }
         } catch (attachErr) {
           const msg = `The reviewed ontology was saved but not attached to the project: ${attachErr?.message || 'unknown error'}. Attach it from the project's Ontology tab.`;
@@ -1536,9 +1552,11 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   }, [allModels, modelQuery, modelQueryRegex, wsModels]);
 
   /* ─── Step 4: Ontology review (before the dry run) ─── */
-  // Same source config the dry run sends; PBIX gets real file paths so the
-  // backend can read each file without running the pipeline.
+  // Source-agnostic: PBIX, Fabric, Tableau, Snowflake, and Databricks all pass
+  // their full source_config + selected_sources so Step 4 deduplicates before Dry Run.
   const buildOntologyReviewRequest = useCallback(() => {
+    const tableauPath = effectiveSources.singlePbixPath || pbixUploadPath || selectedPbixFilePath || '';
+    const dbxTables = Array.from(selectedDatabricksTables || []).filter(Boolean);
     const { sourceConfig } = buildDryRunPayload({
       sourceConnector,
       targetConnectors,
@@ -1552,13 +1570,25 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       targetSchema,
       targetWarehouse,
       selectedModelNames,
+      selectedDatabricksTables: dbxTables,
       pbixPath: effectiveSources.isMulti ? '' : effectiveSources.singlePbixPath,
+      tableauPath,
     });
-    const selected = sourceConnector === 'pbix'
-      ? (effectiveSources.isMulti ? effectiveSources.sources : [effectiveSources.singlePbixPath]).filter(Boolean)
-      : selectedModelNames;
+    let selected = selectedModelNames;
+    if (sourceConnector === 'pbix') {
+      selected = (effectiveSources.isMulti ? effectiveSources.sources : [effectiveSources.singlePbixPath]).filter(Boolean);
+    } else if (sourceConnector === 'databricks') {
+      selected = dbxTables;
+    } else if (sourceConnector === 'tableau' && (!selectedModelNames || selectedModelNames.length === 0)) {
+      selected = [tableauPath].filter(Boolean);
+    }
     return { source_config: sourceConfig, selected_sources: selected };
-  }, [sourceConnector, targetConnectors, fabricAccountId, fabricWorkspaceId, snowflakeAccountId, databricksAccountId, snowflakeDatabase, snowflakeSchema, targetDatabase, targetSchema, targetWarehouse, selectedModelNames, effectiveSources]);
+  }, [
+    sourceConnector, targetConnectors, fabricAccountId, fabricWorkspaceId,
+    snowflakeAccountId, databricksAccountId, snowflakeDatabase, snowflakeSchema,
+    targetDatabase, targetSchema, targetWarehouse, selectedModelNames,
+    selectedDatabricksTables, pbixUploadPath, selectedPbixFilePath, effectiveSources,
+  ]);
 
   /* ─── Step validity ─── */
   const canAdvance = () => {
@@ -1663,6 +1693,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     const projectId = createdProject?.id || createdProject?.project_id || (editMode && initialData?.id) || 'preview';
     // Same derived source list the save uses (buildSourceConfig).
     const isMulti = effectiveSources.isMulti;
+    const tableauPath = effectiveSources.singlePbixPath || pbixUploadPath || selectedPbixFilePath || '';
     const { sourceConfig, targetConfig } = buildDryRunPayload({
       sourceConnector,
       targetConnectors,
@@ -1676,11 +1707,14 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       targetSchema,
       targetWarehouse,
       selectedModelNames,
+      selectedDatabricksTables,
       pbixPath: isMulti ? '' : effectiveSources.singlePbixPath,
+      tableauPath,
     });
 
     const effectiveTargetConfig = applyDatabricksRound2Options(targetConfig);
     const selectedSources = selectedModelNames;
+    const ontologyIdsPayload = savedOntologyDomainIds.length > 0 ? savedOntologyDomainIds : undefined;
 
     if (isMulti) {
       // >1 model (PBIX files or Fabric models): background job + polling,
@@ -1696,6 +1730,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
           source_config: sourceConfig,
           target_config: effectiveTargetConfig,
           selected_sources: effectiveSources.sources,
+          ontology_domain_ids: ontologyIdsPayload,
         });
         if (!job?.job_id) throw new Error('The dry-run job could not be created (no job id returned).');
         setMultiDryRunJob({ ...job, api_project_id: projectId });
@@ -1714,6 +1749,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         target_config: effectiveTargetConfig,
         selected_sources: selectedSources,
         sync_mode: useProjectWizardStore.getState().wizard.write_strategy || undefined,
+        ontology_domain_ids: ontologyIdsPayload,
       });
 
       if (response?.success === false) {
@@ -1750,8 +1786,9 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     }
   }, [
     applyDatabricksRound2Options, createdProject, sourceConnector, fabricWorkspaceId, snowflakeDatabase,
-    snowflakeSchema, targetConnectors, targetDatabase, targetSchema,
-    selectedModelNames, currentMappingSignature, fabricAccountId, effectiveSources,
+    snowflakeSchema, snowflakeAccountId, databricksAccountId, targetConnectors, targetDatabase, targetSchema,
+    targetWarehouse, selectedModelNames, selectedDatabricksTables, pbixUploadPath, selectedPbixFilePath,
+    currentMappingSignature, fabricAccountId, effectiveSources, savedOntologyDomainIds, editMode, initialData,
   ]);
 
   // ── Multi-model dry run: polling + per-model rows/edits keyed by file_id ──
@@ -1993,35 +2030,224 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     }
   }, [detectedMappings, createdProject, dryRunData]);
 
-  const goNext = async () => {
-    if (step === 6) { handleFinish(); return; }
-    if (step === 1) {
-      const isStep1Valid = Boolean(sourceConnector) && targetConnectors.size > 0 && Boolean(intermediateFormat);
-      if (!isStep1Valid) {
-        setShowStep1Validation(true);
-        return;
-      }
-      setShowStep1Validation(false);
+  const buildDuplicateCheckRequest = useCallback(() => {
+    const tableauPath = effectiveSources.singlePbixPath || pbixUploadPath || selectedPbixFilePath || '';
+    const dbxTables = Array.from(selectedDatabricksTables || []).filter(Boolean);
+    const { sourceConfig, targetConfig } = buildDryRunPayload({
+      sourceConnector,
+      targetConnectors,
+      fabricAccountId,
+      fabricWorkspaceId,
+      snowflakeAccountId,
+      databricksAccountId,
+      snowflakeDatabase,
+      snowflakeSchema,
+      targetDatabase,
+      targetSchema,
+      targetWarehouse,
+      selectedModelNames,
+      selectedDatabricksTables: dbxTables,
+      pbixPath: effectiveSources.isMulti ? '' : effectiveSources.singlePbixPath,
+      tableauPath,
+    });
+    let selected = selectedModelNames;
+    if (sourceConnector === 'pbix') {
+      selected = (effectiveSources.isMulti ? effectiveSources.sources : [effectiveSources.singlePbixPath]).filter(Boolean);
+    } else if (sourceConnector === 'databricks') {
+      selected = dbxTables;
+    } else if (sourceConnector === 'tableau' && (!selectedModelNames || selectedModelNames.length === 0)) {
+      selected = [tableauPath].filter(Boolean);
     }
-    if (step === 3) {
-      setMappingError('');
-      sessionStorage.removeItem('detectedRelationships');
-      if (mappingDryRunSignature !== currentMappingSignature) {
-        setDetectedMappings([]);
-        setDetectedEntityMappings([]);
-        setMappingReadyToProceed(false);
-        setMappingDryRunStatus('idle');
-        setMappingDryRunError('');
-        setMappingDryRunSignature('');
-        setUnmappedAcknowledged(false);
-        setMultiDryRunJob(null);
-      }
+    return {
+      source_config: sourceConfig,
+      target_config: applyDatabricksRound2Options(targetConfig),
+      selected_sources: selected,
+      project_name: name.trim() || undefined,
+    };
+  }, [
+    applyDatabricksRound2Options, sourceConnector, targetConnectors, fabricAccountId,
+    fabricWorkspaceId, snowflakeAccountId, databricksAccountId, snowflakeDatabase,
+    snowflakeSchema, targetDatabase, targetSchema, targetWarehouse, selectedModelNames,
+    selectedDatabricksTables, pbixUploadPath, selectedPbixFilePath, effectiveSources, name,
+  ]);
+
+  const currentDuplicateSignature = useMemo(() => {
+    const primaryTarget = Array.from(targetConnectors || [])[0] || '';
+    const tableauPath = effectiveSources.singlePbixPath || pbixUploadPath || selectedPbixFilePath || '';
+    let sources = selectedModelNames;
+    if (sourceConnector === 'pbix') {
+      sources = (effectiveSources.isMulti ? effectiveSources.sources : [effectiveSources.singlePbixPath]).filter(Boolean);
+    } else if (sourceConnector === 'databricks') {
+      sources = Array.from(selectedDatabricksTables || []);
+    } else if (sourceConnector === 'tableau' && (!selectedModelNames || selectedModelNames.length === 0)) {
+      sources = [tableauPath].filter(Boolean);
     }
-    if (step === 5 && !mappingReadyToProceed) {
-      setMappingError('Resolve blocking mapping validation issues before continuing.');
+    return buildDuplicateCheckSignature({
+      sourceConnector,
+      sources,
+      targetType: primaryTarget,
+      targetDatabase,
+      targetSchema,
+    });
+  }, [
+    sourceConnector, targetConnectors, effectiveSources, pbixUploadPath,
+    selectedPbixFilePath, selectedModelNames, selectedDatabricksTables,
+    targetDatabase, targetSchema,
+  ]);
+
+  const wizardNavState = useMemo(() => ({
+    currentStep: step,
+    editMode,
+    name,
+    sourceConnector,
+    targetConnectors,
+    intermediateFormat,
+    effectiveSources,
+    selectedModelNames,
+    selectedDatabricksTables,
+    pbixUploadPath,
+    selectedPbixFilePath,
+    snowflakeDatabase,
+    snowflakeSchema,
+    mappingReadyToProceed,
+    currentDuplicateSignature,
+    acknowledgedDuplicateSignature: acknowledgedDuplicateSig,
+  }), [
+    step, editMode, name, sourceConnector, targetConnectors, intermediateFormat,
+    effectiveSources, selectedModelNames, selectedDatabricksTables, pbixUploadPath,
+    selectedPbixFilePath, snowflakeDatabase, snowflakeSchema, mappingReadyToProceed,
+    currentDuplicateSignature, acknowledgedDuplicateSig,
+  ]);
+
+  // Early live duplicate detection right on Step 2 / Step 3 once source + target are selected
+  useEffect(() => {
+    if (step !== 2 && step !== 3) return undefined;
+    if (targetConnectors.size === 0 || !hasSelectedWizardSource(wizardNavState)) {
+      setDuplicatePreview({ checking: false, duplicates: [], message: '', signature: currentDuplicateSignature });
+      return undefined;
+    }
+    let cancelled = false;
+    const projectId = createdProject?.id || createdProject?.project_id || (editMode && initialData?.id) || 'preview';
+    setDuplicatePreview((prev) => ({ ...prev, checking: true }));
+    const timer = setTimeout(() => {
+      api.checkDuplicateModels(projectId, buildDuplicateCheckRequest())
+        .then((res) => {
+          if (cancelled) return;
+          setDuplicatePreview({
+            checking: false,
+            duplicates: Array.isArray(res?.duplicates) ? res.duplicates : [],
+            message: String(res?.message || ''),
+            signature: currentDuplicateSignature,
+          });
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setDuplicatePreview({ checking: false, duplicates: [], message: '', signature: currentDuplicateSignature });
+          }
+        });
+    }, 200);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [step, targetConnectors, wizardNavState, currentDuplicateSignature, createdProject, editMode, initialData, buildDuplicateCheckRequest]);
+
+  const promptWizardDuplicates = useCallback(async (duplicates, message) => {
+    const projectId = createdProject?.id || createdProject?.project_id || (editMode && initialData?.id) || '';
+    const confirmed = await requestDuplicateSyncConfirmation(
+      {
+        stage: 'wizard',
+        duplicates,
+        message: message || `${duplicates.length} selected model(s) are already synced by another project. Review them before continuing, or change your selection now.`,
+      },
+      projectId,
+    );
+    if (confirmed) {
+      setAcknowledgedDuplicateSig(currentDuplicateSignature);
+    }
+    return confirmed;
+  }, [createdProject, editMode, initialData, currentDuplicateSignature]);
+
+  const ensurePreStep4DuplicateCheck = useCallback(async () => {
+    if (acknowledgedDuplicateSig && acknowledgedDuplicateSig === currentDuplicateSignature) {
+      return true;
+    }
+    const projectId = createdProject?.id || createdProject?.project_id || (editMode && initialData?.id) || 'preview';
+    try {
+      const res = (duplicatePreview.signature === currentDuplicateSignature && !duplicatePreview.checking)
+        ? duplicatePreview
+        : await api.checkDuplicateModels(projectId, buildDuplicateCheckRequest());
+      const duplicates = Array.isArray(res?.duplicates) ? res.duplicates : [];
+      setDuplicatePreview({
+        checking: false,
+        duplicates,
+        message: String(res?.message || ''),
+        signature: currentDuplicateSignature,
+      });
+      if (duplicates.length === 0) return true;
+      return await promptWizardDuplicates(duplicates, res?.message);
+    } catch {
+      // Do not block wizard navigation if pre-flight network call fails; sync-start gate still runs later.
+      return true;
+    }
+  }, [
+    acknowledgedDuplicateSig, currentDuplicateSignature, createdProject,
+    editMode, initialData, duplicatePreview, buildDuplicateCheckRequest, promptWizardDuplicates,
+  ]);
+
+  const resetStaleDryRunOnSourceExit = useCallback(() => {
+    setMappingError('');
+    sessionStorage.removeItem('detectedRelationships');
+    if (mappingDryRunSignature !== currentMappingSignature) {
+      setDetectedMappings([]);
+      setDetectedEntityMappings([]);
+      setMappingReadyToProceed(false);
+      setMappingDryRunStatus('idle');
+      setMappingDryRunError('');
+      setMappingDryRunSignature('');
+      setUnmappedAcknowledged(false);
+      setMultiDryRunJob(null);
+    }
+  }, [mappingDryRunSignature, currentMappingSignature]);
+
+  const goToStep = useCallback(async (targetStep) => {
+    if (targetStep === 7) {
+      handleFinish();
       return;
     }
-    setStep(s => Math.min(6, s + 1));
+    const decision = resolveWizardStepJump(targetStep, wizardNavState);
+    if (!decision.allowed) {
+      if (decision.reason === 'step1_invalid') {
+        setShowStep1Validation(true);
+      } else if (decision.reason === 'no_source_selected') {
+        setModelSelectionNotice('Select at least one source model or file before continuing.');
+      } else if (decision.reason === 'dry_run_incomplete') {
+        setMappingError('Run Dry Run and resolve blocking mapping validation issues before continuing.');
+      }
+      if (decision.fallbackStep && decision.fallbackStep !== step) {
+        setStep(decision.fallbackStep);
+      }
+      return;
+    }
+
+    setShowStep1Validation(false);
+    if (step <= 3 && decision.targetStep >= 4) {
+      resetStaleDryRunOnSourceExit();
+    }
+    if (decision.requiresDuplicateCheck) {
+      const proceed = await ensurePreStep4DuplicateCheck();
+      if (!proceed) {
+        if (step < 3 && sourceConnector !== 'pbix' && sourceConnector !== 'tableau') {
+          setStep(3);
+        }
+        return;
+      }
+    }
+    setStep(decision.targetStep);
+  }, [wizardNavState, step, setStep, resetStaleDryRunOnSourceExit, ensurePreStep4DuplicateCheck, sourceConnector]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const goNext = async () => {
+    await goToStep(step === 6 ? 7 : step + 1);
   };
   const goBack = () => setStep(s => Math.max(1, s - 1));
 
@@ -2146,6 +2372,8 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         name={name}
         step={step}
         canUpsert={canProjectUpsert(initialData)}
+        onSelectStep={goToStep}
+        canJumpToStep={(target) => canJumpToWizardStep(target, wizardNavState)}
       />
 
       {/* Main Content Area */}
@@ -2163,6 +2391,48 @@ export default function CreateProjectPage({ editMode = false, initialData = null
           maxWidth: (step >= 3 && step <= 5) ? 1400 : 900,
           transition: 'max-width 0.3s ease'
         }}>
+          {(step === 2 || step === 3) && duplicatePreview.duplicates.length > 0 && (
+            <div
+              role="alert"
+              style={{
+                marginBottom: 20,
+                padding: '12px 16px',
+                borderRadius: 12,
+                background: 'var(--color-warning-bg)',
+                border: '1px solid var(--color-warning)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
+                flexWrap: 'wrap',
+              }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 12.5, color: 'var(--text-primary)' }}>
+                <strong style={{ color: 'var(--color-warning)' }}>Model already synced</strong>
+                <span>
+                  {duplicatePreview.message || `${duplicatePreview.duplicates.length} selected model(s) are already synced by another project.`}
+                  {acknowledgedDuplicateSig === currentDuplicateSignature ? ' (Confirmed to continue)' : ''}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => promptWizardDuplicates(duplicatePreview.duplicates, duplicatePreview.message)}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 8,
+                  border: '1px solid var(--color-warning)',
+                  background: 'var(--bg-surface)',
+                  color: 'var(--text-primary)',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                Review details
+              </button>
+            </div>
+          )}
           {/* Step content */}
           {step === 1 && (
             <StepBasicInfo

@@ -11,7 +11,9 @@ export function buildDryRunPayload({
   targetSchema,
   targetWarehouse,
   selectedModelNames,
+  selectedDatabricksTables,
   pbixPath,
+  tableauPath,
 }) {
   const sourceConfig = { type: sourceConnector };
 
@@ -21,12 +23,36 @@ export function buildDryRunPayload({
   }
 
   if (sourceConnector === 'snowflake') {
+    if (snowflakeAccountId) sourceConfig.identity_id = snowflakeAccountId;
     if (snowflakeDatabase) sourceConfig.database = snowflakeDatabase;
     if (snowflakeSchema) sourceConfig.schema = snowflakeSchema;
   }
 
   if (sourceConnector === 'pbix' && pbixPath) {
     sourceConfig.pbix_path = pbixPath;
+  }
+
+  if (sourceConnector === 'tableau') {
+    const resolvedTableauPath = String(tableauPath || pbixPath || '').trim();
+    if (resolvedTableauPath) {
+      sourceConfig.path = resolvedTableauPath;
+      sourceConfig.file_path = resolvedTableauPath;
+    }
+  }
+
+  if (sourceConnector === 'databricks') {
+    if (databricksAccountId) sourceConfig.identity_id = databricksAccountId;
+    const dbxTables = Array.isArray(selectedDatabricksTables)
+      ? selectedDatabricksTables.map((t) => String(t || '').trim()).filter(Boolean)
+      : Array.from(selectedDatabricksTables || []).map((t) => String(t || '').trim()).filter(Boolean);
+    if (dbxTables.length > 0) {
+      sourceConfig.tables = dbxTables;
+      const firstParts = dbxTables[0].split('.').map((p) => p.replace(/`/g, '').trim()).filter(Boolean);
+      if (firstParts.length >= 3) {
+        sourceConfig.catalog = firstParts[0];
+        sourceConfig.schema = firstParts[1];
+      }
+    }
   }
 
   if (Array.isArray(selectedModelNames) && selectedModelNames.length > 0) {
@@ -151,6 +177,17 @@ export function resolveEffectiveSources({
   };
 }
 
+export function extractSavedOntologyDomainIds(saved) {
+  if (!saved || typeof saved !== 'object') return [];
+  if (Array.isArray(saved.domains) && saved.domains.length > 0) {
+    return cleanList(saved.domains.map((d) => d?.id));
+  }
+  if (saved.id) {
+    return cleanList([saved.id]);
+  }
+  return [];
+}
+
 /**
  * buildMappingSignature — stable string identifying every input that affects
  * a dry run's result. When it changes, any previous dry run (single OR
@@ -183,5 +220,6 @@ export function buildMappingSignature(input = {}) {
     // Order-sensitive on purpose: the job's file order follows this list.
     pbixFilePaths: Array.isArray(input.pbixFilePaths) ? input.pbixFilePaths.map(String) : [],
     effectiveSources: Array.isArray(input.effectiveSources) ? input.effectiveSources.map(String) : [],
+    ontologyDomainIds: sorted(input.ontologyDomainIds),
   });
 }

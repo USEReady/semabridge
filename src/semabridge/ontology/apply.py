@@ -150,6 +150,8 @@ class OntologyApplier:
         self.unmatched: List[str] = []
         self.ambiguous: List[str] = []
         self.matched: List[str] = []
+        self.merged_metrics: List[Dict[str, Any]] = []
+        self.renamed_metrics: List[Dict[str, Any]] = []
         # Domain metrics whose formula differs from the BI (PBIX) measure they
         # annotate: BI formulas are read-only, so the domain formula is ignored.
         self.formula_overrides_ignored: List[Dict[str, Any]] = []
@@ -293,13 +295,32 @@ class OntologyApplier:
                 continue
             label = f"domain '{dname}' metric '{metric.name}'"
             m_rules, m_filter = self._effective_rules_and_filter(dom, metric)
+            tags_cf = {_cf(t) for t in (getattr(metric, "tags", None) or [])}
+            is_review_merged = "ontology_merged" in tags_cf or len(metric.maps_to or []) > 1
+            is_review_renamed = "ontology_renamed" in tags_cf
             cands = self._match_metric(metric)
+
+            if len(cands) > 1 and is_review_merged:
+                keeper = self._deduplicate_metric_group(metric, cands, rename_canonical=("ontology_merged" in tags_cf or is_review_renamed))
+                cands = [keeper]
+
             if len(cands) == 1:
+                target_metric = cands[0]
+                extra_syns: List[str] = []
+                if ("ontology_merged" in tags_cf or is_review_renamed) and _cf(target_metric.unique_name) != _cf(metric.name):
+                    old_name = str(target_metric.unique_name)
+                    if not any(m is not target_metric and _cf(m.unique_name) == _cf(metric.name) for m in (getattr(self.model, "metrics", None) or [])):
+                        self._rewrite_sibling_metric_refs({old_name: metric.name})
+                        _set(target_metric, "unique_name", metric.name)
+                        _set(target_metric, "label", metric.label or metric.name)
+                        extra_syns.append(old_name)
+                        self.renamed_metrics.append({"old": old_name, "new": metric.name})
+                        self.idx = _ModelIndex(self.model)
                 self._add(
                     self.metric_layers,
-                    cands[0],
+                    target_metric,
                     _Annot(
-                        synonyms=list(metric.synonyms),
+                        synonyms=_union(list(metric.synonyms), extra_syns),
                         description=metric.description,
                         business_rules=m_rules,
                         data_steward=metric.data_steward,
@@ -308,14 +329,71 @@ class OntologyApplier:
                         sources=[f"domain:{dname}"],
                     ),
                 )
-                self.matched.append(f"{label} -> metric {cands[0].unique_name}")
-                self._check_formula_override(dname, metric, cands[0])
+                self.matched.append(f"{label} -> metric {target_metric.unique_name}")
+                self._check_formula_override(dname, metric, target_metric)
             elif len(cands) > 1:
                 self.ambiguous.append(
                     f"{label}: matches several metrics ({', '.join(m.unique_name for m in cands)}); add 'maps_to'"
                 )
             else:
                 self.unmatched.append(f"{label}: no metric in this model matches (maps_to / name / label / synonyms)")
+
+    def _rewrite_sibling_metric_refs(self, rewrites: Dict[str, str]) -> None:
+        """Rewrite [OldMeasure] bracket references inside sibling metrics' expressions."""
+        clean_map = {str(old): str(new) for old, new in rewrites.items() if old and new and _cf(old) != _cf(new)}
+        if not clean_map:
+            return
+        for sibling in getattr(self.model, "metrics", None) or []:
+            expr = getattr(sibling, "expression", None)
+            if isinstance(expr, str) and "[" in expr:
+                updated = expr
+                for old_name, new_name in clean_map.items():
+                    pattern = re.compile(r"\[\s*" + re.escape(old_name) + r"\s*\]", flags=re.I)
+                    updated = pattern.sub(f"[{new_name}]", updated)
+                if updated != expr:
+                    _set(sibling, "expression", updated)
+
+    def _deduplicate_metric_group(self, metric: Any, cands: List[Any], *, rename_canonical: bool) -> Any:
+        """Collapse duplicate measures in ``self.model.metrics`` into one surviving metric."""
+        ordered = sorted(
+            cands,
+            key=lambda m: (0 if _cf(m.unique_name) == _cf(metric.name) else 1),
+        )
+        keeper = ordered[0]
+        redundant = ordered[1:]
+        dropped_ids = {id(r) for r in redundant}
+        old_keeper_name = str(keeper.unique_name)
+        dropped_names = [str(r.unique_name) for r in redundant]
+
+        model_metrics = list(getattr(self.model, "metrics", None) or [])
+        surviving = [m for m in model_metrics if id(m) not in dropped_ids]
+        _set(self.model, "metrics", surviving)
+
+        target_name = metric.name if (
+            rename_canonical
+            and not any(m is not keeper and _cf(m.unique_name) == _cf(metric.name) for m in surviving)
+        ) else old_keeper_name
+
+        ref_map = {r_name: target_name for r_name in dropped_names}
+        if _cf(old_keeper_name) != _cf(target_name):
+            ref_map[old_keeper_name] = target_name
+        self._rewrite_sibling_metric_refs(ref_map)
+
+        extra_syns = [n for n in [old_keeper_name, *dropped_names] if _cf(n) != _cf(target_name)]
+        existing_syns = list(getattr(keeper, "synonyms", None) or [])
+        _set(keeper, "synonyms", _union(existing_syns, extra_syns))
+        if _cf(old_keeper_name) != _cf(target_name):
+            _set(keeper, "unique_name", target_name)
+            _set(keeper, "label", metric.label or target_name)
+
+        self.merged_metrics.append({
+            "name": str(keeper.unique_name),
+            "kept_from": old_keeper_name,
+            "merged_from": [old_keeper_name, *dropped_names],
+            "dropped": dropped_names,
+        })
+        self.idx = _ModelIndex(self.model)
+        return keeper
 
     def _check_formula_override(self, dname: str, metric: Any, target: Any) -> None:
         """Record a finding when a domain metric carries a formula that differs from
@@ -407,6 +485,12 @@ class OntologyApplier:
                 for m in self.idx.resolve_metric_ref(ref):
                     if m not in found:
                         found.append(m)
+            if not found:
+                tags_cf = {_cf(t) for t in (getattr(metric, "tags", None) or [])}
+                if "ontology_merged" in tags_cf or "ontology_renamed" in tags_cf:
+                    for m in self.idx.metric_by_key.get(_cf(metric.name), []):
+                        if m not in found:
+                            found.append(m)
             return _narrow(found)
         for keys in ([metric.name], [metric.label], list(metric.synonyms)):
             found = []
@@ -452,7 +536,12 @@ class OntologyApplier:
         counts = {"tables": 0, "columns": 0, "metrics": 0}
         # What the ontology actually changed on the model (vs. the BI source),
         # so a COPY-mode dry run can show description / synonym changes too.
-        self.changes: Dict[str, List[Dict[str, Any]]] = {"descriptions": [], "synonyms": []}
+        self.changes: Dict[str, List[Dict[str, Any]]] = {
+            "descriptions": [],
+            "synonyms": [],
+            "merged_metrics": list(self.merged_metrics),
+            "renamed_metrics": list(self.renamed_metrics),
+        }
         for kind, layers_map in (("tables", self.table_layers), ("columns", self.column_layers), ("metrics", self.metric_layers)):
             for oid, layers in layers_map.items():
                 obj = self._objs[oid]
@@ -694,6 +783,7 @@ def apply_project_ontology(
     conflict_resolution: Optional[str] = None,
     domain_priority: Optional[Iterable[str]] = None,
     model_id: Optional[str] = None,
+    explicit_domain_ids: Optional[Iterable[str]] = None,
 ) -> Dict[str, Any]:
     """Load the project's overrides + attached domains and apply them to ``model``
     (and, identically, to every model in ``extra_models``, e.g. the OSI model).
@@ -716,10 +806,10 @@ def apply_project_ontology(
 
         overrides = load_ontology_overrides(project_id)
     resolved_model_id = None
+    all_candidate_names = [*(model_names or []), getattr(model, "unique_name", None), getattr(model, "label", None)]
     if project_id and hasattr(store, "domains_for"):
         resolved_model_id = resolve_project_model_id(
-            store, project_id, model_id,
-            [*(model_names or []), getattr(model, "unique_name", None), getattr(model, "label", None)],
+            store, project_id, model_id, all_candidate_names,
         )
         domains = (
             store.domains_for(project_id, resolved_model_id, attached_only=True)
@@ -727,6 +817,30 @@ def apply_project_ontology(
         )
     else:
         domains = store.get_project_domains(project_id) if project_id else []
+
+    if explicit_domain_ids:
+        from semabridge.ontology.models import model_key
+
+        run_model_keys = {
+            model_key(raw)
+            for raw in [model_id, resolved_model_id, *all_candidate_names]
+            if raw and model_key(raw)
+        }
+        seen_dom_keys = {(getattr(d, "id", None) or getattr(d, "domain", "")) for d in domains}
+        for raw_did in explicit_domain_ids:
+            did = str(raw_did or "").strip()
+            if not did:
+                continue
+            dom = store.get_domain(did) if hasattr(store, "get_domain") else None
+            if dom is None:
+                continue
+            src_mid = model_key(getattr(dom, "source_model_id", None) or "")
+            if src_mid and run_model_keys and src_mid not in run_model_keys:
+                continue
+            dkey = getattr(dom, "id", None) or getattr(dom, "domain", "")
+            if dkey not in seen_dom_keys:
+                domains.append(dom)
+                seen_dom_keys.add(dkey)
     attach_info = store.describe_project_domains(project_id) if project_id else {"missing_domain_ids": []}
     if _norm_resolution(conflict_resolution) is None and project_id and hasattr(store, "get_conflict_resolution"):
         conflict_resolution = store.get_conflict_resolution(project_id)
@@ -846,12 +960,18 @@ def apply_ontology_for_run(engine: Any, context: Any) -> None:
         # The model file THIS job was extracted from identifies the project
         # model, so only that model's domain (+ shared ones) is applied.
         pbix_path = getattr(context, "pbix_path", None)
+        explicit_domain_ids = payload.get("ontology_domain_ids")
+        if isinstance(explicit_domain_ids, str):
+            explicit_domain_ids = [d.strip() for d in explicit_domain_ids.split(",") if d.strip()]
+        elif not isinstance(explicit_domain_ids, list):
+            explicit_domain_ids = None
         report = apply_project_ontology(
             effective_project_id, sml,
             extra_models=[osi], model_names=[n for n in [*names, pbix_path] if n],
             model_id=payload.get("ontology_model_id") or payload.get("model_id"),
             conflict_resolution=resolution,
             domain_priority=priority,
+            explicit_domain_ids=explicit_domain_ids,
         )
         vq_count = _attach_project_verified_queries(effective_project_id, sml, osi)
         report["verified_queries_count"] = vq_count

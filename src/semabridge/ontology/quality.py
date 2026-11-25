@@ -97,7 +97,7 @@ def source_metrics_from_osi(model: Any, source: Optional[str] = None) -> List[So
     out: List[SourceMetric] = []
     src = source or getattr(model, "label", None) or getattr(model, "unique_name", None)
     for m in getattr(model, "metrics", None) or []:
-        expr = getattr(m, "expression", None)
+        expr = getattr(m, "expression", None) or getattr(m, "sql_expression", None)
         if not expr and getattr(m, "source_column", None):
             agg = str(getattr(m, "aggregation", None) or "sum").upper()
             expr = f"{agg}({getattr(m, 'dataset', '')}[{m.source_column}])"
@@ -410,6 +410,7 @@ def apply_review_decisions(
         if keeper.name != canonical:
             synonyms.append(keeper.name)
         synonyms = [s for s in synonyms if s and s.casefold() != canonical.casefold()]
+        merged_tags = list(OrderedDict.fromkeys([*(keeper.tags or []), "ontology_merged"]))
         metrics[keep_pos] = keeper.model_copy(
             update={
                 "name": canonical,
@@ -417,6 +418,7 @@ def apply_review_decisions(
                 "maps_to": list(OrderedDict.fromkeys(bound)),
                 "synonyms": list(OrderedDict.fromkeys(synonyms)),
                 "description": description,
+                "tags": merged_tags,
                 "origin": "user",
             }
         )
@@ -440,8 +442,16 @@ def apply_review_decisions(
                 report["skipped"].append(f"rename {name} -> {new_name or '?'}")
                 continue
             met = metrics[pos]
+            renamed_tags = list(OrderedDict.fromkeys([*(met.tags or []), "ontology_renamed"]))
             metrics[pos] = met.model_copy(
-                update={"name": new_name, "maps_to": list(met.maps_to) or [met.name], "origin": "user"}
+                update={
+                    "name": new_name,
+                    "label": new_name,
+                    "maps_to": list(met.maps_to) or [met.name],
+                    "synonyms": list(OrderedDict.fromkeys([*(met.synonyms or []), met.name])),
+                    "tags": renamed_tags,
+                    "origin": "user",
+                }
             )
             report["renamed"].append(f"{name} -> {new_name}")
 

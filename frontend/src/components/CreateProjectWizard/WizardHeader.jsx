@@ -3,7 +3,17 @@ import { X, Check, Layers, Sparkles } from 'lucide-react';
 import { STEPS } from '../../utils/constants';
 import { useProjectWizardStore } from '../../store/projectWizardStore';
 
-export function WizardHeader({ editMode, hasMeaningfulData, clearWizardState, navigate, name, step, canUpsert = false }) {
+export function WizardHeader({
+  editMode,
+  hasMeaningfulData,
+  clearWizardState,
+  navigate,
+  name,
+  step,
+  canUpsert = false,
+  onSelectStep,
+  canJumpToStep,
+}) {
   const setWizardState = useProjectWizardStore(state => state.setWizardState);
   
   return (
@@ -161,14 +171,31 @@ export function WizardHeader({ editMode, hasMeaningfulData, clearWizardState, na
           const targetStep = idx + 1;
           const isCompleted = step > targetStep;
           const isActive = step === targetStep;
-          const canJump = editMode || targetStep <= step;
+          const isReachable = typeof canJumpToStep === 'function'
+            ? canJumpToStep(targetStep)
+            : (editMode || targetStep <= step);
+          const handleStepClick = () => {
+            if (typeof onSelectStep === 'function') {
+              onSelectStep(targetStep);
+              return;
+            }
+            if (isReachable) {
+              setWizardState({ currentStepIndex: targetStep });
+            }
+          };
+          const tooltip = isActive
+            ? `Current Step ${targetStep}: ${s.label}`
+            : isReachable
+              ? `Go to Step ${targetStep}: ${s.label}`
+              : `Complete earlier required steps before jumping to Step ${targetStep}: ${s.label}`;
           return (
             <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <button
                 type="button"
-                disabled={!canJump}
-                onClick={() => canJump && setWizardState({ step: targetStep })}
-                title={canJump ? `Go to Step ${targetStep}: ${s.label}` : `Step ${targetStep}: ${s.label}`}
+                onClick={handleStepClick}
+                aria-label={`Step ${targetStep}: ${s.label}`}
+                aria-current={isActive ? 'step' : undefined}
+                title={tooltip}
                 style={{
                   width: isActive ? 28 : 24,
                   height: isActive ? 28 : 24,
@@ -179,7 +206,8 @@ export function WizardHeader({ editMode, hasMeaningfulData, clearWizardState, na
                   fontSize: 11,
                   fontWeight: 700,
                   padding: 0,
-                  cursor: canJump ? 'pointer' : 'default',
+                  cursor: isReachable ? 'pointer' : 'not-allowed',
+                  opacity: isReachable || isActive ? 1 : 0.65,
                   transition: 'all 0.2s ease',
                   background: isActive
                     ? 'var(--accent-blue)'
@@ -190,11 +218,15 @@ export function WizardHeader({ editMode, hasMeaningfulData, clearWizardState, na
                     ? '#ffffff'
                     : isCompleted
                     ? 'var(--color-success)'
+                    : isReachable
+                    ? 'var(--text-secondary)'
                     : 'var(--text-quaternary)',
                   border: isActive
                     ? '2px solid var(--border-focus)'
                     : isCompleted
                     ? '1.5px solid var(--color-success)'
+                    : isReachable
+                    ? '1.5px solid var(--accent-blue)'
                     : '1.5px solid var(--border-main)',
                   boxShadow: isActive ? '0 0 12px var(--color-accent-faint)' : 'none'
                 }}
