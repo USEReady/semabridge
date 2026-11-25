@@ -15,7 +15,11 @@ def _suite_path() -> Path:
     return p
 
 
-def _load_suite() -> Dict[str, Any]:
+_SUITE_COLLECTION = "bi_truth"
+_SUITE_KEY = "suite"
+
+
+def _load_suite_file() -> Dict[str, Any]:
     p = _suite_path()
     if not p.exists():
         return {"cases": [], "runs": []}
@@ -26,8 +30,29 @@ def _load_suite() -> Dict[str, Any]:
         return {"cases": [], "runs": []}
 
 
+def _load_suite() -> Dict[str, Any]:
+    """The suite from the shared state store (every server process sees the
+    same cases and runs); a pre-existing local file is imported once."""
+    from semabridge.repository import state_store
+
+    if not state_store.ensure_table():
+        return _load_suite_file()
+    stored = state_store.load_keys(_SUITE_COLLECTION, [_SUITE_KEY]).get(_SUITE_KEY)
+    if isinstance(stored, dict):
+        return {"cases": list(stored.get("cases") or []), "runs": list(stored.get("runs") or [])}
+    legacy = _load_suite_file()
+    if legacy["cases"] or legacy["runs"]:
+        _save_suite(legacy)
+    return legacy
+
+
 def _save_suite(data: Dict[str, Any]) -> None:
-    _suite_path().write_text(json.dumps(data, indent=2), encoding="utf-8")
+    from semabridge.repository import state_store
+
+    payload = {"cases": list(data.get("cases") or []), "runs": list(data.get("runs") or [])}
+    if state_store.apply_changes([(_SUITE_COLLECTION, _SUITE_KEY, payload)]) is None:
+        # Database unavailable: keep the local file so nothing is lost.
+        _suite_path().write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def generate_truth_cases(
