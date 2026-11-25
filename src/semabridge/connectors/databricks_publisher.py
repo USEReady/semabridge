@@ -276,6 +276,8 @@ class DatabricksPublisher:
         # source lacks them -- surfaced with a reason (never silent) and
         # merged into _last_skipped_details / not_converted_details.
         self._null_projection_details: list[dict[str, str]] = []
+        # Measures Databricks rejected at deploy and SemaBridge left out.
+        self._omitted_measures: list[dict[str, str]] = []
         self.not_converted_details: list[dict[str, Any]] = []
         self._last_sql_fallback_state: str = SQL_FALLBACK_NOT_TRIGGERED
         self._last_sql_fallback_reason: str = ""
@@ -1140,6 +1142,32 @@ class DatabricksPublisher:
                 )
 
         return mapped, missing
+
+    # View comments carry business meaning (ontology / BI description). The
+    # leading "Semabridge: <model> - <view>" marker stays: ownership checks
+    # (_is_semabridge_owned_describe_rows) and plan() inference read it.
+    _COMMENT_MARKER_SEPARATOR = " — "
+
+    def _metric_view_comment(self, model_label: str, view_label: str, description: Any) -> str:
+        marker = f"Semabridge: {model_label} - {view_label}"
+        text = re.sub(r"\s+", " ", str(description or "")).strip()
+        if not text:
+            return marker
+        return f"{marker}{self._COMMENT_MARKER_SEPARATOR}{text}"[:1000]
+
+    @classmethod
+    def _comment_view_hint(cls, comment_text: str) -> str:
+        """The <view> part of a "Semabridge: <model> - <view>[ — description]" comment."""
+        marker = str(comment_text or "").split(cls._COMMENT_MARKER_SEPARATOR, 1)[0]
+        return marker.rsplit(" - ", 1)[-1].strip() if " - " in marker else ""
+
+    def _record_omitted_measure(self, name: str, reason: str) -> None:
+        """A measure Databricks rejected and SemaBridge left out of the view."""
+        omitted = getattr(self, "_omitted_measures", None)
+        if omitted is None:
+            self._omitted_measures = omitted = []
+        if not any(o.get("name") == name for o in omitted):
+            omitted.append({"name": str(name), "reason": str(reason)})
 
     def _record_null_projection(self, name: str, item_type: str, reason: str) -> None:
         """Ledger a NULL projection (column or metric source) with its reason
@@ -2793,7 +2821,7 @@ class DatabricksPublisher:
 
         lines: list[str] = [
             "version: 1.1",
-            f"comment: {yaml_quote(f'Semabridge: {model_label} - {ds_label}')}",
+            f"comment: {yaml_quote(self._metric_view_comment(model_label, ds_label, getattr(dataset, 'description', None)))}",
         ]
 
         inline_measure_source_required = not bindings and not dataset.columns and resolved_measures
@@ -4679,10 +4707,10 @@ class DatabricksPublisher:
             return None, ""
 
         payload["measures"] = retained_measures
-        short_reason = " ".join(err.split())[:160]
-        note = f"[SemaBridge] Omitted measure '{omitted_name}': {short_reason}"
-        existing_comment = str(payload.get("comment") or "").strip()
-        payload["comment"] = f"{existing_comment} | {note}" if existing_comment else note
+        # Diagnostics belong in the run report, not in the view comment (the
+        # comment carries business meaning that users and Genie read).
+        short_reason = " ".join(err.split())[:300]
+        self._record_omitted_measure(omitted_name, short_reason)
 
         try:
             repaired_yaml = yaml.safe_dump(payload, sort_keys=False).strip()
@@ -6744,7 +6772,7 @@ class DatabricksPublisher:
 
         lines: list[str] = [
             "version: 1.1",
-            f"comment: {yaml_quote(f'Semabridge: {model_label} - Model Metric View')}",
+            f"comment: {yaml_quote(self._metric_view_comment(model_label, 'Model Metric View', getattr(sml_model, 'description', None)))}",
         ]
 
         # For schemaless roots (e.g., Project Measures), synthesize required
@@ -8282,9 +8310,9 @@ class DatabricksPublisher:
             return s.replace("`", "").strip()
 
         def _infer_dataset_from_view_or_comment(view_short_name: str, comment_text: str) -> SMLDataset | None:
-            # Match comment "Semabridge: <model> - <dataset>"
-            if " - " in comment_text:
-                ds_hint = comment_text.rsplit(" - ", 1)[-1].strip().lower()
+            # Match comment "Semabridge: <model> - <dataset>[ — description]"
+            ds_hint = self._comment_view_hint(comment_text).lower()
+            if ds_hint:
                 for ds in sml_model.datasets:
                     if ds.unique_name.lower() == ds_hint or (ds.label or "").lower() == ds_hint:
                         return ds
@@ -8676,10 +8704,8 @@ class DatabricksPublisher:
         else:
             payload.pop("joins", None)
 
-        existing_comment = str(payload.get("comment") or "").strip()
-        stub_note = "[Schema-First Stub — awaiting physical tables]"
-        if stub_note not in existing_comment:
-            payload["comment"] = f"{existing_comment} {stub_note}".strip()
+        # The structure-only state is reported on the run (views_stubbed) and
+        # tagged by the deploy summary; the business comment is left alone.
 
         try:
             repaired_yaml = yaml.safe_dump(payload, sort_keys=False, width=4096).strip()
@@ -9443,6 +9469,7 @@ class DatabricksPublisher:
                     "views_stubbed": len(stubbed_views),
                     "stubbed_views": [dict(v) for v in stubbed_views],
                     "source_binding_issues": [dict(i) for i in self._source_binding_issues],
+                    "omitted_measures": [dict(o) for o in getattr(self, "_omitted_measures", [])],
                     "views_failed": views_failed,
                     "views_skipped": len(planned_entries) - len(deployable_entries),
                     "skipped_reasons": list(skipped_reasons[:10]),

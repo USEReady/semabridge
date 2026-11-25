@@ -532,8 +532,29 @@ def _report_databricks_structure_only(context: RunContext, deploy_summary: dict)
         )
     for issue in binding_issues:
         _warn(str(issue.get("message") or ""))
+    omitted = [o for o in (deploy_summary.get("omitted_measures") or []) if isinstance(o, dict)]
+    if omitted:
+        details = "; ".join(f"{o.get('name')}: {o.get('reason')}" for o in omitted[:5])
+        _warn(
+            f"Databricks rejected {len(omitted)} measure(s); they were left out of the metric view: {details}"
+            + (" …" if len(omitted) > 5 else "")
+        )
 
     views_deployed = int(deploy_summary.get("views_deployed") or 0)
+    views_failed = int(deploy_summary.get("views_failed") or 0)
+    if views_failed and (views_deployed or stubbed):
+        failed_reasons = [str(r) for r in (deploy_summary.get("failed_reasons") or []) if r][:3]
+        _warn(
+            f"Partially deployed: {views_failed} metric view(s) failed while "
+            f"{views_deployed + len(stubbed)} deployed"
+            + (f" ({'; '.join(failed_reasons)})" if failed_reasons else "")
+            + ". The failed views were not changed in Databricks; fix them and sync again."
+        )
+        context.deploy_step_message = (
+            f"Deployment complete with failures: {views_deployed} view(s) with data, "
+            f"{len(stubbed)} structure only, {views_failed} failed"
+        )
+        return
     if stubbed:
         context.deploy_step_message = (
             f"Deployment complete with warnings: {views_deployed} view(s) with data, "

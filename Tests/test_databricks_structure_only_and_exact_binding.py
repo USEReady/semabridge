@@ -224,3 +224,67 @@ def test_step9_message_is_unchanged_for_a_clean_deploy():
     _step9_deploy(engine, ctx)
 
     assert recorded == [(9, StepStatus.SUCCESS, "Deployment complete")]
+
+
+def test_partial_deploy_is_reported_with_counts():
+    ctx = _ctx()
+    _raise_if_databricks_fallback_failed(
+        None,
+        ctx,
+        _summary(
+            planned_views=3,
+            views_deployed=2,
+            views_failed=1,
+            failed_reasons=["workspace.default.returns_mv: PARSE_SYNTAX_ERROR"],
+        ),
+    )
+    assert ctx.target_warnings[0].startswith("Partially deployed: 1 metric view(s) failed while 2 deployed")
+    assert "PARSE_SYNTAX_ERROR" in ctx.target_warnings[0]
+    assert ctx.deploy_step_message == "Deployment complete with failures: 2 view(s) with data, 0 structure only, 1 failed"
+
+
+# ── Metric view comments carry business meaning, not diagnostics ─────────────
+
+
+def test_view_comment_is_marker_plus_business_description():
+    pub = _publisher()
+    assert pub._metric_view_comment("Sales", "Orders", None) == "Semabridge: Sales - Orders"
+    text = pub._metric_view_comment("Sales", "Orders", "  Every order line,\n net of returns. ")
+    assert text == "Semabridge: Sales - Orders — Every order line, net of returns."
+    assert pub._comment_view_hint(text) == "Orders"
+    assert pub._comment_view_hint("Semabridge: Sales - Orders") == "Orders"
+    assert pub._comment_view_hint("hand written") == ""
+
+
+def test_marker_still_marks_the_view_as_semabridge_owned():
+    pub = _publisher()
+    comment = pub._metric_view_comment("Sales", "Orders", "Every order line")
+    assert DatabricksPublisher._is_semabridge_owned_describe_rows([["Comment", comment]])
+
+
+def test_rejected_measure_goes_to_the_run_report_not_the_comment():
+    import yaml as _yaml
+
+    pub = _publisher()
+    body = _yaml.safe_dump({
+        "version": "1.1",
+        "comment": "Semabridge: Sales - Orders — Every order line",
+        "source": "workspace.default.orders",
+        "measures": [{"name": "good", "expr": "SUM(a)"}, {"name": "bad_measure", "expr": "SUM(nope)"}],
+    }, sort_keys=False)
+    sql = f"CREATE OR REPLACE VIEW `workspace`.`default`.`orders_mv` WITH METRICS LANGUAGE YAML AS $$\n{body}$$"
+    repaired, omitted = pub._strip_rejected_metric_measure(sql, "INVALID_METRIC_VIEW_MEASURE: measure `bad_measure` is invalid")
+    assert omitted == "bad_measure"
+    doc = _yaml.safe_load(repaired.split("$$")[1])
+    assert doc["comment"] == "Semabridge: Sales - Orders — Every order line"
+    assert pub._omitted_measures[0]["name"] == "bad_measure"
+
+
+def test_omitted_measures_become_a_run_warning():
+    ctx = _ctx()
+    _raise_if_databricks_fallback_failed(
+        None, ctx, _summary(views_deployed=1, omitted_measures=[{"name": "bad_measure", "reason": "INVALID_METRIC_VIEW_MEASURE"}]),
+    )
+    assert ctx.target_warnings == [
+        "Databricks rejected 1 measure(s); they were left out of the metric view: bad_measure: INVALID_METRIC_VIEW_MEASURE"
+    ]

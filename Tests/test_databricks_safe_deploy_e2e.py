@@ -862,7 +862,9 @@ def test_schema_first_stub_deploys_metric_view_without_physical_tables():
     assert str(doc["source"]).upper().startswith("SELECT ")
     assert "WHERE 1=0" in str(doc["source"]).upper()
     assert not doc.get("joins")
-    assert "[Schema-First Stub" in str(doc.get("comment") or "")
+    # The comment keeps business meaning only; the stub state is reported on the run.
+    assert str(doc.get("comment") or "").startswith("Semabridge: ")
+    assert "Stub" not in str(doc.get("comment") or "")
     # No dimension expr may reference a dropped join alias (e.g. customers.region)
     for d in doc.get("dimensions") or []:
         assert "." not in str(d.get("expr") or "")
