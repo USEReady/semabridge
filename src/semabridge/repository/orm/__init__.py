@@ -62,6 +62,8 @@ from semabridge.repository.orm.infra_models import (
     Credential,
     CommandLog,
 )
+from semabridge.repository.orm.state_models import StateDocument
+from semabridge.repository.orm.job_models import RunJob
 from semabridge.repository.orm.ai_models import (
     AIQueryExecutionRow,
     AIVerifiedQueryRow,
@@ -121,4 +123,7 @@ __all__ = [
     "MetricCertification",
     "QueryExecutionHistory",
     "VerifiedQuery",
+    # Shared application state
+    "StateDocument",
+    "RunJob",
 ]

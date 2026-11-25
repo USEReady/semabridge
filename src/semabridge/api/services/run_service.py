@@ -46,7 +46,8 @@ from semabridge.api.services.run_records import (
     merge_with_memory,
     save_project_run,
 )
-from semabridge.core import run_coordination
+from semabridge.core import job_queue, run_coordination
+from semabridge.api.services.project_shared import compat_store_lock
 
 logger = logging.getLogger(__name__)
 
@@ -1317,9 +1318,13 @@ async def _sync_safety_checks(
 async def _execute_project_run(project_id: str, schedule_label: str = "Manual") -> dict:
     """Scheduled/triggered run: same config preparation and dry-run gate as
     run-now. A gate failure is recorded on the run instead of deploying; a
-    project that is already syncing gets a "skipped" run record."""
+    project that is already syncing gets a "skipped" run record. In queue
+    mode the run is handed to a worker and returned as queued."""
     config = _prepare_sync_config(project_id)
     run, project_cfg, started = _create_project_run(project_id, schedule_label, project_cfg_override=config)
+    if job_queue.queue_enabled():
+        _enqueue_run(JOB_GATED_PROJECT_RUN, run, project_cfg, started)
+        return run
     return await _gated_project_run(run, project_cfg, started)
 
 
@@ -1328,6 +1333,9 @@ def _start_gated_project_run(project_id: str, schedule_label: str = "Manual") ->
     Used by job triggers so they get the same checks as run-now."""
     config = _prepare_sync_config(project_id)
     run, project_cfg, started = _create_project_run(project_id, schedule_label, project_cfg_override=config)
+    if job_queue.queue_enabled():
+        _enqueue_run(JOB_GATED_PROJECT_RUN, run, project_cfg, started)
+        return run
 
     def _run_loop() -> None:
         run_coordination.run_coroutine_blocking(lambda: _gated_project_run(run, project_cfg, started))
@@ -1375,8 +1383,72 @@ async def _gated_project_run(run: dict, project_cfg: str, started: float) -> dic
     return await _perform_project_run(run, project_cfg, started)
 
 
+# ---------------------------------------------------------------------------
+# Durable execution (core/job_queue): in queue mode a run is a run_jobs row
+# that a worker claims; a worker crash re-queues it instead of losing it.
+# ---------------------------------------------------------------------------
+
+JOB_PROJECT_RUN = "project_run"
+JOB_GATED_PROJECT_RUN = "gated_project_run"
+
+
+def _enqueue_run(kind: str, run: dict, project_cfg: str, started: float) -> str:
+    run["status"] = run.get("status") or "queued"
+    _persist_run(run)
+    return job_queue.enqueue(
+        kind,
+        {"run": run, "project_cfg": project_cfg, "started": started},
+        job_id=str(run.get("run_id") or run.get("id")),
+        project_id=str(run.get("project_id") or "") or None,
+    )
+
+
+def _adopt_run(run: dict) -> dict:
+    """Make the worker's copy of the run the one this process's store holds,
+    so its saves reach the shared state (another process may have queued it)."""
+    pid = str(run.get("project_id") or "")
+    rid = str(run.get("run_id") or run.get("id") or "")
+    with compat_store_lock():
+        runs = _compat_project_runs.setdefault(pid, [])
+        for i, existing in enumerate(runs):
+            if str(existing.get("run_id") or existing.get("id") or "") == rid:
+                runs[i] = run
+                break
+        else:
+            runs.insert(0, run)
+    return run
+
+
+def _job_project_run(payload: dict, ctx: "job_queue.JobContext", *, gated: bool) -> None:
+    run = _adopt_run(dict(payload.get("run") or {}))
+    project_cfg = str(payload.get("project_cfg") or "")
+    started = float(payload.get("started") or _time.time())
+    project_id = str(run.get("project_id") or "")
+    run_id = str(run.get("run_id") or run.get("id") or "")
+    ctx.raise_if_cancelled()
+    if ctx.is_retry:
+        run["logs"] = [*run.get("logs", []), "Resumed on another worker after the previous one stopped."]
+    if not gated:
+        # The request took the project lease; it may have lapsed while the
+        # job waited or after a worker crash, so take it again (same run id).
+        lease = _acquire_project_lease(project_id, run_id)
+        if not lease:
+            _mark_run_skipped(run, started, lease)
+            return
+        run_coordination.run_coroutine_blocking(lambda: _perform_project_run(run, project_cfg, started))
+        return
+    run_coordination.run_coroutine_blocking(lambda: _gated_project_run(run, project_cfg, started))
+
+
+job_queue.register_handler(JOB_PROJECT_RUN, lambda p, c: _job_project_run(p, c, gated=False))
+job_queue.register_handler(JOB_GATED_PROJECT_RUN, lambda p, c: _job_project_run(p, c, gated=True))
+
+
 def _run_project_background(run: dict, project_cfg: str, started: float) -> None:
-    """Run project execution in a dedicated background thread with its own event loop."""
+    """Hand the run to a worker (queue mode) or run it in a dedicated thread."""
+    if job_queue.queue_enabled():
+        _enqueue_run(JOB_PROJECT_RUN, run, project_cfg, started)
+        return
 
     def _run_loop():
         run_coordination.run_coroutine_blocking(lambda: _perform_project_run(run, project_cfg, started))
@@ -1534,12 +1606,25 @@ async def get_project_runs_compat(project_id: str):
 
     from semabridge.api.services.run_report_service import load_persisted_model_reports
 
+    # Detail blobs this process does not hold (another process ran it, or
+    # this one restarted) come from the shared state database.
+    from semabridge.api.services.project_shared import load_run_details
+
+    missing_detail_ids = [
+        str(r.get("run_id") or "") for r in db_runs
+        if not (mem_by_id.get(str(r.get("run_id") or "")) or {}).get("summary")
+    ]
+    persisted_details = await asyncio.to_thread(load_run_details, missing_detail_ids) if missing_detail_ids else {}
+
     merged: List[Dict[str, Any]] = []
     seen: set = set()
     for db_run in db_runs:
         rid = str(db_run.get("run_id") or "")
         seen.add(rid)
         run = merge_with_memory(db_run, mem_by_id.get(rid))
+        for key, value in (persisted_details.get(rid) or {}).items():
+            if not run.get(key):
+                run[key] = value
         if not run.get("model_reports"):
             run["model_reports"] = load_persisted_model_reports(pid, rid)
         merged.append(run)

@@ -92,6 +92,7 @@ orm = [
 
 [project.scripts]
 semabridge = "semabridge.cli.main:main"
+semabridge-worker = "semabridge.core.job_queue:main"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
