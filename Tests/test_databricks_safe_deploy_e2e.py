@@ -803,7 +803,7 @@ def test_zero_views_deployed_raises_deployment_error():
 def test_schema_first_stub_deploys_metric_view_without_physical_tables():
     """With on_missing_source='stub', Databricks deploys the Metric View using an inline SQL
     SELECT CAST(NULL AS ...) WHERE 1=0 source when physical tables do not exist yet,
-    with zero CREATE TABLE statements, and automatically rebinds when real tables exist."""
+    with zero CREATE TABLE statements, and binds to the real tables on the next sync once they exist."""
     import yaml as _yaml
     from semabridge.connectors.sql_guard import DatabricksSQLGuardPolicy, validate_databricks_sql
 
@@ -866,9 +866,13 @@ def test_schema_first_stub_deploys_metric_view_without_physical_tables():
     # No dimension expr may reference a dropped join alias (e.g. customers.region)
     for d in doc.get("dimensions") or []:
         assert "." not in str(d.get("expr") or "")
-    # Deploy summary reports 1 deployed view (will NOT fail zero-views gate)
+    # The stub is reported as structure only, never as a deployed view with
+    # data. It does not trip the zero-views gate (it is reported as a warning).
     summary = pub_stub.get_last_publish_summary()["deploy_summary"]
-    assert summary["views_deployed"] == 1
+    assert summary["views_deployed"] == 0
+    assert summary["views_stubbed"] == 1
+    assert summary["stubbed_views"][0]["view"].replace("`", "").lower() == "workspace.default.starmodel_metric_view"
+    assert summary["stubbed_views"][0]["missing_source_tables"]
     assert summary["views_skipped"] == 0
 
     # 2) Once physical tables exist in workspace.default -> binds to real tables (no stub)

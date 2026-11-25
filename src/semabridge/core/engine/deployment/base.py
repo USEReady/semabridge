@@ -65,7 +65,11 @@ def _step9_deploy(self, context: RunContext) -> None:
         elif context.target_type == "databricks":
             self._deploy_to_databricks(context)
 
-        self._record_step(9, StepStatus.SUCCESS, "Deployment complete")
+        self._record_step(
+            9,
+            StepStatus.SUCCESS,
+            getattr(context, "deploy_step_message", None) or "Deployment complete",
+        )
 
     # ✅ HANDLE MISSING TABLE AS WARNING (NOT FAILURE)
     except MissingSourceTableWarning as w:

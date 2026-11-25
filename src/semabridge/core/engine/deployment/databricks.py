@@ -469,7 +469,10 @@ def _raise_if_databricks_fallback_failed(
     views_failed = int(deploy_summary.get("views_failed") or 0)
     views_skipped = int(deploy_summary.get("views_skipped") or 0)
 
-    if planned_views > 0 and views_deployed == 0 and fallback_state != "FALLBACK_SUCCESS":
+    views_stubbed = int(deploy_summary.get("views_stubbed") or 0)
+    _report_databricks_structure_only(context, deploy_summary)
+
+    if planned_views > 0 and views_deployed == 0 and views_stubbed == 0 and fallback_state != "FALLBACK_SUCCESS":
         reasons: list[str] = []
         for r in (deploy_summary.get("failed_reasons") or [])[:3]:
             if r:
@@ -490,4 +493,49 @@ def _raise_if_databricks_fallback_failed(
             f"(0/{planned_views} deployed, {views_skipped} skipped, {views_failed} failed)"
             + (f": {detail}" if detail else ".")
             + hint
+        )
+
+
+def _report_databricks_structure_only(context: RunContext, deploy_summary: dict) -> None:
+    """Make structure-only (stubbed) views and unbound source tables visible.
+
+    A metric view deployed over an inline NULL stub because its source tables
+    are missing exists in Unity Catalog but returns no data. It is reported as
+    a run warning and in the Step 9 message, never as a plain success.
+    """
+    stubbed = [v for v in (deploy_summary.get("stubbed_views") or []) if isinstance(v, dict)]
+    binding_issues = [i for i in (deploy_summary.get("source_binding_issues") or []) if isinstance(i, dict)]
+    warnings = getattr(context, "target_warnings", None)
+    if warnings is None:
+        warnings = []
+        try:
+            context.target_warnings = warnings
+        except AttributeError:
+            pass
+
+    def _warn(message: str) -> None:
+        if message and message not in warnings:
+            warnings.append(message)
+
+    if stubbed:
+        missing: list[str] = []
+        for v in stubbed:
+            for t in v.get("missing_source_tables") or []:
+                if t and str(t) not in missing:
+                    missing.append(str(t))
+        views = ", ".join(str(v.get("view") or "") for v in stubbed)
+        _warn(
+            f"Structure only (no data): {len(stubbed)} metric view(s) were published without data because "
+            f"their source tables do not exist in Databricks: {views}"
+            + (f" (missing: {', '.join(missing)})" if missing else "")
+            + ". Create the tables or set source_table_mapping, then sync again."
+        )
+    for issue in binding_issues:
+        _warn(str(issue.get("message") or ""))
+
+    views_deployed = int(deploy_summary.get("views_deployed") or 0)
+    if stubbed:
+        context.deploy_step_message = (
+            f"Deployment complete with warnings: {views_deployed} view(s) with data, "
+            f"{len(stubbed)} structure only (no data, source tables missing)"
         )

@@ -301,6 +301,9 @@ class DatabricksPublisher:
         self._offline_plan_mode: bool = False
         self._include_multi_fact_skipped_views: bool = False
         self._missing_source_tables: list[str] = []
+        # Source tables not bound automatically (e.g. a same-named table in
+        # another schema), with the reason -- surfaced in the deploy summary.
+        self._source_binding_issues: list[dict[str, str]] = []
         self.deploy_events: list[dict[str, Any]] = []
         self._last_plan: dict[str, Any] = {}
         self._matched_source_tables: dict[str, MatchedTable] = {}
@@ -1290,17 +1293,49 @@ class DatabricksPublisher:
                 if re.fullmatch(r"[a-z_][a-z0-9_]*", candidate):
                     discovered_schemas.append(candidate)
 
-        if not discovered_schemas:
+        candidates = sorted({s for s in discovered_schemas if s and s != expected_schema})
+        if not candidates:
             return None
 
-        # Prefer a non-default alternate schema when available.
-        chosen_schema = discovered_schemas[0]
-        for candidate in discovered_schemas:
-            if candidate and candidate != expected_schema:
-                chosen_schema = candidate
-                break
+        expected_fqn = f"{catalog}.{schema_name}.{table_name}"
+        found_in = ", ".join(f"{catalog}.{s}.{table_name}" for s in candidates)
+        if not bool(getattr(self._dbx_behavior, "allow_alternate_schema_discovery", False)):
+            # Exact binding only: a same-named table in another schema may be
+            # a dev or backup copy, so it is reported, never used silently.
+            self._record_source_binding_issue(
+                expected_fqn,
+                f"Source table {expected_fqn} does not exist. A table with the same name exists in "
+                f"{found_in}, but it was not used automatically. Map it explicitly with "
+                "source_table_mapping if it is the right table.",
+            )
+            return None
+        if len(candidates) > 1:
+            self._record_source_binding_issue(
+                expected_fqn,
+                f"Source table {expected_fqn} does not exist and a table with the same name exists in "
+                f"several schemas ({found_in}); none was chosen. Map the right one with source_table_mapping.",
+            )
+            return None
 
+        chosen_schema = candidates[0]
+        logger.warning(
+            "Source table %s does not exist; bound to %s.%s.%s (allow_alternate_schema_discovery is on)",
+            expected_fqn,
+            catalog,
+            chosen_schema,
+            table_name,
+        )
         return f"`{catalog}`.`{chosen_schema}`.`{table_name}`"
+
+    def _record_source_binding_issue(self, source_table: str, message: str) -> None:
+        """Record (once per table) why a source table was not bound automatically."""
+        issues = getattr(self, "_source_binding_issues", None)
+        if issues is None:
+            issues = self._source_binding_issues = []
+        if any(i.get("source_table") == source_table for i in issues):
+            return
+        issues.append({"source_table": source_table, "message": message})
+        logger.warning("%s", message)
 
     def _parse_table_reference(self, source_table: str) -> tuple[str, str, str] | None:
         """Parse a Databricks table reference into catalog, schema, and table."""
@@ -8775,7 +8810,7 @@ class DatabricksPublisher:
                             warnings_list.append(
                                 f"Deploying {view_spec['name']} as schema-first inline SQL stub "
                                 f"(missing source/join table(s): {', '.join(missing_for_view)}; "
-                                "zero tables created — will rebind automatically once physical tables exist)"
+                                "zero tables created; it returns no data until those tables exist and the project is synced again)"
                             )
                             logger.info(
                                 "📋 Schema-first stub deploy for %s (missing source tables: %s)",
@@ -9392,6 +9427,7 @@ class DatabricksPublisher:
 
             views_success = 0
             views_failed = 0
+            stubbed_views: list[dict[str, Any]] = []
             failed_view_names: list[str] = []
             failed_view_errors: list[str] = []
             failed_view_classes: dict[str, int] = {}
@@ -9401,7 +9437,12 @@ class DatabricksPublisher:
                 self._last_deploy_summary = {
                     "planned_views": len(planned_entries),
                     "deployable_views": len(deployable_entries),
+                    # Views with real data. Structure-only stubs (missing
+                    # source tables) are counted separately, never as deployed.
                     "views_deployed": views_success,
+                    "views_stubbed": len(stubbed_views),
+                    "stubbed_views": [dict(v) for v in stubbed_views],
+                    "source_binding_issues": [dict(i) for i in self._source_binding_issues],
                     "views_failed": views_failed,
                     "views_skipped": len(planned_entries) - len(deployable_entries),
                     "skipped_reasons": list(skipped_reasons[:10]),
@@ -9429,7 +9470,18 @@ class DatabricksPublisher:
                     }
                     for future in as_completed(futures):
                         view_name, success, error_msg, error_class = future.result()
-                        if success:
+                        entry_spec = futures[future].get("view_spec") or {}
+                        if success and entry_spec.get("schema_first_stub"):
+                            stubbed_views.append({
+                                "view": view_name,
+                                "missing_source_tables": list(entry_spec.get("missing_source_tables") or []),
+                            })
+                            logger.warning(
+                                "Deployed STRUCTURE ONLY (no data) for %s: missing source table(s) %s",
+                                view_name,
+                                ", ".join(entry_spec.get("missing_source_tables") or []),
+                            )
+                        elif success:
                             views_success += 1
                             logger.info("✅ Deployed measure view: %s", view_name)
                         else:
@@ -9447,8 +9499,8 @@ class DatabricksPublisher:
 
                 deploy_elapsed = time.monotonic() - deploy_start
                 logger.info(
-                    "📊 View deployment complete: %d/%d succeeded in %.1fs",
-                    views_success, len(deployable_entries), deploy_elapsed,
+                    "📊 View deployment complete: %d/%d with data, %d structure only (no data), %d failed in %.1fs",
+                    views_success, len(deployable_entries), len(stubbed_views), views_failed, deploy_elapsed,
                 )
 
             if views_failed:

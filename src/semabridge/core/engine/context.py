@@ -161,3 +161,6 @@ class RunContext:
     # Target credential origin (account tag / ambient config) and warnings
     target_credential_origin: Optional[str] = None
     target_warnings: list[str] = _dataclass_field(default_factory=list)
+    # Step 9 message when the deploy succeeded with something to flag (e.g.
+    # Databricks metric views published structure-only). None = "Deployment complete".
+    deploy_step_message: Optional[str] = None

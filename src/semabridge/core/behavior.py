@@ -303,6 +303,15 @@ class DatabricksBehavior(BaseModel):
             "object-type conflicts during publish retries."
         )
     )
+    allow_alternate_schema_discovery: bool = Field(
+        default=False,
+        description=(
+            "When a source table is not at its configured location, bind to a table of the "
+            "same name found in another schema of the catalog. Off by default: a same-named "
+            "table elsewhere (e.g. a dev or backup copy) is reported, never used silently. "
+            "When on, it is used only if exactly one other schema has the table."
+        )
+    )
     enable_auto_join_key_bridge: bool = Field(
         default=False,
         description=(
