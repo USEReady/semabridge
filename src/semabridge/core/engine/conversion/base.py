@@ -236,9 +236,7 @@ def _upsert_delta_preview_model(self, context: RunContext, preview_overrides: Di
         else:
             converted = context.sml_model.model_copy(deep=True)
         if not shadow.mapping_overrides_applied:
-            self._apply_mapping_overrides_from_config(
-                converted, shadow.config_path, config_payload=shadow.config_payload
-            )
+            self._apply_overrides_for_run(shadow, converted, shadow.config_path, shadow.config_payload)
         self._normalize_relationships_for_target(converted)
         baseline_pid = (
             (context.config_payload or {}).get("delta_baseline_project_id")

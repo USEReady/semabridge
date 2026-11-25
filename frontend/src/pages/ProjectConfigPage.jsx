@@ -23,6 +23,7 @@ import usePageCache from '../hooks/usePageCache';
 
 import ProjectWizard from './CreateProjectPage';
 import Modal from '../components/common/Modal';
+import { platformTerms } from '../utils/platformTerms';
 
 // --- Styled Components for Dashboard ---
 const FormCard = ({ title, subtitle, children }) => (
@@ -2992,7 +2993,7 @@ function FormEditor({
             {Array.isArray(value.pbix_models) && value.pbix_models.length > 0 && (
               <div style={{ gridColumn: '1 / -1', fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>
                 Multi-PBIX project — {value.pbix_models.length} file{value.pbix_models.length === 1 ? '' : 's'} configured
-                from project creation (each becomes its own semantic view): {value.pbix_models.join(', ')}
+                from project creation (each becomes its own {platformTerms(value.target_type).view}): {value.pbix_models.join(', ')}
               </div>
             )}
           </div>

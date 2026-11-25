@@ -28,6 +28,9 @@ class _EngineStub:
     _apply_mapping_overrides_from_config = staticmethod(
         ExecutionEngine._apply_mapping_overrides_from_config
     )
+    # Step 6 routes saved names through this (Databricks planner runs collect
+    # them as requests; every other run applies them as before).
+    _apply_overrides_for_run = ExecutionEngine._apply_overrides_for_run
 
     def _record_step(self, *args, **kwargs):
         pass

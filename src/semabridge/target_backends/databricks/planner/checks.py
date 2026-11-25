@@ -9,6 +9,7 @@ from semabridge.target_backends.databricks.planner import sqltext
 from semabridge.target_backends.databricks.planner.anchors import Decision
 from semabridge.target_backends.databricks.planner.names import check_name
 from semabridge.target_backends.databricks.planner.model import (
+    Blocker,
     PlannerInvariantError,
     PlannerResult,
     PlannerSettings,
@@ -16,7 +17,7 @@ from semabridge.target_backends.databricks.planner.model import (
 )
 
 _PROPAGATED = {"conversion_failed", "unrecognised_pattern", "analysis_mismatch", "filter_removal_unsupported",
-               "filter_semantics_differ", "dependency_cycle", "depends_on"}
+               "filter_semantics_differ", "dependency_cycle", "depends_on", "user_excluded"}
 
 
 def view_checks(view: ViewPlan) -> List[Dict[str, Any]]:
@@ -38,6 +39,23 @@ def view_checks(view: ViewPlan) -> List[Dict[str, Any]]:
         if m.readiness == "structure_only" or "MAX(" in m.expr and not sqltext.REF.search(m.expr):
             checks.append({"kind": "zero_row_behaviour", "measure": m.name})
     return checks
+
+
+def security_blockers(settings: PlannerSettings) -> List[Blocker]:
+    """Power BI security roles: found or unknown both block publication (3.8
+    enforces it). Missing information is never read as "no roles"."""
+    roles = settings.security_roles
+    if roles is None:
+        return [Blocker("security_roles_unknown",
+                        "Power BI security roles could not be confirmed for this model; publishing is blocked "
+                        "until it is confirmed there are none or a Databricks access design exists",
+                        details={"security_roles": None})]
+    if roles > 0:
+        return [Blocker("security_roles_present",
+                        f"{roles} Power BI security role(s) found and not migrated; publishing is blocked until "
+                        "a Databricks access design exists",
+                        details={"security_roles": roles})]
+    return []
 
 
 def result_notes(result: PlannerResult, settings: PlannerSettings, two_way: List[str], skipped: List[str]) -> List[str]:

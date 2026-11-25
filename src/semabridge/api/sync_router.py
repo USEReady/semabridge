@@ -370,6 +370,27 @@ class AddMissingColumnRequest(BaseModel):
     column_type: str = Field("VARCHAR", description="Snowflake SQL type for the new column (default VARCHAR)")
 
 
+def _refuse_non_snowflake_target(config_yaml: str) -> None:
+    """This action runs ALTER TABLE on a Snowflake table: refused for any other
+    target (e.g. Databricks), where it is neither valid nor in SemaBridge's
+    semantic-only scope."""
+    import yaml as _yaml
+
+    try:
+        parsed = _yaml.safe_load(config_yaml) or {}
+    except Exception:
+        parsed = {}
+    target = parsed.get("target") if isinstance(parsed.get("target"), dict) else {}
+    if not target and isinstance(parsed.get("targets"), list) and parsed["targets"]:
+        target = parsed["targets"][0] if isinstance(parsed["targets"][0], dict) else {}
+    target_type = str((target or {}).get("type") or "snowflake").strip().lower()
+    if target_type != "snowflake":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Adding a column to a physical table is a Snowflake-only action; this project targets {target_type}.",
+        )
+
+
 @router.post("/schema/add-missing-column")
 async def add_missing_dimension_column(body: AddMissingColumnRequest) -> Dict[str, Any]:
     """Add a missing dimension column to the Snowflake physical table.
@@ -396,6 +417,7 @@ async def add_missing_dimension_column(body: AddMissingColumnRequest) -> Dict[st
 
         if not config_yaml:
             raise HTTPException(status_code=400, detail="Project has no stored configuration")
+        _refuse_non_snowflake_target(config_yaml)
 
         from semabridge.core.config_loader import load_config_from_yaml
         config = load_config_from_yaml(config_yaml)

@@ -444,6 +444,7 @@ export default function RunDrawer({
                   return (
                     <div key={entry.key}>
                       <ModelRunSection
+                        targetType={run.summary?.target_type || run.target_type || ''}
                         entry={{ ...entry, logs: lines }}
                         projectId={run.project_id}
                         runId={run.id}

@@ -243,55 +243,107 @@ def databricks_planner_settings(context: RunContext):
     view_mode, selected_tables, primary_fact, excluded_measures)."""
     from semabridge.target_backends.databricks.planner import PlannerSettings
 
-    db = getattr(getattr(context, "behavior", None), "databricks", None)
-    values: Dict[str, Any] = {
-        "calculate_mode": str(getattr(db, "planner_calculate_mode", "approximate") or "approximate").strip().lower(),
-        "view_mode": str(getattr(db, "planner_view_mode", "separate_views") or "separate_views").strip().lower(),
-        "capabilities": frozenset(getattr(db, "planner_capabilities", None) or []),
-    }
-    target = getattr(context.config, "target", None)
-    project = getattr(target, "planner", None) or {}
-    if not isinstance(project, dict):
-        project = getattr(project, "__dict__", {}) or {}
+    defaults = _planner_defaults(context)
+    values: Dict[str, Any] = {**defaults, "capabilities": frozenset(defaults["capabilities"])}
+    project = _project_planner_block(context)
     for key in ("calculate_mode", "view_mode", "primary_fact"):
         if project.get(key):
             values[key] = str(project[key]).strip()
     for key in ("selected_tables", "excluded_measures"):
         if project.get(key):
             values[key] = tuple(str(x) for x in project[key])
+    values["requested_names"] = tuple(
+        (str(r.get("source_path")), str(r.get("target_name")), r.get("origin"))
+        for r in (getattr(context, "databricks_name_requests", None) or [])
+        if isinstance(r, dict) and r.get("source_path") and r.get("target_name")
+    )
+    values["security_roles"] = security_roles_for_run(context)
     return PlannerSettings(**values)
+
+
+def security_roles_for_run(context: RunContext) -> Optional[int]:
+    """Power BI security roles of this run's model: >0 found, 0 confirmed none,
+    None unknown (the reader could not confirm). Never 0 by assumption."""
+    osi = getattr(context, "osi_model", None)
+    carried = ((getattr(osi, "metadata", None) or {}).get("security_roles")) if osi is not None else None
+    if carried:
+        return len(carried)
+    source = str(getattr(context, "source_type", "") or "").strip().lower()
+    if source == "snowflake":
+        return 0  # a Snowflake semantic view source has no Power BI roles
+    if source not in ("pbix", "fabric"):
+        return None
+    tmsl = getattr(getattr(context, "source_format", None), "tmsl_definition", None)
+    if not isinstance(tmsl, dict):
+        return None
+    model = tmsl.get("model") if isinstance(tmsl.get("model"), dict) else tmsl
+    if isinstance(model.get("roles"), list):
+        return sum(1 for r in model["roles"] if isinstance(r, dict))
+    if source == "fabric":
+        return 0  # the service's model definition lists every role
+    # PBIX: a complete DataModelSchema lists every role; other readers must
+    # have read the Role table (an explicit empty list) to confirm none.
+    return 0 if getattr(context, "pbix_parser", None) == "schema" else None
+
+
+def _planner_defaults(context: RunContext) -> Dict[str, Any]:
+    db = getattr(getattr(context, "behavior", None), "databricks", None)
+    return {
+        "calculate_mode": str(getattr(db, "planner_calculate_mode", "approximate") or "approximate").strip().lower(),
+        "view_mode": str(getattr(db, "planner_view_mode", "separate_views") or "separate_views").strip().lower(),
+        "capabilities": sorted(getattr(db, "planner_capabilities", None) or []),
+    }
+
+
+def _project_planner_block(context: RunContext) -> Dict[str, Any]:
+    target = getattr(context.config, "target", None)
+    project = getattr(target, "planner", None) or {}
+    if not isinstance(project, dict):
+        project = dict(getattr(project, "__dict__", {}) or {})
+    return dict(project)
 
 
 def _run_databricks_planner(self, context: RunContext, table_plan) -> None:
     """Plan the metric views (offline, read-only) so Step 7 saves the plan and the
     dry run shows it. Settings errors and self-check failures stop the run.
 
-    The plan is also written next to the run's other Databricks artifacts:
-    output/databricks/<project>/databricks_view_plan.json and .md."""
+    The plan is also written next to the run's other Databricks artifacts
+    (output/databricks/<project>/databricks_view_plan.json and .md), with the
+    planner's inputs (databricks_planner_input.json) so the screen can re-plan
+    after a rename or an option change without another dry run (replan.py)."""
+    from semabridge.target_backends.databricks import replan
     from semabridge.target_backends.databricks.planner import (
         PlannerError,
         PlannerInvariantError,
         plan_metric_views,
     )
 
+    settings = databricks_planner_settings(context)
     try:
-        result = plan_metric_views(context.sml_model, table_plan, databricks_planner_settings(context))
+        result = plan_metric_views(context.sml_model, table_plan, settings)
     except (PlannerError, PlannerInvariantError) as exc:
         raise ConversionError(f"Databricks planner: {exc}") from None
-    context.databricks_view_plan = result.as_dict()
-    summary = context.databricks_view_plan["summary"]
+    plan = result.as_dict()
+    summary = plan["summary"]
     logger.info("Databricks view plan: %d view(s), %d measure(s) placed, %d left out (%d approximate)",
                 summary["views"], summary["measures_placed"], summary["measures_left_out"], summary["approximate"])
+    subdir = getattr(context, "physical_namespace", None)
+    out_dir = replan.output_dir(context.project_id, subdir)
+    revision = replan.now_revision()
+    cache_ref = {"project_id": str(context.project_id), "model_subdir": subdir}
     try:
-        from semabridge.target_backends.databricks.planner.report import render
-
-        out_dir = self._model_output_dir("databricks", model_name=context.project_id,
-                                         model_subdir=getattr(context, "physical_namespace", None))
-        out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / "databricks_view_plan.json").write_text(
-            json.dumps(context.databricks_view_plan, indent=2, ensure_ascii=False), encoding="utf-8")
-        (out_dir / "databricks_view_plan.md").write_text(
-            render(context.databricks_view_plan, str(context.project_id)), encoding="utf-8")
-        logger.info("Databricks view plan written to %s", out_dir / "databricks_view_plan.md")
+        plan["meta"] = replan.write_cache(
+            out_dir, sml_model=context.sml_model, table_plan=table_plan, security_roles=settings.security_roles,
+            defaults=_planner_defaults(context), project_planner=_project_planner_block(context),
+            cache_ref=cache_ref, revision=revision,
+        )
+    except Exception as exc:  # the plan is still valid; it just cannot be re-planned without a dry run
+        logger.warning("Could not store the Databricks planner input for re-planning: %s", exc)
+        plan["meta"] = {"revision": revision, "status": "valid", "source": "dry_run", "cache_ref": None,
+                        "basis": {"table_check_at": None, "uc_recheck_required_before_deploy": True}}
+    context.databricks_view_plan = plan
+    try:
+        replan.record_plan(out_dir, plan, str(context.project_id), reset=True)
+        logger.info("Databricks view plan written to %s", out_dir / replan.PLAN_MD)
     except Exception as exc:  # non-fatal: the plan is in the run summary either way
         logger.warning("Could not write the Databricks view plan file: %s", exc)

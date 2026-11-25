@@ -194,6 +194,10 @@ class MappingOverride(Base):
     position: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False, default=_utc_now)
     updated_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # Provenance of the name (sb0006). NULL: unmarked / historical row (any
+    # platform; how every row before sb0006 was saved). "user": an explicit
+    # user edit. Only Databricks projects write the marker.
+    origin: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
 
     def __repr__(self) -> str:
         return (

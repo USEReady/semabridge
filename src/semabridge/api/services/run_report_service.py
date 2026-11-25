@@ -98,6 +98,16 @@ _REASON_RULES: List[Tuple[str, str]] = [
         "the time of this run, so it was left out to be safe.",
     ),
     (
+        "not found in the live databricks schema",
+        "This field no longer exists in the connected database, so "
+        "anything depending on it couldn't be included.",
+    ),
+    (
+        "no live databricks schema was fetched",
+        "We couldn't confirm this field still exists in the database at "
+        "the time of this run, so it was left out to be safe.",
+    ),
+    (
         "no live schema was",
         "A date field this calculation depends on couldn't be checked "
         "against the connected database, so it was left out to avoid a "
@@ -377,13 +387,18 @@ def _reason_group_key(reason: str) -> str:
     return r.strip() or "unspecified"
 
 
-def _metric_outcomes_markdown(outcomes: Dict[str, Any]) -> List[str]:
+def _metric_outcomes_markdown(outcomes: Dict[str, Any], target_type: Optional[str] = None) -> List[str]:
     lines: List[str] = ["## Metric Outcomes", ""]
     converted = outcomes.get("converted")
     lines.append("| Outcome | Count |")
     lines.append("|---|---:|")
     lines.append(f"| ✅ Converted (real SQL in the deployed view) | {converted if converted is not None else 'n/a'} |")
-    lines.append(f"| ⏸️ Expected failures (by design — Snowflake limitation) | {outcomes.get('expected_count', 0)} |")
+    _limit = (
+        "target platform limitation"
+        if str(target_type or "").lower() == "databricks"
+        else "Snowflake limitation"
+    )
+    lines.append(f"| ⏸️ Expected failures (by design — {_limit}) | {outcomes.get('expected_count', 0)} |")
     lines.append(f"| ❌ Unexpected failures (bug / data issue) | {outcomes.get('unexpected_count', 0)} |")
     lines.append("")
     if outcomes.get("expected"):
@@ -1206,7 +1221,7 @@ def generate_run_report_markdown(
         logger.debug("Run report: metric outcome summary unavailable", exc_info=True)
         _outcomes = None
     if _outcomes and (_outcomes.get("converted") is not None or _outcomes.get("expected") or _outcomes.get("unexpected")):
-        lines.extend(_metric_outcomes_markdown(_outcomes))
+        lines.extend(_metric_outcomes_markdown(_outcomes, target_type))
 
     # --- Converted calculations ----------------------------------------
     lines.append("## Converted Calculations")

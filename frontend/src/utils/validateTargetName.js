@@ -43,7 +43,7 @@ export function targetNameKind(rowOrKind) {
 export function validateTargetName(value, targetPlatform, sourceType, targetType, kind = 'column') {
   const next = String(value || '').trim();
   if (!next) {
-    return { isValid: false, code: 'EMPTY_TARGET', message: 'Target field cannot be empty.', suggestion: 'UNNAMED' };
+    return { isValid: false, code: 'EMPTY_TARGET', message: 'Target field cannot be empty.', suggestion: namingFor(String(targetPlatform || '')).id === 'databricks' ? 'unnamed' : 'UNNAMED' };
   }
 
   // The platform's naming object (utils/targetNaming.js) owns the rule; this

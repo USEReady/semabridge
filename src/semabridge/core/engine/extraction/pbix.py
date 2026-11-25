@@ -112,6 +112,14 @@ def _extract_pbix(
     connector = LocalPBIXConnector({"pbix_path": pbix_path}, drop_ledger=drop_ledger)
     discovered = connector.discover()
     tmsl = connector.extract() if discovered.get("raw_tmsl") is None else discovered.get("raw_tmsl")
+    # Which reader produced the model (the security-role state depends on it:
+    # the full DataModelSchema is complete; the pbixray fallback reads roles
+    # only when its Role-table query works). Recorded only; nothing reads it
+    # except the Databricks planner settings.
+    if discovered.get("raw_tmsl") is None:
+        context.pbix_parser = "extract"
+    else:
+        context.pbix_parser = str((discovered.get("metadata") or {}).get("parser") or "schema")
 
     if not tmsl:
         raise ExtractionError(

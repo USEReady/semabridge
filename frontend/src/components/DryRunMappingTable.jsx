@@ -16,6 +16,11 @@ import { useState, useMemo, useCallback, createContext, useContext } from 'react
 const TargetPlatformContext = createContext('snowflake');
 // The SQL dialect the measures were translated to (backend `sql_dialect`); falls back to the target.
 const SqlDialectContext = createContext(null);
+// Databricks: the planner's final names per row (Map source_path -> [{view, name}])
+// and the per-row "reset to automatic" action. Null elsewhere.
+const PlannedNamesContext = createContext(null);
+const ResetRowContext = createContext(null);
+const isDatabricks = (platform) => String(platform || '').toLowerCase() === 'databricks';
 const PLATFORM_LABELS = { snowflake: 'Snowflake', databricks: 'Databricks', fabric: 'Fabric' };
 function platformLabel(platform) {
   return PLATFORM_LABELS[String(platform || '').toLowerCase()] || 'Snowflake';
@@ -145,6 +150,57 @@ function TableHeader() {
 
 // ─── Single mapping row ───────────────────────────────────────────────────────
 // ─── Single mapping row ───────────────────────────────────────────────────────
+/** Databricks: the planner's final name(s) for this row -- the names that
+ * deploy. Several views can name one source field differently. */
+function PlannedNames({ row }) {
+  const planned = useContext(PlannedNamesContext);
+  const platform = useTargetPlatform();
+  if (!isDatabricks(platform) || !planned) return null;
+  const entries = planned.get(String(row.source_path || '')) || [];
+  if (entries.length === 0) {
+    return (
+      <div style={{ fontSize: 10, color: 'var(--text-tertiary)' }} title="Not in any planned metric view (hidden, left out, or its view is not built)">
+        not in a metric view
+      </div>
+    );
+  }
+  const names = [...new Set(entries.map((e) => e.name))];
+  const differs = names.length > 1 || names[0] !== row.target_field;
+  const text = entries.length === 1
+    ? `${entries[0].name} in ${entries[0].view}`
+    : entries.map((e) => `${e.view}: ${e.name}`).join(', ');
+  return (
+    <div
+      style={{ fontSize: 10, fontWeight: 600, color: differs ? '#fbbf24' : 'var(--text-tertiary)', overflowWrap: 'anywhere' }}
+      title="The planner's final Databricks name (it decides names per metric view)"
+    >
+      {differs ? 'Planned: ' : ''}{text}
+    </div>
+  );
+}
+
+/** Databricks: put a renamed field back to automatic naming. */
+function ResetRowButton({ row }) {
+  const onReset = useContext(ResetRowContext);
+  const platform = useTargetPlatform();
+  const renamed = String(row.status || '').toLowerCase() === 'manual' || Boolean(row.override_origin);
+  if (!isDatabricks(platform) || !onReset || !renamed) return null;
+  return (
+    <button
+      type="button"
+      onClick={() => onReset(row.id)}
+      title="Remove your saved name; the planner names this field automatically"
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 6,
+        border: '1px solid var(--border-main)', background: 'var(--bg-surface-raised)',
+        color: 'var(--text-secondary)', fontSize: 11, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
+      }}
+    >
+      Reset
+    </button>
+  );
+}
+
 function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpandedCollision, allRows, pendingRenames, setPendingRenames, applyingRename, onApplyRename }) {
   const targetPlatform = useTargetPlatform();
   const [expandedMeasure, setExpandedMeasure] = useState(false);
@@ -269,6 +325,7 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
             </div>
           )}
         </div>
+        <PlannedNames row={row} />
         {isCollision && (() => {
           // Only show a suggestion chip if it differs from the conflicting target name
           const { suggestions } = suggestCollisionResolutions(row, allRows, targetPlatform);
@@ -553,6 +610,7 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
                 {expandedMeasure ? 'Hide SQL' : 'View SQL'}
               </button>
             )}
+            <ResetRowButton row={row} />
             <button
               type="button"
               onClick={() => onEdit?.(row.id)}
@@ -1182,9 +1240,13 @@ function NameChangesPanel({ rows, onEdit, deployedNamesKnown = false }) {
           <Info size={14} style={{ flexShrink: 0, marginTop: 1, color: CHANGE_TONE.renamed_in_snowflake }} />
           <span>
             {renamedInSnowflake > 0
-              ? `${renamedInSnowflake} column${renamedInSnowflake > 1 ? 's are' : ' is'} renamed in Snowflake by this sync `
-                + '(see "Renamed in Snowflake" below). Queries, reports, dashboards or Cortex verified queries that use '
-                + 'the old names must be updated.'
+              ? (isDatabricks(targetPlatform)
+                ? `${renamedInSnowflake} column${renamedInSnowflake > 1 ? 's are' : ' is'} renamed in Databricks by this sync `
+                  + '(see "Renamed in Databricks" below). Queries, dashboards or Genie spaces that use '
+                  + 'the old names must be updated.'
+                : `${renamedInSnowflake} column${renamedInSnowflake > 1 ? 's are' : ' is'} renamed in Snowflake by this sync `
+                  + '(see "Renamed in Snowflake" below). Queries, reports, dashboards or Cortex verified queries that use '
+                  + 'the old names must be updated.')
               : legacyNote}
           </span>
         </div>
@@ -1238,17 +1300,33 @@ function NameChangesPanel({ rows, onEdit, deployedNamesKnown = false }) {
 
 /** One line for the cross-table shared names (never blocking). */
 function SharedNamesNote({ rows }) {
+  const databricks = isDatabricks(useTargetPlatform());
   const names = useMemo(() => {
     const seen = new Map();
     (rows || []).forEach((row) => {
       if (Array.isArray(row.shared_name_tables) && row.shared_name_tables.length > 1) {
-        seen.set(String(row.target_field || '').toUpperCase(), row.shared_name_tables);
+        // Databricks names are lowercase (shown as they deploy); Snowflake upper case.
+        const name = String(row.target_field || '');
+        seen.set(databricks ? name.toLowerCase() : name.toUpperCase(), row.shared_name_tables);
       }
     });
     return [...seen.entries()];
-  }, [rows]);
+  }, [rows, databricks]);
   if (names.length === 0) return null;
   const sample = names.slice(0, 3).map(([name, tables]) => `${name} (${tables.join(', ')})`).join('; ');
+  if (databricks) {
+    return (
+      <div style={{ ...PANEL, padding: '10px 14px', fontSize: 12, color: 'var(--text-secondary)', display: 'flex', gap: 8 }}>
+        <Info size={14} style={{ flexShrink: 0, marginTop: 1, color: 'var(--text-tertiary)' }} />
+        <span>
+          {names.length} column name{names.length > 1 ? 's are' : ' is'} used in more than one table: {sample}
+          {names.length > 3 ? ` and ${names.length - 3} more` : ''}. A Databricks metric view has one list of names, so
+          where two of them meet in one view the planner gives one a table prefix (see the planned names). Rename one
+          (Edit) to choose the name yourself.
+        </span>
+      </div>
+    );
+  }
   return (
     <div style={{ ...PANEL, padding: '10px 14px', fontSize: 12, color: 'var(--text-secondary)', display: 'flex', gap: 8 }}>
       <Info size={14} style={{ flexShrink: 0, marginTop: 1, color: 'var(--text-tertiary)' }} />
@@ -1270,13 +1348,15 @@ export default function DryRunMappingTable({
   onBulkResolved,     // (resolvedMap: Record<rowId, suggestedTarget>) => void
   summary,
   relationships = [],
-  schemaConflicts = [],       // DIMENSION_MISSING conflicts from backend
+  schemaConflicts: schemaConflictsIn = [],  // DIMENSION_MISSING conflicts from backend (Snowflake only)
   compatibilityScore = null,  // 0–100 float from backend
   onReSync,                   // () => void — trigger a re-sync after auto-add
   droppedEntities = [],       // DropRecord[] — entities excluded from deployed DDL (see DropLedger)
   deployedNamesKnown = false, // backend read the last deploy's names (rows carry deployed_name_change)
   targetPlatform = 'snowflake', // the project's target: drives the "<Platform> SQL" labels
   sqlDialect = null,            // the dialect actually used (dry-run `sql_dialect`); overrides the SQL labels
+  plannedNames = null,          // Databricks: Map source_path -> [{view, name}] from the planner (utils/databricksPlan.js)
+  onResetRow = null,            // Databricks: (rowId) => void -- reset a renamed field to automatic naming
   unresolvedReportFieldReferences = [], // [{field, field_type, table, occurrences}] — report queries a name absent from the current schema (see LocalPBIXConnector._detect_unresolved_field_references); table-scoped only, never auto-attached to a specific column
 }) {
   // ── Dev-only guardrail: catch un-normalized rows reaching this component ────
@@ -1294,6 +1374,9 @@ export default function DryRunMappingTable({
       );
     }
   }
+
+  // The missing-column fix (ALTER TABLE on a Snowflake table) is Snowflake-only.
+  const schemaConflicts = isDatabricks(targetPlatform) ? [] : schemaConflictsIn;
 
   // ── Tier 1 (field type, single-select) / Tier 2 (status, multi-select) ──────
   const [activeFieldType, setActiveFieldType] = useState('all');
@@ -1597,6 +1680,8 @@ export default function DryRunMappingTable({
   return (
     <TargetPlatformContext.Provider value={targetPlatform}>
     <SqlDialectContext.Provider value={sqlDialect}>
+    <PlannedNamesContext.Provider value={plannedNames}>
+    <ResetRowContext.Provider value={onResetRow}>
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
 
       {/* ── Compatibility score bar ─────────────────────────────────────────── */}
@@ -2032,6 +2117,8 @@ export default function DryRunMappingTable({
         onSave={handleSynonymSave}
       />
     </div>
+    </ResetRowContext.Provider>
+    </PlannedNamesContext.Provider>
     </SqlDialectContext.Provider>
     </TargetPlatformContext.Provider>
   );

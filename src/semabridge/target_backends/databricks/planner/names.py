@@ -4,6 +4,12 @@ Each name comes from the independent Databricks normaliser (lowercase
 snake_case; target_rules/databricks/naming.py), then a per-namespace allocator:
 
   1. reserved (already deployed) names, by structured source identity
+  1a. firm requests (explicit user edits): honoured, or a BLOCKING conflict
+      when the name is taken (deployed name, another firm request, a join
+      alias / `source`) or not legal -- never silently changed
+  1b. soft requests (unmarked historical saved names): honoured only when free
+      AND not another object's natural name; otherwise the object is named
+      normally and the change is reported (never silently discarded)
   2. natural names for every object, in a stable order: measures in model
      order, then fields by join distance, ties broken by source identity
   3. only then secondary candidates: fields <table>_<name>, then numbers;
@@ -48,11 +54,19 @@ class _Item:
         self.why = ""
 
 
+class NameRequest:
+    """A saved name for one source object: firm (explicit user edit) or soft."""
+
+    def __init__(self, source_path: str, name: str, firm: bool) -> None:
+        self.source_path, self.name, self.firm = source_path, name, firm
+
+
 class Allocator:
     """One case-insensitive namespace."""
 
     def __init__(self, reserved_words: Sequence[str] = ()) -> None:
-        self.taken: Set[str] = {w.lower() for w in reserved_words}
+        self.words: Set[str] = {w.lower() for w in reserved_words}
+        self.taken: Set[str] = set(self.words)
 
     def free(self, name: str) -> bool:
         return name.lower() not in self.taken
@@ -60,13 +74,73 @@ class Allocator:
     def take(self, name: str) -> None:
         self.taken.add(name.lower())
 
-    def allocate(self, items: List[_Item], reserved: Mapping[SourceId, str]) -> None:
+    def _holder(self, name: str, items: List[_Item], me: _Item) -> str:
+        for o in items:
+            if o is not me and o.final is not None and o.final.lower() == name.lower():
+                return f"{o.kind} {o.label}"
+        return "a join alias or the reserved word `source`" if name.lower() in self.words else "another object"
+
+    def allocate(self, items: List[_Item], reserved: Mapping[SourceId, str],
+                 requests: Optional[Mapping[SourceId, NameRequest]] = None) -> List[Dict]:
+        """Allocate every item; returns one event per requested name."""
         items = sorted(items, key=lambda it: it.order)
+        requests = requests or {}
+        events: List[Dict] = []
         for it in items:                                   # 1. reserved
             name = reserved.get(it.sid)
             if name and NAMING.is_legal_identifier(name) and self.free(name):
                 it.final, it.generated, it.why = name, NAMING.is_generated_name(name), "kept the name already deployed"
                 self.take(name)
+        for it in items:                                   # 1a. firm requests
+            req = requests.get(it.sid)
+            if req is None or not req.firm:
+                continue
+            ev = {"item": it, "request": req, "holder": ""}
+            events.append(ev)
+            if it.final is not None and it.final.lower() != req.name.lower():
+                ev.update(status="conflict", holder="the deployed name",
+                          reason=f"the deployed name {it.final} is kept (deployed names are protected)")
+            elif it.final is not None:
+                ev.update(status="kept", reason="")
+            elif not NAMING.is_legal_identifier(req.name):
+                ev.update(status="conflict", reason=f"{req.name!r} is not a legal Databricks name")
+            elif not self.free(req.name):
+                holder = self._holder(req.name, items, it)
+                ev.update(status="conflict", holder=holder,
+                          reason=f"{req.name} is already used by {holder} in this view")
+            else:
+                it.final, it.generated, it.why = req.name, NAMING.is_generated_name(req.name), "your saved name"
+                self.take(req.name)
+                ev.update(status="kept", reason="")
+        for it in items:                                   # 1b. soft requests
+            req = requests.get(it.sid)
+            if req is None or req.firm:
+                continue
+            ev = {"item": it, "request": req, "holder": ""}
+            events.append(ev)
+            if it.final is not None:
+                same = it.final.lower() == req.name.lower()
+                ev.update(status="kept" if same else "changed",
+                          reason="" if same else "the deployed name is kept")
+                continue
+            if req.name.lower() == it.base.lower():
+                ev.update(status="pending", reason="")       # its own natural name: step 2 decides
+                continue
+            owner = next((o for o in items if o is not it and o.final is None
+                          and o.base.lower() == req.name.lower()), None)
+            if not NAMING.is_legal_identifier(req.name):
+                ev.update(status="changed", reason=f"{req.name!r} is not a legal Databricks name")
+            elif not self.free(req.name):
+                holder = self._holder(req.name, items, it)
+                ev.update(status="changed", holder=holder, reason=f"{req.name} is already used by {holder}")
+            elif owner is not None:
+                # a soft request never displaces another object's natural name
+                ev.update(status="changed", holder=f"{owner.kind} {owner.label}",
+                          reason=f"{req.name} is the natural name of {owner.kind} {owner.label}")
+            else:
+                it.final, it.generated, it.why = req.name, NAMING.is_generated_name(req.name), "saved name kept"
+                self.take(req.name)
+                ev.update(status="kept", reason="")
         for it in items:                                   # 2. natural names first
             if it.final is None and self.free(it.base):
                 it.final = it.base
@@ -83,6 +157,14 @@ class Allocator:
             it.final = cand
             it.why = f"{it.base} is already used in this view"
             self.take(cand)
+        for ev in events:                                  # outcome of requests left to steps 2-3
+            it, req = ev["item"], ev["request"]
+            ev["final"] = it.final
+            if ev["status"] == "pending":
+                ok = it.final.lower() == req.name.lower()
+                ev["status"] = "kept" if ok else "changed"
+                ev["reason"] = "" if ok else f"{req.name} is already used in this view"
+        return events
 
 
 def _labels(label: str, synonyms: Sequence[str]) -> Tuple[str, List[str], List[str]]:
@@ -109,7 +191,9 @@ def _labels(label: str, synonyms: Sequence[str]) -> Tuple[str, List[str], List[s
 
 
 def assign_names(view: ViewPlan, graph: ModelGraph, reserved: Mapping[SourceId, str],
-                 join_aliases: Sequence[str], measure_order: Mapping[str, int]) -> List[Rename]:
+                 join_aliases: Sequence[str], measure_order: Mapping[str, int],
+                 requests: Optional[Mapping[SourceId, NameRequest]] = None,
+                 events_out: Optional[List[Dict]] = None) -> List[Rename]:
     alloc = Allocator(["source", *join_aliases])
     items: List[_Item] = []
     sql_by_name: Dict[str, List[MeasurePlan]] = {}
@@ -128,13 +212,17 @@ def assign_names(view: ViewPlan, graph: ModelGraph, reserved: Mapping[SourceId, 
         items.append(_Item(f, f.source_id, base, f.column, "field",
                            (lambda n, b=base, t=table_base: f"{t}_{b}" if n == 1 else f"{t}_{b}_{n}"),
                            (1, depth.get(f.path, 9), f.path, f.source_id.key())))
-    alloc.allocate(items, reserved)
+    events = alloc.allocate(items, reserved, requests)
+    if events_out is not None:
+        for ev in events:
+            ev["view"] = view.name
+        events_out.extend(events)
 
     renames: List[Rename] = []
     for it in items:
         it.obj.name = it.final
         it.obj.name_generated = it.generated
-        if it.final != it.base:
+        if it.final != it.base and it.why not in ("your saved name", "saved name kept"):
             renames.append(Rename(view.name, it.kind, it.label, it.final, it.why, it.sid))
     for expr, ms in sql_by_name.items():
         if len(ms) > 1:

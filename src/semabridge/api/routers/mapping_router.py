@@ -17,7 +17,7 @@ Design principles:
 from __future__ import annotations
 
 import hashlib
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -48,6 +48,9 @@ class ResolvedField(BaseModel):
 class BulkResolveRequest(BaseModel):
     """Payload for bulk collision resolution."""
     collisions: List[CollisionField]
+    # The project's target platform. Databricks gets its own (lowercase,
+    # table-prefixed) suggestions; absent / Snowflake keeps the behaviour below.
+    target_type: Optional[str] = None
 
 
 class BulkResolveResponse(BaseModel):
@@ -92,6 +95,8 @@ def bulk_resolve_collisions(body: BulkResolveRequest) -> BulkResolveResponse:
     - Stable: re-calling this endpoint with the same inputs yields the same output
     """
     resolved: List[ResolvedField] = []
+    if str(body.target_type or "").strip().lower() == "databricks":
+        return _databricks_suggestions(body)
 
     for collision in body.collisions:
         entity = (collision.entity_name or "").strip()
@@ -112,4 +117,24 @@ def bulk_resolve_collisions(body: BulkResolveRequest) -> BulkResolveResponse:
             )
         )
 
+    return BulkResolveResponse(resolved=resolved, total=len(resolved))
+
+
+def _databricks_suggestions(body: BulkResolveRequest) -> BulkResolveResponse:
+    """Databricks naming v2: `<table>_<name>` (lowercase snake_case, table
+    prefix; the planner's own secondary candidate), no hash. Suggestions only:
+    the planner still decides final names per metric view."""
+    from semabridge.target_rules.naming import naming_for
+
+    naming = naming_for("databricks")
+    resolved = []
+    for collision in body.collisions:
+        entity = (collision.entity_name or "").strip()
+        field = (collision.field_name or "").strip()
+        base = (collision.current_target or field).strip()
+        suggested = naming.target_name(f"{entity} {base}".strip(), entity_kind="column")
+        resolved.append(ResolvedField(
+            entity_name=entity, field_name=field, current_target=collision.current_target,
+            suggested_target=suggested, hash_suffix="", status="suggestion",
+        ))
     return BulkResolveResponse(resolved=resolved, total=len(resolved))

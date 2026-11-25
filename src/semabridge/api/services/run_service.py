@@ -280,11 +280,17 @@ def _build_run_logs(sync_result: Dict[str, Any]) -> List[str]:
 
 
 def _build_stage_states(sync_result: Dict[str, Any]) -> List[Dict[str, str]]:
+    _summary = sync_result.get("summary") if isinstance(sync_result.get("summary"), dict) else {}
+    _deploy_label = (
+        "Databricks Deployment"
+        if str(_summary.get("target_type") or "").lower() == "databricks"
+        else "Snowflake Deployment"
+    )
     defaults = [
         {"id": "extraction", "label": "Extraction", "status": "pending"},
         {"id": "osi_conversion", "label": "OSI Conversion", "status": "pending"},
         {"id": "sml_generation", "label": "SML Generation", "status": "pending"},
-        {"id": "snowflake_deployment", "label": "Snowflake Deployment", "status": "pending"},
+        {"id": "snowflake_deployment", "label": _deploy_label, "status": "pending"},
     ]
     steps = (
         sync_result.get("summary", {}).get("steps_completed", [])

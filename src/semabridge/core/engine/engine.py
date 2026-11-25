@@ -359,7 +359,7 @@ class ExecutionEngine:
             sml_model = self._step6_convert_to_sml(context, workspace_id, dataset_id, force=force)
             
             if config_path is not None and not context.mapping_overrides_applied:
-                self._apply_mapping_overrides_from_config(sml_model, Path(config_path), config_payload=config_dict)
+                self._apply_overrides_for_run(context, sml_model, Path(config_path), config_dict)
             context.sml_model = sml_model
 
             # Step 6-ontology: per-element user overrides > attached domain
@@ -536,6 +536,7 @@ class ExecutionEngine:
 # ?? Method bindings ?? do not edit manually ??????????????????????????????????
 from semabridge.core.engine import config as _cfg
 ExecutionEngine._apply_mapping_overrides_from_config = staticmethod(_cfg._apply_mapping_overrides_from_config)
+ExecutionEngine._apply_overrides_for_run            = _cfg._apply_overrides_for_run
 ExecutionEngine._step1_load_config                   = _cfg._step1_load_config
 ExecutionEngine._step2_init_identifiers              = _cfg._step2_init_identifiers
 

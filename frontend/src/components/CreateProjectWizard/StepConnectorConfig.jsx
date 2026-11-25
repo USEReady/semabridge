@@ -588,6 +588,7 @@ export function StepConnectorConfig({
 
                 {pbixMultiFileMode ? (
                   <MultiPbixUpload
+                    targetType={[...targetConnectors][0] || ''}
                     entries={pbixFileEntries}
                     onAddFiles={onAddPbixFiles}
                     onRemove={onRemovePbixFile}

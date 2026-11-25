@@ -64,6 +64,10 @@ class AutoMapRequest(BaseModel):
 
 class DeployRequest(BaseModel):
     field_mappings: List[Dict[str, Any]]
+    # The project's target platform (sent by the wizard). A "preview" project
+    # created here takes it when no preview config is stored, instead of
+    # assuming Snowflake.
+    target_type: Optional[str] = None
     # Answers to the sync-start checks (same as run-now): the user confirmed
     # the duplicate / removed-fields warning, or chose a sync mode for this run.
     acknowledge_duplicates: bool = False
@@ -91,6 +95,204 @@ async def list_mappings(request: Request, project_id: Optional[str] = None):
             raise HTTPException(status_code=400, detail="project_id is required")
         _assert_project_access(pid, user_id)
     return await list_mappings_compat(pid or None)
+
+
+class ResetOverrideRequest(BaseModel):
+    source_path: str
+    model: Optional[str] = None
+
+
+@router.post('/api/projects/{project_id}/mapping-overrides/reset')
+async def reset_mapping_override(project_id: str, request: Request, body: ResetOverrideRequest):
+    """Reset one field to automatic naming: its saved name is removed from
+    the override table (the planner then names it). Other saved names stay."""
+    user_id = require_request_user_id(request)
+    _assert_project_access(project_id, user_id)
+    from semabridge.api.services.project_config_store import delete_override
+
+    path = str(body.source_path or "").strip()
+    if not path:
+        raise HTTPException(status_code=400, detail="source_path is required")
+    removed = delete_override(project_id, path, model=body.model)
+    with project_shared_store_lock():
+        _drop_cached_manual_mapping(project_id, path, body.model)
+    return {"success": True, "removed": removed, "source_path": path}
+
+
+def project_shared_store_lock():
+    from semabridge.api.services.project_shared import compat_store_lock
+
+    return compat_store_lock()
+
+
+def _drop_cached_manual_mapping(project_id: str, source_path: str, model: Optional[str]) -> None:
+    """The display cache must not keep showing the reset name as manual."""
+    import semabridge.api.services.project_shared as ps
+
+    for mapping_id, mapping in list(ps._compat_mappings.items()):
+        if not isinstance(mapping, dict) or str(mapping.get("project_id") or "") != project_id:
+            continue
+        if str(mapping.get("source_path") or "") != source_path:
+            continue
+        if model and str(mapping.get("model") or "") not in ("", str(model)):
+            continue
+        for key in ("is_user_edited", "origin"):
+            mapping.pop(key, None)
+        if mapping.get("status") == "manual":
+            mapping["status"] = "auto"
+    ps._compat_save_store()
+
+
+# --- Databricks plan: re-plan and planner options (integration batch 2) -------------------
+
+_CALC_MODES = ("approximate", "strict")
+
+
+class ReplanRequest(BaseModel):
+    # Which dry run's cache to re-plan (the plan's meta.cache_ref).
+    cache_project_id: Optional[str] = None
+    model_subdir: Optional[str] = None
+    # The screen's current saved names / options; None -> the project's stored ones.
+    mappings_overrides: Optional[List[Dict[str, Any]]] = None
+    planner: Optional[Dict[str, Any]] = None
+    # Monotonic (ms): a response for an older revision never replaces a newer plan.
+    revision: Optional[int] = None
+
+
+class PlannerOptionsRequest(BaseModel):
+    calculate_mode: Optional[str] = None
+    excluded_measures: Optional[List[str]] = None
+
+
+def _stored_config(project_id: str) -> Dict[str, Any]:
+    from semabridge.api.services.project_config_store import get_project_config_text, is_transient_project
+
+    if is_transient_project(project_id):
+        import semabridge.api.services.project_shared as ps
+
+        text = str(ps._compat_project_configs.get(project_id) or "")
+    else:
+        try:
+            text = get_project_config_text(project_id)
+        except Exception:
+            text = ""
+    try:
+        parsed = yaml.safe_load(text) or {}
+    except Exception:
+        parsed = {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _target_block(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    if isinstance(cfg.get("target"), dict):
+        return cfg["target"]
+    targets = cfg.get("targets")
+    if isinstance(targets, list) and targets and isinstance(targets[0], dict):
+        return targets[0]
+    return {}
+
+
+def _validated_planner_options(opts: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if opts is None:
+        return None
+    out: Dict[str, Any] = {}
+    mode = str(opts.get("calculate_mode") or "").strip().lower()
+    if mode:
+        if mode not in _CALC_MODES:
+            raise HTTPException(status_code=400, detail=f"calculate_mode must be one of {list(_CALC_MODES)}")
+        out["calculate_mode"] = mode
+    if opts.get("excluded_measures") is not None:
+        if not isinstance(opts["excluded_measures"], list):
+            raise HTTPException(status_code=400, detail="excluded_measures must be a list of measure names")
+        out["excluded_measures"] = sorted({str(x) for x in opts["excluded_measures"] if str(x).strip()})
+    return out
+
+
+def _require_databricks(project_id: str, cfg: Dict[str, Any]) -> None:
+    target_type = str(_target_block(cfg).get("type") or "").strip().lower()
+    if target_type and target_type != "databricks":
+        raise HTTPException(status_code=400, detail=f"Project '{project_id}' targets {target_type}, not Databricks.")
+
+
+def _plan_cache_project(project_id: str, cache_project_id: Optional[str], request: Request) -> str:
+    """Which dry run's plan cache a plan request may read. A real project:
+    access-checked, its own cache or a preview's (the wizard dry run that
+    created it). The wizard ("preview"): only a preview cache, under the same
+    rule as the wizard dry run itself (no project to own yet)."""
+    user_id = require_request_user_id(request)
+    cache_pid = str(cache_project_id or project_id).strip()
+    if project_id in ("preview", ""):
+        if not _is_preview_project_id(cache_pid) or cache_pid == "preview":
+            raise HTTPException(status_code=400, detail="a wizard plan request needs its preview cache id")
+        return cache_pid
+    _assert_project_access(project_id, user_id)
+    if cache_pid != project_id and not _is_preview_project_id(cache_pid):
+        raise HTTPException(status_code=400, detail="cache_project_id must be this project or its preview")
+    return cache_pid
+
+
+@router.post('/api/projects/{project_id}/databricks/replan')
+async def replan_databricks(project_id: str, request: Request, body: ReplanRequest):
+    """Re-run ONLY the metric-view planner from the last dry run's cached
+    inputs, with the current saved names and planner options. Never reads
+    Unity Catalog (the plan states which table check it rests on). A failed
+    re-plan marks the recorded plan stale; an older revision never replaces a
+    newer plan."""
+    from semabridge.target_backends.databricks import replan
+
+    cache_pid = _plan_cache_project(project_id, body.cache_project_id, request)
+    cfg = _stored_config(project_id) if project_id != "preview" else {}
+    _require_databricks(project_id, cfg)
+    rows = body.mappings_overrides
+    if rows is None:
+        rows = [r for r in cfg.get("mappings_overrides") or [] if isinstance(r, dict)]
+    opts = _validated_planner_options(body.planner)
+    if opts is None:
+        opts = _validated_planner_options(_target_block(cfg).get("planner") or {})
+    out_dir = replan.output_dir(cache_pid, body.model_subdir)
+    revision = int(body.revision or replan.now_revision())
+    return replan.replan(out_dir, rows, opts, revision, title=str(project_id))
+
+
+@router.get('/api/projects/{project_id}/databricks/plan')
+async def get_databricks_plan(project_id: str, request: Request, cache_project_id: Optional[str] = None,
+                              model_subdir: Optional[str] = None):
+    """The recorded plan and its state (valid / stale with the error)."""
+    from semabridge.target_backends.databricks import replan
+
+    cache_pid = _plan_cache_project(project_id, cache_project_id, request)
+    plan, state = replan.recorded_plan(replan.output_dir(cache_pid, model_subdir))
+    if plan is None:
+        raise HTTPException(status_code=404, detail="No Databricks plan recorded yet: run a dry run first.")
+    return {"plan": plan, "state": state}
+
+
+@router.put('/api/projects/{project_id}/databricks/planner-options')
+async def save_planner_options(project_id: str, request: Request, body: PlannerOptionsRequest):
+    """Save approximate/strict and the unticked measures in the project's
+    target `planner` block (a new config version). Preview projects keep them
+    on the screen until the project is created."""
+    from semabridge.api.services.project_config_store import is_transient_project, save_project_config
+
+    user_id = require_request_user_id(request)
+    _assert_project_access(project_id, user_id)
+    if is_transient_project(project_id) or _is_preview_project_id(project_id):
+        raise HTTPException(status_code=409, detail="A preview project has no saved config yet; options are saved "
+                                                    "with the project when it is created.")
+    cfg = _stored_config(project_id)
+    if not cfg:
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' has no stored configuration")
+    _require_databricks(project_id, cfg)
+    opts = _validated_planner_options(body.model_dump(exclude_none=True)) or {}
+    target = _target_block(cfg)
+    if not target:
+        raise HTTPException(status_code=400, detail="The project has no target to hold planner options")
+    planner = dict(target.get("planner") or {})
+    planner.update(opts)
+    target["planner"] = planner
+    saved = save_project_config(project_id, yaml.safe_dump(cfg, sort_keys=False, allow_unicode=False),
+                                reason="planner_options", user_id=user_id)
+    return {"success": True, "planner": planner, "config_version": saved.get("version")}
 
 
 @router.delete('/api/mappings')
@@ -227,7 +429,7 @@ def _build_config_yaml_from_request(
     so the real sync pipeline can run extraction + OSI + SML without deployment.
     """
     source_type = str(source_config.get("type") or "fabric").strip().lower()
-    target_type = str(target_config.get("type") or "snowflake").strip().lower()
+    target_type = _wizard_target_type(target_config)
 
     source_section: Dict[str, Any] = {"type": source_type}
     if source_config.get("workspace_id"):
@@ -456,6 +658,9 @@ def _restore_engine_collision_verdicts(
             continue
         if engine_row.get("mapping_scope"):
             row["mapping_scope"] = engine_row.get("mapping_scope")
+        for key in ("override_origin", "saved_target_name"):  # Databricks rows only
+            if engine_row.get(key):
+                row[key] = engine_row.get(key)
         if engine_row.get("collision_detected"):
             continue
         if str(row.get("validation_code") or "").upper() == "COLLISION":
@@ -517,6 +722,56 @@ def _project_sync_settings(project_id: str) -> Tuple[str, Dict[str, Any]]:
         return "copy", {}
 
 
+def _planner_owns_databricks_clashes(rows: List[Dict[str, Any]]) -> None:
+    """Databricks: the metric-view planner decides final names and clashes per
+    view (names are unique per metric VIEW, not per table). The screen's own
+    per-table clash verdicts are cleared so they never contradict the plan;
+    the plan's conflicts (databricks_view_plan.blockers / name_requests) are
+    what the screen shows."""
+    for row in rows:
+        if not row.get("collision_detected") and str(row.get("validation_code") or "").upper() not in (
+                "COLLISION", "NAME_COLLISION"):
+            continue
+        row["collision_detected"] = False
+        row["validation_status"] = "valid"
+        row["validation_code"] = "OK"
+        row["validation_message"] = ""
+        row["collision_group"] = ""
+        if str(row.get("status") or "").lower() == "collision":
+            row["status"] = row["mapping_status"] = "auto"
+
+
+def _wizard_target_type(target_config: Any) -> str:
+    """The wizard's target platform; a type-less target with Databricks
+    settings is refused (400), never named as Snowflake."""
+    from semabridge.api.services.sync_execution_service import resolve_target_type
+    from semabridge.domain.exceptions import ValidationError
+
+    try:
+        return resolve_target_type(target_config or {}, "snowflake")
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+def _databricks_saved_name(row: Dict[str, Any], source_path: str, saved: str, default_name: Any) -> Dict[str, Any]:
+    """A saved Databricks name as the dry run shows it: normalised exactly as
+    the run reads it (``override_deploy_name``), never dropped as an "old
+    automatic name" (that rule is Snowflake's), and with its provenance.
+    ``origin`` "user" = explicit edit (firm); otherwise unmarked (soft)."""
+    from semabridge.api.services.project_config_store import normalize_origin
+    from semabridge.target_rules.naming import override_deploy_name
+
+    name = override_deploy_name(saved, source_path, "databricks") or saved
+    origin = normalize_origin(row.get("origin"))
+    return {
+        "target_name": name,
+        "is_user_edited": origin is not None or name != str(default_name or ""),
+        "preserve_name": True,  # never strip a suffix from a saved Databricks name
+        "override_origin": origin or "unmarked",
+        "saved_target_name": name,
+    }
+
+
 def _saved_names_for_dry_run(
     project_cfg: Dict[str, Any],
     source_config: Dict[str, Any],
@@ -566,6 +821,9 @@ def _saved_names_for_dry_run(
         default_name = _default_target_identifier(
             source_name, target_connector, "column" if ".columns." in source_path else "metric",
         )
+        if str(target_connector or "").strip().lower() == "databricks":
+            existing[source_path] = _databricks_saved_name(row, source_path, target_name, default_name)
+            continue
         from semabridge.utils.identifiers import is_legacy_auto_column_name
         if ".columns." in source_path and is_legacy_auto_column_name(source_name, target_name):
             # Only the old automatic name (COL_DATE for Date): not a user
@@ -813,7 +1071,7 @@ async def _run_dry_run_pipeline(
         )
 
     # ── 4. Build entity mappings from the real SML snapshot ──────────────────
-    target_connector = str(target_config.get("type") or "snowflake").strip().lower()
+    target_connector = _wizard_target_type(target_config)
 
     # Read the SML blob directly from the snapshot by snapshot_id.
     # We cannot use _compat_build_project_entity_mappings because the snapshot
@@ -1002,13 +1260,21 @@ async def _run_dry_run_pipeline(
             # name) so every row of a per-model result is attributable.
             "source_file": m.get("source_file") or source_label or None,
         })
+        for key in ("override_origin", "saved_target_name"):   # Databricks rows only
+            if m.get(key):
+                filtered_mappings[-1][key] = m.get(key)
+
+    if target_connector == "databricks":
+        _planner_owns_databricks_clashes(filtered_mappings)
 
     # Columns whose Snowflake name changes vs the last deploy (e.g. COL_DATE
     # -> DATE after the naming-rule change): marked so the UI warns that
     # queries / reports using the old name must be updated.
     from semabridge.api.services.deployed_name_changes import annotate_dry_run_rows
 
-    deployed_names_known = annotate_dry_run_rows(
+    # Snowflake only: it reads the deployed Snowflake DDL. Databricks has no
+    # deployed history yet (3.8 keeps it per target and destination).
+    deployed_names_known = False if target_connector == "databricks" else annotate_dry_run_rows(
         filtered_mappings, project_id, (model_plan or {}).get("physical_namespace"),
     )
 
@@ -1301,10 +1567,11 @@ async def deploy_mappings(
     actual_project_id = project_id
     if project_id == "preview" or project_id.startswith("preview-"):
         preview_cfg = str(project_shared._compat_project_configs.get(project_id) or "").strip()
+        requested_target = str(getattr(request, "target_type", None) or "").strip().lower()
         new_project_payload = {
             "name": f"project-{uuid.uuid4().hex[:8]}",
             "source": {"type": "fabric"},
-            "targets": [{"type": "snowflake"}],
+            "targets": [{"type": requested_target or "snowflake"}],
             "preferred_interface": "ui",
             "user_id": request_user_id,
         }
@@ -1328,6 +1595,15 @@ async def deploy_mappings(
                 target_connector_type = str((targets[0] or {}).get("type") or "").strip().lower()
     except Exception:
         target_connector_type = ""
+    requested_target = str(getattr(request, "target_type", None) or "").strip().lower()
+    if requested_target == "databricks" and target_connector_type not in ("", "databricks"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Deploy request is for Databricks but the project targets '{target_connector_type}'.",
+        )
+    if not target_connector_type and requested_target:
+        target_connector_type = requested_target
+    databricks = target_connector_type == "databricks"
 
     for idx, mapping in enumerate(request.field_mappings):
         if not isinstance(mapping, dict):
@@ -1355,7 +1631,16 @@ async def deploy_mappings(
         merged["target_name"] = target_name
         merged["target_data_type"] = str(mapping.get("target_data_type") or "").strip()
         merged["updated_at"] = project_shared._compat_now_iso()
-        if target_name:
+        if databricks:
+            # Databricks: only genuine user edits are saved (with the explicit
+            # marker); suggested / automatic names are left to the planner.
+            if target_name and bool(mapping.get("user_edited")):
+                merged["status"] = "manual"
+                merged["is_user_edited"] = True
+                merged["origin"] = "user"
+                from semabridge.api.services.mapping_service import _compat_record_manual_mapping
+                _compat_record_manual_mapping(actual_project_id, merged, user_id=request_user_id)
+        elif target_name:
             merged["status"] = "manual"
             merged["is_user_edited"] = True
             # The override table is what the sync reads.

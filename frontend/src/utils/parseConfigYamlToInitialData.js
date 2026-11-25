@@ -84,6 +84,14 @@ export function parseConfigYamlToInitialData(yamlText, projectMeta) {
       target_source_schemas: Array.isArray(firstTarget.source_schemas)
         ? firstTarget.source_schemas.map(String).join(', ')
         : String(firstTarget.source_schemas || ''),
+      // Databricks planner options (kept when the project is edited and saved).
+      target_planner: firstTarget.planner && typeof firstTarget.planner === 'object'
+        ? {
+          calculate_mode: firstTarget.planner.calculate_mode ? String(firstTarget.planner.calculate_mode) : undefined,
+          excluded_measures: Array.isArray(firstTarget.planner.excluded_measures)
+            ? firstTarget.planner.excluded_measures.map(String) : [],
+        }
+        : null,
       target_schema: String(firstTarget.schema || ''),
       target_account: String(firstTarget.account || ''),
       target_warehouse: String(firstTarget.warehouse || ''),

@@ -34,9 +34,10 @@ TIME_FLAG = "time_intelligence_anchored_to_current_date"
 
 # Left-out reasons that make every measure built on it unusable too. Placement
 # reasons are not inherited: a dependant inlines the SQL and is placed on its own.
+# A measure the user unticked is inherited: excluding it excludes what is built on it.
 INHERITED = {
     "conversion_failed", "unrecognised_pattern", "analysis_mismatch",
-    "filter_removal_unsupported", "filter_semantics_differ", CYCLE, "depends_on",
+    "filter_removal_unsupported", "filter_semantics_differ", CYCLE, "depends_on", "user_excluded",
 }
 
 
