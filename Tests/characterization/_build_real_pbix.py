@@ -17,6 +17,7 @@ from __future__ import annotations
 import importlib.util
 import re
 import sys
+import zipfile
 from pathlib import Path
 from typing import Dict, List
 
@@ -30,8 +31,24 @@ SNAPSHOT_DIR = _HERE / "snapshots" / "real_pbix"
 KINDS = ("osi.json", "sml.json", "ddl.sql")
 
 
+def _has_embedded_model(pbix_path: Path) -> bool:
+    """True if the PBIX archive contains an embedded semantic model payload.
+    Thin reports (live connections to Power BI service) contain Connections
+    but no DataModel/DataModelSchema and cannot be characterized as models."""
+    try:
+        with zipfile.ZipFile(pbix_path) as z:
+            names = set(z.namelist())
+            return bool(names & {"DataModel", "DataModelSchema", "definition/model.bim", "model.bim"})
+    except Exception:
+        return False
+
+
 def pbix_samples() -> List[Path]:
-    return sorted((REPO_ROOT / "Examples").rglob("*.pbix"), key=lambda p: p.as_posix().lower())
+    return [
+        p
+        for p in sorted((REPO_ROOT / "Examples").rglob("*.pbix"), key=lambda p: p.as_posix().lower())
+        if _has_embedded_model(p)
+    ]
 
 
 def slug(path: Path) -> str:
