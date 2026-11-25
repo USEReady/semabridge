@@ -110,14 +110,26 @@ fails; before, it fell through and recorded "Deployment complete".
 - A Databricks change to metric view output must update the golden snapshots
   deliberately (`SEMABRIDGE_UPDATE_GOLDEN=1`).
 
-## Not done yet (next steps)
+### 8. Follow-up work (same branch)
+- **Run-scoped LLM credentials** (`core/run_secrets.py`): every LLM key lookup
+  prefers the run's key; different users' syncs no longer wait on a
+  process-wide `os.environ` gate. Saving / testing a connection with sign-in
+  on no longer leaves a user's credentials in the shared environment.
+- **Cancel** a queued or running sync (`POST /api/projects/{id}/runs/{run_id}/cancel`,
+  `core/run_cancel.py`): checked at every engine step; the run ends "cancelled".
+- **PostgreSQL CI lane** (`.github/workflows/tests.yml` job `postgres`,
+  `Scripts/check_migrations.py`).
+- **Splits:** `dax_ast_parser.py` 8.7k → 2.1k lines (`converter/dax/sql_renderer.py`,
+  `converter/dax/feasibility.py`, re-exported); `databricks_publisher.py`
+  9.6k → 8.8k (`connectors/databricks/source_resolution.py`, `view_repair.py`).
+- **Snowflake Native App / Databricks App packaging** (`deploy/snowflake-native`,
+  `deploy/databricks-app`) as templates.
 
-| Item | Why it matters |
+## Not done yet
+
+| Item | Why it is open |
 |---|---|
-| Per-run credentials instead of `os.environ` injection | Removes the process-wide credential gate that serializes users' runs. Largest remaining security/throughput item. |
-| Finish splitting `databricks_publisher.py` (9.3k lines) and `dax_ast_parser.py` (8.7k) | Maintainability; the source-resolution split is the pattern. |
-| Unity Catalog tags as the ownership marker | Lets view comments be 100% business text; needs live-workspace testing. |
-| Cancellation inside a running sync | Today cancel stops queued jobs and is checked before start. |
-| Blob/stage/volume `ArtifactStore` | Azure uses an Azure Files mount for reports today. |
-| Snowflake Native App and Databricks App packaging | Profiles and identity adapters exist; packaging templates do not. |
-| PostgreSQL test lane in CI | SKIP LOCKED, advisory locks and RLS are exercised only on SQLite in tests. |
+| Unity Catalog tags as the ownership marker | Changes which views SemaBridge may replace; must be tested against a live workspace. |
+| Validate the Snowflake Native App and Databricks App templates | Needs a Snowflake provider/consumer account and a Databricks workspace. |
+| Further publisher split (YAML generation, deploy/staging) | Mechanical, same mixin pattern; golden snapshots guard it. |
+| Snowflake session-token target credentials inside the Native App | So consumers do not enter warehouse credentials. |
