@@ -530,4 +530,4 @@ def test_local_allow_list_override_still_requires_proof(monkeypatch):
     assert capability_allow_list(behavior) == ["one_to_many_joins", "constant_coalesce"]
     host = f"dbc-{uuid.uuid4().hex[:6]}.cloud.databricks.com"
     caps, ref = evidence.effective_capabilities(host, "wh1", capability_allow_list(behavior))
-    assert caps == frozenset() and ref["status"] == "none"            # no proof: still nothing
+    assert caps == frozenset() and "no probe run" in ref["reason"]     # no proof: still nothing

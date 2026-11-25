@@ -156,15 +156,20 @@ measures:
   - Count of Product
 $$;
 
--- sales_fact_metrics  sha256=b6d57eaaeba0d67e3f6c87ba025a57b9d029d928a4ba68fb00d3f863743f2a90
+-- sales_fact_metrics  sha256=646540dd4aea33e00f68f6ead8b4eb62d476f758cbf6bdc50f5466e71da1e14e
+-- note: field date_date: format 'General Date' omitted: pattern not expressible exactly
 -- note: measure sales_dollars: format '\\$#,0;(\\$#,0);\\$#,0' omitted: currency symbol '$' is ambiguous (no locale tag)
 -- note: measure total_category_volume: format '\\$#,0;(\\$#,0);\\$#,0' omitted: currency symbol '$' is ambiguous (no locale tag)
+-- note: measure total_units_ytd_var_pct: negative/zero format sections are not carried
 
 CREATE VIEW `workspace`.`semabridge_dev`.`sales_fact_metrics` WITH METRICS LANGUAGE YAML AS $$
 version: 1.1
 comment: Created by SemaBridge from model golden
 source: workspace.semabridge_dev.sales_fact
 joins:
+- name: date
+  source: workspace.semabridge_dev.date
+  'on': source.`date` = `date`.`date`
 - name: geo
   source: workspace.semabridge_dev.geo
   'on': source.`zip` = `geo`.`zip`
@@ -179,6 +184,36 @@ joins:
     source: workspace.semabridge_dev.manufacturer
     'on': '`product`.`manufacturer_id` = `manufacturer`.`manufacturer_id`'
 fields:
+- name: date_date
+  expr: '`date`.`date`'
+  display_name: Date
+  synonyms:
+  - Date
+- name: month_no
+  expr: '`date`.`month_no`'
+  display_name: MonthNo
+  synonyms:
+  - MonthNo
+- name: month_name
+  expr: '`date`.`month_name`'
+  display_name: MonthName
+  synonyms:
+  - MonthName
+- name: month
+  expr: '`date`.`month`'
+  display_name: Month
+  synonyms:
+  - Month
+- name: quarter
+  expr: '`date`.`quarter`'
+  display_name: Quarter
+  synonyms:
+  - Quarter
+- name: year
+  expr: '`date`.`year`'
+  display_name: Year
+  synonyms:
+  - Year
 - name: city
   expr: '`geo`.`city`'
   display_name: City
@@ -259,12 +294,68 @@ measures:
   synonyms:
   - Sales $
   - Total Revenue
+- name: total_units_ytd
+  expr: SUM(CASE WHEN `date`.`date` >= TRUNC(CURRENT_DATE(), 'YEAR') AND `date`.`date` <= CURRENT_DATE() THEN source.`units`::DOUBLE ELSE NULL END)
+  display_name: Total Units YTD
+  synonyms:
+  - Total Units YTD
+  comment: 'approximate: CALCULATE filters may give a different result under some slicers; approximate: time intelligence is anchored to the current date'
+  format:
+    type: number
+    decimal_places:
+      type: exact
+      places: 0
 - name: total_category_volume
   expr: (SUM(source.`units`::DOUBLE))
   display_name: Total Category Volume
   synonyms:
   - Total Category Volume
   - Category Volume
+- name: total_units_sply
+  expr: SUM(CASE WHEN YEAR(`date`.`date`) = YEAR(ADD_MONTHS(CURRENT_DATE(), -12)) AND `date`.`date` BETWEEN ADD_MONTHS(TRUNC(CURRENT_DATE(), 'YEAR'), -12) AND ADD_MONTHS(CURRENT_DATE(), -12) THEN source.`units`::DOUBLE ELSE NULL END)
+  display_name: TOTAL UNITS SPLY
+  synonyms:
+  - TOTAL UNITS SPLY
+  comment: 'approximate: CALCULATE filters may give a different result under some slicers; approximate: time intelligence is anchored to the current date'
+  format:
+    type: number
+    decimal_places:
+      type: exact
+      places: 0
+- name: total_units_ytd_sply
+  expr: (SUM(CASE WHEN `date`.`date` >= TRUNC(ADD_MONTHS(CURRENT_DATE(), -12), 'YEAR') AND `date`.`date` <= ADD_MONTHS(CURRENT_DATE(), -12) THEN source.`units`::DOUBLE ELSE NULL END))
+  display_name: Total Units YTD SPLY
+  synonyms:
+  - Total Units YTD SPLY
+  comment: 'approximate: CALCULATE filters may give a different result under some slicers; approximate: time intelligence is anchored to the current date; approximate: built on an approximate measure'
+  format:
+    type: number
+    decimal_places:
+      type: exact
+      places: 0
+- name: total_units_ytd_var
+  expr: CASE WHEN (SUM(CASE WHEN `date`.`date` >= TRUNC(CURRENT_DATE(), 'YEAR') AND `date`.`date` <= CURRENT_DATE() THEN source.`units`::DOUBLE ELSE NULL END)) IS NULL AND (SUM(CASE WHEN `date`.`date` >= TRUNC(ADD_MONTHS(CURRENT_DATE(), -12), 'YEAR') AND `date`.`date` <= ADD_MONTHS(CURRENT_DATE(), -12) THEN source.`units`::DOUBLE ELSE NULL END)) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN `date`.`date` >= TRUNC(CURRENT_DATE(), 'YEAR') AND `date`.`date` <= CURRENT_DATE() THEN source.`units`::DOUBLE ELSE NULL END)), 0) - COALESCE((SUM(CASE WHEN `date`.`date` >= TRUNC(ADD_MONTHS(CURRENT_DATE(), -12), 'YEAR') AND `date`.`date` <= ADD_MONTHS(CURRENT_DATE(), -12) THEN source.`units`::DOUBLE ELSE NULL END)), 0) END
+  display_name: Total Units YTD Var
+  synonyms:
+  - Total Units YTD Var
+  comment: 'approximate: time intelligence is anchored to the current date; approximate: built on an approximate measure'
+  format:
+    type: number
+    decimal_places:
+      type: exact
+      places: 0
+- name: total_units_ytd_var_pct
+  expr: (CASE WHEN (SUM(CASE WHEN `date`.`date` >= TRUNC(CURRENT_DATE(), 'YEAR') AND `date`.`date` <= CURRENT_DATE() THEN source.`units`::DOUBLE ELSE NULL END)) IS NULL AND (SUM(CASE WHEN `date`.`date` >= TRUNC(ADD_MONTHS(CURRENT_DATE(), -12), 'YEAR') AND `date`.`date` <= ADD_MONTHS(CURRENT_DATE(), -12) THEN source.`units`::DOUBLE ELSE NULL END)) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN `date`.`date` >= TRUNC(CURRENT_DATE(), 'YEAR') AND `date`.`date` <= CURRENT_DATE() THEN source.`units`::DOUBLE ELSE NULL END)), 0) - COALESCE((SUM(CASE WHEN `date`.`date` >= TRUNC(ADD_MONTHS(CURRENT_DATE(), -12), 'YEAR') AND `date`.`date` <= ADD_MONTHS(CURRENT_DATE(), -12) THEN source.`units`::DOUBLE ELSE NULL END)), 0) END) / NULLIF((SUM(CASE WHEN YEAR(`date`.`date`) = YEAR(ADD_MONTHS(CURRENT_DATE(), -12)) AND `date`.`date` BETWEEN ADD_MONTHS(TRUNC(CURRENT_DATE(), 'YEAR'), -12) AND ADD_MONTHS(CURRENT_DATE(), -12) THEN source.`units`::DOUBLE ELSE NULL END)), 0)
+  display_name: Total Units YTD Var %
+  synonyms:
+  - Total Units YTD Var %
+  comment: 'approximate: time intelligence is anchored to the current date; approximate: built on an approximate measure'
+  format:
+    type: percentage
+    decimal_places:
+      type: exact
+      places: 0
+    hide_group_separator: true
 - name: sum_of_units
   expr: SUM(source.`units`::DOUBLE)
   display_name: Sum of Units
@@ -275,15 +366,37 @@ measures:
   display_name: Sum of Revenue
   synonyms:
   - Sum of Revenue
+- name: at_indicator03
+  expr: CASE WHEN ((CASE WHEN (SUM(CASE WHEN `date`.`date` >= TRUNC(CURRENT_DATE(), 'YEAR') AND `date`.`date` <= CURRENT_DATE() THEN source.`units`::DOUBLE ELSE NULL END)) IS NULL AND (SUM(CASE WHEN `date`.`date` >= TRUNC(ADD_MONTHS(CURRENT_DATE(), -12), 'YEAR') AND `date`.`date` <= ADD_MONTHS(CURRENT_DATE(), -12) THEN source.`units`::DOUBLE ELSE NULL END)) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN `date`.`date` >= TRUNC(CURRENT_DATE(), 'YEAR') AND `date`.`date` <= CURRENT_DATE() THEN source.`units`::DOUBLE ELSE NULL END)), 0) - COALESCE((SUM(CASE WHEN `date`.`date` >= TRUNC(ADD_MONTHS(CURRENT_DATE(), -12), 'YEAR') AND `date`.`date` <= ADD_MONTHS(CURRENT_DATE(), -12) THEN source.`units`::DOUBLE ELSE NULL END)), 0) END) / NULLIF((SUM(CASE WHEN YEAR(`date`.`date`) = YEAR(ADD_MONTHS(CURRENT_DATE(), -12)) AND `date`.`date` BETWEEN ADD_MONTHS(TRUNC(CURRENT_DATE(), 'YEAR'), -12) AND ADD_MONTHS(CURRENT_DATE(), -12) THEN source.`units`::DOUBLE ELSE NULL END)), 0)) < 0 THEN 1 ELSE CASE WHEN ((CASE WHEN (SUM(CASE WHEN `date`.`date` >= TRUNC(CURRENT_DATE(), 'YEAR') AND `date`.`date` <= CURRENT_DATE() THEN source.`units`::DOUBLE ELSE NULL END)) IS NULL AND (SUM(CASE WHEN `date`.`date` >= TRUNC(ADD_MONTHS(CURRENT_DATE(), -12), 'YEAR') AND `date`.`date` <= ADD_MONTHS(CURRENT_DATE(), -12) THEN source.`units`::DOUBLE ELSE NULL END)) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN `date`.`date` >= TRUNC(CURRENT_DATE(), 'YEAR') AND `date`.`date` <= CURRENT_DATE() THEN source.`units`::DOUBLE ELSE NULL END)), 0) - COALESCE((SUM(CASE WHEN `date`.`date` >= TRUNC(ADD_MONTHS(CURRENT_DATE(), -12), 'YEAR') AND `date`.`date` <= ADD_MONTHS(CURRENT_DATE(), -12) THEN source.`units`::DOUBLE ELSE NULL END)), 0) END) / NULLIF((SUM(CASE WHEN YEAR(`date`.`date`) = YEAR(ADD_MONTHS(CURRENT_DATE(), -12)) AND `date`.`date` BETWEEN ADD_MONTHS(TRUNC(CURRENT_DATE(), 'YEAR'), -12) AND ADD_MONTHS(CURRENT_DATE(), -12) THEN source.`units`::DOUBLE ELSE NULL END)), 0)) > 0.1 THEN 3 ELSE 2 END END
+  display_name: '@Indicator03'
+  synonyms:
+  - '@Indicator03'
+  comment: 'approximate: time intelligence is anchored to the current date; approximate: built on an approximate measure'
+  format:
+    type: number
+    decimal_places:
+      type: exact
+      places: 0
+    hide_group_separator: true
+- name: total_units_ytd_var_pct_2
+  expr: FLOOR((CASE WHEN (SUM(CASE WHEN `date`.`date` >= TRUNC(CURRENT_DATE(), 'YEAR') AND `date`.`date` <= CURRENT_DATE() THEN source.`units`::DOUBLE ELSE NULL END)) IS NULL AND (SUM(CASE WHEN `date`.`date` >= TRUNC(ADD_MONTHS(CURRENT_DATE(), -12), 'YEAR') AND `date`.`date` <= ADD_MONTHS(CURRENT_DATE(), -12) THEN source.`units`::DOUBLE ELSE NULL END)) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN `date`.`date` >= TRUNC(CURRENT_DATE(), 'YEAR') AND `date`.`date` <= CURRENT_DATE() THEN source.`units`::DOUBLE ELSE NULL END)), 0) - COALESCE((SUM(CASE WHEN `date`.`date` >= TRUNC(ADD_MONTHS(CURRENT_DATE(), -12), 'YEAR') AND `date`.`date` <= ADD_MONTHS(CURRENT_DATE(), -12) THEN source.`units`::DOUBLE ELSE NULL END)), 0) END) / NULLIF((SUM(CASE WHEN YEAR(`date`.`date`) = YEAR(ADD_MONTHS(CURRENT_DATE(), -12)) AND `date`.`date` BETWEEN ADD_MONTHS(TRUNC(CURRENT_DATE(), 'YEAR'), -12) AND ADD_MONTHS(CURRENT_DATE(), -12) THEN source.`units`::DOUBLE ELSE NULL END)), 0) * 100)
+  display_name: Total Units YTD Var %2
+  synonyms:
+  - Total Units YTD Var %2
+  comment: 'approximate: time intelligence is anchored to the current date; approximate: built on an approximate measure'
 $$;
 
--- sentiment_metrics  sha256=4bb43dc2a628b7a7ee03da1d7e4def94c57061c8fef25f3c25c81fba84e74f60
+-- sentiment_metrics  sha256=7baff858b73e982160df48245f91cd1d11b3f74dc321af9cd04bbbcfa3942cfe
+-- note: field date_date: format 'General Date' omitted: pattern not expressible exactly
 
 CREATE VIEW `workspace`.`semabridge_dev`.`sentiment_metrics` WITH METRICS LANGUAGE YAML AS $$
 version: 1.1
 comment: Created by SemaBridge from model golden
 source: workspace.semabridge_dev.sentiment
 joins:
+- name: date
+  source: workspace.semabridge_dev.date
+  'on': source.`date` = `date`.`date`
 - name: geo
   source: workspace.semabridge_dev.geo
   'on': source.`zip` = `geo`.`zip`
@@ -291,6 +404,36 @@ joins:
   source: workspace.semabridge_dev.manufacturer
   'on': source.`manufacturer_id` = `manufacturer`.`manufacturer_id`
 fields:
+- name: date_date
+  expr: '`date`.`date`'
+  display_name: Date
+  synonyms:
+  - Date
+- name: month_no
+  expr: '`date`.`month_no`'
+  display_name: MonthNo
+  synonyms:
+  - MonthNo
+- name: month_name
+  expr: '`date`.`month_name`'
+  display_name: MonthName
+  synonyms:
+  - MonthName
+- name: month
+  expr: '`date`.`month`'
+  display_name: Month
+  synonyms:
+  - Month
+- name: quarter
+  expr: '`date`.`quarter`'
+  display_name: Quarter
+  synonyms:
+  - Quarter
+- name: year
+  expr: '`date`.`year`'
+  display_name: Year
+  synonyms:
+  - Year
 - name: city
   expr: '`geo`.`city`'
   display_name: City
