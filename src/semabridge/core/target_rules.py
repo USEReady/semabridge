@@ -334,6 +334,9 @@ _DATABRICKS_MESSAGE_REPLACEMENTS: tuple[tuple[str, str], ...] = (
     ("Snowflake semantic-view", "Databricks Unity Catalog metric-view"),
     ("Snowflake Semantic Views", "Databricks Unity Catalog Metric Views"),
     ("Snowflake Semantic View", "Databricks Unity Catalog Metric View"),
+    # Security advice (row-level / object-level security not migrated).
+    ("implement with a Snowflake row access policy", "implement with a Unity Catalog row filter"),
+    ("implement with Snowflake masking policies/grants", "implement with Unity Catalog column masks/grants"),
     ("Snowflake identifiers", "Databricks identifiers"),
     ("Snowflake identifier", "Databricks identifier"),
     ("in Snowflake", "in Databricks"),
