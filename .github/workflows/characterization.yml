@@ -103,6 +103,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
+          fetch-depth: 0
 
       - uses: actions/setup-python@v6
         with:
@@ -120,3 +121,29 @@ jobs:
           PYTHONHASHSEED: "0"
           SEMABRIDGE_REQUIRE_REAL_PBIX: "1"
         run: python -m pytest Tests/characterization -v -o addopts="--import-mode=importlib"
+
+      - name: Build snapshots from merge-base with origin/dev
+        if: always()
+        env:
+          PYTHONHASHSEED: "0"
+          PYTHONPATH: /tmp/base/src
+        run: |
+          git fetch origin "$BASE_BRANCH"
+          BASE_SHA=$(git merge-base HEAD "origin/$BASE_BRANCH")
+          echo "base=$BASE_SHA"
+          git worktree add /tmp/base "$BASE_SHA"
+          pip install -r /tmp/base/requirements.txt
+          rm -f Tests/characterization/snapshots/*.osi.json Tests/characterization/snapshots/*.sml.json Tests/characterization/snapshots/*.ddl.sql
+          rm -f "$SNAP_DIR"/*.osi.json "$SNAP_DIR"/*.sml.json "$SNAP_DIR"/*.ddl.sql
+          python Tests/characterization/_build.py
+          python Tests/characterization/_build_real_pbix.py | tee /tmp/build.log
+          grep -q "semabridge loaded from: /tmp/base/src/semabridge" /tmp/build.log
+          echo "$BASE_SHA" > "$SNAP_DIR/BASE_COMMIT"
+
+      - name: Upload characterization snapshots artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: characterization-snapshots
+          path: Tests/characterization/snapshots
+          if-no-files-found: error
