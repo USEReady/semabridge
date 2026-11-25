@@ -504,14 +504,15 @@ class TestDatabricksDeployHardening:
         assert ok is True
         assert out_fqn == live_fqn
         assert err == ""
-        # Final promoted SQL has only good_revenue and records omissions in comment:
+        # Final promoted SQL has only good_revenue; omissions go to the run
+        # report (publisher._omitted_measures), the business comment is kept:
         promoted_sql = submitted_yaml_sqls[-1]
         yaml_part = promoted_sql.split("$$")[1]
         payload = yaml.safe_load(yaml_part)
         measure_names = [m["name"] for m in payload["measures"]]
         assert measure_names == ["good_revenue"]
-        assert "Omitted measure 'bad_measure_1'" in payload["comment"]
-        assert "Omitted measure 'bad_measure_2'" in payload["comment"]
+        assert payload["comment"] == "SemaBridge sales view"
+        assert [o["name"] for o in publisher._omitted_measures] == ["bad_measure_1", "bad_measure_2"]
 
         omitted_events = [e for e in publisher.deploy_events if e["action"] == "measure_omitted"]
         assert len(omitted_events) == 2
