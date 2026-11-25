@@ -123,7 +123,7 @@ async def test_auto_map_dry_run_prefers_project_backed_mappings(monkeypatch):
     payload = {
         "project_id": "project-1",
         "dry_run": True,
-        "config_yaml": "project_name: map\nsource:\n  type: fabric\n  models:\n    - Device\ntarget:\n  type: snowflake\n",
+        "config_yaml": "project_name: map\nsource:\n  type: fabric\n  workspace_id: ws-1\n  models:\n    - Device\ntarget:\n  type: snowflake\n",
         "selected_model_names": ["Device"],
         "target_connector": "snowflake",
     }
@@ -591,3 +591,66 @@ def test_capture_snapshots_strips_runtime_metadata(monkeypatch):
     snapshots = ss._compat_project_snapshots["project-1"]
     assert snapshots
     assert all(not has_runtime_keys(snapshot.get("state")) for snapshot in snapshots)
+
+
+_FABRIC_EMPTY_MAPPINGS = {
+    "project_id": "project-1",
+    "session_key": "s",
+    "model_name": "m",
+    "source_fields": [],
+    "target_fields": [],
+    "mappings": [],
+    "collisions": [],
+}
+
+
+@pytest.mark.asyncio
+async def test_auto_map_reads_fabric_live_when_workspace_is_set(monkeypatch):
+    """A Fabric project's auto-map dry run reads the model now, not the last snapshot."""
+    captured = {}
+
+    async def fake_sync_models(payload):
+        captured.update(payload)
+        return {"status": "success", "summary": {"sml_snapshot_id": "snap-fresh"}, "results": []}
+
+    built = {}
+
+    def fake_build(*args, **kwargs):
+        built.update(kwargs)
+        return dict(_FABRIC_EMPTY_MAPPINGS)
+
+    _patch_compat(monkeypatch, "_compat_projects", {"project-1": {"name": "p1"}})
+    _patch_compat(monkeypatch, "_compat_build_project_entity_mappings", fake_build)
+    monkeypatch.setattr(core_domain_service, "sync_models", fake_sync_models)
+
+    result = await pri.auto_map_compat({
+        "project_id": "project-1",
+        "dry_run": True,
+        "config_yaml": "source:\n  type: fabric\n  workspace_id: ws-1\n",
+    })
+
+    assert result["status"] == "ok"
+    assert captured.get("dry_run") is True
+    assert built.get("preferred_snapshot_id") == "snap-fresh"
+
+
+@pytest.mark.asyncio
+async def test_auto_map_fabric_without_workspace_is_a_clear_error(monkeypatch):
+    """No workspace: a validation error naming the field, not a silent old snapshot."""
+    from semabridge.api.services import sync_execution_service
+    from semabridge.domain.exceptions import ValidationError
+
+    async def must_not_run(payload):
+        raise AssertionError("sync_models must not run without a Fabric workspace")
+
+    _patch_compat(monkeypatch, "_compat_projects", {"project-1": {"name": "p1"}})
+    _patch_compat(monkeypatch, "_compat_build_project_entity_mappings", lambda *a, **k: dict(_FABRIC_EMPTY_MAPPINGS))
+    monkeypatch.setattr(core_domain_service, "sync_models", must_not_run)
+    monkeypatch.setattr(sync_execution_service, "_fabric_env_workspace", lambda: "")
+
+    with pytest.raises(ValidationError, match="source.workspace_id"):
+        await pri.auto_map_compat({
+            "project_id": "project-1",
+            "dry_run": True,
+            "config_yaml": "source:\n  type: fabric\n",
+        })

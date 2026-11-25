@@ -55,7 +55,7 @@ def test_dry_run_and_sync_with_workspace_resolves_identically():
 
 
 @pytest.mark.asyncio
-async def test_dry_run_without_workspace_gate_passes_and_fabric_read_fails_standard_message(monkeypatch):
+async def test_dry_run_without_workspace_gate_and_fabric_read_fail_with_standard_message(monkeypatch):
     config = {
         "project_id": "test_fabric_no_ws",
         "source": {"type": "fabric", "models": ["Sales"]},
@@ -63,15 +63,24 @@ async def test_dry_run_without_workspace_gate_passes_and_fabric_read_fails_stand
     }
     content_str = yaml.dump(config)
 
-    # 1. Dry run gate passes without workspace and never calls Fabric
+    # 1. The pre-sync dry-run gate reads Fabric live like every other source,
+    #    so without a workspace it stops with the same standard message, before
+    #    any Fabric call and without falling back to an old snapshot.
     monkeypatch.setattr(
         mapping_service,
         "_compat_build_project_entity_mappings",
         lambda *args, **kwargs: {"project_id": "test_fabric_no_ws", "mappings": [], "collisions": []},
     )
-    # The dry-run gate does not raise an error
-    preview_id = await _assert_sync_ready("test_fabric_no_ws", content_str)
-    assert preview_id is None
+    from semabridge.api.services import core_domain_service, sync_execution_service
+
+    async def must_not_call_fabric(payload):
+        raise AssertionError("the gate must not read Fabric without a workspace")
+
+    monkeypatch.setattr(core_domain_service, "sync_models", must_not_call_fabric)
+    monkeypatch.setattr(sync_execution_service, "_fabric_env_workspace", lambda: "")
+    with pytest.raises(ValidationError) as gate_exc:
+        await _assert_sync_ready("test_fabric_no_ws", content_str)
+    assert "Fabric source has no workspace: set source.workspace_id in the project settings." in str(gate_exc.value)
 
     # 2. Duplicate check passes without workspace and never calls Fabric
     duplicates = find_duplicate_deployments("test_fabric_no_ws", content_str)

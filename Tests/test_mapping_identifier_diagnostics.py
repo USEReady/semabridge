@@ -112,7 +112,7 @@ async def test_auto_map_attaches_invalid_identifier_diagnostics(monkeypatch):
     payload = {
         "project_id": "project-1",
         "dry_run": True,
-        "config_yaml": "project_name: Core_Finance_v1\nsource:\n  type: fabric\n",
+        "config_yaml": "project_name: Core_Finance_v1\nsource:\n  type: fabric\n  workspace_id: ws-1\n",
         "target_connector": "snowflake",
     }
 
