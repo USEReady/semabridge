@@ -1,0 +1,16 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "namePrefix": { "value": "sbclient" },
+    "image": { "value": "<registry>.azurecr.io/semabridge:<version>" },
+    "registryServer": { "value": "<registry>.azurecr.io" },
+    "postgresAdminLogin": { "value": "sbadmin" },
+    "postgresAdminPassword": { "reference": { "keyVault": { "id": "<bootstrap key vault resource id>" }, "secretName": "pg-admin-password" } },
+    "jwtSecretKey": { "reference": { "keyVault": { "id": "<bootstrap key vault resource id>" }, "secretName": "jwt-secret-key" } },
+    "credentialEncryptionKey": { "reference": { "keyVault": { "id": "<bootstrap key vault resource id>" }, "secretName": "credential-encryption-key" } },
+    "entraClientId": { "value": "<app registration client id>" },
+    "entraClientSecret": { "reference": { "keyVault": { "id": "<bootstrap key vault resource id>" }, "secretName": "entra-client-secret" } },
+    "platformAdmins": { "value": "admin@client.com" }
+  }
+}

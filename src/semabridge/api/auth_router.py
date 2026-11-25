@@ -209,6 +209,73 @@ def auto_login(
     )
 
 
+@router.post("/platform-login", response_model=TokenResponse)
+def platform_login(
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> TokenResponse:
+    """Sign in the user the hosting platform already authenticated
+    (Azure Entra ID, Snowflake, Databricks; see semabridge.platform.identity).
+
+    404 unless the deployment declares a trusted front door, so it is
+    indistinguishable from a missing route everywhere else. The platform user
+    is matched to a SemaBridge user by email (or platform user name) and
+    created on first sign-in.
+    """
+    import uuid
+
+    from semabridge.platform.identity import platform_identity, role_for
+
+    identity = platform_identity(request.headers)
+    if identity is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+
+    username = (identity.email or identity.display_name or identity.subject)[:150]
+    email = identity.email or f"{uuid.uuid5(uuid.NAMESPACE_URL, identity.provider + ':' + identity.subject).hex[:16]}@{identity.provider}.platform"
+    user = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
+    if user is None:
+        user = db.execute(select(User).where(User.username == username)).scalar_one_or_none()
+    desired_role = role_for(identity)
+    if user is None:
+        from semabridge.auth.passwords import hash_password as _hash
+
+        user = User(
+            username=username,
+            email=email,
+            password_hash=_hash(uuid.uuid4().hex),  # never used: the platform signs users in
+            role=desired_role,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        logger.info("[Auth] Provisioned platform user id=%s provider=%s role=%s", user.id, identity.provider, desired_role)
+    elif desired_role == "admin" and user.role != "admin":
+        user.role = "admin"
+        db.commit()
+        db.refresh(user)
+
+    access_token, raw_refresh = create_token_pair(user.id, user.username, user.role)
+    db.add(RefreshToken(
+        user_id=user.id,
+        token_hash=hash_refresh_token(raw_refresh),
+        expires_at=get_refresh_token_expiry(),
+    ))
+    db.commit()
+    response.set_cookie(
+        key=_REFRESH_COOKIE,
+        value=raw_refresh,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=7 * 24 * 60 * 60,
+        path="/auth",
+    )
+    from semabridge.auth.schemas import UserResponse
+
+    return TokenResponse(access_token=access_token, user=UserResponse.model_validate(user))
+
+
 # ── Public endpoints ─────────────────────────────────────────────────────
 
 

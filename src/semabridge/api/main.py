@@ -122,6 +122,11 @@ if auth_router is not None:
 
 app.include_router(ui_router, prefix='/api')
 
+# The built web app (hosted image). Mounted last: API routes win.
+from semabridge.api.bootstrap.spa import mount_spa  # noqa: E402
+
+mount_spa(app)
+
 
 if __name__ == '__main__':
     import uvicorn

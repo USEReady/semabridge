@@ -1,0 +1,21 @@
+# Keep secrets, local state and build noise out of the image.
+.env
+.env.*
+**/.env
+.git
+.venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+frontend/node_modules
+frontend/dist
+node_modules
+output
+Scratch
+Examples
+Tests
+baseline_ddl
+*.sqlite
+*.db
+*.log
+.semabridge*

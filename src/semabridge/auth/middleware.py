@@ -52,6 +52,7 @@ PUBLIC_PATHS: Set[str] = {
     "/auth/register",
     "/auth/login",
     "/auth/auto-login",
+    "/auth/platform-login",
     "/auth/refresh",
     "/auth/logout",
     "/docs",
@@ -72,7 +73,9 @@ PUBLIC_PATHS |= {
 PUBLIC_PREFIXES = (
     "/ws",       # WebSocket endpoints
     "/static",   # Static files
-    "/health",    # Health and diagnostics
+    # /health/* (network diagnostics: probes configured hosts, reports proxy
+    # setup) requires sign-in; the liveness/readiness probes are the exact
+    # /api/health paths in PUBLIC_PATHS above.
 )
 
 
@@ -120,6 +123,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # Allow public paths unconditionally
         if path in PUBLIC_PATHS or path.startswith(PUBLIC_PREFIXES):
             return await call_next(request)
+        # The web app shell (index.html, JS/CSS assets) carries no data; the
+        # API calls it makes are authenticated.
+        if request.method in ("GET", "HEAD"):
+            from semabridge.api.bootstrap.spa import is_spa_path
+
+            if is_spa_path(path):
+                return await call_next(request)
 
         # Extract token: prefer Authorization header, fall back to HttpOnly cookie
         token = None

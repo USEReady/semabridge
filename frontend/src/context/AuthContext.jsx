@@ -117,10 +117,20 @@ export function AuthProvider({ children }) {
   /** Auto-login: create a dev user and get JWT without credentials */
   const autoLogin = useCallback(async () => {
     try {
-      const res = await fetchWithTimeout(`${AUTH_BASE}/auto-login`, {
+      // Hosted deployments (Azure Entra ID, Snowflake, Databricks) sign the
+      // user in at the platform's front door; /platform-login exchanges that
+      // identity for a session. It is a 404 everywhere else, so fall back to
+      // the development auto-login.
+      let res = await fetchWithTimeout(`${AUTH_BASE}/platform-login`, {
         method: 'POST',
         credentials: 'include',
       }, AUTH_REQUEST_TIMEOUT_MS);
+      if (res.status === 404) {
+        res = await fetchWithTimeout(`${AUTH_BASE}/auto-login`, {
+          method: 'POST',
+          credentials: 'include',
+        }, AUTH_REQUEST_TIMEOUT_MS);
+      }
       if (!res.ok) return false;
       const data = await res.json();
       if (data.access_token) {

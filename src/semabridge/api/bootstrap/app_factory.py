@@ -79,6 +79,9 @@ logger = logging.getLogger('semabridge.api')
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    from semabridge.api.bootstrap import startup_state as _startup_state
+
+    _startup_state.reset()
     async def _create_orm_tables_with_retry() -> None:
         max_retries = 3
         retry_delays = [2, 5, 10]
@@ -131,6 +134,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                             Base.metadata.create_all(bind=engine)
                     except Exception as fallback_exc:
                         logger.error('ORM table creation failed entirely: %s', fallback_exc)
+                        _startup_state.record_failure('orm_tables', fallback_exc)
                     return
 
     try:
@@ -139,6 +143,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             _apply_schema_compatibility_fixes()
         except Exception as fix_exc:
             logger.error('Schema compatibility fix failed: %s', fix_exc, exc_info=True)
+            _startup_state.record_failure('schema_compatibility_fixes', fix_exc)
         try:
             # Versioned schema changes (PostgreSQL): stamp a pre-Alembic DB at
             # the baseline, then upgrade to head. create_all above still
@@ -151,27 +156,42 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.info('Alembic: %s', _report)
         except Exception as mig_exc:
             logger.error('Alembic upgrade failed: %s', mig_exc, exc_info=True)
+            _startup_state.record_failure('alembic_upgrade', mig_exc)
         try:
             _migrate_credentials_table()
             migrate_credentials_encryption()
         except Exception as cred_exc:
             logger.error('Credentials table migration failed: %s', cred_exc, exc_info=True)
+            _startup_state.record_failure('credentials_migration', cred_exc)
         try:
             _apply_rls_policies()
         except Exception as rls_exc:
             logger.error('RLS policy setup failed: %s', rls_exc, exc_info=True)
+            _startup_state.record_failure('rls_policies', rls_exc)
         try:
             _assign_orphaned_accounts_to_dev_user()
         except Exception as orphan_exc:
             logger.debug('Orphaned account assignment skipped: %s', orphan_exc)
     except Exception as exc:
         logger.error('ORM table setup failed: %s', exc)
+        _startup_state.record_failure('orm_setup', exc)
+    # Hosted profiles refuse to serve traffic on a stale or partial schema.
+    _startup_state.raise_if_startup_failed()
 
     # Phase 3: Log multi-tenant enforcement status at startup.
     from semabridge.auth.flags import auth_enabled as _auth_enabled
     from semabridge.auth.encryption import ensure_encryption_key_available
 
     auth_enabled = _auth_enabled()
+    from semabridge.core.deployment_profile import is_production as _is_production
+
+    if _is_production() and not auth_enabled:
+        # Auth off = every request is admin user "1": never on a hosted profile.
+        _startup_state.record_failure(
+            'auth_disabled',
+            RuntimeError('AUTH_ENABLED must be true on a hosted deployment profile'),
+        )
+        _startup_state.raise_if_startup_failed()
     # Fail at startup (not on first credential use) when auth is on and no
     # encryption key is configured or persisted.
     ensure_encryption_key_available()
@@ -273,6 +293,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             except Exception as exc:
                 logger.debug('Periodic stale-run sweep failed: %s', exc)
 
+    # Durable execution: in queue mode this process runs job workers (or only
+    # the maintenance loop when SEMABRIDGE_EMBEDDED_WORKERS=0 and a separate
+    # worker app executes jobs).
+    try:
+        from semabridge.core import job_queue
+
+        if job_queue.queue_enabled():
+            job_queue.start_embedded_workers()
+            logger.info('Execution mode: queue (%d embedded worker(s))', job_queue.embedded_worker_count())
+        else:
+            logger.info('Execution mode: inline (runs execute in request-started threads)')
+    except Exception as exc:
+        logger.error('Job workers did not start: %s', exc)
+        _startup_state.record_failure('job_workers', exc)
+        _startup_state.raise_if_startup_failed()
+
     cleanup_task = asyncio.create_task(_cleanup_poll_sessions())
     sweep_task = asyncio.create_task(_sweep_stale_runs_periodically())
     try:
@@ -291,6 +327,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from semabridge.repository.orm.session_factory import db_manager as orm_db_manager
 
     scheduler_service.shutdown()
+    try:
+        from semabridge.core import job_queue
+
+        job_queue.stop_embedded_workers()
+    except Exception as exc:
+        logger.debug('Job worker shutdown: %s', exc)
     orm_db_manager.dispose()
     logger.debug('Database engine disposed on shutdown')
 
