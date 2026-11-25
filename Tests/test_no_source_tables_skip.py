@@ -53,7 +53,7 @@ def test_empty_model_without_connection_is_no_tables(tmp_path):
 
 
 def test_real_thin_report_example():
-    example = REPO / "Examples" / "powerbi" / "annual.pbix"
+    example = REPO / "Tests" / "fixtures" / "pbix" / "thin_report_live_connection.pbix"
     if not example.exists():
         if os.getenv("CI") == "true" or os.getenv("GITHUB_ACTIONS") == "true":
             pytest.fail("example thin report not present in CI")
