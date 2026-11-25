@@ -92,6 +92,8 @@ class RunContext:
     # table (target_backends/databricks/tables.TablePlan), used by the
     # planner / YAML writer. Its dict form is table_binding_plan above.
     databricks_table_plan: Optional[Any] = None
+    # Planner path (Phase 3.6): the metric-view plan (PlannerResult.as_dict()).
+    databricks_view_plan: Optional[Dict[str, Any]] = None
     # Dry run: Step 8 builds the target DDL (against the live schema) for
     # the preview but writes no target artifacts.
     dry_run: bool = False

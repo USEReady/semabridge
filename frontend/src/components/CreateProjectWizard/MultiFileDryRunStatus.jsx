@@ -80,6 +80,7 @@ export default function MultiFileDryRunStatus({
   onSynonymUpdate,    // (fileId, rowId, synonyms) => void
   onRetryFile,        // (fileId) => void
   onRemoveFile,       // (fileId) => void
+  targetPlatform = 'snowflake', // the project's target, for the dry-run table's labels
 }) {
   const [expanded, setExpanded] = useState(() => new Set());
   const [bulkResolvingAll, setBulkResolvingAll] = useState(false);
@@ -373,6 +374,7 @@ export default function MultiFileDryRunStatus({
                         onReSync={onRetryFile ? () => onRetryFile(section.fileId) : undefined}
                         droppedEntities={section.result?.dropped_entities || []}
                         unresolvedReportFieldReferences={section.result?.unresolved_report_field_references || []}
+                        targetPlatform={targetPlatform}
                       />
                     </UpsertChangesView>
                   </div>

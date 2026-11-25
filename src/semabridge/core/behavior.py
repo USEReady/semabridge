@@ -126,6 +126,25 @@ class DatabricksBehavior(BaseModel):
             "DatabricksPublisher path unchanged."
         ),
     )
+    planner_calculate_mode: str = Field(
+        default="approximate",
+        description=(
+            "Planner path: measures whose CALCULATE filters may behave differently under "
+            "slicers. 'approximate' keeps them with a warning (as Snowflake does); 'strict' "
+            "leaves them out."
+        ),
+    )
+    planner_view_mode: str = Field(
+        default="separate_views",
+        description="Planner path: 'separate_views' | 'selected_facts' | 'primary_fact_only'.",
+    )
+    planner_capabilities: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Planner path: Databricks features proven by live probes (Phase 3.5), e.g. "
+            "'one_to_many_joins', 'mixed_root_views', 'constant_coalesce'. Empty = none."
+        ),
+    )
     create_metadata_table: bool = Field(
         default=True,
         description="Create Semabridge metadata Delta table (set false for metric-view-only deployment)"

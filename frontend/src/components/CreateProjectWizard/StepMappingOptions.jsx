@@ -663,6 +663,7 @@ export function StepMappingOptions({
       {multiDryRunJob?.job_id && (showAllMappings || isLoading || multiJobHasFailures) && (
         <div ref={mappingTableRef}>
           <MultiFileDryRunStatus
+            targetPlatform={primaryTargetConnector || 'snowflake'}
             sections={multiSections}
             jobStatus={multiJobStatus}
             projectId={projectId}
@@ -738,6 +739,7 @@ export function StepMappingOptions({
               onReSync={onRunDryRun}
               droppedEntities={dryRunData?.dropped_entities || []}
               unresolvedReportFieldReferences={dryRunData?.unresolved_report_field_references || []}
+              targetPlatform={primaryTargetConnector || 'snowflake'}
             />
           </UpsertChangesView>
         </div>

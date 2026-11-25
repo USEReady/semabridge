@@ -162,6 +162,9 @@ class TableBinding:
     column_map: Dict[str, str] = field(default_factory=dict)       # SANITIZED_UPPER -> real column name
     missing_columns: List[str] = field(default_factory=list)       # model columns the real table lacks
     stub_columns: List[Tuple[str, str]] = field(default_factory=list)   # (column name, Spark type)
+    # Power BI calculated columns the real table has a column of the same name
+    # for: usable, but unverified (the values may not match the DAX).
+    unverified_calculated: List[str] = field(default_factory=list)
     note: str = ""
 
     def as_dict(self) -> Dict[str, Any]:
@@ -180,6 +183,8 @@ class TableBinding:
             out["missing_columns"] = list(self.missing_columns)
         if self.stub_columns:
             out["stub_columns"] = [{"name": n, "type": t} for n, t in self.stub_columns]
+        if self.unverified_calculated:
+            out["unverified_calculated_columns"] = list(self.unverified_calculated)
         return out
 
 
@@ -379,6 +384,12 @@ def plan_tables(
                     binding.missing_columns.append(col)
                 else:
                     binding.column_map[sanitize_column(col).upper()] = real
+            for col in getattr(ds, "columns", []) or []:
+                if getattr(col, "is_calculated", False) and col.unique_name not in cols:
+                    real = _real_column(col.unique_name, binding.table)
+                    if real is not None:
+                        binding.column_map.setdefault(sanitize_column(col.unique_name).upper(), real)
+                        binding.unverified_calculated.append(col.unique_name)
             if binding.missing_columns:
                 binding.note = f"{len(binding.missing_columns)} column(s) not in {binding.table.full_name}"
         else:
@@ -386,16 +397,53 @@ def plan_tables(
             if mode == "stub":
                 binding = TableBinding(name, alias, "stub", matched_by=None,
                                        stub_columns=_stub_columns(ds, alias, numeric_refs),
-                                       note="table not found yet: inline stub (no rows) until it exists")
+                                       note="table not found yet: empty table (created at deploy) until it exists")
             else:
                 binding = TableBinding(name, alias, "skip", note="table not found: skipped (on_missing_source=skip)")
         plan.bindings.append(binding)
 
+    _align_stub_key_types(sml_model, plan)
     if missing and mode == "fail":
         where = ", ".join(f"{c}.{s}" for c, s in source_schemas) or "the source schemas"
         raise TableMatchingError(f"No Unity Catalog table found in {where} for: {', '.join(missing)} "
                                  "(on_missing_source=fail).")
     return plan
+
+
+def _align_stub_key_types(sml_model: Any, plan: TablePlan) -> None:
+    """A stub's join-key column takes the type of the column it joins to, so the
+    join compares like with like (we create the stub, so we choose its types).
+    Against a real table that is its Unity Catalog type; between two stubs, the
+    lookup (one) side's type."""
+    by_dataset = {b.dataset: b for b in plan.bindings}
+
+    def key_type(binding: TableBinding, column: str) -> Optional[str]:
+        clean = sanitize_column(column).upper()
+        if binding.action == "bind" and binding.table is not None:
+            real = binding.column_map.get(clean)
+            hit = binding.table.columns.get(real.upper()) if real else None
+            return str(hit[1]).upper() if hit else None
+        if binding.action == "stub":
+            return next((t for n, t in binding.stub_columns if n.upper() == clean), None)
+        return None
+
+    def set_type(binding: TableBinding, column: str, spark: str) -> None:
+        clean = sanitize_column(column).upper()
+        binding.stub_columns = [(n, spark if n.upper() == clean else t) for n, t in binding.stub_columns]
+
+    for rel in getattr(sml_model, "relationships", []) or []:
+        many, one = by_dataset.get(rel.from_dataset), by_dataset.get(rel.to_dataset)
+        if many is None or one is None:
+            continue
+        for m_col, o_col in zip(rel.from_columns, rel.to_columns):
+            if many.action == "stub" and one.action in ("bind", "stub"):
+                t = key_type(one, o_col)
+                if t:
+                    set_type(many, m_col, t)
+            elif one.action == "stub" and many.action == "bind":
+                t = key_type(many, m_col)
+                if t:
+                    set_type(one, o_col, t)
 
 
 # --- measure SQL to real column names ---------------------------------------------------------
@@ -407,8 +455,11 @@ def rewrite_measure_columns(sql: Optional[str], rewrite_map: Mapping[str, Mappin
     """ALIAS.`SANITIZED` -> ALIAS.`real name` for columns of bound tables.
 
     Only backticked column names after a known table alias change; the
-    logic of the SQL is untouched. Unknown aliases / columns stay as they are.
+    logic of the SQL is untouched. Unknown aliases / columns stay as they are,
+    and text inside string literals (e.g. 'SALES.`X`') is never changed.
     """
+    from semabridge.target_backends.databricks.planner.sqltext import sub_in_code
+
     if not sql or not rewrite_map:
         return sql
 
@@ -421,4 +472,4 @@ def rewrite_measure_columns(sql: Optional[str], rewrite_map: Mapping[str, Mappin
             return m.group(0)
         return f"{m.group(1)}.{_quote(real)}"
 
-    return _REF.sub(repl, sql)
+    return sub_in_code(_REF, repl, sql)

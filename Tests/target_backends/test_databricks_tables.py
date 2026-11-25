@@ -232,6 +232,13 @@ def _engine():
     return ExecutionEngine()
 
 
+@pytest.fixture(autouse=True)
+def _step6b_in_temp_folder(request, monkeypatch, tmp_path):
+    """Step 6b writes the view plan under output/; keep test runs out of the repo."""
+    if "step6b" in request.node.name:
+        monkeypatch.chdir(tmp_path)
+
+
 def test_step6b_without_a_connection_reports_unavailable(monkeypatch) -> None:
     from semabridge.core.engine.targets import databricks as step
 
@@ -240,6 +247,19 @@ def test_step6b_without_a_connection_reports_unavailable(monkeypatch) -> None:
     _engine()._step6b_databricks_tables(ctx)
     assert "table plan unavailable" in ctx.table_binding_plan["warnings"][0]
     assert ctx.sml_model.metrics[0].sql_expression == "SUM(SALES.`SUM_REGULAR_SALES_DOLLARS`::DOUBLE)"
+
+
+def test_step6b_runs_the_planner_and_writes_the_plan(monkeypatch, tmp_path) -> None:
+    from semabridge.core.engine.targets import databricks as step
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(step, "_databricks_connection_for_run", lambda ctx: None)
+    ctx = _context(["SUM(SALES.`SUM_REGULAR_SALES_DOLLARS`::DOUBLE)"], {})
+    _engine()._step6b_databricks_tables(ctx)
+    assert ctx.databricks_view_plan["platform"] == "databricks"
+    out = tmp_path / "output" / "databricks" / "p"
+    assert (out / "databricks_view_plan.json").exists()
+    assert (out / "databricks_view_plan.md").read_text(encoding="utf-8").startswith("# Databricks metric-view plan")
 
 
 def _connected(monkeypatch, catalog_meta=None, error=None):

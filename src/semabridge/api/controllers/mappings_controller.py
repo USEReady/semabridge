@@ -743,6 +743,7 @@ async def _run_dry_run_pipeline(
     ambiguous_report_aliases: List[Dict[str, Any]] = []
     upsert_delta: Optional[Dict[str, Any]] = None
     table_binding_plan: Optional[Dict[str, Any]] = None
+    databricks_view_plan: Optional[Dict[str, Any]] = None
     ontology_report: Optional[Dict[str, Any]] = None
     # Step 8 of the engine dry run built the target DDL against the live
     # schema; its drops/placeholders are what the sync would report.
@@ -794,6 +795,8 @@ async def _run_dry_run_pipeline(
         print(f"[DryRun] model={r.get('model')!r} sml_snapshot_id={summary.get('sml_snapshot_id')!r}")
         if table_binding_plan is None:
             table_binding_plan = summary.get("table_binding_plan")
+        if databricks_view_plan is None:
+            databricks_view_plan = summary.get("databricks_view_plan")
         if sync_mode == "upsert" and upsert_delta is None:
             upsert_delta = r.get("upsert_delta") or summary.get("upsert_delta")
             if upsert_delta is None and str(r.get("status") or "").lower() != "success":
@@ -1086,6 +1089,8 @@ async def _run_dry_run_pipeline(
         },
         "blocking_conflicts": ontology_blockers,
         "table_binding_plan": table_binding_plan,
+        # Databricks planner path only (Phase 3.6); None otherwise.
+        "databricks_view_plan": databricks_view_plan,
         "summary": {
             "total_fields": len(filtered_mappings),
             "auto_mapped": auto_count,
