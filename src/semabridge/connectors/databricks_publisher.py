@@ -7970,14 +7970,18 @@ class DatabricksPublisher(DatabricksSourceResolutionMixin):
                 if inferred_ds is not None:
                     fact_name = inferred_ds.unique_name
                     source_table = self._resolve_source_table(inferred_ds).replace("`", "").strip()
-            for j in (doc.get("joins") or []):
-                if not isinstance(j, dict):
-                    continue
+            # Nested joins (a dimension joined through another, e.g.
+            # product -> manufacturer) are listed too, so a missing nested
+            # table is detected like a top-level one.
+            _join_stack = [j for j in (doc.get("joins") or []) if isinstance(j, dict)]
+            while _join_stack:
+                j = _join_stack.pop(0)
                 joins.append({
                     "dataset": str(j.get("name") or ""),
                     "table": _extract_table_from_source(str(j.get("source") or "")),
                     "on": str(j.get("on") or ""),
                 })
+                _join_stack.extend(c for c in (j.get("joins") or []) if isinstance(c, dict))
             for d in (doc.get("dimensions") or []):
                 if not isinstance(d, dict):
                     continue
@@ -8183,21 +8187,48 @@ class DatabricksPublisher(DatabricksSourceResolutionMixin):
                     if ds_prefix:
                         col_type_map.setdefault(f"{ds_prefix}_{lk}", spark_t)
 
-        # Partition joins: drop joins whose backing table does not exist
+        # Partition joins at every depth: a join whose backing table does not
+        # exist is dropped together with the joins nested under it. Every
+        # alias path (e.g. ("product", "category")) is recorded as kept or
+        # removed so references through a removed join can be rewritten.
         raw_joins = payload.get("joins")
-        kept_joins: list[dict[str, Any]] = []
         removed_join_aliases: set[str] = set()
-        if isinstance(raw_joins, list):
-            for j in raw_joins:
+        alias_paths: dict[tuple[str, ...], bool] = {}  # path -> removed?
+
+        def _mark_removed(joins: Any, parent: tuple[str, ...]) -> None:
+            for j in joins or []:
+                if isinstance(j, dict) and str(j.get("name") or "").strip():
+                    path = parent + (str(j.get("name")).strip().lower(),)
+                    alias_paths[path] = True
+                    _mark_removed(j.get("joins"), path)
+
+        def _prune(joins: Any, parent: tuple[str, ...]) -> list[dict[str, Any]]:
+            kept: list[dict[str, Any]] = []
+            for j in joins or []:
                 if not isinstance(j, dict):
                     continue
-                j_src = str(j.get("source") or "").strip()
                 j_name = str(j.get("name") or "").strip().lower()
-                if _norm_tbl(j_src) in missing_norm:
+                path = parent + (j_name,) if j_name else parent
+                if _norm_tbl(str(j.get("source") or "").strip()) in missing_norm:
                     if j_name:
-                        removed_join_aliases.add(j_name)
-                else:
-                    kept_joins.append(j)
+                        if not parent:
+                            removed_join_aliases.add(j_name)
+                        alias_paths[path] = True
+                        _mark_removed(j.get("joins"), path)
+                    continue
+                if j_name:
+                    alias_paths[path] = False
+                if isinstance(j.get("joins"), list):
+                    children = _prune(j.get("joins"), path)
+                    j = dict(j)
+                    if children:
+                        j["joins"] = children
+                    else:
+                        j.pop("joins", None)
+                kept.append(j)
+            return kept
+
+        kept_joins: list[dict[str, Any]] = _prune(raw_joins, ()) if isinstance(raw_joins, list) else []
 
         # Collect numeric-context columns from measure expressions so sum()/avg() never get STRING
         measures = payload.get("measures") if isinstance(payload.get("measures"), list) else []
@@ -8268,6 +8299,44 @@ class DatabricksPublisher(DatabricksSourceResolutionMixin):
                         dim["expr"] = f"`{flat_col}`"
                         _project(flat_col)
 
+        # Any remaining reference that goes THROUGH a removed join, at any
+        # depth (product.product, product.category.channel), becomes one flat
+        # stub column (root missing) or a typed NULL (root kept). Left as is,
+        # Databricks would read it as a field of a plain column and fail with
+        # INVALID_EXTRACT_BASE_FIELD_TYPE.
+        dotted_ref_re = re.compile(
+            r"(?<![A-Za-z0-9_`.])`?([A-Za-z_][A-Za-z0-9_]*)`?((?:\.`?[A-Za-z_][A-Za-z0-9_ ]*?`?)+)(?![A-Za-z0-9_(])"
+        )
+
+        def _rewrite_removed_refs(expr: str) -> str:
+            if not any(alias_paths.values()):
+                return expr
+
+            def _sub(match: "re.Match[str]") -> str:
+                head = match.group(1)
+                tail = [seg.strip("`").strip() for seg in match.group(2).split(".") if seg.strip("`").strip()]
+                segments = [head] + tail
+                path: tuple[str, ...] = ()
+                for seg in segments[:-1]:
+                    path = path + (seg.lower(),)
+                    if path not in alias_paths:
+                        return match.group(0)  # not a join path (e.g. a literal 1.5)
+                    if alias_paths[path]:
+                        flat = self._sanitize_identifier("_".join(segments)).lower()
+                        if root_missing:
+                            _project(flat)
+                            return f"`{flat}`"
+                        return f"CAST(NULL AS {_infer_col_type(segments[-1])})"
+                return match.group(0)
+
+            # Leave quoted string literals untouched.
+            parts = re.split(r"('(?:''|[^'])*')", expr)
+            return "".join(part if i % 2 else dotted_ref_re.sub(_sub, part) for i, part in enumerate(parts))
+
+        for dim in dimensions:
+            if isinstance(dim, dict) and dim.get("expr"):
+                dim["expr"] = _rewrite_removed_refs(str(dim.get("expr")))
+
         # Rewrite measure expressions referencing removed join aliases and project referenced columns
         for m in measures:
             if not isinstance(m, dict):
@@ -8282,7 +8351,8 @@ class DatabricksPublisher(DatabricksSourceResolutionMixin):
                     )
                     replacement = f"`{flat_col}`" if root_missing else f"CAST(NULL AS {_infer_col_type(flat_col)})"
                     m_expr = pattern.sub(replacement, m_expr)
-                m["expr"] = m_expr
+            m_expr = _rewrite_removed_refs(m_expr)
+            m["expr"] = m_expr
 
             if root_missing:
                 # Strip single-quoted string literals before scanning for column identifiers
