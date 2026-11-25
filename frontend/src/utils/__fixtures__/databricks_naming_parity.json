@@ -1,0 +1,695 @@
+{
+ "note": "Backend Databricks naming v2 outputs; frontend databricksNaming.js must match (Tests/target_rules write this).",
+ "cases": [
+  {
+   "name": "Date",
+   "kind": "column",
+   "expected": "date"
+  },
+  {
+   "name": "Date",
+   "kind": "metric",
+   "expected": "date"
+  },
+  {
+   "name": "date",
+   "kind": "column",
+   "expected": "date"
+  },
+  {
+   "name": "date",
+   "kind": "metric",
+   "expected": "date"
+  },
+  {
+   "name": "Order",
+   "kind": "column",
+   "expected": "order_field"
+  },
+  {
+   "name": "Order",
+   "kind": "metric",
+   "expected": "order_measure"
+  },
+  {
+   "name": "Value",
+   "kind": "column",
+   "expected": "value"
+  },
+  {
+   "name": "Value",
+   "kind": "metric",
+   "expected": "value"
+  },
+  {
+   "name": "Count",
+   "kind": "column",
+   "expected": "count"
+  },
+  {
+   "name": "Count",
+   "kind": "metric",
+   "expected": "count"
+  },
+  {
+   "name": "Sales",
+   "kind": "column",
+   "expected": "sales"
+  },
+  {
+   "name": "Sales",
+   "kind": "metric",
+   "expected": "sales"
+  },
+  {
+   "name": "Total Sales",
+   "kind": "column",
+   "expected": "total_sales"
+  },
+  {
+   "name": "Total Sales",
+   "kind": "metric",
+   "expected": "total_sales"
+  },
+  {
+   "name": "Gross Margin This Year %",
+   "kind": "column",
+   "expected": "gross_margin_this_year_pct"
+  },
+  {
+   "name": "Gross Margin This Year %",
+   "kind": "metric",
+   "expected": "gross_margin_this_year_pct"
+  },
+  {
+   "name": "% Margin",
+   "kind": "column",
+   "expected": "pct_margin"
+  },
+  {
+   "name": "% Margin",
+   "kind": "metric",
+   "expected": "pct_margin"
+  },
+  {
+   "name": "Margin %",
+   "kind": "column",
+   "expected": "margin_pct"
+  },
+  {
+   "name": "Margin %",
+   "kind": "metric",
+   "expected": "margin_pct"
+  },
+  {
+   "name": "Sales $",
+   "kind": "column",
+   "expected": "sales_dollars"
+  },
+  {
+   "name": "Sales $",
+   "kind": "metric",
+   "expected": "sales_dollars"
+  },
+  {
+   "name": "Unit $ Price",
+   "kind": "column",
+   "expected": "unit_dollars_price"
+  },
+  {
+   "name": "Unit $ Price",
+   "kind": "metric",
+   "expected": "unit_dollars_price"
+  },
+  {
+   "name": "2024 Sales",
+   "kind": "column",
+   "expected": "field_2024_sales"
+  },
+  {
+   "name": "2024 Sales",
+   "kind": "metric",
+   "expected": "measure_2024_sales"
+  },
+  {
+   "name": "1st",
+   "kind": "column",
+   "expected": "field_1st"
+  },
+  {
+   "name": "1st",
+   "kind": "metric",
+   "expected": "measure_1st"
+  },
+  {
+   "name": "City Name",
+   "kind": "column",
+   "expected": "city_name"
+  },
+  {
+   "name": "City Name",
+   "kind": "metric",
+   "expected": "city_name"
+  },
+  {
+   "name": "DM_Pic_fl",
+   "kind": "column",
+   "expected": "dm_pic_fl"
+  },
+  {
+   "name": "DM_Pic_fl",
+   "kind": "metric",
+   "expected": "dm_pic_fl"
+  },
+  {
+   "name": "DistrictID",
+   "kind": "column",
+   "expected": "district_id"
+  },
+  {
+   "name": "DistrictID",
+   "kind": "metric",
+   "expected": "district_id"
+  },
+  {
+   "name": "Category (clusters) 2",
+   "kind": "column",
+   "expected": "category_clusters_2"
+  },
+  {
+   "name": "Category (clusters) 2",
+   "kind": "metric",
+   "expected": "category_clusters_2"
+  },
+  {
+   "name": "Avg $/Unit TY",
+   "kind": "column",
+   "expected": "avg_dollars_unit_ty"
+  },
+  {
+   "name": "Avg $/Unit TY",
+   "kind": "metric",
+   "expected": "avg_dollars_unit_ty"
+  },
+  {
+   "name": "a-b",
+   "kind": "column",
+   "expected": "a_b"
+  },
+  {
+   "name": "a-b",
+   "kind": "metric",
+   "expected": "a_b"
+  },
+  {
+   "name": "a.b",
+   "kind": "column",
+   "expected": "a_b"
+  },
+  {
+   "name": "a.b",
+   "kind": "metric",
+   "expected": "a_b"
+  },
+  {
+   "name": "Résumé",
+   "kind": "column",
+   "expected": "resume"
+  },
+  {
+   "name": "Résumé",
+   "kind": "metric",
+   "expected": "resume"
+  },
+  {
+   "name": "   padded   ",
+   "kind": "column",
+   "expected": "padded"
+  },
+  {
+   "name": "   padded   ",
+   "kind": "metric",
+   "expected": "padded"
+  },
+  {
+   "name": "__x__",
+   "kind": "column",
+   "expected": "x"
+  },
+  {
+   "name": "__x__",
+   "kind": "metric",
+   "expected": "x"
+  },
+  {
+   "name": "SELECT",
+   "kind": "column",
+   "expected": "select_field"
+  },
+  {
+   "name": "SELECT",
+   "kind": "metric",
+   "expected": "select_measure"
+  },
+  {
+   "name": "from",
+   "kind": "column",
+   "expected": "from_field"
+  },
+  {
+   "name": "from",
+   "kind": "metric",
+   "expected": "from_measure"
+  },
+  {
+   "name": "Table",
+   "kind": "column",
+   "expected": "table_field"
+  },
+  {
+   "name": "Table",
+   "kind": "metric",
+   "expected": "table_measure"
+  },
+  {
+   "name": "user",
+   "kind": "column",
+   "expected": "user"
+  },
+  {
+   "name": "user",
+   "kind": "metric",
+   "expected": "user"
+  },
+  {
+   "name": "Role",
+   "kind": "column",
+   "expected": "role"
+  },
+  {
+   "name": "Role",
+   "kind": "metric",
+   "expected": "role"
+  },
+  {
+   "name": "KEY",
+   "kind": "column",
+   "expected": "key"
+  },
+  {
+   "name": "KEY",
+   "kind": "metric",
+   "expected": "key"
+  },
+  {
+   "name": "Year",
+   "kind": "column",
+   "expected": "year"
+  },
+  {
+   "name": "Year",
+   "kind": "metric",
+   "expected": "year"
+  },
+  {
+   "name": "Month",
+   "kind": "column",
+   "expected": "month"
+  },
+  {
+   "name": "Month",
+   "kind": "metric",
+   "expected": "month"
+  },
+  {
+   "name": "Group",
+   "kind": "column",
+   "expected": "group_field"
+  },
+  {
+   "name": "Group",
+   "kind": "metric",
+   "expected": "group_measure"
+  },
+  {
+   "name": "Order Date",
+   "kind": "column",
+   "expected": "order_date"
+  },
+  {
+   "name": "Order Date",
+   "kind": "metric",
+   "expected": "order_date"
+  },
+  {
+   "name": "Customer ID",
+   "kind": "column",
+   "expected": "customer_id"
+  },
+  {
+   "name": "Customer ID",
+   "kind": "metric",
+   "expected": "customer_id"
+  },
+  {
+   "name": "Customer_ID",
+   "kind": "column",
+   "expected": "customer_id"
+  },
+  {
+   "name": "Customer_ID",
+   "kind": "metric",
+   "expected": "customer_id"
+  },
+  {
+   "name": "customer id",
+   "kind": "column",
+   "expected": "customer_id"
+  },
+  {
+   "name": "customer id",
+   "kind": "metric",
+   "expected": "customer_id"
+  },
+  {
+   "name": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+   "kind": "column",
+   "expected": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_d29ff19f"
+  },
+  {
+   "name": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+   "kind": "metric",
+   "expected": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_f00bb44e"
+  },
+  {
+   "name": "#hash",
+   "kind": "column",
+   "expected": "num_hash"
+  },
+  {
+   "name": "#hash",
+   "kind": "metric",
+   "expected": "num_hash"
+  },
+  {
+   "name": "a#b",
+   "kind": "column",
+   "expected": "a_num_b"
+  },
+  {
+   "name": "a#b",
+   "kind": "metric",
+   "expected": "a_num_b"
+  },
+  {
+   "name": "Sales/Units",
+   "kind": "column",
+   "expected": "sales_units"
+  },
+  {
+   "name": "Sales/Units",
+   "kind": "metric",
+   "expected": "sales_units"
+  },
+  {
+   "name": "Qty&Price",
+   "kind": "column",
+   "expected": "qty_and_price"
+  },
+  {
+   "name": "Qty&Price",
+   "kind": "metric",
+   "expected": "qty_and_price"
+  },
+  {
+   "name": "@at",
+   "kind": "column",
+   "expected": "at_at"
+  },
+  {
+   "name": "@at",
+   "kind": "metric",
+   "expected": "at_at"
+  },
+  {
+   "name": "+plus",
+   "kind": "column",
+   "expected": "plus_plus"
+  },
+  {
+   "name": "+plus",
+   "kind": "metric",
+   "expected": "plus_plus"
+  },
+  {
+   "name": "=eq",
+   "kind": "column",
+   "expected": "eq_eq"
+  },
+  {
+   "name": "=eq",
+   "kind": "metric",
+   "expected": "eq_eq"
+  },
+  {
+   "name": "Q?",
+   "kind": "column",
+   "expected": "q_question"
+  },
+  {
+   "name": "Q?",
+   "kind": "metric",
+   "expected": "q_question"
+  },
+  {
+   "name": "!bang",
+   "kind": "column",
+   "expected": "excl_bang"
+  },
+  {
+   "name": "!bang",
+   "kind": "metric",
+   "expected": "excl_bang"
+  },
+  {
+   "name": "<lt>",
+   "kind": "column",
+   "expected": "lt_lt_gt"
+  },
+  {
+   "name": "<lt>",
+   "kind": "metric",
+   "expected": "lt_lt_gt"
+  },
+  {
+   "name": "*star",
+   "kind": "column",
+   "expected": "star_star"
+  },
+  {
+   "name": "*star",
+   "kind": "metric",
+   "expected": "star_star"
+  },
+  {
+   "name": "COL_DATE",
+   "kind": "column",
+   "expected": "col_date"
+  },
+  {
+   "name": "COL_DATE",
+   "kind": "metric",
+   "expected": "col_date"
+  },
+  {
+   "name": "col_order",
+   "kind": "column",
+   "expected": "col_order"
+  },
+  {
+   "name": "col_order",
+   "kind": "metric",
+   "expected": "col_order"
+  },
+  {
+   "name": "Sum_Regular_Sales_Dollars",
+   "kind": "column",
+   "expected": "sum_regular_sales_dollars"
+  },
+  {
+   "name": "Sum_Regular_Sales_Dollars",
+   "kind": "metric",
+   "expected": "sum_regular_sales_dollars"
+  },
+  {
+   "name": "TotalSalesLY",
+   "kind": "column",
+   "expected": "total_sales_ly"
+  },
+  {
+   "name": "TotalSalesLY",
+   "kind": "metric",
+   "expected": "total_sales_ly"
+  },
+  {
+   "name": "SKUs Sold",
+   "kind": "column",
+   "expected": "skus_sold"
+  },
+  {
+   "name": "SKUs Sold",
+   "kind": "metric",
+   "expected": "skus_sold"
+  },
+  {
+   "name": "IDs",
+   "kind": "column",
+   "expected": "ids"
+  },
+  {
+   "name": "IDs",
+   "kind": "metric",
+   "expected": "ids"
+  },
+  {
+   "name": "KPIs",
+   "kind": "column",
+   "expected": "kpis"
+  },
+  {
+   "name": "KPIs",
+   "kind": "metric",
+   "expected": "kpis"
+  },
+  {
+   "name": "URLsVisited",
+   "kind": "column",
+   "expected": "urls_visited"
+  },
+  {
+   "name": "URLsVisited",
+   "kind": "metric",
+   "expected": "urls_visited"
+  },
+  {
+   "name": "xCoordinate",
+   "kind": "column",
+   "expected": "x_coordinate"
+  },
+  {
+   "name": "xCoordinate",
+   "kind": "metric",
+   "expected": "x_coordinate"
+  },
+  {
+   "name": "iPhone Sales",
+   "kind": "column",
+   "expected": "iphone_sales"
+  },
+  {
+   "name": "iPhone Sales",
+   "kind": "metric",
+   "expected": "iphone_sales"
+  },
+  {
+   "name": "eBay Orders",
+   "kind": "column",
+   "expected": "ebay_orders"
+  },
+  {
+   "name": "eBay Orders",
+   "kind": "metric",
+   "expected": "ebay_orders"
+  },
+  {
+   "name": "HTTPStatusCode",
+   "kind": "column",
+   "expected": "http_status_code"
+  },
+  {
+   "name": "HTTPStatusCode",
+   "kind": "metric",
+   "expected": "http_status_code"
+  },
+  {
+   "name": "Café Résumé",
+   "kind": "column",
+   "expected": "cafe_resume"
+  },
+  {
+   "name": "Café Résumé",
+   "kind": "metric",
+   "expected": "cafe_resume"
+  },
+  {
+   "name": "Straße",
+   "kind": "column",
+   "expected": "strasse"
+  },
+  {
+   "name": "Straße",
+   "kind": "metric",
+   "expected": "strasse"
+  },
+  {
+   "name": "Q1Revenue",
+   "kind": "column",
+   "expected": "q1_revenue"
+  },
+  {
+   "name": "Q1Revenue",
+   "kind": "metric",
+   "expected": "q1_revenue"
+  },
+  {
+   "name": "AddressLine2",
+   "kind": "column",
+   "expected": "address_line2"
+  },
+  {
+   "name": "AddressLine2",
+   "kind": "metric",
+   "expected": "address_line2"
+  },
+  {
+   "name": "1st",
+   "kind": "column",
+   "expected": "field_1st"
+  },
+  {
+   "name": "1st",
+   "kind": "metric",
+   "expected": "measure_1st"
+  },
+  {
+   "name": "Customer's Name",
+   "kind": "column",
+   "expected": "customers_name"
+  },
+  {
+   "name": "Customer's Name",
+   "kind": "metric",
+   "expected": "customers_name"
+  },
+  {
+   "name": "Age>=18",
+   "kind": "column",
+   "expected": "age_gte_18"
+  },
+  {
+   "name": "Age>=18",
+   "kind": "metric",
+   "expected": "age_gte_18"
+  },
+  {
+   "name": "Revenue: Actual",
+   "kind": "column",
+   "expected": "revenue_actual"
+  },
+  {
+   "name": "Revenue: Actual",
+   "kind": "metric",
+   "expected": "revenue_actual"
+  }
+ ]
+}

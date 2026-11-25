@@ -119,7 +119,7 @@ export default function MultiFileDryRunStatus({
 
       for (const section of sections) {
         if (!section.loaded || !Array.isArray(section.rows)) continue;
-        const resolvedMap = resolveCollisionsForRows(section.rows);
+        const resolvedMap = resolveCollisionsForRows(section.rows, targetPlatform);
         const count = Object.keys(resolvedMap).length;
         if (count > 0) {
           onBulkResolved(section.fileId, resolvedMap);
@@ -143,7 +143,7 @@ export default function MultiFileDryRunStatus({
       setBulkResolvingAll(false);
       setTimeout(() => setAllResolvedToast(null), 6000);
     }
-  }, [sections, onBulkResolved]);
+  }, [sections, onBulkResolved, targetPlatform]);
 
   if (!jobStatus && sections.length === 0) {
     return (

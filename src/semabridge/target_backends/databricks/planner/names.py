@@ -29,13 +29,10 @@ from semabridge.target_backends.databricks.planner.model import (
     SourceId,
     ViewPlan,
 )
-from semabridge.target_rules.databricks.naming import (
-    MAX_LEN,
-    fit_length,
-    is_generated_name,
-    is_legal_identifier,
-    normalize,
-)
+from semabridge.target_rules.databricks import DATABRICKS_RULES
+from semabridge.target_rules.databricks.naming import MAX_LEN
+
+NAMING = DATABRICKS_RULES.naming   # the Databricks rulebook's naming object (policy revision 2)
 
 MAX_SYNONYMS = 10
 MAX_LABEL = 255
@@ -67,8 +64,8 @@ class Allocator:
         items = sorted(items, key=lambda it: it.order)
         for it in items:                                   # 1. reserved
             name = reserved.get(it.sid)
-            if name and is_legal_identifier(name) and self.free(name):
-                it.final, it.generated, it.why = name, is_generated_name(name), "kept the name already deployed"
+            if name and NAMING.is_legal_identifier(name) and self.free(name):
+                it.final, it.generated, it.why = name, NAMING.is_generated_name(name), "kept the name already deployed"
                 self.take(name)
         for it in items:                                   # 2. natural names first
             if it.final is None and self.free(it.base):
@@ -79,7 +76,7 @@ class Allocator:
                 continue
             n = 1
             while True:
-                cand = fit_length(it.secondary(n), (it.sid.key(), n))
+                cand = NAMING.fit_length(it.secondary(n), (it.sid.key(), n))
                 if self.free(cand):
                     break
                 n += 1
@@ -127,7 +124,7 @@ def assign_names(view: ViewPlan, graph: ModelGraph, reserved: Mapping[SourceId, 
         depth[j.name] = j.name.count(".") + 1
     for f in view.fields:
         base = f.name  # fields.py set the normalised base name
-        table_base = normalize(f.dataset, "table", ("table", f.dataset))[0]
+        table_base = NAMING.normalize(f.dataset, "table", ("table", f.dataset))[0]
         items.append(_Item(f, f.source_id, base, f.column, "field",
                            (lambda n, b=base, t=table_base: f"{t}_{b}" if n == 1 else f"{t}_{b}_{n}"),
                            (1, depth.get(f.path, 9), f.path, f.source_id.key())))
@@ -159,8 +156,8 @@ def view_names(sources: Sequence[str], reserved: Mapping[str, str]) -> Tuple[Dic
     alloc = Allocator()
     items: List[_Item] = []
     for s in sorted(sources):
-        base_table = normalize(s, "view", ("view", s))[0]
-        base = fit_length(f"{base_table}_metrics", ("view", s))
+        base_table = NAMING.normalize(s, "view", ("view", s))[0]
+        base = NAMING.fit_length(f"{base_table}_metrics", ("view", s))
         sid = SourceId("table", s, s)
         items.append(_Item(None, sid, base, s, "view",
                            (lambda n, b=base_table: f"{b}_{n + 1}_metrics"), (0, s)))
@@ -175,7 +172,7 @@ def join_aliases(tables: Sequence[str]) -> Dict[str, str]:
     alloc = Allocator(["source"])
     items = []
     for t in tables:
-        base = normalize(t, "join", ("join", t))[0]
+        base = NAMING.normalize(t, "join", ("join", t))[0]
         items.append(_Item(None, SourceId("table", t, t), base, t, "join",
                            (lambda n, b=base: f"{b}_{n + 1}"), (0, t)))
     alloc.allocate(items, {})
@@ -183,8 +180,8 @@ def join_aliases(tables: Sequence[str]) -> Dict[str, str]:
 
 
 def check_name(name: str, generated: bool) -> Optional[str]:
-    if generated and not is_generated_name(name):
+    if generated and not NAMING.is_generated_name(name):
         return f"generated name {name!r} breaks the naming rule"
-    if not is_legal_identifier(name) or len(name) > MAX_LEN:
+    if not NAMING.is_legal_identifier(name) or len(name) > MAX_LEN:
         return f"name {name!r} is not a legal Databricks identifier"
     return None

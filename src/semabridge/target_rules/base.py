@@ -283,6 +283,12 @@ class TargetNaming:
     def is_legacy_auto_name(self, source_path: Optional[str], name: str) -> bool:
         return False
 
+    def accepts_target_name(self, name: str, entity_kind: Optional[str] = None) -> bool:
+        """True when ``name`` is already in this platform's final form (the rule
+        would not change it). Default: names are upper case (Snowflake), so the
+        rule's output is compared with the upper-cased name."""
+        return self.target_name(name, entity_kind=entity_kind) == str(name).upper()
+
 
 @dataclass(frozen=True)
 class TargetRules:

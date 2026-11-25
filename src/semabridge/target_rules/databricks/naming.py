@@ -158,6 +158,8 @@ def normalize(label: str, kind: str = "field", source_identity: Any = None) -> T
     """The generated Databricks name for an object, and why it differs from the label."""
     kind_word = KIND_WORDS.get(str(kind or "field").lower(), "field")
     identity = source_identity if source_identity is not None else (kind_word, label)
+    if is_final_name(str(label or "")):
+        return str(label), []   # already final (incl. our own hashed / truncated names): unchanged
     name, reasons, lost = base_normalize(label)
     if lost:
         reasons.append("letters_not_transliterated")
@@ -181,6 +183,13 @@ def fit_length(name: str, identity: Any) -> str:
     if len(name) <= MAX_LEN:
         return name
     return f"{name[:MAX_LEN - 9].rstrip('_')}_{_hash8(identity, name)}"
+
+
+def is_final_name(name: str) -> bool:
+    """Lowercase snake_case that the rule would leave as it is: right grammar and
+    length, not a usability keyword, no protected or digit start."""
+    return (is_generated_name(name) and name not in USABILITY_KEYWORDS
+            and not name.startswith(PROTECTED_PREFIXES))
 
 
 def is_generated_name(name: str) -> bool:
@@ -223,3 +232,25 @@ class DatabricksNaming(TargetNaming):
 
     def is_legacy_auto_name(self, source_path: Optional[str], name: str) -> bool:
         return False
+
+    def accepts_target_name(self, name: str, entity_kind: Optional[str] = None) -> bool:
+        """Lowercase snake_case names are final as they are (case matters here:
+        the rule never upper-cases)."""
+        return self.target_name(name, entity_kind=entity_kind) == str(name)
+
+    # --- the policy, as methods (planner and table matching use these) ---------------
+
+    def normalize(self, label: str, kind: str = "field", source_identity: Any = None) -> Tuple[str, List[str]]:
+        return normalize(label, kind, source_identity)
+
+    def base_normalize(self, label: str) -> Tuple[str, List[str], bool]:
+        return base_normalize(label)
+
+    def fit_length(self, name: str, identity: Any) -> str:
+        return fit_length(name, identity)
+
+    def is_generated_name(self, name: str) -> bool:
+        return is_generated_name(name)
+
+    def is_legal_identifier(self, name: str) -> bool:
+        return is_legal_identifier(name)

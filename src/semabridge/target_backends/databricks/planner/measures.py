@@ -35,7 +35,7 @@ def measure_identity(metric) -> "Tuple[SourceId, str]":
     """Structured identity and naming-v2 base name of a measure. Implicit
     (generated) measures such as SUM_OF_SELLINGAREASIZE are identified by
     table + column + aggregation and named from the column: sum_of_selling_area_size."""
-    from semabridge.target_rules.databricks.naming import normalize
+    from semabridge.target_backends.databricks.planner.names import NAMING
 
     name = str(metric.unique_name)
     column = getattr(metric, "source_column", None)
@@ -45,9 +45,9 @@ def measure_identity(metric) -> "Tuple[SourceId, str]":
         agg = str(getattr(agg_raw, "value", agg_raw) or "").upper()
         word = name.split("_OF_", 1)[0].lower() if "_OF_" in name else (agg.lower() or "agg")
         sid = SourceId("implicit_measure", str(getattr(metric, "dataset", "")), str(column), agg or word.upper())
-        return sid, normalize(f"{word} of {column}", "measure", sid.key())[0]
+        return sid, NAMING.normalize(f"{word} of {column}", "measure", sid.key())[0]
     sid = SourceId("measure", "", name)
-    return sid, normalize(name, "measure", sid.key())[0]
+    return sid, NAMING.normalize(name, "measure", sid.key())[0]
 
 
 def _rewrite(sql: str, alias_to_path: Dict[str, str]) -> str:

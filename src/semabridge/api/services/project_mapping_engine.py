@@ -603,7 +603,9 @@ def _validate_target_name(
             }
 
         sanitized = _default_target_identifier(resolved_target, target_connector, entity_kind)
-        if sanitized != upper_name:
+        if not naming.accepts_target_name(
+            resolved_target, entity_kind="column" if _is_column_kind(entity_kind) else "metric"
+        ):
             return {
                 "validation_status": "invalid",
                 "validation_code": "UNSUPPORTED_CHARACTERS",
@@ -851,6 +853,8 @@ def _flag_hidden_collisions(rows: List[Dict[str, Any]], target_connector: Option
     Rows the user already named (a saved override) are left alone: their
     target name no longer equals the automatic one.
     """
+    naming = naming_for(_normalize_connector_name(target_connector))
+    label = naming.platform_label if naming is not None else "Snowflake"
     columns_by_table: Dict[Tuple[str, str], Set[str]] = {}
     for row in rows:
         if str(row.get("entity_kind") or "").lower() == "column":
@@ -873,7 +877,7 @@ def _flag_hidden_collisions(rows: List[Dict[str, Any]], target_connector: Option
             _mark_collision(
                 row,
                 f"'{original}' and another column of {_table_label(row.get('parent_source_path'))} both become "
-                f"{clean} in Snowflake, so this one was renamed to {target} automatically. "
+                f"{clean} in {label}, so this one was renamed to {target} automatically. "
                 "Pick a name (or Resolve All).",
             )
             continue
@@ -884,7 +888,7 @@ def _flag_hidden_collisions(rows: List[Dict[str, Any]], target_connector: Option
             if target in columns_by_table.get(home, set()):
                 _mark_collision(
                     row,
-                    f"Metric and column of {row['home_dataset']} are both named {target} in Snowflake; "
+                    f"Metric and column of {row['home_dataset']} are both named {target} in {label}; "
                     "the column would be left out of the semantic view. Rename the metric (or Resolve All).",
                 )
 

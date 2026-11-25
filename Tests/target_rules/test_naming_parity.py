@@ -102,6 +102,19 @@ def test_validate_target_name() -> None:
                 assert run(t) == site[t][_k(kind)][str(collided)], (t, kind, collided)
             for dbx in run("databricks"):
                 assert dbx["validation_code"] != "RESERVED_KEYWORD"
+    # A name already in Databricks' final form (lowercase snake_case) is valid as it is:
+    # the check must not assume Snowflake's upper case (it once flagged every name).
+    for kind in ("column", "metric"):
+        for n in NAMES:
+            final = _v2(n, None, kind) if n.strip() else ""
+            if not final:
+                continue
+            got = _validate_target_name(target_name=final, source_name=n, collision_detected=False,
+                                        target_connector="databricks", entity_kind=kind)
+            assert got["validation_code"] == "OK", (n, final, got)
+            upper = _validate_target_name(target_name=final.upper(), source_name=n, collision_detected=False,
+                                          target_connector="databricks", entity_kind=kind)
+            assert upper["validation_code"] == "UNSUPPORTED_CHARACTERS" and _generated(upper["suggested_target_name"])
 
 
 def test_sanitize_for_project(monkeypatch) -> None:
@@ -232,6 +245,8 @@ def test_dry_run_rows_of_real_models(model, hermetic) -> None:
     dbx, snow = rows("databricks"), BASE["models"][model]["snowflake"]
     assert [r["source_path"] for r in dbx] == [r["source_path"] for r in snow]      # same rows
     assert all(_generated(r["target_name"]) for r in dbx)                            # v2 names
+    bad = [r for r in dbx if r["validation_code"] not in ("OK", "NAME_COLLISION")]
+    assert bad == [], bad[:3]                                                        # no false "invalid" rows
     # Naming v2 splits camelCase, so names Snowflake kept apart can meet: Competitive Marketing's
     # Date[RunningMonths] and Date[Running Months] are both running_months (Snowflake:
     # RUNNINGMONTHS / RUNNING_MONTHS). Known and intended; the planner allocator resolves it in
