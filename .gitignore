@@ -230,6 +230,7 @@ frontend/.vite/
 # Models and Power BI binaries
 models/
 *.pbix
+!Examples/powerbi/annual.pbix
 
 
 # Temporary databases & logs

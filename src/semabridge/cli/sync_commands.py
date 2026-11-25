@@ -56,6 +56,18 @@ def sync_run(
         None, "--workspace-id", "-w",
         help="Target Fabric workspace ID",
     ),
+    fabric_identity_id: Optional[str] = typer.Option(
+        None, "--fabric-identity-id",
+        help="Fabric account/identity to use (required for Fabric directions unless --project gives it)",
+    ),
+    fabric_workspace_id: Optional[str] = typer.Option(
+        None, "--fabric-workspace-id",
+        help="Fabric workspace ID (Fabric directions; overrides --workspace-id)",
+    ),
+    project: Optional[str] = typer.Option(
+        None, "--project",
+        help="Project id to read the Fabric identity/workspace from (source.identity_id / source.workspace_id)",
+    ),
     conflict_resolution: str = typer.Option(
         "fail_and_approve", "--conflict",
         help="Conflict strategy: fail_and_approve | source_wins | target_wins | merge",
@@ -100,13 +112,29 @@ def sync_run(
         )
         raise typer.Exit(code=1)
 
+    ws_for_sync = fabric_workspace_id or workspace_id
+    identity_for_sync = fabric_identity_id
+    from semabridge.sources.fabric.legacy_sync import is_fabric_direction, resolve_sync_fabric_target
+
+    if is_fabric_direction(sync_direction):
+        from semabridge.sources.base import SourceError
+
+        try:
+            identity_for_sync, ws_for_sync = resolve_sync_fabric_target(
+                identity_id=fabric_identity_id, workspace_id=ws_for_sync, project_id=project, caller="cli",
+            )
+        except SourceError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=1)
+
     config = SyncConfig(
         direction=sync_direction,
         conflict_resolution=strategy,
         pbix_folder=pbix_folder,
         pbix_pattern=pbix_pattern,
         snowflake_schema=snowflake_schema,
-        fabric_workspace_id=workspace_id,
+        fabric_workspace_id=ws_for_sync,
+        fabric_identity_id=identity_for_sync,
         max_workers=max_workers,
         enable_parallel=max_workers > 1,
         incremental=incremental,

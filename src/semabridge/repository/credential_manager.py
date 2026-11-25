@@ -21,12 +21,23 @@ from sqlalchemy import select, delete
 from sqlalchemy.orm import Session
 
 from semabridge.core.env import get_fabric_access_token_from_env
-from semabridge.core.exceptions import RepositoryError
+from semabridge.core.exceptions import MissingCredentialError, RepositoryError
 from semabridge.repository.orm.base import Base
 from semabridge.repository.orm.models import Credential
 from semabridge.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+class CredentialDecryptionError(MissingCredentialError, RepositoryError):
+    """Raised when a secret credential cannot be decrypted."""
+
+    def __init__(self, message: str, credential_name: str = "", service: str = ""):
+        super().__init__(credential_name or message, service)
+        self.message = message
+
+    def __str__(self) -> str:
+        return self.message
 
 
 # Services whose stored values must NEVER be pushed into os.environ by
@@ -212,9 +223,21 @@ class CredentialManager:
                     if not value and value != 0:
                         continue
                     is_secret = key in secret_keys
+                    stored_value = str(value)
+                    if is_secret and stored_value:
+                        from semabridge.auth.encryption import encrypt_token, _get_fernet
+                        already_encrypted = False
+                        if stored_value.startswith("gAAAAA"):
+                            try:
+                                _get_fernet().decrypt(stored_value.encode("utf-8"))
+                                already_encrypted = True
+                            except Exception:
+                                pass
+                        if not already_encrypted:
+                            stored_value = encrypt_token(stored_value)
                     existing = session.get(Credential, (user_id, service, key))
                     if existing:
-                        existing.value = str(value)
+                        existing.value = stored_value
                         existing.is_secret = is_secret
                     else:
                         session.add(
@@ -222,7 +245,7 @@ class CredentialManager:
                                 owner_id=user_id,
                                 service=service,
                                 key=key,
-                                value=str(value),
+                                value=stored_value,
                                 is_secret=is_secret,
                             )
                         )
@@ -301,12 +324,27 @@ class CredentialManager:
             for row in rows:
                 if mask_secrets and row.is_secret:
                     out[row.key] = "••••••••"
+                elif row.is_secret and row.value:
+                    if row.value.startswith("gAAAAA"):
+                        from semabridge.auth.encryption import decrypt_token
+                        dec = decrypt_token(row.value)
+                        if not dec:
+                            raise CredentialDecryptionError(
+                                f"Failed to decrypt credential '{row.key}' for connection '{service}'. "
+                                f"Please re-enter credential '{row.key}'.",
+                                credential_name=row.key,
+                                service=service,
+                            )
+                        out[row.key] = dec
+                    else:
+                        out[row.key] = row.value
                 else:
                     out[row.key] = row.value
             return out
 
         # --- Step 1: Try user-scoped rows first (when user_id > 0) ---
         if user_id > 0:
+            user_rows = None
             try:
                 with self._session() as session:
                     user_rows = session.execute(
@@ -315,13 +353,14 @@ class CredentialManager:
                             Credential.service == service,
                         )
                     ).scalars().all()
-                if user_rows:
-                    result = _rows_to_dict(user_rows)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Database error querying user credentials: %s", e)
+            if user_rows:
+                result = _rows_to_dict(user_rows)
 
         # --- Step 2: Fall back to global rows (owner_id=0) ---
         if not result:
+            global_rows = None
             try:
                 with self._session() as session:
                     global_rows = session.execute(
@@ -330,9 +369,10 @@ class CredentialManager:
                             Credential.service == service,
                         )
                     ).scalars().all()
+            except Exception as e:
+                logger.debug("Database error querying global credentials: %s", e)
+            if global_rows:
                 result = _rows_to_dict(global_rows)
-            except Exception:
-                pass
 
         if not include_env_fallback:
             return result
@@ -629,9 +669,13 @@ class CredentialManager:
             with self._session() as session:
                 for key, value in token_data.items():
                     is_secret = key in ("access_token", "refresh_token")
+                    stored_value = str(value)
+                    if is_secret and stored_value:
+                        from semabridge.auth.encryption import encrypt_token
+                        stored_value = encrypt_token(stored_value)
                     existing = session.get(Credential, (user_id, "fabric_token", key))
                     if existing:
-                        existing.value = value
+                        existing.value = stored_value
                         existing.is_secret = is_secret
                     else:
                         session.add(
@@ -639,7 +683,7 @@ class CredentialManager:
                                 owner_id=user_id,
                                 service="fabric_token",
                                 key=key,
-                                value=value,
+                                value=stored_value,
                                 is_secret=is_secret,
                             )
                         )
@@ -677,7 +721,27 @@ class CredentialManager:
                     ).scalars().all()
                 if not rows:
                     return None
-                return {row.key: row.value for row in rows}
+                from semabridge.auth.encryption import decrypt_token
+                result = {}
+                for row in rows:
+                    if row.is_secret and row.value:
+                        if row.value.startswith("gAAAAA"):
+                            dec = decrypt_token(row.value)
+                            if not dec:
+                                raise CredentialDecryptionError(
+                                    f"Failed to decrypt credential '{row.key}' for connection 'fabric_token'. "
+                                    f"Please re-enter credential '{row.key}'.",
+                                    credential_name=row.key,
+                                    service="fabric_token",
+                                )
+                            result[row.key] = dec
+                        else:
+                            result[row.key] = row.value
+                    else:
+                        result[row.key] = row.value
+                return result
+        except CredentialDecryptionError:
+            raise
         except Exception:
             return None
 

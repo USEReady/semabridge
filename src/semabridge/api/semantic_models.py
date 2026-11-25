@@ -84,6 +84,9 @@ class SemanticSyncRequest(BaseModel):
             "or 'fabric_snowflake_bidirectional'."
         ),
     )
+    fabric_identity_id: Optional[str] = Field(
+        default=None, description="Fabric account/identity to use (required; no server-wide FABRIC_* fallback)"
+    )
     fabric_workspace_id: Optional[str] = Field(
         default=None, description="Override Fabric workspace ID"
     )

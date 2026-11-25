@@ -10,7 +10,7 @@ class ConversionRouter:
     """Route any source→target conversion through the correct pipeline.
 
     Pipeline steps are symbolic — each step name corresponds to a converter
-    or connector stage in core/engine.py.
+    or connector stage in core/engine/ (the engine package).
     """
 
     PATHS: dict[tuple[str, str], list[str]] = {

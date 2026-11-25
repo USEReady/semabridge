@@ -29,6 +29,9 @@ else:
     os.environ["SEMABRIDGE_DISABLE_DOTENV"] = "1"
     # The API test clients run without a login; auth tests set it explicitly.
     os.environ.setdefault("AUTH_ENABLED", "false")
+    worker_id = os.environ.get("PYTEST_XDIST_WORKER", str(os.getpid()))
+    os.environ.setdefault("SEMABRIDGE_DATABASE_URL", f"sqlite:///file:mem_{worker_id}?mode=memory&cache=shared&uri=true")
+    os.environ.setdefault("SEMABRIDGE_DB_BACKEND", "orm")
 
 # Add src directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -55,18 +58,58 @@ if not LIVE_TESTS_ENABLED:
         pass
 
 
+def _check_pbixray_support() -> tuple[bool, str]:
+    """Check once whether pbixray and its native extensions are loadable."""
+    try:
+        import pbixray
+        from pbixray import PBIXRay
+        import pbixray.core
+        return True, ""
+    except Exception as exc:
+        return False, f"pbixray native decoder is unavailable or blocked by Application Control ({exc})"
+
+
+PBIXRAY_AVAILABLE, PBIXRAY_SKIP_REASON = _check_pbixray_support()
+
+
 def pytest_collection_modifyitems(config: pytest.Config, items: list) -> None:
     """Skip ``live`` tests (real Fabric / Snowflake / login.microsoftonline.com)
     unless SEMABRIDGE_LIVE_TESTS=1, and ``slow`` (wall-clock) tests unless
-    SEMABRIDGE_SLOW_TESTS=1."""
+    SEMABRIDGE_SLOW_TESTS=1.
+
+    Also skip pbixray-dependent tests when native extensions are blocked, except in CI.
+    """
     run_slow = os.environ.get("SEMABRIDGE_SLOW_TESTS", "").strip().lower() in ("1", "true", "yes", "on")
     skip_live = pytest.mark.skip(reason="live service test: set SEMABRIDGE_LIVE_TESTS=1 to run")
     skip_slow = pytest.mark.skip(reason="wall-clock timing test: set SEMABRIDGE_SLOW_TESTS=1 to run")
+
+    is_ci = (
+        os.getenv("CI") == "true"
+        or os.getenv("GITHUB_ACTIONS") == "true"
+        or os.getenv("SEMABRIDGE_REQUIRE_REAL_PBIX") == "1"
+    )
+    skip_pbixray = pytest.mark.skip(reason=PBIXRAY_SKIP_REASON) if (not PBIXRAY_AVAILABLE and not is_ci) else None
+
     for item in items:
         if not LIVE_TESTS_ENABLED and "live" in item.keywords:
             item.add_marker(skip_live)
         if not run_slow and "slow" in item.keywords:
             item.add_marker(skip_slow)
+
+        if skip_pbixray is not None:
+            nodeid = item.nodeid.replace("\\", "/")
+            if "test_calculated_table_relationships.py" in nodeid:
+                if any(target in nodeid for target in (
+                    "test_a_keep_legitimate_calculated_table_relationship",
+                    "test_b_exclude_actual_auto_date_time_relationships",
+                    "test_c_inferred_column_name_fallback",
+                    "test_d_missing_endpoint_diagnostic",
+                )):
+                    item.add_marker(skip_pbixray)
+            elif "test_local_pbix_connector.py" in nodeid:
+                item.add_marker(skip_pbixray)
+            elif "pbixray" in item.keywords:
+                item.add_marker(skip_pbixray)
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -91,6 +134,11 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     except ValueError:
         pass  # already registered by another conftest
 
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Ensure pytest cache basetemp directory exists on clean checkouts."""
+    Path(".pytest_cache/temp").mkdir(parents=True, exist_ok=True)
+
 # -----------------------------------------------------------------------------
 # Database environment — force in-memory SQLite for all tests
 # -----------------------------------------------------------------------------
@@ -103,15 +151,28 @@ def _set_test_database_env(request: pytest.FixtureRequest):
     suite against PostgreSQL, MySQL, or a persistent DuckDB file.
     """
     import os
+    import sqlite3
 
+    worker_id = os.environ.get("PYTEST_XDIST_WORKER", str(os.getpid()))
+    worker_default_url = f"sqlite:///file:mem_{worker_id}?mode=memory&cache=shared&uri=true"
     cli_url: str | None = request.config.getoption("--db-url", default=None)
-    test_url = cli_url or "sqlite:///file::memory:?cache=shared&uri=true"
+    test_url = cli_url or os.environ.get("SEMABRIDGE_DATABASE_URL") or worker_default_url
 
     _old_url = os.environ.get("SEMABRIDGE_DATABASE_URL")
     _old_backend = os.environ.get("SEMABRIDGE_DB_BACKEND")
 
     os.environ["SEMABRIDGE_DATABASE_URL"] = test_url
     os.environ["SEMABRIDGE_DB_BACKEND"] = "orm"
+
+    # For shared in-memory SQLite, keep a connection alive for the entire session
+    # so tables are never destroyed when individual test engines are disposed.
+    keepalive_conn = None
+    if "sqlite" in test_url and ("mode=memory" in test_url or ":memory:" in test_url):
+        try:
+            uri_part = test_url.replace("sqlite:///", "")
+            keepalive_conn = sqlite3.connect(uri_part, uri=True)
+        except Exception:
+            keepalive_conn = None
 
     # Clear cached engine and db_resolver so they pick up the new URL.
     try:
@@ -130,7 +191,23 @@ def _set_test_database_env(request: pytest.FixtureRequest):
     except Exception:
         pass
 
+    # Eagerly initialize all tables on the worker database
+    try:
+        from semabridge.repository.orm.session_factory import db_manager
+        from semabridge.repository.orm.base import Base
+        import semabridge.repository.orm
+        engine = db_manager.get_engine(test_url)
+        Base.metadata.create_all(bind=engine)
+    except Exception:
+        pass
+
     yield
+
+    if keepalive_conn is not None:
+        try:
+            keepalive_conn.close()
+        except Exception:
+            pass
 
     # Restore original values
     if _old_url is not None:
@@ -157,6 +234,34 @@ def _set_test_database_env(request: pytest.FixtureRequest):
         clear_db_config_cache()
     except Exception:
         pass
+
+
+@pytest.fixture(autouse=True)
+def _guard_worker_database_not_leaked(request: pytest.FixtureRequest):
+    """Guard against tests leaking database configuration or engines.
+
+    Fails the test if, after it runs, the app's database no longer points at
+    the worker's database (so a leak names the leaking test).
+    """
+    from semabridge.repository.orm.session_factory import db_manager
+
+    expected_url = os.environ.get("SEMABRIDGE_DATABASE_URL")
+
+    yield
+
+    current_env_url = os.environ.get("SEMABRIDGE_DATABASE_URL")
+    if current_env_url != expected_url:
+        pytest.fail(
+            f"Test '{request.node.nodeid}' leaked SEMABRIDGE_DATABASE_URL: "
+            f"expected '{expected_url}', but found '{current_env_url}'."
+        )
+
+    current_engine_url = db_manager._current_url
+    if current_engine_url is not None and current_engine_url != expected_url:
+        pytest.fail(
+            f"Test '{request.node.nodeid}' leaked db_manager._current_url: "
+            f"expected '{expected_url}', but found '{current_engine_url}'."
+        )
 
 
 
@@ -453,3 +558,7 @@ def dax_expressions():
         "tier3_time_intel": "TOTALYTD(SUM([Revenue]), 'Date'[Date])",
         "tier3_iterator": "SUMX(Sales, Sales[Quantity] * Sales[Price])",
     }
+
+
+
+

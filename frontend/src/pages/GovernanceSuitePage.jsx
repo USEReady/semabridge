@@ -121,7 +121,7 @@ export function DriftView({ projectId = '', targetType = 'snowflake' }) {
   const [msg, setMsg] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
 
-  // Blast Radius Modal state & simulation in mock mode for Drift Monitoring
+  // Blast Radius Modal state for Drift Monitoring
   const [blastModalOpen, setBlastModalOpen] = useState(false);
   const [blastTarget, setBlastTarget] = useState('TOTAL_UNITS');
   const [blastType, setBlastType] = useState('METRIC');

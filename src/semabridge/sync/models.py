@@ -387,6 +387,10 @@ class SyncConfig(BaseModel):
     )
 
     # Power BI / Fabric target
+    fabric_identity_id: Optional[str] = Field(
+        default=None,
+        description="Fabric account/identity whose token the legacy sync uses (required for Fabric directions)",
+    )
     fabric_workspace_id: Optional[str] = Field(
         default=None, description="Target Fabric workspace ID"
     )

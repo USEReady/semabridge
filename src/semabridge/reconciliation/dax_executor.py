@@ -272,6 +272,38 @@ def _execute_rest_api(
     return cols, normalized_rows, {"dataset_id": ds_id, "workspace_id": ws_id or None}
 
 
+_GUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+
+def _resolve_xmla_catalog(dataset: str, workspace_id: Optional[str], token: str, timeout_seconds: int = 30) -> str:
+    """XMLA ``Initial Catalog`` is the semantic model NAME, never its GUID.
+
+    A name is used as given. A GUID is resolved to the model's name through the
+    Power BI REST API in the given workspace; without a workspace_id it cannot
+    be resolved and the call fails with the reason (no guessing).
+    """
+    if not _GUID_RE.match(dataset):
+        return dataset
+    ws_id = (workspace_id or "").strip()
+    if not ws_id:
+        raise DaxExecutionError(
+            f"Dataset '{dataset}' is a GUID; XMLA needs the model name. Pass workspace_id so it can be resolved."
+        )
+    base = os.getenv("POWERBI_API_BASE", "https://api.powerbi.com").rstrip("/")
+    url = f"{base}/v1.0/myorg/groups/{ws_id}/datasets/{dataset}"
+    with httpx.Client(timeout=timeout_seconds) as client:
+        resp = client.get(url, headers={"Authorization": f"Bearer {token}"})
+    if not resp.is_success:
+        raise DaxExecutionError(
+            f"Could not resolve dataset {dataset} to a model name in workspace {ws_id} "
+            f"(HTTP {resp.status_code}): {resp.text[:300]}"
+        )
+    name = str((resp.json() or {}).get("name") or "").strip()
+    if not name:
+        raise DaxExecutionError(f"Power BI returned no name for dataset {dataset} in workspace {ws_id}.")
+    return name
+
+
 def _execute_xmla(
     query: str,
     *,
@@ -280,24 +312,31 @@ def _execute_xmla(
     tenant_id: Optional[str],
     client_id: Optional[str],
     client_secret: Optional[str],
+    workspace_id: Optional[str] = None,
+    access_token: Optional[str] = None,
 ) -> tuple[List[str], List[Dict[str, Any]], Dict[str, Any]]:
+    """Run DAX over XMLA with a bearer token.
+
+    The connection string carries a short-lived access token (``Password`` with
+    an empty ``User ID``), never the service principal's client secret. The
+    token is the caller's ``access_token`` or one acquired for the service
+    principal (the secret only ever goes to the token endpoint).
+    """
     ws = (workspace or os.getenv("PBI_WORKSPACE_NAME") or "").strip()
     ds = (dataset or os.getenv("PBI_DATASET_NAME") or os.getenv("PBI_DATASET_ID") or "").strip()
     if not ws:
         raise DaxExecutionError("workspace name is required for the xmla backend.")
-    tid = tenant_id or os.getenv("PBI_TENANT_ID") or os.getenv("FABRIC_TENANT_ID")
-    cid = client_id or os.getenv("PBI_CLIENT_ID") or os.getenv("FABRIC_CLIENT_ID")
-    csec = client_secret or os.getenv("PBI_CLIENT_SECRET") or os.getenv("FABRIC_CLIENT_SECRET")
+    if not ds:
+        raise DaxExecutionError("dataset (model name or id) is required for the xmla backend.")
+    token = (access_token or "").strip() or _acquire_powerbi_token(tenant_id, client_id, client_secret)
+    catalog = _resolve_xmla_catalog(ds, workspace_id, token)
 
-    parts = [f"Data Source=powerbi://api.powerbi.com/v1.0/myorg/{ws}"]
-    if ds:
-        parts.append(f"Initial Catalog={ds}")
-    if tid and cid and csec:
-        parts.append(f"User ID=app:{cid}@{tid}")
-        parts.append(f"Password={csec}")
-    conn_str = ";".join(parts) + ";"
+    conn_str = (
+        f"Data Source=powerbi://api.powerbi.com/v1.0/myorg/{ws};"
+        f"Initial Catalog={catalog};User ID=;Password={token};"
+    )
     cols, rows = _run_adomd_query(conn_str, query)
-    return cols, rows, {"workspace": ws, "dataset": ds or None}
+    return cols, rows, {"workspace": ws, "dataset": ds, "catalog": catalog}
 
 
 def execute_dax(
@@ -312,8 +351,14 @@ def execute_dax(
     client_id: Optional[str] = None,
     client_secret: Optional[str] = None,
     timeout_seconds: int = 60,
+    access_token: Optional[str] = None,
 ) -> DaxExecutionResult:
-    """Execute a DAX query via ``pbi_desktop``, ``rest_api``, or ``xmla`` backend."""
+    """Execute a DAX query via ``pbi_desktop``, ``rest_api``, or ``xmla`` backend.
+
+    ``access_token`` (xmla) is a bearer token to connect with; without it a
+    service-principal token is acquired. The client secret is never placed in
+    an XMLA connection string.
+    """
     q_clean = (query or "").strip()
     if not q_clean:
         raise DaxExecutionError("DAX query must not be empty.")
@@ -351,6 +396,8 @@ def execute_dax(
                 tenant_id=tenant_id,
                 client_id=client_id,
                 client_secret=client_secret,
+                workspace_id=workspace_id,
+                access_token=access_token,
             )
         else:
             raise DaxExecutionError(

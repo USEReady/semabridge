@@ -495,6 +495,7 @@ class OSIToSMLConverter(BaseConverter):
             is_fact=osi_ds.is_fact,
             dataset_kind=getattr(osi_ds, "dataset_kind", "table") or "table",
             expression=getattr(osi_ds, "expression", None),
+            source_hint=getattr(osi_ds, "source_hint", None),
         ), renames
 
     def _convert_column(self, osi_col: OSIColumn) -> SMLColumn:

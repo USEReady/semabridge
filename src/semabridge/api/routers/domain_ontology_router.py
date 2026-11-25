@@ -523,6 +523,18 @@ async def bootstrap_from_osi(req: FromOsiRequest, request: Request) -> Dict[str,
         osi_obj = await _load_osi_model(project_id)
         if not osi_obj:
             raise HTTPException(status_code=404, detail=f"No OSI model found for project '{project_id}'.")
+        from semabridge.sources.fabric.synonyms import carry_sml_synonyms, project_uses_fabric_report_layer
+
+        if project_uses_fabric_report_layer(project_id):
+            # Fabric + report layer: keep the report-caption synonyms the SML
+            # snapshot holds (the SML->OSI step drops them), like PBIX domains.
+            import json as _json_mod
+
+            from semabridge.repository.model_repository import ModelRepository
+
+            head = ModelRepository().get_head(project_id)
+            blob = _json_mod.loads(head.sml_blob) if head and isinstance(head.sml_blob, (str, bytes)) else getattr(head, "sml_blob", None)
+            osi_obj = carry_sml_synonyms(osi_obj, blob)
     else:
         raise HTTPException(status_code=400, detail="Must provide either 'osi_model' dictionary or 'project_id'.")
 

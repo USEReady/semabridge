@@ -18,6 +18,10 @@ const DEFAULT_WIZARD_STATE = {
   snowflakeAccountId: '',
   databricksAccountId: '',
   fabricWorkspaceId: '',
+  // Fabric TARGET identity / workspace: separate from the source fields above
+  // so a Fabric target never overwrites the source (or the reverse). Ids only.
+  targetFabricAccountId: '',
+  targetFabricWorkspaceId: '',
   snowflakeDatabase: '',
   snowflakeSchema: '',
   targetDatabase: '',

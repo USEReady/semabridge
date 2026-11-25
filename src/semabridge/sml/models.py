@@ -224,6 +224,7 @@ class SMLDataset(BaseModel):
         description="'table' | 'calculated_table' | 'field_parameter' — non-'table' kinds have no physical source table",
     )
     expression: Optional[str] = Field(default=None, description="Defining DAX of a calculated table / field parameter")
+    source_hint: Optional[dict[str, Any]] = Field(default=None, exclude=True, description="Power Query M source hint")
     
     def model_post_init(self, __context: Any) -> None:
         """Set defaults after initialization."""

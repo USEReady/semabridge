@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -13,15 +14,38 @@ from semabridge.repository.orm.models import Account
 from semabridge.repository.orm.session_factory import db_manager, reset_engine
 
 
-def _prepare_db() -> None:
-    os.environ['AUTH_ENABLED'] = 'false'
-    os.environ['SEMABRIDGE_DATABASE_URL'] = 'sqlite:///file::memory:?cache=shared&uri=true'
-    os.environ['SEMABRIDGE_DB_BACKEND'] = 'orm'
-
+@pytest.fixture(autouse=True)
+def _isolate_account_create_db(tmp_path, monkeypatch):
+    orig_url = os.environ.get("SEMABRIDGE_DATABASE_URL")
+    orig_backend = os.environ.get("SEMABRIDGE_DB_BACKEND")
+    db_file = tmp_path / "test_account_create.db"
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    monkeypatch.setenv("SEMABRIDGE_DATABASE_URL", f"sqlite:///{db_file}")
+    monkeypatch.setenv("SEMABRIDGE_DB_BACKEND", "orm")
     reset_engine()
     db_manager.reset()
     engine = db_manager.get_engine()
+    import semabridge.repository.orm
     Base.metadata.create_all(bind=engine)
+    yield
+    db_manager.reset()
+    if orig_url is not None:
+        os.environ["SEMABRIDGE_DATABASE_URL"] = orig_url
+    else:
+        os.environ.pop("SEMABRIDGE_DATABASE_URL", None)
+    if orig_backend is not None:
+        os.environ["SEMABRIDGE_DB_BACKEND"] = orig_backend
+    else:
+        os.environ.pop("SEMABRIDGE_DB_BACKEND", None)
+    reset_engine()
+    db_manager.reset()
+    if orig_url:
+        restored_engine = db_manager.get_engine()
+        Base.metadata.create_all(bind=restored_engine)
+
+
+def _prepare_db() -> None:
+    pass
 
 
 def test_create_account_is_idempotent_for_same_tag_and_connector():

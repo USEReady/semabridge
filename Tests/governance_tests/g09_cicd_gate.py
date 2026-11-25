@@ -18,6 +18,10 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+repo_root = Path(__file__).resolve().parent.parent.parent
+src_dir = repo_root / "src"
+if str(src_dir) not in sys.path:
+    sys.path.insert(0, str(src_dir))
 from common import Api, Report, base_args, body_text  # noqa: E402
 
 p = base_args(__doc__)

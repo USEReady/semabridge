@@ -14,13 +14,9 @@ from semabridge.utils.precompute_aggregation import (
 
 def _prepare_db() -> None:
     from semabridge.repository.orm.base import Base
-    from semabridge.repository.orm.session_factory import db_manager, reset_engine
+    from semabridge.repository.orm.session_factory import db_manager
+    import semabridge.repository.orm
 
-    os.environ["SEMABRIDGE_DATABASE_URL"] = "sqlite:///file::memory:?cache=shared&uri=true"
-    os.environ["SEMABRIDGE_DB_BACKEND"] = "orm"
-
-    reset_engine()
-    db_manager.reset()
     engine = db_manager.get_engine()
     Base.metadata.create_all(bind=engine)
 

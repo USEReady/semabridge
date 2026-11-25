@@ -76,6 +76,8 @@ def _real_tables(pbix_model) -> list[str]:
 def pbix_files():
     files = _distinct_pbix_files()
     if not files:
+        if os.getenv("CI") == "true" or os.getenv("GITHUB_ACTIONS") == "true":
+            pytest.fail(f"PBIX upload cache fixture missing in CI: {_SKIP_REASON}")
         pytest.skip(_SKIP_REASON)
     return files
 
@@ -294,6 +296,8 @@ def test_corporate_spend_small_real_table_lands_in_ambiguous_needs_review(table_
     duplicate real data already there) and must NOT be silently skipped
     either. Confirms landing in ambiguous_needs_review with evidence."""
     if not os.path.isfile(_SAMPLE_MODEL_PBIX):
+        if os.getenv("CI") == "true" or os.getenv("GITHUB_ACTIONS") == "true":
+            pytest.fail(f"Sample model PBIX fixture missing in CI: {_SAMPLE_MODEL_PBIX}")
         pytest.skip(_SKIP_REASON)
 
     from pbixray import PBIXRay

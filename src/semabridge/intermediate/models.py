@@ -269,6 +269,11 @@ class OSIDataset(OSIBaseModel):
         default=None,
         description="Defining DAX expression for calculated tables / field parameters",
     )
+    source_hint: Optional[Dict[str, Any]] = Field(
+        default=None,
+        exclude=True,
+        description="Power Query M source binding hint",
+    )
 
     @property
     def is_physical(self) -> bool:

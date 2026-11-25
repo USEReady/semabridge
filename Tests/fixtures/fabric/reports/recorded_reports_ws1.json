@@ -1,0 +1,112 @@
+{
+ "_recorded": "Power BI GET /v1.0/myorg/groups/{ws}/reports and Fabric POST /v1/workspaces/{ws}/reports/{id}/getDefinition (+ operation polling); ids scrubbed",
+ "workspace_id": "aaaaaaaa-0000-0000-0000-000000000001",
+ "dataset_id": "11111111-1111-1111-1111-111111111111",
+ "reports": {
+  "value": [
+   {
+    "id": "r-legacy-0000",
+    "name": "Sales Overview",
+    "datasetId": "11111111-1111-1111-1111-111111111111",
+    "format": "PBIX"
+   },
+   {
+    "id": "r-pbir-0000",
+    "name": "Revenue (PBIR)",
+    "datasetId": "11111111-1111-1111-1111-111111111111",
+    "format": "PBIR"
+   },
+   {
+    "id": "r-locked-0000",
+    "name": "Exec Only",
+    "datasetId": "11111111-1111-1111-1111-111111111111",
+    "format": "PBIX"
+   },
+   {
+    "id": "r-other-0000",
+    "name": "Other Model Report",
+    "datasetId": "99999999-9999-9999-9999-999999999999",
+    "format": "PBIX"
+   }
+  ]
+ },
+ "getDefinition": {
+  "r-legacy-0000": {
+   "status": 200,
+   "body": {
+    "definition": {
+     "parts": [
+      {
+       "path": "definition.pbir",
+       "payload": "eyJ2ZXJzaW9uIjogIjEuMCJ9",
+       "payloadType": "InlineBase64"
+      },
+      {
+       "path": "report.json",
+       "payload": "eyJzZWN0aW9ucyI6IFt7ImRpc3BsYXlOYW1lIjogIk92ZXJ2aWV3IiwgInZpc3VhbENvbnRhaW5lcnMiOiBbeyJjb25maWciOiAie1wic2luZ2xlVmlzdWFsXCI6IHtcInZpc3VhbFR5cGVcIjogXCJjYXJkXCIsIFwidmNPYmplY3RzXCI6IHtcInRpdGxlXCI6IFt7XCJwcm9wZXJ0aWVzXCI6IHtcInRleHRcIjoge1widmFsdWVcIjogXCJVbml0cyBTb2xkXCJ9fX1dfX19IiwgInF1ZXJ5IjogIntcIkNvbW1hbmRzXCI6IFt7XCJTZW1hbnRpY1F1ZXJ5XCI6IHtcIlNlbGVjdFwiOiBbe1wiTWVhc3VyZVwiOiB7XCJQcm9wZXJ0eVwiOiBcIlRvdGFsIFVuaXRzXCIsIFwiRXhwcmVzc2lvblwiOiB7XCJTb3VyY2VSZWZcIjoge1wiU291cmNlXCI6IFwidFwifX19fV0sIFwiRnJvbVwiOiBbe1wiTmFtZVwiOiBcInRcIiwgXCJFbnRpdHlcIjogXCJTYWxlc1wiLCBcIlR5cGVcIjogMH1dfX1dfSJ9LCB7ImNvbmZpZyI6ICJ7XCJzaW5nbGVWaXN1YWxcIjoge1widmlzdWFsVHlwZVwiOiBcImNhcmRcIiwgXCJ2Y09iamVjdHNcIjoge1widGl0bGVcIjogW3tcInByb3BlcnRpZXNcIjoge1widGV4dFwiOiB7XCJ2YWx1ZVwiOiBcIkJyYW5kXCJ9fX1dfX19IiwgInF1ZXJ5IjogIntcIkNvbW1hbmRzXCI6IFt7XCJTZW1hbnRpY1F1ZXJ5XCI6IHtcIlNlbGVjdFwiOiBbe1wiQ29sdW1uXCI6IHtcIlByb3BlcnR5XCI6IFwiTWFudWZhY3R1cmVyXCIsIFwiRXhwcmVzc2lvblwiOiB7XCJTb3VyY2VSZWZcIjoge1wiU291cmNlXCI6IFwidFwifX19fV0sIFwiRnJvbVwiOiBbe1wiTmFtZVwiOiBcInRcIiwgXCJFbnRpdHlcIjogXCJQcm9kdWN0XCIsIFwiVHlwZVwiOiAwfV19fV19In0sIHsiY29uZmlnIjogIntcInNpbmdsZVZpc3VhbFwiOiB7XCJ2aXN1YWxUeXBlXCI6IFwiY2FyZFwiLCBcInZjT2JqZWN0c1wiOiB7XCJ0aXRsZVwiOiBbe1wicHJvcGVydGllc1wiOiB7XCJ0ZXh0XCI6IHtcInZhbHVlXCI6IFwiVm9sdW1lXCJ9fX1dfX19IiwgInF1ZXJ5IjogIntcIkNvbW1hbmRzXCI6IFt7XCJTZW1hbnRpY1F1ZXJ5XCI6IHtcIlNlbGVjdFwiOiBbe1wiTWVhc3VyZVwiOiB7XCJQcm9wZXJ0eVwiOiBcIlRvdGFsIFVuaXRzXCIsIFwiRXhwcmVzc2lvblwiOiB7XCJTb3VyY2VSZWZcIjoge1wiU291cmNlXCI6IFwidFwifX19fV0sIFwiRnJvbVwiOiBbe1wiTmFtZVwiOiBcInRcIiwgXCJFbnRpdHlcIjogXCJTYWxlc1wiLCBcIlR5cGVcIjogMH1dfX1dfSJ9LCB7ImNvbmZpZyI6ICJ7XCJzaW5nbGVWaXN1YWxcIjoge1widmlzdWFsVHlwZVwiOiBcImNhcmRcIiwgXCJ2Y09iamVjdHNcIjoge1widGl0bGVcIjogW3tcInByb3BlcnRpZXNcIjoge1widGV4dFwiOiB7XCJ2YWx1ZVwiOiBcIk9sZCBVbml0c1wifX19XX19fSIsICJxdWVyeSI6ICJ7XCJDb21tYW5kc1wiOiBbe1wiU2VtYW50aWNRdWVyeVwiOiB7XCJTZWxlY3RcIjogW3tcIk1lYXN1cmVcIjoge1wiUHJvcGVydHlcIjogXCJVbml0cyBMZWdhY3lcIiwgXCJFeHByZXNzaW9uXCI6IHtcIlNvdXJjZVJlZlwiOiB7XCJTb3VyY2VcIjogXCJ0XCJ9fX19XSwgXCJGcm9tXCI6IFt7XCJOYW1lXCI6IFwidFwiLCBcIkVudGl0eVwiOiBcIlNhbGVzXCIsIFwiVHlwZVwiOiAwfV19fV19In1dfV19",
+       "payloadType": "InlineBase64"
+      }
+     ]
+    }
+   }
+  },
+  "r-pbir-0000": {
+   "status": 202,
+   "headers": {
+    "Location": "https://api.fabric.microsoft.com/v1/operations/op-pbir-1",
+    "Retry-After": "1",
+    "x-ms-operation-id": "op-pbir-1"
+   }
+  },
+  "r-locked-0000": {
+   "status": 403,
+   "body": {
+    "errorCode": "InsufficientPrivileges",
+    "message": "The caller does not have permission to read this report."
+   }
+  }
+ },
+ "operations": {
+  "op-pbir-1": {
+   "polls": [
+    {
+     "status": "Running"
+    },
+    {
+     "status": "Succeeded"
+    }
+   ],
+   "result": {
+    "definition": {
+     "parts": [
+      {
+       "path": "definition.pbir",
+       "payload": "eyJ2ZXJzaW9uIjogIjQuMCIsICJkYXRhc2V0UmVmZXJlbmNlIjogeyJieUNvbm5lY3Rpb24iOiBudWxsfX0=",
+       "payloadType": "InlineBase64"
+      },
+      {
+       "path": "definition/pages/pages.json",
+       "payload": "eyJwYWdlT3JkZXIiOiBbInAxIl19",
+       "payloadType": "InlineBase64"
+      },
+      {
+       "path": "definition/pages/p1/page.json",
+       "payload": "eyJkaXNwbGF5TmFtZSI6ICJSZXZlbnVlIn0=",
+       "payloadType": "InlineBase64"
+      },
+      {
+       "path": "definition/pages/p1/visuals/v1/visual.json",
+       "payload": "eyJ2aXN1YWwiOiB7InZpc3VhbFR5cGUiOiAiY2FyZCIsICJ2aXN1YWxDb250YWluZXJPYmplY3RzIjogeyJ0aXRsZSI6IFt7InByb3BlcnRpZXMiOiB7InRleHQiOiB7InZhbHVlIjogIlJldmVudWUgJCJ9fX1dfSwgInF1ZXJ5IjogeyJxdWVyeVN0YXRlIjogeyJWYWx1ZXMiOiB7InByb2plY3Rpb25zIjogW3siZmllbGQiOiB7Ik1lYXN1cmUiOiB7IkV4cHJlc3Npb24iOiB7IlNvdXJjZVJlZiI6IHsiRW50aXR5IjogIlNhbGVzIn19LCAiUHJvcGVydHkiOiAiVG90YWwgUmV2ZW51ZSJ9fSwgInF1ZXJ5UmVmIjogIlNhbGVzLlRvdGFsIFJldmVudWUifV19fX19fQ==",
+       "payloadType": "InlineBase64"
+      },
+      {
+       "path": "definition/pages/p1/visuals/v2/visual.json",
+       "payload": "eyJ2aXN1YWwiOiB7InZpc3VhbFR5cGUiOiAiY2FyZCIsICJ2aXN1YWxDb250YWluZXJPYmplY3RzIjogeyJ0aXRsZSI6IFt7InByb3BlcnRpZXMiOiB7InRleHQiOiB7InZhbHVlIjogIlZvbHVtZSJ9fX1dfSwgInF1ZXJ5IjogeyJxdWVyeVN0YXRlIjogeyJWYWx1ZXMiOiB7InByb2plY3Rpb25zIjogW3siZmllbGQiOiB7Ik1lYXN1cmUiOiB7IkV4cHJlc3Npb24iOiB7IlNvdXJjZVJlZiI6IHsiRW50aXR5IjogIlNhbGVzIn19LCAiUHJvcGVydHkiOiAiVG90YWwgUmV2ZW51ZSJ9fSwgInF1ZXJ5UmVmIjogIlNhbGVzLlRvdGFsIFJldmVudWUifV19fX19fQ==",
+       "payloadType": "InlineBase64"
+      }
+     ]
+    }
+   }
+  }
+ }
+}

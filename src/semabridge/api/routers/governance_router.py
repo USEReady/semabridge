@@ -76,20 +76,11 @@ def simulate_blast_radius(req: BlastRadiusRequest) -> BlastRadiusReport:
         except Exception:
             certified_names = set()
 
-    from semabridge.reconciliation.mock_parity import is_mock_drift_enabled, is_mock_parity_enabled
-
-    is_mock = req.mock_mode
-    if is_mock is None:
-        if is_mock_drift_enabled() or is_mock_parity_enabled():
-            is_mock = True
-        elif req.project_id in ("proj-comp", "proj-sales"):
-            is_mock = True
-
     simulator = BlastRadiusSimulator(
         ontology=fed,
         verified_queries=verified_queries,
         certified_metrics=certified_names,
-        mock_mode=bool(is_mock),
+        mock_mode=bool(req.mock_mode),
     )
     try:
         report = simulator.simulate_impact(
@@ -98,7 +89,7 @@ def simulate_blast_radius(req: BlastRadiusRequest) -> BlastRadiusReport:
             change_type=req.change_type,
             table_context=req.table_context,
             allowed_domains=allowed_domains,
-            mock_mode=bool(is_mock),
+            mock_mode=req.mock_mode,
         )
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))

@@ -68,9 +68,11 @@ def _step4_extract(
     try:
         if context.source_type == "snowflake":
             return self._extract_snowflake(context, dataset_id)
-        elif context.source_type == "fabric":
+        from semabridge.sources.base import get_source_adapter
+        adapter = get_source_adapter(context.source_type)
+        if adapter.source_type == "fabric":
             return self._extract_fabric(context, dataset_id, workspace_id)
-        elif context.source_type == "pbix":
+        elif adapter.source_type == "pbix":
             return self._extract_pbix(context, pbix_path)
         else:
             raise ExtractionError(f"Unknown source type: {context.source_type}")

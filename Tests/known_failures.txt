@@ -1,0 +1,6 @@
+# Tests/known_failures.txt
+# Accepted known failures on the origin/dev baseline.
+# Requirements:
+# - Single test per line (must contain '::' to identify a specific test, no files or wildcards).
+# - Reason required after '#' on each line.
+# - Passing tests must be removed immediately to lock in fixes.

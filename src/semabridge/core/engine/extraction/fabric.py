@@ -57,12 +57,8 @@ def _extract_fabric(
     from semabridge.connectors.fabric_extractor import FabricExtractor
 
     config = context.config
-    source_config = getattr(config, "source", None)
     fabric_cfg = config.fabric
     ws_id = workspace_id or fabric_cfg.workspace_id
-    interactive_token: Optional[str] = None
-    stored_workspace_id: str = ""
-    identity_id: str = str(getattr(source_config, "identity_id", "") or "").strip()
 
     if context.behavior.features.offline_mode:
         offline_path = Path(context.behavior.features.offline_fabric_model_path)
@@ -99,129 +95,70 @@ def _extract_fabric(
         self._record_step(4, StepStatus.SUCCESS, f"OFFLINE extract loaded {table_count} tables")
         return source_format
 
+    # One resolver for every Fabric stage (identity > run account token >
+    # interactive store > extractor's own configured auth). Resolved here, at
+    # Stage 4, so a long-queued scheduled run still gets a fresh identity token.
+    from semabridge.sources.base import SourceAuthError
+    from semabridge.sources.fabric.credentials import apply_to_extractor, credentials_for_context
+
     try:
-        from semabridge.repository.credential_manager import CredentialManager
-
-        cm = CredentialManager()
-        stored_fabric = cm.get_credentials("fabric", mask_secrets=False)
-        stored_workspace_id = (stored_fabric.get("workspace_id") or "").strip()
-        configured_workspace_id = str(getattr(fabric_cfg, "workspace_id", "") or "").strip()
-        if not workspace_id and not configured_workspace_id and stored_workspace_id:
-            ws_id = stored_workspace_id
-
-        if identity_id:
-            try:
-                from semabridge.auth.token_resolver import resolve_fabric_access_token
-
-                interactive_token = resolve_fabric_access_token(None, identity_id)
-                logger.debug("_extract_fabric: injecting identity-scoped interactive token for %s", identity_id)
-            except Exception as identity_exc:
-                logger.warning(
-                    "_extract_fabric: failed to resolve token for identity %s: %s",
-                    identity_id,
-                    identity_exc,
-                )
-                raise ExtractionError(
-                    f"Could not resolve Fabric token for identity '{identity_id}'. "
-                    f"Please re-authenticate this account in the Connections panel."
-                ) from identity_exc
-
-        if not interactive_token and not identity_id:
-            account_scoped_token = getattr(context, "fabric_access_token", None)
-            if account_scoped_token:
-                # Resolved at Step 3 from context.account_id (see engine.py) into
-                # an isolated, thread-local value — not os.environ — so concurrent
-                # batch-sync jobs for different accounts can't bleed into each other.
-                interactive_token = account_scoped_token
-                logger.debug("_extract_fabric: using account-scoped Fabric token from context (thread-safe)")
-            else:
-                # Only fall back to global credential store when NO identity_id/account
-                # token is specified. This prevents cross-account contamination in
-                # multi-account scenarios.
-                token_data = cm.get_msal_token()
-                if cm.get_fabric_auth_method() == "interactive" and cm.has_valid_token() and token_data:
-                    interactive_token = token_data.get("access_token")
-                    logger.debug("_extract_fabric: injecting interactive token from credential store (no identity_id)")
-    except ExtractionError:
-        raise
-    except Exception as exc:
-        logger.warning("_extract_fabric: credential lookup failed, falling back to env auth: %s", exc)
+        fabric_creds = credentials_for_context(context)
+    except SourceAuthError as exc:
+        raise ExtractionError(str(exc)) from exc
+    logger.debug("_extract_fabric: Fabric credentials origin=%s", fabric_creds.origin)
 
     if not dataset_id:
         raise ExtractionError("dataset_id is required for Fabric source")
 
-    guid_pattern = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-
-    def _is_guid(value: str) -> bool:
-        return bool(value and re.match(guid_pattern, value))
+    # The project's workspace only: a GUID as-is, or an exact workspace NAME
+    # resolved with the project's credentials. Never the stored credential's
+    # or the .env workspace (no alias fallback).
+    from semabridge.sources.base import SourceError
+    from semabridge.sources.fabric.workspaces import resolve_workspace_strict
 
     requested_ws = str(ws_id or "").strip()
-    configured_ws = str(fabric_cfg.workspace_id or "").strip()
-    stored_ws = str(stored_workspace_id or "").strip()
+    if not requested_ws:
+        raise ExtractionError("No Fabric workspace for this model: set source.workspace_id (no default workspace is used).")
+    fabric_cfg.workspace_id = requested_ws
+    extractor = apply_to_extractor(FabricExtractor(fabric_cfg), fabric_creds)
+    try:
+        ws_id = resolve_workspace_strict(extractor, requested_ws)
+    except SourceError as exc:
+        raise ExtractionError(str(exc)) from exc
+    fabric_cfg.workspace_id = ws_id
+    extractor.config.workspace_id = ws_id
 
-    # UI aliases (for example, semabridge-local) are not accepted by Fabric API.
-    # Prefer known GUIDs from credentials or environment-backed config.
-    if requested_ws and not _is_guid(requested_ws):
-        if _is_guid(stored_ws):
-            logger.info(
-                "Fabric workspace '%s' appears to be an alias; using credential workspace GUID '%s'",
-                requested_ws,
-                stored_ws,
-            )
-            requested_ws = stored_ws
-        elif _is_guid(configured_ws):
-            logger.info(
-                "Fabric workspace '%s' appears to be an alias; using configured workspace GUID '%s'",
-                requested_ws,
-                configured_ws,
-            )
-            requested_ws = configured_ws
+    # Exact match only: a GUID as-is, or exactly one model with that display
+    # name. Two models sharing a name is an error naming their ids, never
+    # "the first one".
+    from semabridge.sources.base import SourceError
 
-    ws_id = requested_ws or configured_ws or stored_ws
+    try:
+        resolved_dataset_id = extractor._resolve_model_id_exact(dataset_id)
+    except SourceError as exc:
+        raise ExtractionError(str(exc)) from exc
 
-    if ws_id and fabric_cfg.workspace_id != ws_id:
-        fabric_cfg.workspace_id = ws_id
+    from semabridge.sources.base import ModelIdentity, get_source_adapter
+    adapter = get_source_adapter("fabric")
+    identity = ModelIdentity(
+        source_type="fabric",
+        model_id=resolved_dataset_id,
+        display_name=extractor.get_model_display_name(resolved_dataset_id) or resolved_dataset_id,
+        workspace_id=ws_id,
+    )
+    tmsl = adapter.extract_model(identity, extractor=extractor)
+    if context.behavior.features.fabric_real_row_counts:
+        # COUNTROWS counts are kept for row-count parity only and never reach
+        # fact/dimension classification (facts come from relationships), so
+        # the classifier gets no row counts at all on this path.
+        from semabridge.sources.fabric.stats import fabric_row_counts
 
-
-    # Refresh token just-in-time at Stage 4 for the source identity.
-    # context.scoped_fabric_token was resolved at Stage 3. In long-queued
-    # batch runs (e.g. scheduled jobs) that token may have expired by the
-    # time Stage 4 executes. Re-resolving here mirrors the Stage 9 pattern
-    # and guarantees freshness for the Fabric extraction API call.
-    if identity_id:
-        try:
-            from semabridge.auth.token_resolver import resolve_fabric_access_token
-            jit_token = resolve_fabric_access_token(None, identity_id)
-            if jit_token:
-                interactive_token = jit_token
-                logger.info(
-                    "_extract_fabric: resolved JIT fresh token for source identity %s",
-                    identity_id,
-                )
-        except Exception as exc:
-            if interactive_token:
-                logger.info(
-                    "_extract_fabric: JIT token resolution failed for %s; "
-                    "continuing with Stage 3 scoped token (%s)",
-                    identity_id, exc,
-                )
-            else:
-                logger.warning(
-                    "_extract_fabric: JIT token resolution failed for %s and no "
-                    "Stage 3 scoped token is available: %s",
-                    identity_id, exc,
-                )
-
-    extractor = FabricExtractor(fabric_cfg)
-
-    if interactive_token:
-        extractor._access_token = interactive_token
-        extractor._token_expires_at = time.time() + 1800
-
-    resolved_dataset_id = extractor.resolve_model_id(dataset_id)
-
-    tmsl = extractor.get_model_definition(resolved_dataset_id)
-    row_counts = extractor.get_table_row_counts(resolved_dataset_id)
+        stats = fabric_row_counts(extractor, resolved_dataset_id, tmsl)
+        context.source_row_counts = stats.counts
+        context.source_row_count_errors = stats.errors
+        row_counts = {}
+    else:
+        row_counts = extractor.get_table_row_counts(resolved_dataset_id)
 
     source_format = from_fabric_tmsl(
         project_id=context.project_id,
@@ -234,6 +171,20 @@ def _extract_fabric(
     
     # Ensure display name is explicitly resolved and stored for naming resolution
     source_format.dataset_name = extractor.get_model_display_name(resolved_dataset_id)
+
+    if context.behavior.features.fabric_report_layer:
+        # Report-layer parity with .pbix: captions of the reports bound to this
+        # model become field aliases (synonyms); unresolved / ambiguous report
+        # fields are reported like PBIX. A report this identity cannot read is a
+        # run warning, not a failure.
+        try:
+            layer = adapter.extract_report_layer(identity, extractor=extractor, tmsl=tmsl)
+        except SourceError as exc:
+            raise ExtractionError(f"Fabric report layer failed: {exc}") from exc
+        source_format.field_aliases = layer.field_aliases
+        source_format.unresolved_report_field_references = layer.unresolved
+        source_format.ambiguous_report_aliases = layer.ambiguous
+        context.source_warnings.extend(layer.warnings)
 
     self._record_step(4, StepStatus.SUCCESS, f"Extracted TMSL definition for '{source_format.dataset_name}'")
 

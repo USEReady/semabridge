@@ -25,6 +25,7 @@ import {
     FileCode2,
     RotateCcw,
     Key,
+    Edit2,
 } from 'lucide-react';
 import { api } from '../utils/api';
 import { useLogs } from '../context/LogsContext';
@@ -67,6 +68,10 @@ function withTimeout(promise, ms, fallbackValue = null) {
    ─────────────────────────────────────────────── */
 
 function FabricAccountForm({ initialTag, onSave, onCancel }) {
+    const [authMode, setAuthMode] = useState('interactive'); // 'interactive' | 'service_principal'
+    const [spTenantId, setSpTenantId] = useState('');
+    const [spClientId, setSpClientId] = useState('');
+    const [spClientSecret, setSpClientSecret] = useState('');
     const [authStatus, setAuthStatus] = useState(null);
     const [loginPhase, setLoginPhase] = useState('idle'); // idle | requesting | code_shown | polling | success | failed
     const [deviceCode, setDeviceCode] = useState(null);
@@ -241,6 +246,53 @@ function FabricAccountForm({ initialTag, onSave, onCancel }) {
         }
     };
 
+    const handleSaveServicePrincipal = async () => {
+        try {
+            setWorkspaceSaving(true);
+            setError(null);
+            if (!spTenantId.trim() || !spClientId.trim() || !spClientSecret.trim()) {
+                setError('Tenant ID, Client ID, and Client Secret are required.');
+                return;
+            }
+            const effectiveConnectionId = connectionId || generateConnectionId();
+            const vaultAccounts = await api.createAccount({
+                connection_id: effectiveConnectionId,
+                connector_type: 'FABRIC',
+                tag: initialTag,
+                identity_email: spClientId.trim(),
+                credentials: {
+                    auth_type: 'service_principal',
+                    tenant_id: spTenantId.trim(),
+                    client_id: spClientId.trim(),
+                    client_secret: spClientSecret.trim(),
+                },
+            });
+            const existing = readFabricConnectionsFromStorage();
+            const newConnection = {
+                id: effectiveConnectionId,
+                tag: initialTag,
+                identity_email: spClientId.trim(),
+                connector_type: 'FABRIC',
+                status: 'Active',
+                auth_type: 'service_principal',
+            };
+            const next = [...existing.filter((conn) => conn?.id !== newConnection.id), newConnection];
+            writeFabricConnectionsToStorage(next);
+            addLog('info', 'Connections', `Fabric service principal account ${initialTag} stored in DB.`);
+            if (onSave) {
+                onSave({
+                    vaultAccounts,
+                    createdConnection: newConnection,
+                });
+            }
+        } catch (err) {
+            setError(err.message);
+            addLog('error', 'Connections', `Failed to create Fabric service principal account: ${err.message}`);
+        } finally {
+            setWorkspaceSaving(false);
+        }
+    };
+
     const isLoggedIn = authStatus?.logged_in;
 
     return (
@@ -252,11 +304,91 @@ function FabricAccountForm({ initialTag, onSave, onCancel }) {
             </div>
             
             <div className="space-y-4">
+                {/* Auth Mode Tabs */}
+                <div className="flex rounded-lg overflow-hidden border" style={{ borderColor: 'var(--border-main)' }}>
+                    <button
+                        type="button"
+                        onClick={() => { setAuthMode('interactive'); setError(null); }}
+                        className="flex-1 py-2 text-xs font-semibold text-center transition-colors"
+                        style={{
+                            background: authMode === 'interactive' ? 'var(--color-accent)' : 'transparent',
+                            color: authMode === 'interactive' ? '#fff' : 'var(--text-secondary)',
+                        }}
+                    >
+                        Interactive (Device Code)
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => { setAuthMode('service_principal'); setError(null); }}
+                        className="flex-1 py-2 text-xs font-semibold text-center transition-colors"
+                        style={{
+                            background: authMode === 'service_principal' ? 'var(--color-accent)' : 'transparent',
+                            color: authMode === 'service_principal' ? '#fff' : 'var(--text-secondary)',
+                        }}
+                    >
+                        Service Principal
+                    </button>
+                </div>
+
                 {/* Tag/Alias Input locked by ConnectionManager or passed in */}
                 <div>
                    <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Account Tag</label>
                    <input type="text" readOnly value={initialTag} className="w-full px-3 py-2 rounded-lg text-xs border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-tertiary)' }} />
                 </div>
+
+                {/* ── Service Principal Mode ── */}
+                {authMode === 'service_principal' && (
+                    <div className="space-y-3">
+                        <div>
+                            <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Tenant ID</label>
+                            <input
+                                type="text"
+                                placeholder="e.g. 72f988bf-86f1-41af-91ab-2d7cd011db47"
+                                value={spTenantId}
+                                onChange={(e) => setSpTenantId(e.target.value)}
+                                className="w-full px-3 py-2 rounded-lg text-xs border"
+                                style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-primary)' }}
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Client ID (Application ID)</label>
+                            <input
+                                type="text"
+                                placeholder="e.g. 00000000-0000-0000-0000-000000000000"
+                                value={spClientId}
+                                onChange={(e) => setSpClientId(e.target.value)}
+                                className="w-full px-3 py-2 rounded-lg text-xs border"
+                                style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-primary)' }}
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Client Secret</label>
+                            <input
+                                type="password"
+                                placeholder="••••••••"
+                                value={spClientSecret}
+                                onChange={(e) => setSpClientSecret(e.target.value)}
+                                className="w-full px-3 py-2 rounded-lg text-xs border"
+                                style={{ background: 'var(--bg-input)', borderColor: 'var(--border-main)', color: 'var(--text-primary)' }}
+                            />
+                        </div>
+                        {error && (
+                            <div className="text-xs p-2 rounded bg-red-500/10 text-red-400 border border-red-500/20">{error}</div>
+                        )}
+                        <button
+                            onClick={handleSaveServicePrincipal}
+                            disabled={workspaceSaving || !spTenantId.trim() || !spClientId.trim() || !spClientSecret.trim()}
+                            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-xs font-bold transition-all hover:brightness-110 disabled:opacity-50"
+                            style={{ background: 'var(--color-accent)', color: '#fff' }}
+                        >
+                            {workspaceSaving ? <Loader2 size={14} className="animate-spin" /> : null}
+                            Save Service Principal
+                        </button>
+                    </div>
+                )}
+
+                {/* ── Interactive Mode ── */}
+                {authMode === 'interactive' && (<>
 
                 {/* ── Logged In State ── */}
                 {isLoggedIn && (
@@ -359,6 +491,7 @@ function FabricAccountForm({ initialTag, onSave, onCancel }) {
                         </button>
                     </div>
                 )}
+                </>)}
             </div>
 
             {isLoggedIn && (
@@ -705,6 +838,12 @@ function ConnectionManager({ type, title, subtitle, icon: Icon, color, FormCompo
     const [accounts, setAccounts] = useState([]);
     const [isAdding, setIsAdding] = useState(false);
     const [newTag, setNewTag] = useState('');
+    const [reconnectingAccount, setReconnectingAccount] = useState(null);
+    const [editingAccId, setEditingAccId] = useState(null);
+    const [editingTag, setEditingTag] = useState('');
+    const [isSavingEdit, setIsSavingEdit] = useState(false);
+    const [testingAccId, setTestingAccId] = useState(null);
+    const [testResults, setTestResults] = useState({});
     const { addLog } = useLogs();
 
     useEffect(() => {
@@ -713,9 +852,13 @@ function ConnectionManager({ type, title, subtitle, icon: Icon, color, FormCompo
         if (!cached.length) return;
         const normalized = cached.map((v) => ({
             id: v.id,
+            connection_id: v.connection_id || v.id,
             tag: v.tag,
             identity: v.identity_email || 'N/A',
             status: v.status || 'Active',
+            auth_type: v.auth_type,
+            token_expires_at: v.token_expires_at,
+            token_status: v.token_status || 'valid',
         }));
         setAccounts(normalized);
     }, [type]);
@@ -724,18 +867,26 @@ function ConnectionManager({ type, title, subtitle, icon: Icon, color, FormCompo
         if (vaultAccounts && Array.isArray(vaultAccounts)) {
             const vaultList = vaultAccounts.map(v => ({
                 id: v.id,
+                connection_id: v.connection_id,
                 tag: v.tag,
                 identity: v.identity_email || 'N/A',
-                status: v.status || 'Active'
+                status: v.status || 'Active',
+                auth_type: v.auth_type,
+                token_expires_at: v.token_expires_at,
+                token_status: v.token_status || 'valid',
             }));
             setAccounts(vaultList);
             if (String(type || '').toUpperCase() === 'FABRIC') {
                 const toCache = vaultAccounts.map((v) => ({
                     id: v.id,
+                    connection_id: v.connection_id,
                     tag: v.tag,
                     identity_email: v.identity_email || 'N/A',
                     connector_type: v.connector_type || 'FABRIC',
                     status: v.status || 'Active',
+                    auth_type: v.auth_type,
+                    token_expires_at: v.token_expires_at,
+                    token_status: v.token_status || 'valid',
                 }));
                 writeFabricConnectionsToStorage(toCache);
             }
@@ -769,6 +920,62 @@ function ConnectionManager({ type, title, subtitle, icon: Icon, color, FormCompo
         }
     };
 
+    const handleTest = async (accId) => {
+        setTestingAccId(accId);
+        setTestResults(prev => ({ ...prev, [accId]: null }));
+        try {
+            const res = await api.testAccount(accId);
+            const isOk = res && res.connected !== false;
+            setTestResults(prev => ({
+                ...prev,
+                [accId]: {
+                    success: isOk,
+                    message: res?.message || (isOk ? 'Connection verified' : 'Connection failed')
+                }
+            }));
+            addLog(isOk ? 'info' : 'warn', 'Connections', `Test connection ${accId}: ${res?.message || (isOk ? 'OK' : 'Failed')}`);
+        } catch (err) {
+            setTestResults(prev => ({
+                ...prev,
+                [accId]: {
+                    success: false,
+                    message: err?.message || 'Connection test failed'
+                }
+            }));
+            addLog('error', 'Connections', `Test connection ${accId} error: ${err?.message}`);
+        } finally {
+            setTestingAccId(null);
+        }
+    };
+
+    const handleStartEdit = (acc) => {
+        setEditingAccId(acc.id);
+        setEditingTag(acc.tag || '');
+    };
+
+    const handleCancelEdit = () => {
+        setEditingAccId(null);
+        setEditingTag('');
+    };
+
+    const handleSaveEdit = async (accId) => {
+        const trimmed = editingTag.trim();
+        if (!trimmed) return;
+        setIsSavingEdit(true);
+        try {
+            await api.updateAccount(accId, { tag: trimmed });
+            setAccounts(prev => prev.map(a => a.id === accId ? { ...a, tag: trimmed } : a));
+            setEditingAccId(null);
+            setEditingTag('');
+            fetchAccounts();
+            addLog('info', 'Connections', `Account tag updated to "${trimmed}"`);
+        } catch (err) {
+            addLog('error', 'Connections', `Failed to update account tag: ${err?.message}`);
+        } finally {
+            setIsSavingEdit(false);
+        }
+    };
+
     return (
         <div className="mb-8">
             <div className="mb-4">
@@ -781,10 +988,11 @@ function ConnectionManager({ type, title, subtitle, icon: Icon, color, FormCompo
 
             {/* List Header */}
             {accounts.length > 0 && (
-                <div className="grid grid-cols-3 gap-4 px-4 py-2 border-b border-gray-700/50 text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2">
-                    <div>Identity</div>
-                    <div>Tag</div>
-                    <div>Actions</div>
+                <div className="grid grid-cols-12 gap-3 px-4 py-2 border-b border-gray-700/50 text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2">
+                    <div className="col-span-4">Identity</div>
+                    <div className="col-span-3">Tag</div>
+                    <div className="col-span-3">Status</div>
+                    <div className="col-span-2 text-right">Actions</div>
                 </div>
             )}
 
@@ -796,16 +1004,159 @@ function ConnectionManager({ type, title, subtitle, icon: Icon, color, FormCompo
                     </div>
                 ) : (
                     accounts.map(acc => (
-                        <div key={acc.id} className="grid grid-cols-3 gap-4 items-center px-4 py-3 bg-[#131620] border border-gray-100/10 rounded-lg hover:border-gray-100/20 transition-colors">
-                            <div className="text-xs text-gray-400 truncate">{acc.identity}</div>
-                            <div className="text-xs font-bold text-[#e2e8f0] truncate">{acc.tag}</div>
-                            <div className="flex items-center gap-3 text-[11px] font-bold">
-                                <button className="text-gray-500 hover:text-red-400 transition-colors" onClick={() => handleDelete(acc.id)}>Logout </button>
+                        <div key={acc.id} className="space-y-1.5 p-3 bg-[#131620] border border-gray-100/10 rounded-lg hover:border-gray-100/20 transition-colors">
+                            <div className="grid grid-cols-12 gap-3 items-center">
+                                {/* Identity */}
+                                <div className="col-span-4 text-xs text-gray-300 truncate flex items-center gap-1.5">
+                                    <span className="truncate" title={acc.identity}>{acc.identity}</span>
+                                    {acc.auth_type === 'service_principal' && (
+                                        <span className="px-1.5 py-0.5 rounded text-[9px] bg-purple-500/10 text-purple-400 border border-purple-500/20 font-mono shrink-0">
+                                            SPN
+                                        </span>
+                                    )}
+                                </div>
+
+                                {/* Tag */}
+                                <div className="col-span-3 text-xs">
+                                    {editingAccId === acc.id ? (
+                                        <div className="flex items-center gap-1">
+                                            <input
+                                                value={editingTag}
+                                                onChange={(e) => setEditingTag(e.target.value)}
+                                                className="px-2 py-0.5 rounded bg-black/50 border border-indigo-500 text-xs text-white outline-none w-28"
+                                                autoFocus
+                                            />
+                                            <button
+                                                onClick={() => handleSaveEdit(acc.id)}
+                                                disabled={isSavingEdit}
+                                                className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500 text-white font-bold disabled:opacity-50"
+                                            >
+                                                {isSavingEdit ? '...' : 'Save'}
+                                            </button>
+                                            <button
+                                                onClick={handleCancelEdit}
+                                                className="text-[10px] text-gray-400 hover:text-white"
+                                            >
+                                                ✕
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <div className="flex items-center gap-1.5 group">
+                                            <span className="font-bold text-[#e2e8f0] truncate" title={acc.tag}>{acc.tag}</span>
+                                            <button
+                                                onClick={() => handleStartEdit(acc)}
+                                                className="text-gray-500 hover:text-indigo-400 p-0.5 opacity-60 group-hover:opacity-100 transition-opacity"
+                                                title="Edit tag"
+                                            >
+                                                <Edit2 size={11} />
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Status / Expiry */}
+                                <div className="col-span-3 text-xs">
+                                    {acc.token_status === 'expired' || acc.token_status === 'reauth_required' ? (
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                            <span className="px-2 py-0.5 rounded text-[10px] bg-amber-500/10 text-amber-400 border border-amber-500/20 font-semibold whitespace-nowrap">
+                                                Sign in again
+                                            </span>
+                                            <button
+                                                onClick={() => setReconnectingAccount(acc)}
+                                                className="flex items-center gap-1 text-[10px] font-semibold text-indigo-400 hover:text-indigo-300 transition-colors"
+                                                title="Reconnect this account"
+                                            >
+                                                <RotateCcw size={10} /> Reconnect
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <div className="flex flex-col">
+                                            <span className="text-[11px] text-emerald-400 flex items-center gap-1 font-semibold">
+                                                <CheckCircle2 size={11} /> Valid
+                                            </span>
+                                            {acc.token_expires_at ? (
+                                                <span
+                                                    className="text-[9px] text-gray-500 truncate"
+                                                    title={new Date(acc.token_expires_at * 1000).toLocaleString()}
+                                                >
+                                                    Exp: {new Date(acc.token_expires_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                </span>
+                                            ) : null}
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Actions */}
+                                <div className="col-span-2 flex items-center justify-end gap-2 text-[11px] font-bold">
+                                    <button
+                                        onClick={() => handleTest(acc.id)}
+                                        disabled={testingAccId === acc.id}
+                                        className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-semibold border border-gray-700 hover:border-gray-500 text-gray-300 hover:text-white transition-colors disabled:opacity-50"
+                                        title="Test connection"
+                                    >
+                                        {testingAccId === acc.id ? <Loader2 size={10} className="animate-spin" /> : <Zap size={10} />}
+                                        Test
+                                    </button>
+                                    <button
+                                        className="text-gray-500 hover:text-red-400 transition-colors text-[10px]"
+                                        onClick={() => handleDelete(acc.id)}
+                                        title="Delete credential"
+                                    >
+                                        Logout
+                                    </button>
+                                </div>
                             </div>
+
+                            {/* Inline Test Result */}
+                            {testResults[acc.id] && (
+                                <div
+                                    className={`text-[10px] px-2 py-1 rounded flex items-center gap-1.5 ${
+                                        testResults[acc.id].success
+                                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                            : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                                    }`}
+                                >
+                                    {testResults[acc.id].success ? <CheckCircle2 size={10} /> : <AlertCircle size={10} />}
+                                    <span>{testResults[acc.id].message}</span>
+                                </div>
+                            )}
                         </div>
                     ))
                 )}
             </div>
+
+            {/* Reconnect Account Modal / Form */}
+            {reconnectingAccount && (
+                <div className="p-4 bg-[#11131a] border border-amber-500/50 rounded-xl space-y-3 mb-4">
+                    <div className="flex justify-between items-center">
+                        <h4 className="text-xs font-bold text-amber-400">
+                            Reconnect Account: {reconnectingAccount.tag} ({reconnectingAccount.identity})
+                        </h4>
+                        <button
+                            onClick={() => setReconnectingAccount(null)}
+                            className="text-xs text-gray-400 hover:text-white"
+                        >
+                            <X size={14} />
+                        </button>
+                    </div>
+                    <FormComponent
+                        key={`reconnect-${reconnectingAccount.id}`}
+                        initialTag={reconnectingAccount.tag}
+                        connectionId={reconnectingAccount.connection_id || reconnectingAccount.id}
+                        status={null}
+                        onSave={(result) => {
+                            setReconnectingAccount(null);
+                            const vaultAccounts = result?.vaultAccounts || result;
+                            if (vaultAccounts) {
+                                updateVaultAccountsInState(vaultAccounts);
+                            } else {
+                                fetchAccounts();
+                            }
+                        }}
+                        onCancel={() => setReconnectingAccount(null)}
+                    />
+                </div>
+            )}
 
             {/* Add Account Flow */}
             {!isAdding ? (

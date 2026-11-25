@@ -151,7 +151,7 @@ class SemaBridgeMCPServer:
             return {"models": results}
         except Exception as exc:
             logger.warning("Could not list models from repository: %s", exc)
-            return {"models": [], "status": "mock_mode"}
+            return {"models": [], "status": "error", "error": f"Could not list models from the repository: {exc}"}
 
     def _tool_get_model_ontology(self, args: Dict[str, Any]) -> Dict[str, Any]:
         """Get model ontology structure."""

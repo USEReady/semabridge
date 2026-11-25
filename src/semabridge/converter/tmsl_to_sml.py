@@ -636,6 +636,9 @@ class TMSLTransformer:
                 columns.append(self._parse_column(col))
                 
         source_table = name
+        from semabridge.converter.m_source import snowflake_binding_hint
+
+        hint = snowflake_binding_hint(table_def.get("partitions") or [])
 
         return SMLDataset(
             unique_name=name,
@@ -643,7 +646,8 @@ class TMSLTransformer:
             description=table_def.get("description", ""),
             is_hidden=table_def.get("isHidden", False),
             columns=columns,
-            source_table=source_table
+            source_table=source_table,
+            source_hint=hint,
         )
 
     @classmethod

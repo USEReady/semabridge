@@ -205,6 +205,13 @@ _FABRIC_SCOPES = ["https://api.fabric.microsoft.com/.default"]
 _fabric_session_token: Optional[str] = None
 _fabric_session_token_expires_at: float = 0.0
 
+# In-memory pending Fabric logins awaiting Account creation (avoids writing plain-text tokens to DB).
+_pending_fabric_logins: Dict[str, Dict[str, Any]] = {}
+
+def get_and_consume_pending_fabric_login(token_or_flow_id: str) -> Optional[Dict[str, Any]]:
+    """Retrieve and remove a pending Fabric login bundle."""
+    return _pending_fabric_logins.pop(token_or_flow_id, None) or _pending_fabric_logins.get(token_or_flow_id)
+
 # Module-level MSAL app instance cache (keyed by authority URL)
 _msal_app_cache: Dict[str, Any] = {}
 _msal_http_client: Optional[Any] = None
@@ -515,22 +522,16 @@ async def fabric_device_code_poll(request: Request, payload: Dict[str, Any] = No
         _fabric_session_token = state["access_token"]
         _fabric_session_token_expires_at = _time.time() + int(state.get("expires_in", 3600))
 
-        # Persist to CredentialManager only (for CLI/background-sync fallback).
-        # Account DB row is created later by the frontend via POST /api/accounts.
-        # We intentionally do NOT call upsert_account() here because it
-        # would overwrite an existing FABRIC account's token/email with
-        # the newly-authenticated user's credentials.
-        try:
-            cm = CredentialManager()
-            cm.save_msal_token(
-                access_token=state["access_token"],
-                refresh_token=state.get("refresh_token", ""),
-                account_username=state.get("username", "unknown"),
-                tenant_id=state.get("tenant_id", "organizations"),
-                expires_in=state.get("expires_in", 3600),
-            )
-        except Exception as exc:
-            logger.exception("Failed to persist MSAL token to CredentialManager: %s", exc)
+        # Store in-memory pending token for account creation (tokens live only encrypted on accounts).
+        _pending_fabric_logins[state["access_token"]] = {
+            "access_token": state["access_token"],
+            "refresh_token": state.get("refresh_token", ""),
+            "account_username": state.get("username", "unknown"),
+            "tenant_id": state.get("tenant_id", "organizations"),
+            "expires_in": state.get("expires_in", 3600),
+            "expires_at": str(int(_time.time()) + int(state.get("expires_in", 3600))),
+            "auth_method": "interactive",
+        }
 
         logger.info("Fabric interactive login successful for %s (flow_id=%s)", state.get("username"), flow_id)
         return {
@@ -807,7 +808,7 @@ def _try_silent_refresh(
     so it must NEVER be called while a caller is holding an open session
     (QueuePool deadlock risk).
     """
-    # ── Account-aware path (preferred) ─────────────────────────────────────
+    # ── Account-aware path ─────────────────────────────────────────────────
     if account_id and credential_payload:
         refresh_token = credential_payload.get("refresh_token", "")
         tenant_id = credential_payload.get("tenant_id", "organizations")
@@ -819,47 +820,7 @@ def _try_silent_refresh(
             return _refresh_account_token(
                 account_id, account_tag or account_id, refresh_token, tenant_id, credential_payload
             )
-
-    # ── Legacy fallback: global CredentialManager (single-account / CLI) ───
-    try:
-        from semabridge.repository.credential_manager import CredentialManager
-        import msal
-
-        cm = CredentialManager()
-        token_data = cm.get_msal_token()
-        if not token_data or not token_data.get("refresh_token"):
-            return None
-
-        tenant_id = token_data.get("tenant_id", "organizations")
-        app_msal = _get_msal_app(f"https://login.microsoftonline.com/{tenant_id}")
-        # IMPORTANT: Use the Fabric Items API scope. Power BI scope tokens
-        # are rejected by the Fabric Items API with 404 (not 403).
-        result = app_msal.acquire_token_by_refresh_token(
-            token_data["refresh_token"],
-            scopes=["https://api.fabric.microsoft.com/.default"],
-        )
-        if "access_token" in result:
-            cm.save_msal_token(
-                access_token=result["access_token"],
-                refresh_token=result.get("refresh_token", token_data["refresh_token"]),
-                account_username=token_data.get("account_username", "unknown"),
-                tenant_id=tenant_id,
-                expires_in=result.get("expires_in", 3600),
-            )
-            logger.info(
-                "_try_silent_refresh: refreshed via global CredentialManager "
-                "(legacy fallback — single-account mode only)"
-            )
-            return result["access_token"]
-        else:
-            logger.warning(
-                "Silent token refresh failed: %s",
-                result.get("error_description", result.get("error", "unknown")),
-            )
-            return None
-    except Exception as exc:
-        logger.warning("Silent token refresh exception: %s", exc)
-        return None
+    return None
 
 
 async def fabric_list_workspaces(
@@ -1183,7 +1144,17 @@ async def get_connections_status(user_id: int = 0):
                         svc_status["accounts_count"] = len(svc_accounts)
                         if svc == "fabric":
                             svc_status["has_auth"] = True
-                            svc_status["auth_method"] = "interactive"
+                            svc_status["auth_method"] = acct.auth_type or "interactive"
+                            from datetime import datetime as _dt, timezone as _tz
+                            now = _dt.now(tz=_tz.utc)
+                            if acct.auth_type != "service_principal":
+                                exp = acct.token_expires_at
+                                if exp:
+                                    if exp.tzinfo is None:
+                                        exp = exp.replace(tzinfo=_tz.utc)
+                                    if now >= exp:
+                                        svc_status["status"] = "expired"
+                                        svc_status["token_expired"] = True
                     status[svc] = svc_status
         except Exception as acc_err:
             logger.warning("Could not load Account table for status: %s", acc_err)
@@ -1316,20 +1287,23 @@ async def test_connection(service: str, user_id: int = 0):
 
         return run_databricks_connection_test(user_id=user_id)
 
-    from semabridge.repository.credential_manager import CredentialManager
+    from semabridge.repository.credential_manager import CredentialManager, CredentialDecryptionError
 
     cm = CredentialManager()
 
     try:
         cm.inject_credentials_to_env(service, user_id=user_id)
+    except CredentialDecryptionError as e:
+        return {"status": "failed", "message": str(e)}
     except Exception as e:
         raise ValidationError(f"No credentials stored: {e}")
 
     if service == "fabric":
         try:
-            cfg = reload_settings()
-            extractor = make_source_extractor("fabric", cfg.fabric)
-            extractor._get_access_token()
+            from semabridge.auth.token_resolver import resolve_fabric_access_token
+            tok = resolve_fabric_access_token(None, None)
+            if not tok:
+                return {"status": "failed", "message": "No Fabric token resolved"}
             return {"status": "success", "message": "Fabric authentication successful"}
         except Exception as e:
             return {"status": "failed", "message": str(e)}

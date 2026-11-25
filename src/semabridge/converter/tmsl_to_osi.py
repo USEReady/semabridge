@@ -1187,6 +1187,9 @@ class TMSLToOSIConverter(BaseConverter):
                 columns.append(self._parse_column(col, name))
 
         source_table = name
+        from semabridge.converter.m_source import snowflake_binding_hint
+
+        hint = snowflake_binding_hint(table_def.get("partitions") or [])
 
         return OSIDataset(
             unique_name=name,
@@ -1197,6 +1200,7 @@ class TMSLToOSIConverter(BaseConverter):
             source_table=source_table,
             dataset_kind=kind,
             expression=expression or None,
+            source_hint=hint,
         )
 
     @classmethod

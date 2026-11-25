@@ -115,6 +115,7 @@ class EmitInput:
     diff_json: str = ""
     fabric_workspace_id: str = ""
     version_tag: str = ""
+    fabric_identity_id: str = ""
 
 
 @dataclass
@@ -395,8 +396,14 @@ async def emit_to_fabric(inp: EmitInput) -> EmitOutput:
     try:
         activity.heartbeat("Preparing TMSL payload")
 
-        config = FabricConfig(workspace_id=inp.fabric_workspace_id)
-        publisher = FabricPublisher(config=config)
+        if inp.fabric_identity_id:
+            # Per-job identity (orchestrator adapter), not the server FABRIC_* env.
+            from semabridge.sources.fabric.legacy_sync import fabric_publisher_for_sync
+
+            publisher = fabric_publisher_for_sync(inp.fabric_workspace_id, inp.fabric_identity_id)
+        else:
+            config = FabricConfig(workspace_id=inp.fabric_workspace_id)
+            publisher = FabricPublisher(config=config)
 
         from semabridge.formats.sml.models import SMLModel
         sml_model = SMLModel.model_validate_json(inp.sml_json)
