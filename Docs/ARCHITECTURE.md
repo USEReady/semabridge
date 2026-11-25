@@ -6,6 +6,11 @@
 - **Verification Date**: October 6, 2026
 - **Target Audience**: New Developers, QA Engineers, Engineering Managers, and Client Technical Contacts
 
+> **Architecture v2 (November 2026):** shared state in PostgreSQL, durable job
+> queue and workers, plan-once readiness, deployment profiles (Azure first) and
+> the TargetAdapter port supersede the corresponding parts below. See
+> [ADR-002](decisions/ADR-002-architecture-v2.md).
+
 ---
 
 ## Table of Contents
