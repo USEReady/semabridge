@@ -28,22 +28,41 @@ if (-not (Test-Path $sourceJson)) {
     exit 1
 }
 
-# External Tools directory confirmed for both standard MSI and Microsoft Store installs:
-$externalToolsDir = Join-Path $env:ProgramFiles "Common Files\Microsoft Shared\Power BI Desktop\External Tools"
+# Detect candidate External Tools directories:
+# 1. 64-bit Power BI Desktop: %ProgramFiles%\Common Files\Microsoft Shared\Power BI Desktop\External Tools
+# 2. 32-bit Power BI Desktop: %ProgramFiles(x86)%\Common Files\Microsoft Shared\Power BI Desktop\External Tools
+$targetDirs = @()
 
-if (-not (Test-Path $externalToolsDir)) {
-    Write-Host "Creating External Tools directory: $externalToolsDir"
-    New-Item -ItemType Directory -Force -Path $externalToolsDir | Out-Null
+$dir64 = Join-Path $env:ProgramFiles "Common Files\Microsoft Shared\Power BI Desktop\External Tools"
+$targetDirs += $dir64
+
+if ($env:ProgramFilesX86 -and (Test-Path $env:ProgramFilesX86)) {
+    $dir32 = Join-Path $env:ProgramFilesX86 "Common Files\Microsoft Shared\Power BI Desktop\External Tools"
+    $pbi32Installed = Test-Path (Join-Path $env:ProgramFilesX86 "Microsoft Power BI Desktop\bin\PBIDesktop.exe")
+    if ($pbi32Installed -or (Test-Path $dir32)) {
+        if ($dir32 -ne $dir64) {
+            $targetDirs += $dir32
+        }
+    }
 }
 
 # Read template and set absolute path
 $jsonContent = Get-Content $sourceJson -Raw -Encoding UTF8 | ConvertFrom-Json
 $jsonContent.path = $launcherCmd
 
-$targetJson = Join-Path $externalToolsDir "semabridge.pbitool.json"
-$jsonContent | ConvertTo-Json -Depth 5 | Set-Content $targetJson -Encoding UTF8
+Write-Host "Registering SemaBridge in Power BI Desktop External Tools..."
+foreach ($dir in $targetDirs) {
+    if (-not (Test-Path $dir)) {
+        Write-Host "Detected active Power BI Desktop target path (creating): $dir"
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    } else {
+        Write-Host "Detected active Power BI Desktop target path: $dir"
+    }
+
+    $targetJson = Join-Path $dir "semabridge.pbitool.json"
+    $jsonContent | ConvertTo-Json -Depth 5 | Set-Content $targetJson -Encoding UTF8
+    Write-Host "Registered at: $targetJson"
+}
 
 Write-Host "Successfully registered SemaBridge in Power BI Desktop External Tools!"
-Write-Host "Registration folder: $externalToolsDir"
-Write-Host "Configuration file:  $targetJson"
-Write-Host "Target executable:   $launcherCmd"
+Write-Host "Launcher path: $launcherCmd"

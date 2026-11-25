@@ -182,7 +182,7 @@ FLAGS: List[FeatureFlag] = [
     FeatureFlag("SEMABRIDGE_PBI_DESKTOP_SOURCE", "bool", "false",
                 "Enable Power BI Desktop live semantic model source adapter (alias).",
                 "sources/pbi_desktop/adapter.py"),
-    FeatureFlag("SEMABRIDGE_DETERMINISTIC_RELATIONSHIPS", "bool", "false",
+    FeatureFlag("deterministic_relationship_order", "bool", "false",
                 "Sort model relationships deterministically in conversion output.",
                 "converter/tmsl_to_osi.py"),
 ]
@@ -196,6 +196,15 @@ def is_pbi_desktop_source_enabled() -> bool:
         os.environ.get("pbi_desktop_source")
         or os.environ.get("PBI_DESKTOP_SOURCE")
         or os.environ.get("SEMABRIDGE_PBI_DESKTOP_SOURCE", "")
+    ).strip().lower()
+    return val in _TRUE
+
+
+def is_deterministic_relationship_order_enabled() -> bool:
+    """Return True if deterministic_relationship_order feature flag is enabled."""
+    val = (
+        os.environ.get("deterministic_relationship_order")
+        or os.environ.get("DETERMINISTIC_RELATIONSHIP_ORDER", "")
     ).strip().lower()
     return val in _TRUE
 

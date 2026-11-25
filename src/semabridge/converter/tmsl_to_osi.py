@@ -15,6 +15,7 @@ import unicodedata
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from semabridge.core.feature_flags import is_deterministic_relationship_order_enabled
 from semabridge.core.interfaces import BaseConverter
 from semabridge.core.exceptions import ConversionError
 from semabridge.intermediate.models import (
@@ -460,7 +461,7 @@ class TMSLToOSIConverter(BaseConverter):
                             ],
                         )
 
-            if source_data.get("deterministic_relationships") or os.getenv("SEMABRIDGE_DETERMINISTIC_RELATIONSHIPS", "").lower() in _TRUTHY:
+            if is_deterministic_relationship_order_enabled():
                 osi_model.relationships.sort(
                     key=lambda r: (
                         str(r.from_dataset or ""),

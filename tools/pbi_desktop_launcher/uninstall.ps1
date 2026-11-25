@@ -14,12 +14,22 @@ if (-not (Test-IsAdministrator)) {
     exit 1
 }
 
-$externalToolsDir = Join-Path $env:ProgramFiles "Common Files\Microsoft Shared\Power BI Desktop\External Tools"
-$targetJson = Join-Path $externalToolsDir "semabridge.pbitool.json"
+$dirsToCheck = @(
+    (Join-Path $env:ProgramFiles "Common Files\Microsoft Shared\Power BI Desktop\External Tools")
+)
+if ($env:ProgramFilesX86 -and (Test-Path $env:ProgramFilesX86)) {
+    $dir32 = Join-Path $env:ProgramFilesX86 "Common Files\Microsoft Shared\Power BI Desktop\External Tools"
+    if ($dir32 -ne $dirsToCheck[0]) {
+        $dirsToCheck += $dir32
+    }
+}
 
-if (Test-Path $targetJson) {
-    Remove-Item -Path $targetJson -Force
-    Write-Host "Successfully removed SemaBridge registration from: $targetJson"
-} else {
-    Write-Host "SemaBridge is not currently registered at: $targetJson"
+foreach ($dir in $dirsToCheck) {
+    $targetJson = Join-Path $dir "semabridge.pbitool.json"
+    if (Test-Path $targetJson) {
+        Remove-Item -Path $targetJson -Force
+        Write-Host "Successfully removed SemaBridge registration from: $targetJson"
+    } else {
+        Write-Host "SemaBridge is not registered at: $targetJson"
+    }
 }
