@@ -365,3 +365,44 @@ def test_real_model_binds_and_every_bound_reference_uses_real_names(hermetic) ->
         for alias, name in re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\.`((?:[^`]|``)+)`", out or ""):
             if alias.upper() in bound and name.upper() in rmap[alias.upper()]:
                 assert name == name.lower(), (m.unique_name, alias, name)
+
+
+# --- empty (stub) table column types: Power BI types are authoritative ----------------------
+
+def test_stub_types_ignore_columns_used_only_in_conditions():
+    """Columns referenced only in CASE WHEN conditions inside SUM/AVG keep their Power
+    BI type (a date stays DATE, a text flag stays STRING); only a text/unknown column
+    whose VALUE is aggregated becomes DOUBLE (CS-12)."""
+    from semabridge.sml.models import DataType, SMLColumn, SMLDataset, SMLMetric, SMLModel
+    from semabridge.target_backends.databricks.tables import plan_tables
+    from semabridge.utils.naming import sanitize_column, to_alias
+
+    def ref(table, col):   # exactly how the converter writes a column reference
+        return f"{to_alias(table).upper()}.`{sanitize_column(col).upper()}`"
+
+    model = SMLModel(
+        unique_name="m",
+        datasets=[
+            SMLDataset(unique_name="Date", label="Date", columns=[
+                SMLColumn(unique_name="Date", label="Date", data_type=DataType.DATE)]),
+            SMLDataset(unique_name="Opp", label="Opp", columns=[
+                SMLColumn(unique_name="Status", label="Status", data_type=DataType.STRING),
+                SMLColumn(unique_name="Value", label="Value", data_type=DataType.STRING),
+                SMLColumn(unique_name="Flag", label="Flag", data_type=DataType.BOOLEAN),
+                SMLColumn(unique_name="Units", label="Units", data_type=DataType.INTEGER)]),
+        ],
+        metrics=[
+            SMLMetric(unique_name="Won", label="Won", dataset="Opp", sync_enabled=True,
+                      sql_expression=f"SUM(CASE WHEN {ref('Opp', 'Status')} = 'Won' THEN {ref('Opp', 'Value')} END::DOUBLE)"),
+            SMLMetric(unique_name="YTD", label="YTD", dataset="Opp", sync_enabled=True,
+                      sql_expression=f"SUM(CASE WHEN {ref('Date', 'Date')} >= TRUNC(CURRENT_DATE(), 'YEAR') "
+                                     f"AND {ref('Opp', 'Flag')} THEN {ref('Opp', 'Units')} END)"),
+        ],
+    )
+    tp = plan_tables(model, {("w", "s"): {}}, source_schemas=[("w", "s")], on_missing_source="stub")
+    types = {b.dataset: dict(b.stub_columns) for b in tp.bindings}
+    assert types["Date"]["date"] == "DATE"              # only in a condition: stays a date
+    assert types["Opp"]["status"] == "STRING"           # only in a condition: stays text
+    assert types["Opp"]["value"] == "DOUBLE"            # text whose value is summed: DOUBLE (CS-12)
+    assert types["Opp"]["flag"] == "BOOLEAN"
+    assert types["Opp"]["units"] == "BIGINT"            # numbers keep their type

@@ -55,6 +55,7 @@ _SPARK_TYPES = {
     "string": "STRING", "integer": "BIGINT", "decimal": "DOUBLE", "float": "DOUBLE", "boolean": "BOOLEAN",
     "date": "DATE", "datetime": "TIMESTAMP", "time": "STRING", "binary": "BINARY",
 }
+_TEXTUAL_TYPES = ("string", "unknown", "time", "variant", "")
 _NUMERIC_AGGS = ("SUM", "AVG", "STDDEV", "STDDEV_SAMP", "STDDEV_POP", "VARIANCE", "VAR_SAMP", "VAR_POP",
                  "MEDIAN", "PERCENTILE", "TRY_SUM", "TRY_AVG")
 
@@ -329,11 +330,43 @@ def _bind_columns(binding: "TableBinding", model_cols: List[str], calculated: Li
             binding.unverified_calculated.append(col)
 
 
+# Inside an aggregate's argument: string literals, column references, other
+# backtick names and the CASE keywords, in order (so conditions can be told apart).
+_ARG_TOKENS = re.compile(
+    r"(?P<lit>'(?:[^']|'')*')"
+    r"|(?P<ref>(?<![A-Za-z0-9_`.])(?P<alias>[A-Za-z_][A-Za-z0-9_]*)\.`(?P<col>(?:[^`]|``)+)`)"
+    r"|(?P<bt>`(?:[^`]|``)+`)"
+    r"|(?P<kw>\b(?:CASE|WHEN|THEN|ELSE|END)\b)",
+    re.IGNORECASE,
+)
+
+
+def _value_refs(argument: str) -> List[Tuple[str, str]]:
+    """(ALIAS, COLUMN) whose VALUE an aggregate reads: references inside a
+    ``WHEN <condition> THEN`` part (at any CASE nesting) are conditions, not
+    aggregated values, and are left out."""
+    out: List[Tuple[str, str]] = []
+    stack: List[str] = []                       # per open CASE: "cond" (after WHEN) or "value"
+    for m in _ARG_TOKENS.finditer(argument):
+        kw = (m.group("kw") or "").upper()
+        if kw == "CASE":
+            stack.append("value")
+        elif kw == "WHEN" and stack:
+            stack[-1] = "cond"
+        elif kw in ("THEN", "ELSE") and stack:
+            stack[-1] = "value"
+        elif kw == "END" and stack:
+            stack.pop()
+        elif m.group("ref") and "cond" not in stack:
+            out.append((m.group("alias").upper(), m.group("col").replace("``", "`").upper()))
+    return out
+
+
 def _aggregated_refs(sql_texts: Iterable[str]) -> Dict[str, set]:
-    """{ALIAS_UPPER: {COLUMN_UPPER}} referenced inside numeric aggregates."""
+    """{ALIAS_UPPER: {COLUMN_UPPER}} whose VALUES are read by numeric aggregates
+    (columns used only in CASE conditions inside the aggregate are not included)."""
     found: Dict[str, set] = {}
     agg = re.compile(r"\b(" + "|".join(_NUMERIC_AGGS) + r")\s*\(", re.IGNORECASE)
-    ref = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\.`((?:[^`]|``)+)`")
     for sql in sql_texts:
         if not sql:
             continue
@@ -357,8 +390,8 @@ def _aggregated_refs(sql_texts: Iterable[str]) -> Dict[str, set]:
                     if depth == 0:
                         break
                 i += 1
-            for r in ref.finditer(sql[start:i + 1]):
-                found.setdefault(r.group(1).upper(), set()).add(r.group(2).replace("``", "`").upper())
+            for alias, col in _value_refs(sql[start:i + 1]):
+                found.setdefault(alias, set()).add(col)
     return found
 
 
@@ -400,8 +433,12 @@ def _stub_columns(dataset: Any, alias: str, numeric_refs: Dict[str, set]
     for col, key, _name in cols:
         dtype = str(getattr(getattr(col, "data_type", None), "value", getattr(col, "data_type", "")) or "").lower()
         spark = _SPARK_TYPES.get(dtype, "STRING")
-        if key in used_numeric and spark not in ("BIGINT", "DOUBLE"):
-            spark = "DOUBLE"  # CS-12: numeric aggregates must never read a STRING column
+        # The Power BI type is authoritative. Only a column whose VALUE a numeric
+        # aggregate reads, and that Power BI types as text / unknown, becomes DOUBLE
+        # (CS-12: SUM over a STRING column fails). Dates, booleans and numbers keep
+        # their own type; columns used only in conditions keep theirs too.
+        if key in used_numeric and dtype in _TEXTUAL_TYPES:
+            spark = "DOUBLE"
         out.append((final[key], spark))
     if not out:
         out.append(("sb_stub", "INT"))
