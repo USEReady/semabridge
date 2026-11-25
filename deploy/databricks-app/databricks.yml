@@ -1,0 +1,39 @@
+# Databricks Asset Bundle for the SemaBridge app (TEMPLATE).
+#   databricks bundle deploy -t prod && databricks bundle run semabridge
+bundle:
+  name: semabridge
+
+resources:
+  apps:
+    semabridge:
+      name: semabridge
+      description: "Convert Power BI / Fabric semantic models into Unity Catalog metric views."
+      source_code_path: ../..
+      resources:
+        - name: semabridge-database-url
+          secret:
+            scope: semabridge
+            key: database-url
+            permission: READ
+        - name: semabridge-jwt-secret
+          secret:
+            scope: semabridge
+            key: jwt-secret-key
+            permission: READ
+        - name: semabridge-encryption-key
+          secret:
+            scope: semabridge
+            key: credential-encryption-key
+            permission: READ
+        - name: sql-warehouse
+          sql_warehouse:
+            id: ${var.warehouse_id}
+            permission: CAN_USE
+
+variables:
+  warehouse_id:
+    description: SQL warehouse the metric views are deployed with.
+
+targets:
+  prod:
+    mode: production

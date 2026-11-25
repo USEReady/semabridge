@@ -1,0 +1,40 @@
+# SemaBridge as a Snowflake Native App on Snowpark Container Services.
+# TEMPLATE: validate in a sandbox provider + consumer account before listing.
+manifest_version: 1
+
+version:
+  name: v1
+  label: "SemaBridge 1.0"
+
+artifacts:
+  setup_script: setup_script.sql
+  readme: README.md
+  container_services:
+    images:
+      - /semabridge_pkg/app_src/images/semabridge:1.0.0
+      - /semabridge_pkg/app_src/images/postgres:16.4-alpine
+  default_web_endpoint:
+    service: core.semabridge
+    endpoint: ui
+
+privileges:
+  - CREATE COMPUTE POOL:
+      description: "Run the SemaBridge service in a compute pool the app creates."
+  - BIND SERVICE ENDPOINT:
+      description: "Serve the SemaBridge web app to users in this account."
+  - CREATE WAREHOUSE:
+      description: "Run the semantic view deployments SemaBridge creates."
+
+references:
+  # Outbound access for reading Power BI / Fabric models and optional LLM
+  # translation. The consumer approves the integration; without it only
+  # uploaded PBIX files can be used as a source.
+  - external_access:
+      label: "Power BI / Fabric and LLM endpoints"
+      description: "Outbound HTTPS to api.powerbi.com, login.microsoftonline.com and the chosen LLM provider."
+      privileges:
+        - USAGE
+      object_type: EXTERNAL ACCESS INTEGRATION
+      register_callback: core.register_reference
+      configuration_callback: core.get_configuration
+      required_at_setup: false

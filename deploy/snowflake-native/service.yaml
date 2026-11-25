@@ -1,0 +1,51 @@
+# Snowpark Container Services specification (TEMPLATE).
+# One service: SemaBridge (web app + API + job workers) and a PostgreSQL
+# sidecar that holds SemaBridge's own metadata on a persistent block volume.
+spec:
+  containers:
+    - name: semabridge
+      image: /semabridge_pkg/app_src/images/semabridge:1.0.0
+      args: ["api"]
+      env:
+        SEMABRIDGE_DEPLOYMENT_PROFILE: snowflake_native
+        # Snowflake ingress authenticates the user (Sf-Context-Current-User).
+        SEMABRIDGE_PLATFORM_AUTH: "true"
+        AUTH_ENABLED: "true"
+        SEMABRIDGE_EXECUTION_MODE: queue
+        SEMABRIDGE_EMBEDDED_WORKERS: "2"
+        SEMABRIDGE_API_PROCESSES: "1"
+        SEMABRIDGE_DATABASE_URL: "postgresql+psycopg2://semabridge:semabridge@localhost:5432/semabridge"
+        SEMABRIDGE_DISABLE_DOTENV: "1"
+        API_PORT: "8002"
+      # JWT and credential-encryption keys are generated on first start
+      # and kept on the persistent /data volume (see deploy/docker/entrypoint.sh).
+      volumeMounts:
+        - name: data
+          mountPath: /data
+      readinessProbe:
+        port: 8002
+        path: /api/health/ready
+      resources:
+        requests: { cpu: 1, memory: 2G }
+        limits: { cpu: 2, memory: 4G }
+    - name: postgres
+      image: /semabridge_pkg/app_src/images/postgres:16.4-alpine
+      env:
+        POSTGRES_USER: semabridge
+        POSTGRES_PASSWORD: semabridge   # reachable only inside the service
+        POSTGRES_DB: semabridge
+        PGDATA: /pgdata/data
+      volumeMounts:
+        - name: pgdata
+          mountPath: /pgdata
+  endpoints:
+    - name: ui
+      port: 8002
+      public: true
+  volumes:
+    - name: data
+      source: block
+      size: 20Gi
+    - name: pgdata
+      source: block
+      size: 20Gi

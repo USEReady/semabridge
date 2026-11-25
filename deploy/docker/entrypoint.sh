@@ -14,6 +14,20 @@ if [ ! -L /app/output ]; then
   ln -s "$DATA_DIR/output" /app/output
 fi
 
+# Keys not supplied by the platform (Snowflake Native App) are generated once
+# and kept on the persistent volume. Azure supplies them from Key Vault.
+mkdir -p "$DATA_DIR/secrets"
+chmod 700 "$DATA_DIR/secrets"
+gen_key() {
+  f="$DATA_DIR/secrets/$1"
+  if [ ! -s "$f" ]; then
+    (umask 077 && python -c "import secrets; print(secrets.token_urlsafe(48))" > "$f")
+  fi
+  cat "$f"
+}
+if [ -z "${JWT_SECRET_KEY:-}" ]; then JWT_SECRET_KEY="$(gen_key jwt_secret_key)"; export JWT_SECRET_KEY; fi
+if [ -z "${SEMABRIDGE_ENCRYPTION_KEY:-}" ]; then SEMABRIDGE_ENCRYPTION_KEY="$(gen_key credential_encryption_key)"; export SEMABRIDGE_ENCRYPTION_KEY; fi
+
 role="${1:-api}"
 case "$role" in
   api)

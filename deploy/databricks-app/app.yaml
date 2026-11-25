@@ -1,0 +1,27 @@
+# SemaBridge as a Databricks App (TEMPLATE: validate in a workspace first).
+# Databricks Apps run this repository's code (not a container image):
+# the launcher serves the prebuilt web app (frontend/dist) and the API on
+# the port Databricks assigns.
+command: ["python", "-m", "semabridge.platform.launch"]
+
+env:
+  - name: SEMABRIDGE_DEPLOYMENT_PROFILE
+    value: databricks_app
+  - name: SEMABRIDGE_PLATFORM_AUTH        # Databricks Apps sign users in (X-Forwarded-Email)
+    value: "true"
+  - name: AUTH_ENABLED
+    value: "true"
+  - name: SEMABRIDGE_EXECUTION_MODE
+    value: queue
+  - name: SEMABRIDGE_EMBEDDED_WORKERS     # no separate worker app on Databricks
+    value: "2"
+  - name: SEMABRIDGE_FRONTEND_DIST
+    value: frontend/dist
+  - name: SEMABRIDGE_DISABLE_DOTENV
+    value: "1"
+  - name: SEMABRIDGE_DATABASE_URL         # Lakebase (Databricks-managed PostgreSQL) connection string
+    valueFrom: semabridge-database-url
+  - name: JWT_SECRET_KEY
+    valueFrom: semabridge-jwt-secret
+  - name: SEMABRIDGE_ENCRYPTION_KEY
+    valueFrom: semabridge-encryption-key
