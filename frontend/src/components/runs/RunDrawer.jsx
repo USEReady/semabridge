@@ -15,6 +15,7 @@ import { api } from '../../utils/api';
 import { getPerModelRunEntries, getRunLogs } from '../../utils/runLogs';
 import { cleanPbixLabel } from '../../utils/pbixLabel';
 import { isInternalAutoTable } from '../../utils/placeholderMetric';
+import { getRunWarnings, isStructureOnlyWarning, runWarningBadge } from '../../utils/runWarnings';
 import {
   formatDuration, formatDateTime, normStatus, statusPill, syncModeWords,
   parseStages, formatStageTook, isActiveStatus, isRetryableStatus, demoMaskTitle,
@@ -43,6 +44,19 @@ export function StatusPill({ status, run }) {
     <Pill color={p.color} bg={p.bg} title={demoTitle || undefined}>
       {p.label}
       {demoTitle && <span style={{ fontWeight: 700, opacity: 0.75 }}>· demo</span>}
+    </Pill>
+  );
+}
+
+/* Amber badge for a run that finished with warnings (e.g. Databricks views
+   published structure-only). Renders nothing when the run has none. */
+export function RunWarningPill({ run }) {
+  const badge = runWarningBadge(run);
+  if (!badge) return null;
+  return (
+    <Pill color="var(--color-warning)" bg="var(--color-warning-bg)" title={badge.title}>
+      <AlertTriangle size={11} aria-hidden="true" />
+      {badge.label}
     </Pill>
   );
 }
@@ -283,6 +297,7 @@ export default function RunDrawer({
     return { total, actionable, byDesign: total - actionable };
   }, [run, entries]);
 
+  const runWarnings = useMemo(() => getRunWarnings(run), [run]);
   const hasReport = Boolean(run && (run.has_report || run.report_path || (Array.isArray(run.model_reports) && run.model_reports.length)));
   const isMulti = entries.length > 1;
 
@@ -316,6 +331,7 @@ export default function RunDrawer({
           <>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <StatusPill status={run.status} run={run} />
+              <RunWarningPill run={run} />
               <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
                 {syncModeWords(run.sync_mode)}{run.duration_ms ? ` · ${formatDuration(run.duration_ms)}` : ''}
               </span>
@@ -328,6 +344,27 @@ export default function RunDrawer({
             {['failed', 'interrupted', 'partial', 'skipped'].includes(status) && (run.error || run.message) && (
               <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 8, background: status === 'skipped' ? 'var(--bg-surface-raised)' : 'var(--color-error-bg)', color: status === 'skipped' ? 'var(--text-secondary)' : 'var(--color-error)', fontSize: 12, lineHeight: 1.5, overflowWrap: 'anywhere' }}>
                 {run.message || run.error}
+              </div>
+            )}
+            {runWarnings.length > 0 && (
+              <div
+                role="status"
+                style={{
+                  marginTop: 12, padding: '10px 12px', borderRadius: 8, background: 'var(--color-warning-bg)',
+                  border: '1px solid rgba(245, 158, 11, 0.35)', fontSize: 12, lineHeight: 1.5,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, color: 'var(--color-warning)', marginBottom: 6 }}>
+                  <AlertTriangle size={13} aria-hidden="true" />
+                  {runWarnings.some(isStructureOnlyWarning)
+                    ? 'Finished, but some views have no data'
+                    : `Finished with ${runWarnings.length} warning${runWarnings.length === 1 ? '' : 's'}`}
+                </div>
+                <ul style={{ margin: 0, paddingLeft: 18, color: 'var(--text-secondary)' }}>
+                  {runWarnings.map((w) => (
+                    <li key={w} style={{ overflowWrap: 'anywhere', marginTop: 2 }}>{w}</li>
+                  ))}
+                </ul>
               </div>
             )}
             {status === 'queued' && (

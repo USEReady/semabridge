@@ -819,6 +819,7 @@ async def _perform_project_run_impl(run: dict, project_cfg: str, started: float)
                 pass
         run["summary"] = (sync_result or {}).get("summary") or {}
         run["results"] = (sync_result or {}).get("results") or []
+        _merge_model_warnings_into_run_summary(run)
         run["models_synced"] = int((sync_result or {}).get("models_synced") or 0)
         run["total_models"] = int((sync_result or {}).get("total_models") or 0)
         run["logs"] = _build_run_logs(sync_result or {})
@@ -1477,6 +1478,40 @@ def _sweep_stale_runs(force: bool = False):
 
 def _display_run(run: Dict[str, Any]) -> Dict[str, Any]:
     return _enrich_run_report_meta(mask_run_for_display(_hydrate_model_results(run)))
+
+
+def _merge_model_warnings_into_run_summary(run: Dict[str, Any]) -> None:
+    """Make every model's non-fatal warnings visible on the run itself.
+
+    run["summary"] is only the LAST model's summary, and per-model results are
+    not reloaded with their warnings after a restart. So each other model's
+    source/target warnings are copied into run["summary"]["target_warnings"]
+    (prefixed with the model name when the run has several models), which is
+    what the Runs page shows.
+    """
+    summary = run.get("summary")
+    if not isinstance(summary, dict):
+        return
+    results = [r for r in (run.get("results") or []) if isinstance(r, dict)]
+    merged: List[str] = [str(w) for w in (summary.get("target_warnings") or []) if w]
+    existing = set(merged) | {str(w) for w in (summary.get("source_warnings") or []) if w}
+    multi = len(results) > 1
+    for result in results:
+        r_summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+        if r_summary is summary:
+            continue
+        model = str(result.get("model") or result.get("model_name") or result.get("source_model_name") or "").strip()
+        for w in list(r_summary.get("source_warnings") or []) + list(r_summary.get("target_warnings") or []):
+            text = str(w or "").strip()
+            if not text or text in existing:
+                continue
+            labelled = f"[{model}] {text}" if multi and model else text
+            if labelled in existing:
+                continue
+            existing.update({text, labelled})
+            merged.append(labelled)
+    if merged:
+        summary["target_warnings"] = merged
 
 
 async def get_project_runs_compat(project_id: str):

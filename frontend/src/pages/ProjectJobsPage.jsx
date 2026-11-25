@@ -11,7 +11,7 @@ import { matchesSmartQuery } from '../components/common/smartSearchQuery.js';
 import { api } from '../utils/api';
 import { buildMockRunLogs, getRunLogs, saveRunLogs } from '../utils/runLogs';
 import { cleanPbixLabel } from '../utils/pbixLabel';
-import RunDrawer, { StatusPill } from '../components/runs/RunDrawer';
+import RunDrawer, { StatusPill, RunWarningPill } from '../components/runs/RunDrawer';
 import RunReportModal from '../components/runs/RunReportModal';
 import { defaultReportModel, downloadRunMarkdown } from '../components/runs/runReportActions';
 import SchedulesTab from '../components/runs/SchedulesTab';
@@ -512,7 +512,12 @@ export default function ProjectJobsPage() {
                         <td style={{ ...td, whiteSpace: 'nowrap' }} title={formatDateTime(run.started_at)}>{formatAgo(run.started_at)}</td>
                         <td style={{ ...td, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>{formatDuration(run.duration_ms)}</td>
                         <td style={{ ...td, fontSize: 12, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{renderResult(run)}</td>
-                        <td style={td}><StatusPill status={run.status} run={run} /></td>
+                        <td style={td}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                            <StatusPill status={run.status} run={run} />
+                            <RunWarningPill run={run} />
+                          </span>
+                        </td>
                       </tr>
                     );
                   })}
