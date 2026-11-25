@@ -141,8 +141,10 @@ class DatabricksBehavior(BaseModel):
     planner_capabilities: list[str] = Field(
         default_factory=list,
         description=(
-            "Planner path: Databricks features proven by live probes (Phase 3.5), e.g. "
-            "'one_to_many_joins', 'mixed_root_views', 'constant_coalesce'. Empty = none."
+            "Planner path: ADMIN ALLOW-LIST of optional Databricks features "
+            "('one_to_many_joins', 'mixed_root_views', 'constant_coalesce'). A feature is used "
+            "only when it is ALSO proven by valid probe evidence for the warehouse (Phase 3.5); "
+            "this list can disable a feature but never force an unproven one. Empty = none."
         ),
     )
     create_metadata_table: bool = Field(

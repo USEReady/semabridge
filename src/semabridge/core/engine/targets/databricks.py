@@ -178,6 +178,7 @@ def _step6b_databricks_tables(self, context: RunContext) -> None:
         TableMatchingError,
         parse_source_schemas,
         plan_tables,
+        read_existing_objects,
         read_unity_catalog,
         rewrite_measure_columns,
     )
@@ -209,7 +210,12 @@ def _step6b_databricks_tables(self, context: RunContext) -> None:
             if choice["warehouse"] is None:
                 raise DatabricksSqlError(choice["message"])
             client.warehouse_id = choice["warehouse"].id
+        # Which workspace + warehouse this run's plan rests on (probe evidence lookup, 3.5).
+        context.databricks_target = {"host": info.host, "warehouse_id": client.warehouse_id}
         catalog_meta = read_unity_catalog(client, schemas)
+        if info.catalog and info.schema:
+            # Objects already in the output schema: proposed table names never take one (3.7).
+            context.databricks_existing_objects = read_existing_objects(client, info.catalog, info.schema)
     except (DatabricksSqlError, DatabricksAuthError, DatabricksGuardError) as exc:
         raise ConversionError(f"{LIVE_SCHEMA_UNAVAILABLE} ({', '.join(f'{c}.{s}' for c, s in schemas)}): {exc}") from None
     try:
@@ -245,6 +251,7 @@ def databricks_planner_settings(context: RunContext):
 
     defaults = _planner_defaults(context)
     values: Dict[str, Any] = {**defaults, "capabilities": frozenset(defaults["capabilities"])}
+    values["evidence"] = dict(defaults.get("evidence") or {})
     project = _project_planner_block(context)
     for key in ("calculate_mode", "view_mode", "primary_fact"):
         if project.get(key):
@@ -258,7 +265,19 @@ def databricks_planner_settings(context: RunContext):
         if isinstance(r, dict) and r.get("source_path") and r.get("target_name")
     )
     values["security_roles"] = security_roles_for_run(context)
+    catalog, schema = output_location(context)
+    values["output_catalog"], values["output_schema"] = catalog, schema
+    existing = getattr(context, "databricks_existing_objects", None)
+    values["existing_objects"] = frozenset(existing) if existing is not None else None
     return PlannerSettings(**values)
+
+
+def output_location(context: RunContext):
+    """(catalog, schema) the project's metric views (and any proposed tables) go to."""
+    target = getattr(context.config, "target", None)
+    catalog = str(getattr(target, "catalog", "") or "").strip() or None
+    schema = str(getattr(target, "schema", "") or getattr(target, "schema_name", "") or "").strip() or None
+    return catalog, schema
 
 
 def security_roles_for_run(context: RunContext) -> Optional[int]:
@@ -287,12 +306,40 @@ def security_roles_for_run(context: RunContext) -> Optional[int]:
 
 
 def _planner_defaults(context: RunContext) -> Dict[str, Any]:
+    """Global planner defaults. ``capabilities``: the optional Databricks features this
+    run may use = the features PROVEN by valid probe evidence (3.5) for this
+    workspace + warehouse, intersected with the admin allow-list
+    (behavior.databricks.planner_capabilities). No connection or no valid proof:
+    none. Read from the evidence store only -- the warehouse is not queried."""
     db = getattr(getattr(context, "behavior", None), "databricks", None)
+    caps, ref = _capability_proof(context, capability_allow_list(db))
     return {
         "calculate_mode": str(getattr(db, "planner_calculate_mode", "approximate") or "approximate").strip().lower(),
         "view_mode": str(getattr(db, "planner_view_mode", "separate_views") or "separate_views").strip().lower(),
-        "capabilities": sorted(getattr(db, "planner_capabilities", None) or []),
+        "capabilities": sorted(caps),
+        "evidence": ref,
     }
+
+
+CAPABILITY_ALLOW_ENV = "SEMABRIDGE_DATABRICKS_CAPABILITY_ALLOW_LIST"
+
+
+def capability_allow_list(db_behavior) -> list:
+    """The admin allow-list: behavior.databricks.planner_capabilities, unless the
+    local environment sets SEMABRIDGE_DATABRICKS_CAPABILITY_ALLOW_LIST (comma
+    separated; for one developer's machine, e.g. in the git-ignored .env, never
+    committed). Either way a feature is used only when it is also PROVEN."""
+    raw = os.environ.get(CAPABILITY_ALLOW_ENV)
+    if raw is not None and raw.strip():
+        return [x.strip() for x in raw.split(",") if x.strip()]
+    return list(getattr(db_behavior, "planner_capabilities", None) or [])
+
+
+def _capability_proof(context: RunContext, allow_list):
+    from semabridge.target_backends.databricks.probes.evidence import effective_capabilities
+
+    target = getattr(context, "databricks_target", None) or {}
+    return effective_capabilities(target.get("host"), target.get("warehouse_id"), allow_list)
 
 
 def _project_planner_block(context: RunContext) -> Dict[str, Any]:
@@ -336,14 +383,34 @@ def _run_databricks_planner(self, context: RunContext, table_plan) -> None:
             out_dir, sml_model=context.sml_model, table_plan=table_plan, security_roles=settings.security_roles,
             defaults=_planner_defaults(context), project_planner=_project_planner_block(context),
             cache_ref=cache_ref, revision=revision,
+            output={"catalog": settings.output_catalog, "schema": settings.output_schema,
+                    "existing_objects": sorted(settings.existing_objects) if settings.existing_objects is not None else None,
+                    "reserved_table_names": dict(settings.reserved_table_names or {})},
         )
     except Exception as exc:  # the plan is still valid; it just cannot be re-planned without a dry run
         logger.warning("Could not store the Databricks planner input for re-planning: %s", exc)
         plan["meta"] = {"revision": revision, "status": "valid", "source": "dry_run", "cache_ref": None,
                         "basis": {"table_check_at": None, "uc_recheck_required_before_deploy": True}}
+    # 3.7: the view definitions (offline text; nothing is sent to Databricks).
+    from semabridge.target_backends.databricks import bundle
+
+    model = context.sml_model
+    model_label = str(getattr(model, "label", "") or getattr(model, "unique_name", "") or "model")
+    try:
+        defs = bundle.attach_definitions(plan, out_dir, catalog=settings.output_catalog,
+                                         schema=settings.output_schema, model_label=model_label,
+                                         run_id=str(getattr(context, "run_id", "") or "") or None)
+        if defs["status"] != "written":
+            logger.warning("Databricks view definitions not written: %s", defs["error"])
+    except Exception as exc:  # file system trouble: the plan stays valid, definitions unavailable
+        logger.warning("Could not write the Databricks view definitions: %s", exc)
+        plan["definitions"] = []
+        plan.setdefault("meta", {})["definitions"] = {"status": "unavailable", "error": str(exc),
+                                                      "error_code": "bundle_error", "revision": revision, "views": []}
     context.databricks_view_plan = plan
     try:
-        replan.record_plan(out_dir, plan, str(context.project_id), reset=True)
+        if replan.record_plan(out_dir, plan, str(context.project_id), reset=True):
+            bundle.set_current(out_dir, revision, reset=True)
         logger.info("Databricks view plan written to %s", out_dir / replan.PLAN_MD)
     except Exception as exc:  # non-fatal: the plan is in the run summary either way
         logger.warning("Could not write the Databricks view plan file: %s", exc)

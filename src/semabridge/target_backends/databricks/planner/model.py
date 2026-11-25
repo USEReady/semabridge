@@ -65,6 +65,16 @@ class PlannerSettings:
     # Saved names as planner requests: (source_path, name, origin). origin "user"
     # = explicit edit (firm); None = unmarked / historical (soft).
     requested_names: Tuple[Tuple[str, str, Optional[str]], ...] = ()
+    # Writer input (3.7): the project's output catalog/schema (where views and any
+    # proposed tables go), the objects already there (lowercase; None = not listed,
+    # no connection) and table names SemaBridge already owns there (3.8 fills it).
+    output_catalog: Optional[str] = None
+    output_schema: Optional[str] = None
+    existing_objects: Optional[FrozenSet[str]] = None
+    reserved_table_names: Mapping[str, str] = field(default_factory=dict)
+    # 3.5: the probe evidence the capabilities rest on (run id, version, gates,
+    # allow-list), recorded in the plan; 3.8 re-validates it before deploying.
+    evidence: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.calculate_mode not in CALCULATE_MODES:
@@ -88,6 +98,10 @@ class PlannerSettings:
             "capabilities": sorted(self.capabilities),
             "security_roles": self.security_roles,
             "requested_names": len(self.requested_names),
+            "output_location": (f"{self.output_catalog}.{self.output_schema}"
+                                if self.output_catalog and self.output_schema else None),
+            "existing_objects_listed": self.existing_objects is not None,
+            "evidence": dict(self.evidence or {}),
         }
 
 
@@ -148,6 +162,13 @@ class JoinPlan:
     relationship: Tuple[str, Tuple[str, ...], str, Tuple[str, ...]] = ("", (), "", ())
     key_types: List[Tuple[str, str]] = field(default_factory=list)   # (parent type, child type) per key
     warnings: List[str] = field(default_factory=list)
+    # Writer input (3.7): this join's own name, its parent's join name ("source" at the
+    # top), and the condition with LOCAL aliases (YAML 1.1 nested joins); key_casts says
+    # per key which side is compared as text. on_expr keeps the full expression paths.
+    alias: str = ""
+    parent_alias: str = "source"
+    on_local: str = ""
+    key_casts: List[Optional[str]] = field(default_factory=list)
 
 
 @dataclass
@@ -165,6 +186,7 @@ class FieldPlan:
     match_method: Optional[str] = None       # exact | case_insensitive | cleaned (bound tables)
     source_format: Optional[str] = None      # kept internally; emitted only where Databricks supports it
     name_generated: bool = True              # False for a preserved (deployed) name
+    description: str = ""                    # the Power BI / ontology description, kept as is
 
 
 @dataclass
@@ -187,6 +209,7 @@ class MeasurePlan:
     source_format: Optional[str] = None
     name_generated: bool = True
     notes: List[str] = field(default_factory=list)
+    description: str = ""                    # the Power BI / ontology description, kept as is
 
 
 @dataclass
@@ -230,11 +253,14 @@ class Rename:
 class Blocker:
     """A structured reason deploy (3.8) must refuse to publish. Never only text."""
 
-    code: str                        # name_override_conflict | security_roles_present | security_roles_unknown
+    code: str                        # name_override_conflict | security_roles_* | source_table_missing | ...
     message: str
     view: Optional[str] = None
     source_path: Optional[str] = None
     details: Dict[str, Any] = field(default_factory=dict)
+    scope: str = "model"             # model (whole plan) | view (one view) | table (views listed)
+    table: Optional[str] = None      # scope table: the model table
+    views: List[str] = field(default_factory=list)   # the views it affects (view / table scope)
 
 
 @dataclass
@@ -259,6 +285,7 @@ class PlannerResult:
     notes: List[str] = field(default_factory=list)
     name_requests: List[NameRequestOutcome] = field(default_factory=list)
     blockers: List[Blocker] = field(default_factory=list)
+    tables: List[Dict[str, Any]] = field(default_factory=list)   # where each table the views read lives
 
     def view(self, name: str) -> Optional[ViewPlan]:
         return next((v for v in self.views if v.name == name), None)
@@ -300,4 +327,5 @@ class PlannerResult:
             "notes": list(self.notes),
             "name_requests": [asdict(x) for x in self.name_requests],
             "blockers": [asdict(x) for x in self.blockers],
+            "tables": [dict(t) for t in self.tables],
         }

@@ -160,6 +160,59 @@ def test_step6b_writes_the_cache_and_plan_meta(tmp_path, monkeypatch):
     assert res["status"] == "valid"
 
 
+def _dry_run_ctx(target):
+    return SimpleNamespace(
+        sml_model=_model(), project_id="preview-xyz", physical_namespace=None, databricks_name_requests=None,
+        behavior=SimpleNamespace(databricks=SimpleNamespace(planner_calculate_mode="approximate",
+                                                            planner_view_mode="separate_views", planner_capabilities=[])),
+        config=SimpleNamespace(target=target), source_type="pbix", osi_model=SimpleNamespace(metadata={}),
+        pbix_parser="schema", source_format=SimpleNamespace(tmsl_definition={"model": {"tables": []}}),
+        databricks_existing_objects=frozenset({"store"}), run_id="run-1",
+    )
+
+
+def test_step6b_writes_view_definitions_and_makes_the_bundle_current(tmp_path, monkeypatch):
+    """3.7: the dry run renders every view (offline) into a bundle for its plan revision;
+    re-plans move the current bundle forward; a late or failed re-plan never does."""
+    from semabridge.core.engine.targets.databricks import _run_databricks_planner
+    from semabridge.target_backends.databricks import bundle
+
+    monkeypatch.chdir(tmp_path)
+    ctx = _dry_run_ctx(SimpleNamespace(catalog="workspace", schema="semabridge_dev"))
+    _run_databricks_planner(None, ctx, _table_plan())
+    plan = ctx.databricks_view_plan
+    rev = plan["meta"]["revision"]
+    assert plan["meta"]["definitions"]["status"] == "written" and plan["meta"]["definitions"]["revision"] == rev
+    assert [d["view"] for d in plan["definitions"]] == [v["name"] for v in plan["views"]]
+    tables = {t["dataset"]: t for t in plan["tables"]}
+    assert tables["Store"]["name"] == "store_2"                      # "store" already exists in the schema
+    assert "workspace.semabridge_dev.store_2" in plan["definitions"][0]["yaml"]
+    out = Path("output/databricks/preview-xyz")
+    assert bundle.deployable_bundle(out, rev)["plan_revision"] == rev
+
+    newer = replan.replan(out, [], {"calculate_mode": "strict"}, rev + 10, "t")
+    assert newer["plan"]["meta"]["definitions"]["status"] == "written"
+    assert bundle.read_current(out)["plan_revision"] == rev + 10
+    late = replan.replan(out, [], None, rev + 5, "t")                  # an older answer arriving late
+    assert late["superseded"] and bundle.read_current(out)["plan_revision"] == rev + 10
+    failed = replan.replan(out, [], {"calculate_mode": "nonsense"}, rev + 20, "t")
+    assert failed["status"] == "failed" and bundle.read_current(out)["plan_revision"] == rev + 10
+    with pytest.raises(bundle.BundleError):
+        bundle.deployable_bundle(out, rev)                             # obsolete after the re-plan
+
+
+def test_step6b_without_output_location_blocks_with_a_reason(tmp_path, monkeypatch):
+    from semabridge.core.engine.targets.databricks import _run_databricks_planner
+
+    monkeypatch.chdir(tmp_path)
+    ctx = _dry_run_ctx(SimpleNamespace())
+    _run_databricks_planner(None, ctx, _table_plan())
+    plan = ctx.databricks_view_plan
+    assert plan["meta"]["definitions"]["status"] == "unavailable" and plan["definitions"] == []
+    codes = {b["code"] for b in plan["blockers"]}
+    assert {"output_location_missing", "view_definitions_unavailable"} <= codes
+
+
 # --- endpoints ---------------------------------------------------------------------------------
 
 @pytest.fixture

@@ -33,7 +33,7 @@ CACHE_FILE = "databricks_planner_input.json"
 STATE_FILE = "databricks_view_plan_state.json"
 PLAN_JSON = "databricks_view_plan.json"
 PLAN_MD = "databricks_view_plan.md"
-CACHE_VERSION = 1
+CACHE_VERSION = 2   # 2: output location + existing objects (3.7)
 
 _lock = threading.Lock()
 
@@ -96,7 +96,7 @@ def table_plan_from_dict(data: Optional[Dict[str, Any]]) -> Any:
 
 def write_cache(out_dir: Path, *, sml_model: Any, table_plan: Any, security_roles: Optional[int],
                 defaults: Dict[str, Any], project_planner: Dict[str, Any], cache_ref: Dict[str, Any],
-                revision: int) -> Dict[str, Any]:
+                revision: int, output: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Store the planner's inputs; returns the plan's ``meta`` block."""
     out_dir.mkdir(parents=True, exist_ok=True)
     checked_at = datetime.now(timezone.utc).isoformat()
@@ -110,6 +110,7 @@ def write_cache(out_dir: Path, *, sml_model: Any, table_plan: Any, security_role
         "security_roles": security_roles,
         "defaults": defaults,
         "project_planner": project_planner,
+        "output": dict(output or {}),
     }
     tmp = out_dir / (CACHE_FILE + ".tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False, default=str), encoding="utf-8")
@@ -224,6 +225,12 @@ def _settings(cache: Dict[str, Any], rows: List[Dict[str, Any]], planner_opts: O
     requests = collect_databricks_name_requests(None, {"mappings_overrides": list(rows or [])})
     values["requested_names"] = tuple((r["source_path"], r["target_name"], r["origin"]) for r in requests)
     values["security_roles"] = cache.get("security_roles")
+    values["evidence"] = dict(cache["defaults"].get("evidence") or {})   # the dry run's proof, disclosed
+    out = cache.get("output") or {}
+    values["output_catalog"], values["output_schema"] = out.get("catalog"), out.get("schema")
+    existing = out.get("existing_objects")
+    values["existing_objects"] = frozenset(existing) if existing is not None else None
+    values["reserved_table_names"] = dict(out.get("reserved_table_names") or {})
     return PlannerSettings(**values)
 
 
@@ -244,6 +251,20 @@ def replan(out_dir: Path, rows: List[Dict[str, Any]], planner_opts: Optional[Dic
         return {"status": "failed", "plan": None, "revision": revision, "superseded": False,
                 "stale": state.get("status") == "stale", "error": str(exc)}
     result["meta"] = meta_for(cache, revision, source="replan")
+    # 3.7: the view definitions for this revision (offline text).
+    from semabridge.target_backends.databricks import bundle
+
+    out = cache.get("output") or {}
+    model = cache.get("sml_model") or {}
+    try:
+        bundle.attach_definitions(result, out_dir, catalog=out.get("catalog"), schema=out.get("schema"),
+                                  model_label=str(model.get("label") or model.get("unique_name") or "model"))
+    except Exception as exc:  # file system trouble: definitions unavailable, plan still valid
+        result["definitions"] = []
+        result["meta"]["definitions"] = {"status": "unavailable", "error": str(exc), "error_code": "bundle_error",
+                                         "revision": revision, "views": []}
     written = record_plan(out_dir, result, title)
+    if written:
+        bundle.set_current(out_dir, revision)
     return {"status": "valid", "plan": result, "revision": revision, "superseded": not written,
             "stale": False, "error": None}

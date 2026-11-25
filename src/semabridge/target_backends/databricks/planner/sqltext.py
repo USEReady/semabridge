@@ -80,3 +80,29 @@ def refs(sql: str) -> List[Tuple[str, str]]:
         if not is_lit:
             out += [(m.group(1).upper(), m.group(2).replace("``", "`")) for m in REF.finditer(text)]
     return out
+
+
+# A dotted reference chain: `a`.`b`.`c` or source.`c` (each part a backtick
+# identifier or a plain identifier; never a number such as 1.5).
+_PART = r"(?:`(?:[^`]|``)+`|[A-Za-z_][A-Za-z0-9_]*)"
+CHAIN = re.compile(rf"(?<![A-Za-z0-9_`.]){_PART}(?:\s*\.\s*{_PART})+")
+_PARTS = re.compile(_PART)
+
+
+def _unquote(part: str) -> str:
+    return part[1:-1].replace("``", "`") if part.startswith("`") else part
+
+
+def reference_paths(sql: str) -> List[Tuple[str, str]]:
+    """(path, column) for every dotted reference in code (not in string literals):
+    ``store`.`district`.`name`` -> ("store.district", "name"); ``source.`x``` ->
+    ("source", "x"). Structured: the parts are split on identifier boundaries, so a
+    period inside a backtick name stays part of that name."""
+    out: List[Tuple[str, str]] = []
+    for is_lit, text in segments(sql or ""):
+        if is_lit:
+            continue
+        for m in CHAIN.finditer(text):
+            parts = [_unquote(p) for p in _PARTS.findall(m.group(0))]
+            out.append((".".join(parts[:-1]), parts[-1]))
+    return out

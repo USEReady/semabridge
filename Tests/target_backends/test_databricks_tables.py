@@ -280,6 +280,9 @@ def _connected(monkeypatch, catalog_meta=None, error=None):
         return catalog_meta or {}
 
     monkeypatch.setattr(tables, "read_unity_catalog", fake_read)
+    # Step 6b also lists the objects already in the output schema (3.7): one existing
+    # object, so proposed table names must avoid it.
+    monkeypatch.setattr(tables, "read_existing_objects", lambda client, c, s: frozenset({"sales"}))
 
 
 def test_step6b_rewrites_measures_and_sets_the_plan(monkeypatch) -> None:

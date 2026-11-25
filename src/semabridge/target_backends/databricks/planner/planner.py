@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from semabridge.target_backends.databricks.planner import anchors, checks, fields, joins, measures, names, requests, views
+from semabridge.target_backends.databricks.planner import (
+    anchors, checks, fields, joins, locations, measures, names, requests, views,
+)
 from semabridge.target_backends.databricks.planner.bindings import Bindings
 from semabridge.target_backends.databricks.planner.graph import ModelGraph
 from semabridge.target_backends.databricks.planner.model import (
@@ -81,7 +83,8 @@ def plan_metric_views(sml_model: Any, table_plan: Optional[Any] = None,
         if d.left_out is not None:
             result.left_out.append(d.left_out)
     result.name_requests, name_blockers = requests.outcomes(name_requests, unresolved, events)
-    result.blockers = name_blockers + checks.security_blockers(settings)
+    result.tables, table_blockers = locations.plan_locations(result, bindings, settings)
+    result.blockers = name_blockers + checks.security_blockers(settings) + table_blockers
     result.notes = checks.result_notes(result, settings, graph.two_way_notes, graph.skipped_relationships)
     checks.self_check(result, decisions)
     return result

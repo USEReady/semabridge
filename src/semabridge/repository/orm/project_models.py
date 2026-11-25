@@ -204,3 +204,37 @@ class MappingOverride(Base):
             f"<MappingOverride(project_id={self.project_id!r}, model_key={self.model_key!r}, "
             f"source_path={self.source_path!r}, target_name={self.target_name!r})>"
         )
+
+
+class DatabricksProbeEvidence(Base):
+    """One Databricks capability-probe run (Phase 3.5): the platform proof that
+    metric-view patterns SemaBridge emits give the expected numbers on one
+    workspace + warehouse. Append-only; the newest *started* run wins, so an
+    older run finishing late never replaces a newer result.
+
+    ``outcomes_json``: per probe and per gate (baseline, one_to_many_joins,
+    mixed_root_views, constant_coalesce): outcome (proven | unsupported |
+    wrong_result | inconclusive | defect), expected vs actual, notes.
+    Platform proof only: it never authorises anyone to deploy (permissions are
+    checked separately) and is not customer-model parity (3.9).
+    """
+
+    __tablename__ = "databricks_probe_evidence"
+    __table_args__ = (
+        Index("ix_dbx_probe_target", "workspace_host", "warehouse_id", "started_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    workspace_host: Mapped[str] = mapped_column(String(512), nullable=False)
+    warehouse_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    probe_schema: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    dbsql_version: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    platform_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)    # warehouse metadata, settings
+    suite_revision: Mapped[str] = mapped_column(String(32), nullable=False)
+    writer_revision: Mapped[str] = mapped_column(String(32), nullable=False)
+    outcomes_json: Mapped[str] = mapped_column(Text, nullable=False)
+    cleanup_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)     # leftovers / cleanup issues
+    started_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
+    created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)

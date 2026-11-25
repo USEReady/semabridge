@@ -208,8 +208,9 @@ def test_migration_chain_head_is_sb0006():
     from semabridge.repository.alembic_runner import _alembic_config
 
     script = ScriptDirectory.from_config(_alembic_config(None))
-    assert script.get_heads() == ["sb0006_mapping_override_origin"]
+    assert len(script.get_heads()) == 1                                 # one linear chain
     assert script.get_revision("sb0006_mapping_override_origin").down_revision == "sb0005_multi_process_state"
+    assert script.get_revision("sb0007_databricks_probe_evidence").down_revision == "sb0006_mapping_override_origin"
 
 
 # --- API: rename, reset, deploy (wizard) ----------------------------------------------------
@@ -411,3 +412,19 @@ def test_full_migration_chain_existing_database_keeps_rows(tmp_path):
     _chain(engine, "head")
     with engine.begin() as conn:
         assert conn.exec_driver_sql("SELECT target_name, origin FROM mapping_overrides").fetchall() == [("A", None)]
+
+
+def test_full_migration_chain_creates_probe_evidence_table(tmp_path):
+    """3.5: sb0007 adds databricks_probe_evidence on a fresh database and on an
+    existing one at the previous head (sb0006), idempotently."""
+    fresh = sa.create_engine(f"sqlite:///{tmp_path / 'p_fresh.db'}")
+    _chain(fresh, "head")
+    assert sa.inspect(fresh).has_table("databricks_probe_evidence")
+
+    old = sa.create_engine(f"sqlite:///{tmp_path / 'p_old.db'}")
+    _chain(old, "sb0006_mapping_override_origin")
+    with old.begin() as conn:
+        conn.exec_driver_sql("DROP TABLE IF EXISTS databricks_probe_evidence")   # as databases made before sb0007
+    _chain(old, "head")
+    cols = {c["name"] for c in sa.inspect(old).get_columns("databricks_probe_evidence")}
+    assert {"run_id", "workspace_host", "warehouse_id", "outcomes_json", "started_at", "completed_at"} <= cols

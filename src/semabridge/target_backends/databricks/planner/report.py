@@ -57,12 +57,37 @@ def render(plan: dict, title: str) -> str:
         for lo in plan["left_out"]:
             out.append(f"| {_cell(lo['measure'])} | {lo['reason']} | {_cell(lo['detail'])[:160]} | {_cell(lo['root_cause'])} |")
         out.append("")
+    if plan.get("tables"):
+        out.append("## Tables")
+        out.append("")
+        out.append("| Model table | Location | Status | Used by |")
+        out.append("|---|---|---|---|")
+        labels = {"bound": "bound (exists)", "proposed_not_created": "proposed — not created",
+                  "unchecked": "proposed — not checked (no connection)"}
+        for t in plan["tables"]:
+            loc = ".".join(str(x) for x in (t.get("catalog"), t.get("schema"), t.get("name")) if x) or "(none)"
+            out.append(f"| {_cell(t['dataset'])} | {_cell(loc)} | {labels.get(t['status'], t['status'])} | "
+                       f"{_cell(', '.join(t.get('views') or []))} |")
+        out.append("")
+    defs = (plan.get("meta") or {}).get("definitions")
+    if defs:
+        out.append("## View definitions")
+        out.append("")
+        if defs.get("status") == "written":
+            out.append(f"Written for plan revision {defs.get('revision')} (writer {defs.get('writer_revision')}); "
+                       "nothing is created in Databricks until deploy (3.8).")
+            out += [f"- {v['view']}: sha256 {v['body_sha256'][:12]}…" + (f" ({len(v['warnings'])} warning(s))" if v["warnings"] else "")
+                    for v in defs.get("views") or []]
+        else:
+            out.append(f"Not written: {_cell(defs.get('error'))}")
+        out.append("")
     if plan.get("blockers"):
         out.append("## Publication blockers")
         out.append("")
         out.append("Deploy (3.8) refuses to publish while any of these remain.")
         out.append("")
-        out += [f"- **{b['code']}**{' (' + b['view'] + ')' if b.get('view') else ''}: {_cell(b['message'])}"
+        out += [f"- **{b['code']}** [{b.get('scope', 'model')}"
+                f"{': ' + ', '.join(b.get('views') or []) if b.get('views') else ''}]: {_cell(b['message'])}"
                 for b in plan["blockers"]]
         out.append("")
     if plan.get("name_requests"):

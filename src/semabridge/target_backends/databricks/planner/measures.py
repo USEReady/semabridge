@@ -143,6 +143,7 @@ def build_measures(source: str, decisions: List[Decision], where: Dict[str, str]
             source_id=sid,
             source_format=getattr(metric, "format_string", None),
             notes=label_notes,
+            description=str(getattr(metric, "description", "") or ""),
         )
         placed[d.measure] = plan
         plans.append(plan)
