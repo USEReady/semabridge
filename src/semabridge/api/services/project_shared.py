@@ -799,6 +799,225 @@ def _compat_raise_if_store_failed() -> None:
         raise CompatStorePersistenceError(f"Local state could not be saved: {_compat_store_last_error}")
 
 
+# ---------------------------------------------------------------------------
+# Shared state in the database (state_documents) -- the source of truth.
+#
+# The dicts above are this process's cache. Every save writes the entities
+# whose content changed (row-level, digest-compared) and tombstones the ones
+# this process deleted; every few seconds a process pulls the rows other
+# processes changed. The JSON file is only a local mirror (off on hosted
+# profiles) and is imported once into an empty table.
+# ---------------------------------------------------------------------------
+
+_RUN_BLOB_KEYS = ("summary", "results", "logs", "stage_states")
+# Collections fully held in memory: a key this process persisted that is no
+# longer present was deleted here. run_details is lazy (hydrated per run) and
+# therefore never tombstoned by absence.
+_STATE_FULL_COLLECTIONS = (
+    "projects", "project_configs", "project_runs", "project_snapshots", "run_snapshots",
+    "folders", "mappings", "project_schedules", "deleted_project_ids", "job_config",
+)
+_state_digests: Dict[tuple, str] = {}
+_state_last_refresh: Optional[Any] = None
+_state_last_refresh_check: float = 0.0
+
+
+def _state_backend_enabled() -> bool:
+    return str(os.environ.get("SEMABRIDGE_STATE_BACKEND", "db") or "db").strip().lower() != "file"
+
+
+def _state_json_mirror_enabled() -> bool:
+    raw = str(os.environ.get("SEMABRIDGE_STATE_JSON_MIRROR", "") or "").strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    if not _state_backend_enabled():
+        return True
+    from semabridge.core.deployment_profile import is_production
+
+    return not is_production()
+
+
+def _state_refresh_interval() -> float:
+    try:
+        return max(0.0, float(os.environ.get("SEMABRIDGE_STATE_REFRESH_SECONDS", "2")))
+    except ValueError:
+        return 2.0
+
+
+def _state_current_entries(payload: Dict[str, Any]) -> Dict[tuple, Any]:
+    """(collection, key) -> value for everything this process holds."""
+    entries: Dict[tuple, Any] = {}
+    for collection in ("projects", "project_runs", "project_snapshots", "run_snapshots",
+                       "folders", "mappings", "project_schedules"):
+        for key, value in (payload.get(collection) or {}).items():
+            entries[(collection, str(key))] = value
+    for key, text in (payload.get("project_configs") or {}).items():
+        entries[("project_configs", str(key))] = {"yaml": text}
+    for key in payload.get("deleted_project_ids") or []:
+        entries[("deleted_project_ids", str(key))] = True
+    entries[("job_config", "default")] = dict(payload.get("job_config") or {})
+    # Full run detail blobs, one row per run (lists above are stripped).
+    for runs in list(_compat_project_runs.values()):
+        for run in list(runs or []):
+            if not isinstance(run, dict):
+                continue
+            run_id = str(run.get("run_id") or run.get("id") or "").strip()
+            blob = {k: run[k] for k in _RUN_BLOB_KEYS if k in run and run[k] not in (None, {}, [])}
+            if run_id and blob:
+                entries[("run_details", run_id)] = blob
+    return entries
+
+
+def _compat_persist_to_state_db(payload: Dict[str, Any]) -> bool:
+    """Write the entities that changed since the last save (True when the
+    database now matches this process's view)."""
+    if not _state_backend_enabled():
+        return True
+    from semabridge.repository import state_store
+
+    entries = _state_current_entries(payload)
+    changes = []
+    for ident, value in entries.items():
+        digest = state_store.digest_of(state_store.encode(value))
+        if _state_digests.get(ident) != digest:
+            changes.append((ident[0], ident[1], value))
+    for ident, digest in list(_state_digests.items()):
+        if digest and ident[0] in _STATE_FULL_COLLECTIONS and ident not in entries:
+            changes.append((ident[0], ident[1], None))
+    if not changes:
+        return True
+    written = state_store.apply_changes(changes)
+    if written is None:
+        return False
+    _state_digests.update(written)
+    return True
+
+
+def _state_apply_entry(collection: str, key: str, value: Any) -> None:
+    """Apply one row from the database to the in-memory cache."""
+    deleted = value is None
+    if collection == "projects":
+        if deleted:
+            _compat_projects.pop(key, None)
+        elif isinstance(value, dict):
+            _compat_projects[key] = value
+    elif collection == "project_configs":
+        if not str(key).startswith("preview"):
+            return
+        if deleted:
+            _compat_project_configs.pop(key, None)
+        elif isinstance(value, dict) and isinstance(value.get("yaml"), str):
+            _compat_project_configs[key] = value["yaml"]
+    elif collection == "project_runs":
+        if deleted:
+            _compat_project_runs.pop(key, None)
+        elif isinstance(value, list):
+            local = {str(r.get("run_id") or r.get("id") or ""): r for r in _compat_project_runs.get(key, []) if isinstance(r, dict)}
+            merged = []
+            for run in value:
+                if not isinstance(run, dict):
+                    continue
+                mine = local.get(str(run.get("run_id") or run.get("id") or ""))
+                if mine:
+                    run = {**run, **{k: mine[k] for k in _RUN_BLOB_KEYS if k in mine}}
+                merged.append(run)
+            _compat_project_runs[key] = merged
+    elif collection in ("project_snapshots", "run_snapshots", "folders", "mappings", "project_schedules"):
+        container = {
+            "project_snapshots": _compat_project_snapshots,
+            "run_snapshots": _compat_run_snapshots,
+            "folders": _compat_folders,
+            "mappings": _compat_mappings,
+            "project_schedules": _compat_project_schedules,
+        }[collection]
+        if deleted:
+            container.pop(key, None)
+        else:
+            container[key] = value
+    elif collection == "deleted_project_ids":
+        if deleted:
+            _compat_deleted_project_ids.discard(key)
+        else:
+            _compat_deleted_project_ids.add(key)
+    elif collection == "job_config" and isinstance(value, dict):
+        _compat_job_config.update(value)
+
+
+def _compat_load_from_state_db() -> Optional[bool]:
+    """Fill the cache from the database. True when loaded, False when the
+    table is empty (nothing yet), None when the database is unavailable."""
+    global _state_last_refresh
+    if not _state_backend_enabled():
+        return None
+    from semabridge.repository import state_store
+
+    if not state_store.ensure_table():
+        return None
+    rows = state_store.load_all()
+    if rows is None:
+        return None
+    if not rows:
+        return False
+    newest = None
+    for collection, key, value, digest, updated_at in rows:
+        if collection == "run_details":
+            _state_digests[(collection, key)] = digest
+            continue
+        _state_apply_entry(collection, key, value)
+        _state_digests[(collection, key)] = digest
+        if updated_at is not None and (newest is None or updated_at > newest):
+            newest = updated_at
+    _state_last_refresh = newest
+    return True
+
+
+def _compat_refresh_from_state_db(force: bool = False) -> int:
+    """Pull rows other processes changed since the last refresh (throttled).
+    Returns how many rows were applied."""
+    global _state_last_refresh, _state_last_refresh_check
+    if not _state_backend_enabled():
+        return 0
+    now = time.monotonic()
+    if not force and now - _state_last_refresh_check < _state_refresh_interval():
+        return 0
+    _state_last_refresh_check = now
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+
+    from semabridge.core.run_coordination import WORKER_ID
+    from semabridge.repository import state_store
+
+    since = (_state_last_refresh or _dt(1970, 1, 1, tzinfo=_tz.utc)) - _td(seconds=1)
+    rows = state_store.changed_since(since, exclude_worker=WORKER_ID)
+    if not rows:
+        return 0
+    applied = 0
+    with _compat_store_lock:
+        for collection, key, value, digest, updated_at in rows:
+            if _state_digests.get((collection, key)) == digest:
+                continue
+            if collection != "run_details":
+                _state_apply_entry(collection, key, value)
+            _state_digests[(collection, key)] = digest
+            applied += 1
+            if updated_at is not None and (_state_last_refresh is None or updated_at > _state_last_refresh):
+                _state_last_refresh = updated_at
+        if applied:
+            for project_id in list(_compat_deleted_project_ids):
+                _compat_projects.pop(project_id, None)
+    return applied
+
+
+def load_run_details(run_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    """Persisted detail blobs (summary/results/logs/stage_states) by run id."""
+    if not _state_backend_enabled():
+        return {}
+    from semabridge.repository import state_store
+
+    return {k: v for k, v in state_store.load_keys("run_details", run_ids).items() if isinstance(v, dict)}
+
+
 def _compat_save_store(raise_on_error: bool = False) -> bool:
     """Serialize the compat cache to the JSON store file (atomic replace).
 
@@ -827,7 +1046,10 @@ def _compat_save_store(raise_on_error: bool = False) -> bool:
                 raise CompatStorePersistenceError(
                     f"store mutated concurrently during serialization: {last_exc}"
                 )
-            _compat_atomic_write_text(_compat_store_write_path(), text)
+            if not _compat_persist_to_state_db(payload):
+                raise CompatStorePersistenceError("the shared state database did not accept the change")
+            if _state_json_mirror_enabled():
+                _compat_atomic_write_text(_compat_store_write_path(), text)
             _compat_store_dirty = False
             _compat_store_last_error = None
             return True
@@ -926,6 +1148,23 @@ def _compat_load_store() -> None:
     if _compat_store_loaded:
         return
 
+    loaded = _compat_load_from_state_db()
+    if loaded:
+        _compat_store_loaded = True
+        return
+    # Empty table (first start) or database unavailable: read the JSON file;
+    # on an empty table it is imported once by the next save.
+    _compat_load_json_store()
+    if loaded is False:
+        try:
+            _compat_persist_to_state_db(_compat_build_store_payload())
+            logger.info("Imported the local JSON state store into the shared state database.")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not import the JSON state store into the database: %s", exc)
+
+
+def _compat_load_json_store() -> None:
+    global _compat_store_loaded
     p = _compat_store_path()
     if not p.exists():
         _compat_store_loaded = True
@@ -1586,6 +1825,11 @@ _compat_bootstrapped: bool = False
 def _compat_ensure_loaded() -> None:
     global _compat_bootstrapped
     if _compat_bootstrapped:
+        # Pick up what other server processes changed (throttled, cheap).
+        try:
+            _compat_refresh_from_state_db()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Shared state refresh skipped: %s", exc)
         return
     with _compat_store_lock:
         if _compat_bootstrapped:
