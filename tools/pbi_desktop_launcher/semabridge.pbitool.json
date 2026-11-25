@@ -1,0 +1,8 @@
+{
+  "version": "1.0",
+  "name": "SemaBridge",
+  "description": "Export Power BI semantic model to Snowflake semantic views and SML ontologies with SemaBridge.",
+  "path": "launcher.cmd",
+  "arguments": "\"%server%\" \"%database%\"",
+  "iconData": "image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAfPd1RAAAAH0lEQVR4nGNgGAWjYBSMglEwCkZBKKBQUaOgoaERADSoApUotDxoAAAAAElFTkSuQmCC"
+}
