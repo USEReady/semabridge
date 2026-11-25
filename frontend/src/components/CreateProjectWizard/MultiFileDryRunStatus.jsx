@@ -375,6 +375,7 @@ export default function MultiFileDryRunStatus({
                         droppedEntities={section.result?.dropped_entities || []}
                         unresolvedReportFieldReferences={section.result?.unresolved_report_field_references || []}
                         targetPlatform={targetPlatform}
+                        sqlDialect={section.result?.sql_dialect || null}
                       />
                     </UpsertChangesView>
                   </div>

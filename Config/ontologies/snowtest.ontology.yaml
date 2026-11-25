@@ -1,0 +1,1183 @@
+domain: SnowTest
+id: snowtest
+version: 1.0.0
+description: ''
+concepts:
+- name: District
+  logical_name: DISTRICT
+  label: District
+  concept_type: DIMENSION
+  domain: SnowTest
+  synonyms: []
+  business_rules: []
+  physical_table: District
+  attributes:
+  - name: DistrictID
+    logical_name: DISTRICTID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: District
+    logical_name: DISTRICT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: DM
+    logical_name: DM
+    data_type: VARCHAR
+    is_primary_key: true
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: DM_Pic_fl
+    logical_name: DM_PIC_FL
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: DM_Pic
+    logical_name: DM_PIC
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: BusinessUnitID
+    logical_name: BUSINESSUNITID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: DMImage
+    logical_name: DMIMAGE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Item
+  logical_name: ITEM
+  label: Item
+  concept_type: DIMENSION
+  domain: SnowTest
+  synonyms: []
+  business_rules: []
+  physical_table: Item
+  attributes:
+  - name: ItemID
+    logical_name: ITEMID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Segment
+    logical_name: SEGMENT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Category
+    logical_name: CATEGORY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Buyer
+    logical_name: BUYER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: FamilyNane
+    logical_name: FAMILYNANE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Category (clusters) 2
+    logical_name: CATEGORY_CLUSTERS_2
+    data_type: VARCHAR
+    description: Clusters for Category
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+    bi_description: Clusters for Category
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Sales
+  logical_name: SALES
+  label: Sales
+  concept_type: ENTITY
+  domain: SnowTest
+  synonyms: []
+  business_rules: []
+  physical_table: Sales
+  attributes:
+  - name: MonthID
+    logical_name: MONTHID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: ItemID
+    logical_name: ITEMID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: LocationID
+    logical_name: LOCATIONID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Sum_GrossMarginAmount
+    logical_name: SUM_GROSSMARGINAMOUNT
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Sum_Regular_Sales_Dollars
+    logical_name: SUM_REGULAR_SALES_DOLLARS
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Sum_Markdown_Sales_Dollars
+    logical_name: SUM_MARKDOWN_SALES_DOLLARS
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: ScenarioID
+    logical_name: SCENARIOID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: ReportingPeriodID
+    logical_name: REPORTINGPERIODID
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Sum_Regular_Sales_Units
+    logical_name: SUM_REGULAR_SALES_UNITS
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Sum_Markdown_Sales_Units
+    logical_name: SUM_MARKDOWN_SALES_UNITS
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Store
+  logical_name: STORE
+  label: Store
+  concept_type: DIMENSION
+  domain: SnowTest
+  synonyms: []
+  business_rules: []
+  physical_table: Store
+  attributes:
+  - name: LocationID
+    logical_name: LOCATIONID
+    data_type: INTEGER
+    is_primary_key: true
+    is_hidden: true
+    synonyms:
+    - location ID
+    sample_values: []
+    origin: bi
+  - name: City Name
+    logical_name: CITY_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms:
+    - city name
+    - city
+    sample_values: []
+    origin: bi
+  - name: Territory
+    logical_name: TERRITORY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - territory
+    - state
+    sample_values: []
+    origin: bi
+  - name: PostalCode
+    logical_name: POSTALCODE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - postal code
+    - zip
+    sample_values: []
+    origin: bi
+  - name: OpenDate
+    logical_name: OPENDATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: General Date
+    synonyms:
+    - open date
+    sample_values: []
+    origin: bi
+  - name: SellingAreaSize
+    logical_name: SELLINGAREASIZE
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - selling area size
+    sample_values: []
+    origin: bi
+  - name: DistrictName
+    logical_name: DISTRICTNAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms:
+    - district name
+    - district
+    sample_values: []
+    origin: bi
+  - name: Name
+    logical_name: NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - name
+    sample_values: []
+    origin: bi
+  - name: StoreNumberName
+    logical_name: STORENUMBERNAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - store number name
+    sample_values: []
+    origin: bi
+  - name: StoreNumber
+    logical_name: STORENUMBER
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - store number
+    sample_values: []
+    origin: bi
+  - name: City
+    logical_name: CITY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - city
+    - calculated column 1
+    sample_values: []
+    origin: bi
+  - name: Chain
+    logical_name: CHAIN
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - chain
+    sample_values: []
+    origin: bi
+  - name: DM
+    logical_name: DM
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - DM
+    sample_values: []
+    origin: bi
+  - name: DM_Pic
+    logical_name: DM_PIC
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - DM pic
+    sample_values: []
+    origin: bi
+  - name: DistrictID
+    logical_name: DISTRICTID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - district ID
+    sample_values: []
+    origin: bi
+  - name: Open Year
+    logical_name: OPEN_YEAR
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - open year
+    - calculated column 1
+    sample_values: []
+    origin: bi
+  - name: Store Type
+    logical_name: STORE_TYPE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - store type
+    - calculated column 1
+    sample_values: []
+    origin: bi
+  - name: Open Month No
+    logical_name: OPEN_MONTH_NO
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - open month no
+    - open month
+    - calculated column 1
+    sample_values: []
+    origin: bi
+  - name: Open Month
+    logical_name: OPEN_MONTH
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - open month
+    - calculated column 1
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Time
+  logical_name: TIME
+  label: Time
+  concept_type: DIMENSION
+  domain: SnowTest
+  synonyms: []
+  business_rules: []
+  physical_table: Time
+  attributes:
+  - name: ReportingPeriodID
+    logical_name: REPORTINGPERIODID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    synonyms:
+    - reporting period ID
+    sample_values: []
+    origin: bi
+  - name: Period
+    logical_name: PERIOD
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - period
+    sample_values: []
+    origin: bi
+  - name: FiscalYear
+    logical_name: FISCALYEAR
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - fiscal year
+    - year
+    sample_values: []
+    origin: bi
+  - name: FiscalMonth
+    logical_name: FISCALMONTH
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - fiscal month
+    - month
+    sample_values: []
+    origin: bi
+  - name: Month
+    logical_name: MONTH
+    data_type: TIMESTAMP_NTZ
+    is_primary_key: true
+    is_hidden: false
+    format_string: m/d/yy
+    synonyms:
+    - business day date
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+metrics:
+- name: Test Measure
+  logical_name: TEST_MEASURE
+  label: Test Measure
+  description: Total sum of Sum Regular Sales Units for Test Measure (from Store_Sales).
+  sql_expression: SUM(SALES."SUM_REGULAR_SALES_UNITS"::FLOAT) * 2
+  dax_expression: 'SUM(Sales[Sum_Regular_Sales_Units]) * 2 '
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Test Measure
+  business_rules: []
+  domain: SnowTest
+  concept: District
+  tags: []
+  origin: bi
+- name: Regular_Sales_Dollars
+  logical_name: REGULAR_SALES_DOLLARS
+  label: Regular_Sales_Dollars
+  description: Total sum of Sum Regular Sales Dollars for Regular Sales Dollars (from
+    Store_Sales).
+  sql_expression: SUM(Sales."SUM_REGULAR_SALES_DOLLARS"::FLOAT)
+  dax_expression: SUM([Sum_Regular_Sales_Dollars])
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Regular_Sales_Dollars
+  business_rules: []
+  domain: SnowTest
+  concept: Sales
+  tags: []
+  origin: bi
+- name: Markdown_Sales_Dollars
+  logical_name: MARKDOWN_SALES_DOLLARS
+  label: Markdown_Sales_Dollars
+  description: Total sum of Sum Markdown Sales Dollars for Markdown Sales Dollars
+    (from Store_Sales).
+  sql_expression: SUM(Sales."SUM_MARKDOWN_SALES_DOLLARS"::FLOAT)
+  dax_expression: SUM([Sum_Markdown_Sales_Dollars])
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Markdown_Sales_Dollars
+  business_rules: []
+  domain: SnowTest
+  concept: Sales
+  tags: []
+  origin: bi
+- name: TotalSales
+  logical_name: TOTALSALES
+  label: TotalSales
+  description: Calculated metric of Regular Sales Dollars for Total Sales (from Store_Sales).
+  sql_expression: CASE WHEN (Sales."REGULAR_SALES_DOLLARS") IS NULL AND (Sales."MARKDOWN_SALES_DOLLARS")
+    IS NULL THEN NULL ELSE COALESCE(Sales."REGULAR_SALES_DOLLARS", 0) + COALESCE(Sales."MARKDOWN_SALES_DOLLARS",
+    0) END
+  dax_expression: '[Regular_Sales_Dollars]+[Markdown_Sales_Dollars]'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - TotalSales
+  business_rules: []
+  derives_from:
+  - Regular_Sales_Dollars
+  - Markdown_Sales_Dollars
+  domain: SnowTest
+  concept: Sales
+  tags: []
+  origin: bi
+- name: TotalSalesLY
+  logical_name: TOTALSALESLY
+  label: TotalSalesLY
+  description: Calculated metric of TotalSales for Total Sales LY (from Store_Sales).
+  dax_expression: CALCULATE([TotalSales], Sales[ScenarioID]=2)
+  format_string: \$#,0;(\$#,0);\$#,0
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - TotalSalesLY
+  business_rules: []
+  domain: SnowTest
+  concept: Sales
+  tags: []
+  origin: bi
+- name: Gross Margin This Year
+  logical_name: GROSS_MARGIN_THIS_YEAR
+  label: Gross Margin This Year
+  description: Total sum of Sum GrossMarginAmount for Gross Margin This Year (from
+    Store_Sales).
+  sql_expression: SUM(CASE WHEN Sales."SCENARIOID" = 1 THEN Sales."SUM_GROSSMARGINAMOUNT"
+    END::FLOAT)
+  dax_expression: CALCULATE(SUM([Sum_GrossMarginAmount]), Sales[ScenarioID]=1)
+  format_string: \$#,0;(\$#,0);\$#,0
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Gross Margin This Year
+  business_rules: []
+  domain: SnowTest
+  concept: Sales
+  tags: []
+  origin: bi
+- name: Gross Margin This Year %
+  logical_name: GROSS_MARGIN_THIS_YEAR_PCT
+  label: Gross Margin This Year %
+  description: Ratio / rate for Gross Margin This Year % (from Store_Sales).
+  sql_expression: Sales."GROSS_MARGIN_THIS_YEAR" / NULLIF(Sales."TOTALSALESTY", 0)
+  dax_expression: '[Gross Margin This Year]/[TotalSalesTY]'
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Gross Margin This Year %
+  business_rules: []
+  derives_from:
+  - TotalSalesTY
+  domain: SnowTest
+  concept: Sales
+  tags: []
+  origin: bi
+- name: Gross Margin Last Year
+  logical_name: GROSS_MARGIN_LAST_YEAR
+  label: Gross Margin Last Year
+  description: Total sum of Sum GrossMarginAmount for Gross Margin Last Year (from
+    Store_Sales).
+  sql_expression: SUM(CASE WHEN Sales."SCENARIOID" = 2 THEN Sales."SUM_GROSSMARGINAMOUNT"
+    END::FLOAT)
+  dax_expression: CALCULATE(SUM([Sum_GrossMarginAmount]), Sales[ScenarioID]=2)
+  format_string: \$#,0;(\$#,0);\$#,0
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Gross Margin Last Year
+  business_rules: []
+  domain: SnowTest
+  concept: Sales
+  tags: []
+  origin: bi
+- name: Gross Margin Last Year %
+  logical_name: GROSS_MARGIN_LAST_YEAR_PCT
+  label: Gross Margin Last Year %
+  description: Ratio / rate for Gross Margin Last Year % (from Store_Sales).
+  sql_expression: Sales."GROSS_MARGIN_LAST_YEAR" / NULLIF(Sales."TOTALSALESLY", 0)
+  dax_expression: '[Gross Margin Last Year]/[TotalSalesLY]'
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Gross Margin Last Year %
+  business_rules: []
+  derives_from:
+  - TotalSalesLY
+  domain: SnowTest
+  concept: Sales
+  tags: []
+  origin: bi
+- name: Regular_Sales_Units
+  logical_name: REGULAR_SALES_UNITS
+  label: Regular_Sales_Units
+  description: Total sum of Sum Regular Sales Units for Regular Sales Units (from
+    Store_Sales).
+  sql_expression: SUM(Sales."SUM_REGULAR_SALES_UNITS"::FLOAT)
+  dax_expression: SUM([Sum_Regular_Sales_Units])
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Regular_Sales_Units
+  business_rules: []
+  domain: SnowTest
+  concept: Sales
+  tags: []
+  origin: bi
+- name: Markdown_Sales_Units
+  logical_name: MARKDOWN_SALES_UNITS
+  label: Markdown_Sales_Units
+  description: Total sum of Sum Markdown Sales Units for Markdown Sales Units (from
+    Store_Sales).
+  sql_expression: SUM(Sales."SUM_MARKDOWN_SALES_UNITS"::FLOAT)
+  dax_expression: SUM([Sum_Markdown_Sales_Units])
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Markdown_Sales_Units
+  business_rules: []
+  domain: SnowTest
+  concept: Sales
+  tags: []
+  origin: bi
+- name: TotalUnits
+  logical_name: TOTALUNITS
+  label: TotalUnits
+  description: Calculated metric of Regular Sales Units for Total Units (from Store_Sales).
+  sql_expression: CASE WHEN (Sales."REGULAR_SALES_UNITS") IS NULL AND (Sales."MARKDOWN_SALES_UNITS")
+    IS NULL THEN NULL ELSE COALESCE(Sales."REGULAR_SALES_UNITS", 0) + COALESCE(Sales."MARKDOWN_SALES_UNITS",
+    0) END
+  dax_expression: '[Regular_Sales_Units]+[Markdown_Sales_Units]'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - TotalUnits
+  business_rules: []
+  derives_from:
+  - Regular_Sales_Units
+  - Markdown_Sales_Units
+  domain: SnowTest
+  concept: Sales
+  tags: []
+  origin: bi
+- name: Total Units Last Year
+  logical_name: TOTAL_UNITS_LAST_YEAR
+  label: Total Units Last Year
+  description: Calculated metric of TotalUnits for Total Units Last Year (from Store_Sales).
+  dax_expression: CALCULATE([TotalUnits], Sales[ScenarioID]=2)
+  format_string: \$#,0;(\$#,0);\$#,0
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total Units Last Year
+  business_rules: []
+  domain: SnowTest
+  concept: Sales
+  tags: []
+  origin: bi
+- name: Total Units This Year
+  logical_name: TOTAL_UNITS_THIS_YEAR
+  label: Total Units This Year
+  description: Calculated metric of TotalUnits for Total Units This Year (from Store_Sales).
+  dax_expression: CALCULATE([TotalUnits], Sales[ScenarioID]=1)
+  format_string: \$#,0;(\$#,0);\$#,0
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total Units This Year
+  business_rules: []
+  domain: SnowTest
+  concept: Sales
+  tags: []
+  origin: bi
+- name: Avg $/Unit TY
+  logical_name: AVG_DOL_UNIT_TY
+  label: Avg $/Unit TY
+  description: Ratio / rate of Total Units This Year for Avg $/Unit TY (from Store_Sales).
+  sql_expression: CASE WHEN Sales."TOTAL_UNITS_THIS_YEAR" <> 0 THEN Sales."TOTALSALESTY"
+    / NULLIF(Sales."TOTAL_UNITS_THIS_YEAR", 0) END
+  dax_expression: IF([Total Units This Year]<>0, [TotalSalesTY]/[Total Units This
+    Year], BLANK())
+  format_string: \$#,0.00;(\$#,0.00);\$#,0.00
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Avg $/Unit TY
+  business_rules: []
+  derives_from:
+  - TotalSalesTY
+  domain: SnowTest
+  concept: Sales
+  tags: []
+  origin: bi
+- name: Avg $/Unit LY
+  logical_name: AVG_DOL_UNIT_LY
+  label: Avg $/Unit LY
+  description: Ratio / rate of Total Units Last Year for Avg $/Unit LY (from Store_Sales).
+  sql_expression: CASE WHEN Sales."TOTAL_UNITS_LAST_YEAR" <> 0 THEN Sales."TOTALSALESLY"
+    / NULLIF(Sales."TOTAL_UNITS_LAST_YEAR", 0) END
+  dax_expression: IF([Total Units Last Year]<>0, [TotalSalesLY]/[Total Units Last
+    Year], BLANK())
+  format_string: \$#,0.00;(\$#,0.00);\$#,0.00
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Avg $/Unit LY
+  business_rules: []
+  derives_from:
+  - TotalSalesLY
+  domain: SnowTest
+  concept: Sales
+  tags: []
+  origin: bi
+- name: Total Sales Var
+  logical_name: TOTAL_SALES_VAR
+  label: Total Sales Var
+  description: Calculated metric of TotalSalesTY for Total Sales Var (from Store_Sales).
+  sql_expression: CASE WHEN (Sales."TOTALSALESTY") IS NULL AND (Sales."TOTALSALESLY")
+    IS NULL THEN NULL ELSE COALESCE(Sales."TOTALSALESTY", 0) - COALESCE(Sales."TOTALSALESLY",
+    0) END
+  dax_expression: '[TotalSalesTY]-[TotalSalesLY]'
+  format_string: \$#,0;(\$#,0);\$#,0
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total Sales Var
+  business_rules: []
+  derives_from:
+  - TotalSalesTY
+  - TotalSalesLY
+  domain: SnowTest
+  concept: Sales
+  tags: []
+  origin: bi
+- name: Total Sales Var %
+  logical_name: TOTAL_SALES_VAR_PCT
+  label: Total Sales Var %
+  description: Ratio / rate of TotalSalesLY for Total Sales Var % (from Store_Sales).
+  sql_expression: CASE WHEN Sales."TOTALSALESLY" <> 0 THEN Sales."TOTAL_SALES_VAR"
+    / NULLIF(Sales."TOTALSALESLY", 0) END
+  dax_expression: IF([TotalSalesLY]<>0, [Total Sales Var]/[TotalSalesLY], BLANK())
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total Sales Var %
+  business_rules: []
+  derives_from:
+  - TotalSalesLY
+  domain: SnowTest
+  concept: Sales
+  tags: []
+  origin: bi
+- name: Sales Per Sq Ft
+  logical_name: SALES_PER_SQ_FT
+  label: Sales Per Sq Ft
+  description: Distinct count of TotalSalesTY for Sales Per Sq Ft (from Store_Sales).
+  sql_expression: Sales."TOTALSALESTY" / NULLIF(COUNT(DISTINCT Sales."MONTHID") *
+    SUM(STORE."SELLINGAREASIZE"::FLOAT), 0) * 12
+  dax_expression: ([TotalSalesTY]/(DISTINCTCOUNT([MonthID])*SUM(Store[SellingAreaSize])))*12
+  format_string: \$#,0.00;(\$#,0.00);\$#,0.00
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Sales Per Sq Ft
+  business_rules: []
+  derives_from:
+  - TotalSalesTY
+  domain: SnowTest
+  concept: Sales
+  tags: []
+  origin: bi
+- name: Last Year Sales
+  logical_name: LAST_YEAR_SALES
+  label: Last Year Sales
+  description: Calculated metric of TotalSalesLY for Last Year Sales (from Store_Sales).
+  sql_expression: Sales."TOTALSALESLY"
+  dax_expression: '[TotalSalesLY]'
+  format_string: \$#,0;(\$#,0);\$#,0
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Last Year Sales
+  business_rules: []
+  derives_from:
+  - TotalSalesLY
+  domain: SnowTest
+  concept: Sales
+  tags: []
+  origin: bi
+- name: Total Sales Variance
+  logical_name: TOTAL_SALES_VARIANCE
+  label: Total Sales Variance
+  description: Calculated metric for Total Sales Variance (from Store_Sales).
+  sql_expression: Sales."TOTAL_SALES_VAR"
+  dax_expression: '[Total Sales Var]'
+  format_string: \$#,0;(\$#,0);\$#,0
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total Sales Variance
+  business_rules: []
+  domain: SnowTest
+  concept: Sales
+  tags: []
+  origin: bi
+- name: Total Sales Variance %
+  logical_name: TOTAL_SALES_VARIANCE_PCT
+  label: Total Sales Variance %
+  description: Calculated metric of Total Sales Var % for Total Sales Variance % (from
+    Store_Sales).
+  sql_expression: Sales."TOTAL_SALES_VAR_PCT"
+  dax_expression: '[Total Sales Var %]'
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total Sales Variance %
+  business_rules: []
+  domain: SnowTest
+  concept: Sales
+  tags: []
+  origin: bi
+- name: Store Count
+  logical_name: STORE_COUNT
+  label: Store Count
+  description: Distinct count of LocationID for Store Count (from Store_Sales).
+  sql_expression: COUNT(DISTINCT Sales."LOCATIONID")
+  dax_expression: DISTINCTCOUNT([LocationID])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Store Count
+  business_rules: []
+  domain: SnowTest
+  concept: Sales
+  tags: []
+  origin: bi
+- name: Average Unit Price
+  logical_name: AVERAGE_UNIT_PRICE
+  label: Average Unit Price
+  description: Ratio / rate of Avg $/Unit TY for Average Unit Price (from Store_Sales).
+  sql_expression: Sales."AVG_DOL_UNIT_TY"
+  dax_expression: '[Avg $/Unit TY]'
+  format_string: \$#,0.00;(\$#,0.00);\$#,0.00
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Average Unit Price
+  business_rules: []
+  domain: SnowTest
+  concept: Sales
+  tags: []
+  origin: bi
+- name: Average Unit Price Last Year
+  logical_name: AVERAGE_UNIT_PRICE_LAST_YEAR
+  label: Average Unit Price Last Year
+  description: Ratio / rate of Avg $/Unit LY for Average Unit Price Last Year (from
+    Store_Sales).
+  sql_expression: Sales."AVG_DOL_UNIT_LY"
+  dax_expression: '[Avg $/Unit LY]'
+  format_string: \$#,0.00;(\$#,0.00);\$#,0.00
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Average Unit Price Last Year
+  business_rules: []
+  domain: SnowTest
+  concept: Sales
+  tags: []
+  origin: bi
+- name: TotalSalesTY
+  logical_name: TOTALSALESTY
+  label: TotalSalesTY
+  description: Calculated metric of TotalSales for Total Sales TY (from Store_Sales).
+  dax_expression: CALCULATE([TotalSales], Sales[ScenarioID]=1)
+  format_string: \$#,0;(\$#,0);\$#,0
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - TYS Card
+  - TotalSalesTY
+  business_rules: []
+  domain: SnowTest
+  concept: Sales
+  tags: []
+  origin: bi
+- name: This Year Sales
+  logical_name: THIS_YEAR_SALES
+  label: This Year Sales
+  description: Calculated metric of TotalSalesTY for This Year Sales (from Store_Sales).
+  sql_expression: Sales."TOTALSALESTY"
+  dax_expression: '[TotalSalesTY]'
+  format_string: \$#,0;(\$#,0);\$#,0
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - This Year Sales
+  business_rules: []
+  derives_from:
+  - TotalSalesTY
+  domain: SnowTest
+  concept: Sales
+  tags: []
+  origin: bi
+- name: Average Selling Area Size
+  logical_name: AVERAGE_SELLING_AREA_SIZE
+  label: Average Selling Area Size
+  description: Average value of SellingAreaSize for Average Selling Area Size (from
+    Store_Sales).
+  sql_expression: AVG(Store."SELLINGAREASIZE"::FLOAT)
+  dax_expression: AVERAGE([SellingAreaSize])
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - average selling area size
+  - average of selling area size
+  business_rules: []
+  domain: SnowTest
+  concept: Store
+  tags: []
+  origin: bi
+- name: New Stores
+  logical_name: NEW_STORES
+  label: New Stores
+  description: Total count of Store Type for New Stores (from Store_Sales).
+  sql_expression: MAX(STORE."_ALL_COUNTA_STORE_TYPE_NEW_STORE")
+  dax_expression: CALCULATE(COUNTA([Store Type]), FILTER(ALL(Store), [Store Type]="New
+    Store"))
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - new store
+  - New Stores
+  business_rules: []
+  domain: SnowTest
+  concept: Store
+  tags: []
+  origin: bi
+- name: New Stores Target
+  logical_name: NEW_STORES_TARGET
+  label: New Stores Target
+  description: Calculated metric for New Stores Target (from Store_Sales).
+  sql_expression: MAX(14)
+  dax_expression: '14'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - new stores target
+  business_rules: []
+  domain: SnowTest
+  concept: Store
+  tags: []
+  origin: bi
+- name: Total Stores
+  logical_name: TOTAL_STORES
+  label: Total Stores
+  description: Total count of StoreNumberName for Total Stores (from Store_Sales).
+  sql_expression: COUNT(Store."STORENUMBERNAME")
+  dax_expression: COUNTA([StoreNumberName])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - total store
+  - count of store number name
+  - Total Stores
+  business_rules: []
+  domain: SnowTest
+  concept: Store
+  tags: []
+  origin: bi
+- name: Open Store Count
+  logical_name: OPEN_STORE_COUNT
+  label: Open Store Count
+  description: Total count of OpenDate for Open Store Count (from Store_Sales).
+  sql_expression: COUNT(Store."OPENDATE")
+  dax_expression: COUNTA([OpenDate])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - open store count
+  - count of open date 2
+  business_rules: []
+  domain: SnowTest
+  concept: Store
+  tags: []
+  origin: bi
+- name: Count of OpenDate
+  logical_name: COUNT_OF_OPENDATE
+  label: Count of OpenDate
+  description: Total count of OpenDate for Count of Open Date (from Store_Sales).
+  sql_expression: COUNT(Store."OPENDATE")
+  dax_expression: COUNTA('Store'[OpenDate])
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - count of open date
+  - Count of OpenDate
+  business_rules: []
+  domain: SnowTest
+  concept: Store
+  tags: []
+  origin: bi
+- name: SUM_OF_SELLINGAREASIZE
+  logical_name: SUM_OF_SELLINGAREASIZE
+  label: SUM_OF_SELLINGAREASIZE
+  description: Total sum for SUM OF SELLINGAREASIZE (from Store_Sales).
+  sql_expression: SUM(SellingAreaSize)
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - selling area size
+  - SUM_OF_SELLINGAREASIZE
+  business_rules: []
+  domain: SnowTest
+  concept: Store
+  tags: []
+  origin: bi
+- name: SUM_OF_STORENUMBER
+  logical_name: SUM_OF_STORENUMBER
+  label: SUM_OF_STORENUMBER
+  description: Total sum for SUM OF STORENUMBER (from Store_Sales).
+  sql_expression: SUM(StoreNumber)
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - store number
+  - SUM_OF_STORENUMBER
+  business_rules: []
+  domain: SnowTest
+  concept: Store
+  tags: []
+  origin: bi
+- name: SUM_OF_PERIOD
+  logical_name: SUM_OF_PERIOD
+  label: SUM_OF_PERIOD
+  description: Total sum for SUM OF PERIOD (from Store_Sales).
+  sql_expression: SUM(Period)
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - period
+  - SUM_OF_PERIOD
+  business_rules: []
+  domain: SnowTest
+  concept: Time
+  tags: []
+  origin: bi
+- name: SUM_OF_FISCALYEAR
+  logical_name: SUM_OF_FISCALYEAR
+  label: SUM_OF_FISCALYEAR
+  description: Total sum for SUM OF FISCALYEAR (from Store_Sales).
+  sql_expression: SUM(FiscalYear)
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - fiscal year
+  - year
+  - SUM_OF_FISCALYEAR
+  business_rules: []
+  domain: SnowTest
+  concept: Time
+  tags: []
+  origin: bi
+relationships:
+- name: REL_STORE_DISTRICTID__DISTRICT_DISTRICTID
+  from_concept: Store
+  to_concept: District
+  cardinality: N:1
+  join_expression: Store.DistrictID = District.DistrictID
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SALES_LOCATIONID__STORE_LOCATIONID
+  from_concept: Sales
+  to_concept: Store
+  cardinality: N:1
+  join_expression: Sales.LocationID = Store.LocationID
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SALES_ITEMID__ITEM_ITEMID
+  from_concept: Sales
+  to_concept: Item
+  cardinality: N:1
+  join_expression: Sales.ItemID = Item.ItemID
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SALES_REPORTINGPERIODID__TIME_REPORTINGPERIODID
+  from_concept: Sales
+  to_concept: Time
+  cardinality: N:1
+  join_expression: Sales.ReportingPeriodID = Time.ReportingPeriodID
+  cross_filter_direction: single
+  is_active: true
+  origin: bi

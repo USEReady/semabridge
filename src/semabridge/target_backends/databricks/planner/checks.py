@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Set
 
 from semabridge.target_backends.databricks.planner import sqltext
 from semabridge.target_backends.databricks.planner.anchors import Decision
+from semabridge.target_backends.databricks.planner.names import check_name
 from semabridge.target_backends.databricks.planner.model import (
     PlannerInvariantError,
     PlannerResult,
@@ -78,10 +79,18 @@ def self_check(result: PlannerResult, decisions: Dict[str, Decision]) -> None:
                 errors.append(f"{v.name}: field {f.name} comes from a one-to-many table")
             if f.path not in paths:
                 errors.append(f"{v.name}: field {f.name} uses unknown path {f.path}")
+        join_aliases = {j.name.split(".")[-1].lower() for j in v.joins}
         for obj in list(v.fields) + list(v.measures):
             if obj.name.upper() in names:
                 errors.append(f"{v.name}: duplicate name {obj.name}")
             names.add(obj.name.upper())
+            problem = check_name(obj.name, getattr(obj, "name_generated", True))
+            if problem:
+                errors.append(f"{v.name}: {problem}")
+            if obj.name.lower() in join_aliases or obj.name.lower() == "source":
+                errors.append(f"{v.name}: {obj.name} is also a join alias")
+            if obj.source_id is None:
+                errors.append(f"{v.name}: {obj.name} has no source identity")
         for m in v.measures:
             if m.source_name in placed:
                 errors.append(f"{m.source_name} placed in both {placed[m.source_name]} and {v.name}")
@@ -100,19 +109,25 @@ def self_check(result: PlannerResult, decisions: Dict[str, Decision]) -> None:
                         if set(a.value_tables) != {a.grain}:
                             errors.append(f"{v.name}: composed {m.source_name} aggregate reads several tables")
             for a in sqltext.aliases(m.expr):
-                if a.lower() not in {p.split(".")[0].lower() for p in paths}:
-                    errors.append(f"{v.name}: {m.source_name} reads {a}, not joined in this view")
+                if a.upper() != "SOURCE":   # every other reference must be a rewritten, quoted join path
+                    errors.append(f"{v.name}: {m.source_name} reads {a}, not a join of this view")
             for dep in m.depends_on:
                 lo = left.get(dep)
                 if lo is not None and lo.reason in _PROPAGATED:
                     errors.append(f"{m.source_name} depends on left-out {dep} ({lo.reason})")
             if not m.semantic_status or not m.source_verification or not m.readiness:
                 errors.append(f"{m.source_name} has no status")
+    for v in result.views:
+        problem = check_name(v.name, True) if v.name.endswith("_metrics") else check_name(v.name, False)
+        if problem:
+            errors.append(problem)
     view_names = [v.name.upper() for v in result.views]
     if len(view_names) != len(set(view_names)):
         errors.append(f"duplicate view names: {sorted(view_names)}")
     for name in decisions:
         if name not in placed and name not in left:
             errors.append(f"{name} is neither placed nor left out")
+    if len(placed) + len(left) != len(decisions):
+        errors.append(f"{len(placed)} placed + {len(left)} left out != {len(decisions)} measures")
     if errors:
         raise PlannerInvariantError("planner self-check failed:\n  " + "\n  ".join(errors))

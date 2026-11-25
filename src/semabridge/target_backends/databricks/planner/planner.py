@@ -32,7 +32,10 @@ def plan_metric_views(sml_model: Any, table_plan: Optional[Any] = None,
 
     placed: Dict[str, MeasurePlan] = {}
     order = list(graph.measures)
-    for source in sorted(grouped, key=lambda s: views.view_name(graph, s)):
+    measure_order = {m: i for i, m in enumerate(order)}
+    vnames, vrenames = names.view_names(list(grouped), settings.reserved_view_names)   # Stage 6 (views)
+    result.renames += vrenames
+    for source in sorted(grouped, key=lambda s: vnames[s]):
         ds = sorted(grouped[source], key=lambda d: order.index(d.measure))
         join_list, where, notes, blocked = joins.build_joins(source, ds, graph, bindings)   # Stage 3
         kept = []
@@ -41,26 +44,27 @@ def plan_metric_views(sml_model: Any, table_plan: Optional[Any] = None,
             missing = sorted(t for t in needs if t not in where)
             if missing:
                 why = next((blocked[t] for t in missing if t in blocked), "needs_composition")
-                d.left_out = LeftOut(d.measure, why, f"needs {missing}, not joinable in {views.view_name(graph, source)}")
+                d.left_out = LeftOut(d.measure, why, f"needs {missing}, not joinable in {vnames[source]}")
                 d.placement = None
             else:
                 kept.append(d)
         if not kept:
             continue
-        field_list, field_notes = fields.build_fields(source, join_list, graph, bindings)  # Stage 4
+        field_list, field_notes = fields.build_fields(source, join_list, where, graph, bindings)  # Stage 4
         view = ViewPlan(
-            name=views.view_name(graph, source),
+            name=vnames[source],
             source_dataset=source,
             source_table=bindings.uc_table(source),
-            version="1.1" if any(j.cardinality == "one_to_many" for j in join_list) else "0.1",
+            version="1.1",  # display_name / synonyms need YAML 1.1 (Runtime 17.3+)
             readiness=bindings.readiness(source),
             joins=join_list,
             fields=field_list,
             notes=notes + field_notes,
         )
         view.measures = measures.build_measures(source, kept, where, graph, bindings, settings, placed)  # Stage 5
-        reserved = (settings.reserved_names or {}).get(view.name, {})
-        result.renames += names.assign_names(view, graph, reserved)                       # Stage 6
+        reserved = (settings.reserved_names or {}).get(source, {})
+        result.renames += names.assign_names(view, graph, reserved, [j.name.split(".")[-1] for j in join_list],
+                                             measure_order)                                # Stage 6
         if any(j.readiness == "structure_only" for j in join_list) or view.readiness == "structure_only":
             stubs = sorted({j.dataset for j in join_list if j.readiness == "structure_only"} |
                            ({source} if view.readiness == "structure_only" else set()))

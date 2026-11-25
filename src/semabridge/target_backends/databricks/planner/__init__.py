@@ -15,6 +15,7 @@ from semabridge.target_backends.databricks.planner.model import (
     PlannerInvariantError,
     PlannerResult,
     PlannerSettings,
+    SourceId,
 )
 from semabridge.target_backends.databricks.planner.planner import plan_metric_views
 
@@ -24,5 +25,6 @@ __all__ = [
     "PlannerInvariantError",
     "PlannerResult",
     "PlannerSettings",
+    "SourceId",
     "plan_metric_views",
 ]

@@ -20,7 +20,8 @@ from semabridge.target_backends.databricks.planner import sqltext
 from semabridge.target_backends.databricks.planner.anchors import Decision
 from semabridge.target_backends.databricks.planner.bindings import Bindings
 from semabridge.target_backends.databricks.planner.graph import ModelGraph
-from semabridge.target_backends.databricks.planner.model import Capability, MeasurePlan, PlannerSettings
+from semabridge.target_backends.databricks.planner.model import Capability, MeasurePlan, PlannerSettings, SourceId
+from semabridge.target_backends.databricks.planner.names import label_metadata
 from semabridge.utils.naming import sanitize_column
 
 READINESS_ORDER = {"real": 0, "unbound": 1, "structure_only": 2}
@@ -28,6 +29,25 @@ READINESS_ORDER = {"real": 0, "unbound": 1, "structure_only": 2}
 
 class RewriteError(RuntimeError):
     pass
+
+
+def measure_identity(metric) -> "Tuple[SourceId, str]":
+    """Structured identity and naming-v2 base name of a measure. Implicit
+    (generated) measures such as SUM_OF_SELLINGAREASIZE are identified by
+    table + column + aggregation and named from the column: sum_of_selling_area_size."""
+    from semabridge.target_rules.databricks.naming import normalize
+
+    name = str(metric.unique_name)
+    column = getattr(metric, "source_column", None)
+    expr = str(getattr(metric, "expression", "") or "")
+    if column and "_OF_" in name.upper():   # generated from a column's default aggregation (tmsl_to_osi)
+        agg_raw = getattr(metric, "aggregation", None)
+        agg = str(getattr(agg_raw, "value", agg_raw) or "").upper()
+        word = name.split("_OF_", 1)[0].lower() if "_OF_" in name else (agg.lower() or "agg")
+        sid = SourceId("implicit_measure", str(getattr(metric, "dataset", "")), str(column), agg or word.upper())
+        return sid, normalize(f"{word} of {column}", "measure", sid.key())[0]
+    sid = SourceId("measure", "", name)
+    return sid, normalize(name, "measure", sid.key())[0]
 
 
 def _rewrite(sql: str, alias_to_path: Dict[str, str]) -> str:
@@ -103,11 +123,14 @@ def build_measures(source: str, decisions: List[Decision], where: Dict[str, str]
         if readiness == "structure_only":
             warnings.append("structure only: reads stub (empty) tables until real data arrives")
         comment = "; ".join(w for w in warnings if w.startswith(("approximate", "unverified"))) or None
+        sid, base = measure_identity(metric)
+        display, synonyms, label_notes = label_metadata(str(getattr(metric, "label", "") or d.measure),
+                                                        list(getattr(metric, "synonyms", None) or []))
         plan = MeasurePlan(
-            name=d.measure,
+            name=base,
             source_name=d.measure,
             expr=expr,
-            display_name=str(getattr(metric, "label", "") or d.measure),
+            display_name=display,
             placement=d.placement,
             grain=next(iter(sem.grains)) if sem is not None and len(sem.grains) == 1 else source,
             semantic_status=status,
@@ -115,8 +138,11 @@ def build_measures(source: str, decisions: List[Decision], where: Dict[str, str]
             readiness=readiness,
             warnings=list(dict.fromkeys(warnings)),
             depends_on=depends,
-            synonyms=list(getattr(metric, "synonyms", None) or []),
+            synonyms=synonyms,
             comment=comment,
+            source_id=sid,
+            source_format=getattr(metric, "format_string", None),
+            notes=label_notes,
         )
         placed[d.measure] = plan
         plans.append(plan)

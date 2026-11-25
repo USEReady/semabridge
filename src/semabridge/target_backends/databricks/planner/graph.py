@@ -55,6 +55,12 @@ class ModelGraph:
             self.tables[ds.unique_name] = info
             self._by_lower[ds.unique_name.lower()] = ds.unique_name
 
+        self.by_alias: Dict[str, List[str]] = {}
+        for t, info in self.tables.items():
+            self.by_alias.setdefault(info.alias, []).append(t)
+        # converter aliases shared by two tables: their SQL references can't be told apart
+        self.ambiguous_aliases = {a for a, ts in self.by_alias.items() if len(ts) > 1}
+
         self.measures: Dict[str, Any] = {}
         self._measure_lower: Dict[str, str] = {}
         for m in getattr(sml_model, "metrics", []) or []:
@@ -115,6 +121,10 @@ class ModelGraph:
 
     def alias(self, table: str) -> str:
         return self.tables[table].alias
+
+    def table_for_alias(self, alias: str) -> Optional[str]:
+        ts = self.by_alias.get(alias.upper(), [])
+        return ts[0] if len(ts) == 1 else None
 
     def out_edges(self, table: str) -> List[Edge]:
         return list(self._out.get(table, []))
