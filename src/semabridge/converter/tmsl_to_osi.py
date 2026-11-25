@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import unicodedata
 from pathlib import Path
@@ -458,6 +459,16 @@ class TMSLToOSIConverter(BaseConverter):
                                 if not resolved
                             ],
                         )
+
+            if source_data.get("deterministic_relationships") or os.getenv("SEMABRIDGE_DETERMINISTIC_RELATIONSHIPS", "").lower() in _TRUTHY:
+                osi_model.relationships.sort(
+                    key=lambda r: (
+                        str(r.from_dataset or ""),
+                        str(r.to_dataset or ""),
+                        tuple(str(c) for c in (r.from_columns or ())),
+                        tuple(str(c) for c in (r.to_columns or ())),
+                    )
+                )
 
             # Optional fallback: infer relationships when source metadata
             # exposes none. OFF by default — inferred joins are semantics the

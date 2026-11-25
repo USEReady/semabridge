@@ -182,6 +182,9 @@ FLAGS: List[FeatureFlag] = [
     FeatureFlag("SEMABRIDGE_PBI_DESKTOP_SOURCE", "bool", "false",
                 "Enable Power BI Desktop live semantic model source adapter (alias).",
                 "sources/pbi_desktop/adapter.py"),
+    FeatureFlag("SEMABRIDGE_DETERMINISTIC_RELATIONSHIPS", "bool", "false",
+                "Sort model relationships deterministically in conversion output.",
+                "converter/tmsl_to_osi.py"),
 ]
 
 _BY_NAME = {flag.name: flag for flag in FLAGS}
