@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 _BLOB_KEYS = frozenset({"summary", "results", "logs", "stage_states"})
 # Columns win over meta_json for these keys: they are what other processes
 # and the stale sweep update.
-_TERMINAL_STATUSES = frozenset({"success", "warning", "partial", "failed", "interrupted", "skipped", "conflict"})
+_TERMINAL_STATUSES = frozenset({"success", "warning", "partial", "failed", "interrupted", "skipped", "conflict", "cancelled"})
 
 
 def _parse_ts(value: Any) -> Optional[datetime]:

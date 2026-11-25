@@ -678,6 +678,41 @@ def _mark_run_skipped(run: Dict[str, Any], started: float, holder: Any) -> Dict[
     return run
 
 
+def _cancel_requested(run: Dict[str, Any]) -> bool:
+    from semabridge.core.run_cancel import is_cancel_requested
+
+    try:
+        return is_cancel_requested(str(run.get("run_id") or run.get("id") or ""))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def cancel_project_run(project_id: str, run_id: str, user_id: Any = None) -> Dict[str, Any]:
+    """Cancel a queued or running run of ``project_id``."""
+    from semabridge.core.run_cancel import request_cancel
+
+    runs = list_project_runs(project_id) or []
+    run = next((r for r in runs if str(r.get("run_id") or r.get("id")) == str(run_id)), None)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found for this project.")
+    status = str(run.get("status") or "").lower()
+    if status not in run_coordination.ACTIVE_STATUSES:
+        return {"run_id": run_id, "status": status, "message": f"The run already ended ({status}); nothing to cancel."}
+    if not request_cancel(run_id, by=str(user_id) if user_id else None):
+        raise HTTPException(status_code=503, detail="The cancel request could not be stored; try again.")
+    if status == "queued":
+        from semabridge.core import job_queue
+
+        job = job_queue.job_status(run_id) if job_queue.queue_enabled() else None
+        if job and job.get("status") == "cancelled":
+            run = {**run, "status": "cancelled", "message": "Cancelled before it started.", "completed_at": _compat_now_iso()}
+            save_project_run(run)
+            run_coordination.release_leases(run_id=run_id)
+            return {"run_id": run_id, "status": "cancelled", "message": "Cancelled before it started."}
+    return {"run_id": run_id, "status": "cancelling",
+            "message": "Cancel requested; the run stops at its next step and is marked Cancelled."}
+
+
 def _mark_run_started(run: Dict[str, Any]) -> None:
     """queued -> running, once (called when the first model gets a slot)."""
     if str(run.get("status") or "") != "queued":
@@ -839,6 +874,9 @@ async def _perform_project_run_impl(run: dict, project_cfg: str, started: float)
         run["duration_ms"] = elapsed_ms(started)
         run["completed_at"] = _compat_now_iso()
         run["status"] = resolve_run_status(sync_result or {})
+        if _cancel_requested(run):
+            run["status"] = "cancelled"
+            run["message"] = "Cancelled by a user; remaining steps were not run."
         # Effective demo_mode for this run, echoed back from the engine's own
         # resolved ConnectorBehavior (see core/engine/finalize.py, which
         # already ANDs the project's opt-in with the server-wide
@@ -1054,7 +1092,7 @@ async def _perform_project_run_impl(run: dict, project_cfg: str, started: float)
             logger.debug("Run notification skipped: %s", _notify_exc)
 
     except Exception as exc:
-        run["status"] = "failed"
+        run["status"] = "cancelled" if _cancel_requested(run) else "failed"
         run["error"] = str(exc)
         run["message"] = str(exc)
         run["completed_at"] = _compat_now_iso()

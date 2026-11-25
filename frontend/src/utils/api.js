@@ -2167,6 +2167,16 @@ export const api = {
         return sendWithSyncConflictPrompt(projectId, null, send);
     },
 
+    /** Cancel a queued or running sync; it stops at its next step. */
+    async cancelProjectRun(projectId, runId) {
+        invalidateApiCache('jobs:runs:');
+        const res = await authFetch(
+            `${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/cancel`,
+            { method: 'POST', timeoutMs: 20000 },
+        );
+        return handleResponse(res);
+    },
+
     async getRunPreview(projectId) {
         const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/run-preview`, {
             timeoutMs: 10000,

@@ -246,6 +246,16 @@ export default function RunDrawer({
   const [retry, setRetry] = useState({ busy: false, error: '', started: null });
   const realStatus = run?.demo_masked ? normStatus(run?.true_status) : status;
   const canRetry = Boolean(run?.project_id && isRetryableStatus(realStatus) && !running);
+  const [cancel, setCancel] = useState({ busy: false, message: '', error: '' });
+  const handleCancel = async () => {
+    setCancel({ busy: true, message: '', error: '' });
+    try {
+      const res = await api.cancelProjectRun(run.project_id, run.run_id || run.id || runId);
+      setCancel({ busy: false, message: res?.message || 'Cancel requested.', error: '' });
+    } catch (err) {
+      setCancel({ busy: false, message: '', error: err?.message || 'Could not cancel the run.' });
+    }
+  };
   const handleRetry = async () => {
     setRetry({ busy: true, error: '', started: null });
     try {
@@ -375,6 +385,21 @@ export default function RunDrawer({
             {run.demo_masked && (
               <div style={{ marginTop: 12, padding: '8px 12px', borderRadius: 8, background: 'var(--bg-surface-raised)', color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.5 }}>
                 {demoMaskTitle(run)}
+              </div>
+            )}
+            {running && run?.project_id && (
+              <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  disabled={cancel.busy || Boolean(cancel.message)}
+                  style={{ ...btn, opacity: cancel.busy || cancel.message ? 0.6 : 1 }}
+                >
+                  <X size={13} aria-hidden="true" />
+                  {cancel.busy ? 'Cancelling…' : 'Cancel run'}
+                </button>
+                {cancel.message && <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{cancel.message}</span>}
+                {cancel.error && <span style={{ fontSize: 12, color: 'var(--color-error)' }}>{cancel.error}</span>}
               </div>
             )}
             {canRetry && (

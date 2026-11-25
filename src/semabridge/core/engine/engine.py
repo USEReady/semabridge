@@ -520,6 +520,24 @@ class ExecutionEngine:
     ) -> None:
         """Record step result in summary."""
         self._current_step = step_number
+        try:
+            self._record_step_inner(step_number, status, message, artifact_ids)
+        finally:
+            # Cancellation is checked at every step boundary (after the step
+            # is recorded, so the log shows how far the run got).
+            # Never on step 10 (finalize also runs after a cancel) or a failure.
+            if step_number < 10 and str(getattr(status, "value", status)).upper() != "FAILED":
+                from semabridge.core.run_cancel import check as _cancel_check
+
+                _cancel_check()
+
+    def _record_step_inner(
+        self,
+        step_number: int,
+        status: StepStatus,
+        message: Optional[str] = None,
+        artifact_ids: Optional[list] = None,
+    ) -> None:
         step_name = STEP_NAMES.get(step_number, f"Step {step_number}")
         status_text = str(getattr(status, "value", status)).upper()
         log_msg = f"Stage {step_number}: {step_name}"

@@ -40,6 +40,18 @@ async def get_project_runs(project_id: str, request: Request):
     return await get_project_runs_compat(project_id)
 
 
+@router.post("/api/projects/{project_id}/runs/{run_id}/cancel")
+async def cancel_project_run(project_id: str, run_id: str, request: Request):
+    """Cancel a queued or running sync. It stops at its next step."""
+    import asyncio
+
+    from semabridge.api.services.run_service import cancel_project_run as _cancel
+
+    user_id = require_request_user_id(request)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
+    return await asyncio.to_thread(_cancel, project_id, run_id, user_id)
+
+
 @router.get("/api/projects/{project_id}/audit-logs")
 async def get_audit_logs(project_id: str, request: Request):
     user_id = require_request_user_id(request)

@@ -887,7 +887,9 @@ def _run_single_job(job: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
     # SEMABRIDGE_MAX_CONCURRENT_MODELS). A process-executor job already
     # holds its slot in the parent (see _run_parallel_jobs).
     slot_ctx = _NoLock() if job.get("_slot_held") else model_slot()
-    with slot_ctx, model_log_scope(project_id, run_id, model_label):
+    from semabridge.core.run_cancel import scope as _cancel_scope
+
+    with slot_ctx, model_log_scope(project_id, run_id, model_label), _cancel_scope(run_id):
         logger.info(
             "Model '%s' started (view=%s, prefix=%s)",
             model_label, job.get("resolved_display_name") or "-", job.get("physical_namespace") or "-",
