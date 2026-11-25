@@ -1,0 +1,32 @@
+[
+  {
+    "ID": 1,
+    "Name": "Model",
+    "Description": null,
+    "StorageLocation": null,
+    "DefaultMode": 0,
+    "DefaultDataView": 0,
+    "Culture": "en-US",
+    "Collation": null,
+    "ModifiedTime": "28-11-2022 23:41:13",
+    "StructureModifiedTime": "28-11-2022 23:41:13",
+    "Version": 3,
+    "DataAccessOptions": "{\n  \"legacyRedirects\": true,\n  \"returnErrorValuesAsNull\": true\n}",
+    "DefaultMeasureID": null,
+    "DefaultPowerBIDataSourceVersion": 2,
+    "ForceUniqueNames": false,
+    "DiscourageImplicitMeasures": false,
+    "DataSourceVariablesOverrideBehavior": 0,
+    "DataSourceDefaultMaxConnections": 10,
+    "SourceQueryCulture": "en-US",
+    "MAttributes": null,
+    "DiscourageCompositeModels": false,
+    "AutomaticAggregationOptions": null,
+    "DisableAutoExists": -1,
+    "MaxParallelismPerRefresh": -1,
+    "MaxParallelismPerQuery": 0,
+    "DirectLakeBehavior": 0,
+    "ValueFilterBehavior": 0,
+    "VersionMarker": null
+  }
+]

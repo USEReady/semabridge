@@ -1,0 +1,233 @@
+[
+  {
+    "ID": 121,
+    "HierarchyID": 118,
+    "Ordinal": 0,
+    "Name": "Category",
+    "Description": null,
+    "ColumnID": 37,
+    "ModifiedTime": "28-11-2022 23:41:13",
+    "LineageTag": "6f20be0a-14c7-4cfa-8a63-390378ef23b6",
+    "SourceLineageTag": null
+  },
+  {
+    "ID": 122,
+    "HierarchyID": 118,
+    "Ordinal": 1,
+    "Name": "Segment",
+    "Description": null,
+    "ColumnID": 38,
+    "ModifiedTime": "28-11-2022 23:41:13",
+    "LineageTag": "79390af1-6a98-4f20-8e20-a68a07d10038",
+    "SourceLineageTag": null
+  },
+  {
+    "ID": 123,
+    "HierarchyID": 118,
+    "Ordinal": 2,
+    "Name": "Product",
+    "Description": null,
+    "ColumnID": 39,
+    "ModifiedTime": "28-11-2022 23:41:13",
+    "LineageTag": "0196e633-e8b7-4ae0-94a2-04e3b23f0051",
+    "SourceLineageTag": null
+  },
+  {
+    "ID": 124,
+    "HierarchyID": 119,
+    "Ordinal": 0,
+    "Name": "Year",
+    "Description": null,
+    "ColumnID": 56,
+    "ModifiedTime": "28-11-2022 23:41:13",
+    "LineageTag": "78063ea1-d596-41e5-bd56-939ce6faeacd",
+    "SourceLineageTag": null
+  },
+  {
+    "ID": 125,
+    "HierarchyID": 119,
+    "Ordinal": 1,
+    "Name": "Quarter",
+    "Description": null,
+    "ColumnID": 55,
+    "ModifiedTime": "28-11-2022 23:41:13",
+    "LineageTag": "ef632794-f9a2-426a-883b-a61201b974b5",
+    "SourceLineageTag": null
+  },
+  {
+    "ID": 126,
+    "HierarchyID": 119,
+    "Ordinal": 2,
+    "Name": "Month",
+    "Description": null,
+    "ColumnID": 54,
+    "ModifiedTime": "28-11-2022 23:41:13",
+    "LineageTag": "a73a5aeb-c2a8-484e-864f-598bdbdb6743",
+    "SourceLineageTag": null
+  },
+  {
+    "ID": 127,
+    "HierarchyID": 119,
+    "Ordinal": 3,
+    "Name": "Date",
+    "Description": null,
+    "ColumnID": 50,
+    "ModifiedTime": "28-11-2022 23:41:13",
+    "LineageTag": "a625a33c-3f6d-4ccd-a898-cbe5b2dd90e0",
+    "SourceLineageTag": null
+  },
+  {
+    "ID": 2779,
+    "HierarchyID": 2778,
+    "Ordinal": 0,
+    "Name": "Year",
+    "Description": null,
+    "ColumnID": 56,
+    "ModifiedTime": "28-11-2022 23:41:13",
+    "LineageTag": "d99e6bc5-e86a-47ce-af5b-07e97730bb3d",
+    "SourceLineageTag": null
+  },
+  {
+    "ID": 2816,
+    "HierarchyID": 2778,
+    "Ordinal": 1,
+    "Name": "Months",
+    "Description": null,
+    "ColumnID": 2723,
+    "ModifiedTime": "28-11-2022 23:41:13",
+    "LineageTag": "7a876dae-db9b-4265-8416-044d8f53867e",
+    "SourceLineageTag": null
+  },
+  {
+    "ID": 2853,
+    "HierarchyID": 2778,
+    "Ordinal": 2,
+    "Name": "Date",
+    "Description": null,
+    "ColumnID": 50,
+    "ModifiedTime": "28-11-2022 23:41:13",
+    "LineageTag": "dda03246-74ad-4027-a97c-4eca3c2810d8",
+    "SourceLineageTag": null
+  },
+  {
+    "ID": 128,
+    "HierarchyID": 120,
+    "Ordinal": 0,
+    "Name": "State",
+    "Description": null,
+    "ColumnID": 65,
+    "ModifiedTime": "28-11-2022 23:41:13",
+    "LineageTag": "e24b99fb-16ed-4aaf-a749-830e9942a12d",
+    "SourceLineageTag": null
+  },
+  {
+    "ID": 129,
+    "HierarchyID": 120,
+    "Ordinal": 1,
+    "Name": "City",
+    "Description": null,
+    "ColumnID": 64,
+    "ModifiedTime": "28-11-2022 23:41:13",
+    "LineageTag": "68956622-ee35-4cfc-aa27-809a0e02c76c",
+    "SourceLineageTag": null
+  },
+  {
+    "ID": 130,
+    "HierarchyID": 120,
+    "Ordinal": 2,
+    "Name": "Zip",
+    "Description": null,
+    "ColumnID": 63,
+    "ModifiedTime": "28-11-2022 23:41:13",
+    "LineageTag": "5928cf8b-b619-4833-a35f-af4e0c7252e1",
+    "SourceLineageTag": null
+  },
+  {
+    "ID": 1982,
+    "HierarchyID": 1981,
+    "Ordinal": 0,
+    "Name": "Year",
+    "Description": null,
+    "ColumnID": 1974,
+    "ModifiedTime": "28-11-2022 23:41:13",
+    "LineageTag": "0d39bc7e-1c2c-4ab5-b64d-1bb7330548ec",
+    "SourceLineageTag": null
+  },
+  {
+    "ID": 1983,
+    "HierarchyID": 1981,
+    "Ordinal": 1,
+    "Name": "Quarter",
+    "Description": null,
+    "ColumnID": 1978,
+    "ModifiedTime": "28-11-2022 23:41:13",
+    "LineageTag": "848db460-e650-4c87-986c-224be6b6c3b1",
+    "SourceLineageTag": null
+  },
+  {
+    "ID": 1984,
+    "HierarchyID": 1981,
+    "Ordinal": 2,
+    "Name": "Month",
+    "Description": null,
+    "ColumnID": 1976,
+    "ModifiedTime": "28-11-2022 23:41:13",
+    "LineageTag": "695ecdc8-9ba3-4440-89b4-e74e48e6e689",
+    "SourceLineageTag": null
+  },
+  {
+    "ID": 1985,
+    "HierarchyID": 1981,
+    "Ordinal": 3,
+    "Name": "Day",
+    "Description": null,
+    "ColumnID": 1979,
+    "ModifiedTime": "28-11-2022 23:41:13",
+    "LineageTag": "280edff5-0d2b-4370-8a17-50748346c337",
+    "SourceLineageTag": null
+  },
+  {
+    "ID": 2070,
+    "HierarchyID": 2068,
+    "Ordinal": 0,
+    "Name": "Year",
+    "Description": null,
+    "ColumnID": 2061,
+    "ModifiedTime": "28-11-2022 23:41:13",
+    "LineageTag": "0a7d6512-799f-45d6-9874-f143a1167cb9",
+    "SourceLineageTag": null
+  },
+  {
+    "ID": 2071,
+    "HierarchyID": 2068,
+    "Ordinal": 1,
+    "Name": "Quarter",
+    "Description": null,
+    "ColumnID": 2065,
+    "ModifiedTime": "28-11-2022 23:41:13",
+    "LineageTag": "4f9be97f-9c80-4e1b-9213-50094c9a1989",
+    "SourceLineageTag": null
+  },
+  {
+    "ID": 2072,
+    "HierarchyID": 2068,
+    "Ordinal": 2,
+    "Name": "Month",
+    "Description": null,
+    "ColumnID": 2063,
+    "ModifiedTime": "28-11-2022 23:41:13",
+    "LineageTag": "3083a69d-074a-499c-a50d-b0ee3bea7a12",
+    "SourceLineageTag": null
+  },
+  {
+    "ID": 2073,
+    "HierarchyID": 2068,
+    "Ordinal": 3,
+    "Name": "Day",
+    "Description": null,
+    "ColumnID": 2066,
+    "ModifiedTime": "28-11-2022 23:41:13",
+    "LineageTag": "84d7fb9c-013b-4b83-b8d2-e65984402d1f",
+    "SourceLineageTag": null
+  }
+]
