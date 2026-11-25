@@ -85,14 +85,12 @@ This document describes the quality gates enforced on all changes before merge o
   GRANT SELECT ON ALL TABLES IN SCHEMA "<DATABASE>"."<SCHEMA>" TO ROLE "<ROLE>";
   -- Sandbox schemas created dynamically grant CREATE TABLE, CREATE VIEW, DROP SCHEMA.
   ```
-  `SNOWFLAKE_ROLE` and `SNOWFLAKE_WAREHOUSE` are strictly required secrets and must never fall back to user default roles or `ACCOUNTADMIN`.
+  `SNOWFLAKE_ROLE` and `SNOWFLAKE_WAREHOUSE` are strictly required settings and must never fall back to user default roles or `ACCOUNTADMIN`.
 - **How to run**:
-  - **CI (Default)**: Automatically runs in Linux GitHub Actions workflow `.github/workflows/golden_gate.yml` on every push to `fabric/batch-4-ontology` and manual dispatch.
-  - **Local**: `python Scripts/golden_gate.py` (requires Snowflake environment variables and Linux / pbixray environment).
-- **How to read CI results**:
-  1. Open GitHub repository &rarr; Actions tab.
-  2. Select workflow run **"Golden Gate (Snowflake live values)"**.
-  3. Inspect job **`Golden Gate (Snowflake live values)`** &rarr; step **`Run Golden Gate`**.
-  4. Passing status confirms `8/8 live golden values verified`.
-  5. Step **`Clean up sandbox clones`** runs under `if: always()` to guarantee no orphaned sandboxes remain.
+  - **Local only (not in CI)**: `python Scripts/golden_gate.py` with Snowflake credentials in your own `.env` (requires a Linux / pbixray environment). Run it before a release or after changes to conversion, DDL or time intelligence.
+  - It is intentionally not a GitHub Actions workflow, so no Snowflake key is stored in GitHub.
+- **How to read results**:
+  - A pass prints `GOLDEN GATE PASSED: All 8 golden values matched perfectly.` and exits with code 0; any mismatch prints `GOLDEN GATE FAILED` with the details and exits with code 1.
+  - The temporary sandbox schemas are dropped at the end of the run, including when a check fails.
+  - Without Snowflake credentials it prints `SKIPPED` and exits with code 0. That is not a pass: check that the output says `GOLDEN GATE PASSED`.
 
