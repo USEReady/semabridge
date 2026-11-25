@@ -47,8 +47,21 @@ function HowAnswered({ plan, result, target }) {
     plan?.is_draft ? 'offline draft (not governed)' : null,
   ].filter(Boolean).join(' · ');
 
+  const trust = TRUST_LABELS[plan?.trust];
+
   return (
     <div style={{ borderTop: '1px solid var(--border-main)', paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {trust && (
+        <span
+          title={plan?.trust_detail || trust.hint}
+          style={{
+            alignSelf: 'flex-start', fontSize: 11.5, fontWeight: 600, padding: '2px 9px', borderRadius: 999,
+            color: trust.color, background: trust.bg,
+          }}
+        >
+          {trust.label}
+        </span>
+      )}
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -272,3 +285,11 @@ export default function AnswerCard({ entry, onCertify, onRetry, onOfflineDraft, 
     </div>
   );
 }
+
+const TRUST_LABELS = {
+  verified: { label: 'Verified answer', color: 'var(--color-success)', bg: 'var(--color-success-bg)', hint: 'A reviewed, saved query answered this question.' },
+  matches_power_bi: { label: 'Matches Power BI', color: 'var(--color-success)', bg: 'var(--color-success-bg)', hint: 'Every measure used is certified against Power BI.' },
+  differs: { label: 'Differs from Power BI', color: 'var(--color-error)', bg: 'var(--color-error-bg)', hint: 'A measure used failed its Power BI comparison.' },
+  unverified: { label: 'Not verified against Power BI', color: 'var(--text-secondary)', bg: 'var(--bg-surface-raised)', hint: 'Certify the measures in Verify to confirm the numbers.' },
+};
+

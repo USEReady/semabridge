@@ -75,6 +75,13 @@ class QueryResolutionPlan(BaseModel):
     answered_by_view: Optional[str] = None
     answered_by_domain: Optional[str] = None
     candidate_views: List[str] = Field(default_factory=list)
+    # How far the answer can be trusted:
+    #   "verified"          a saved, reviewed question's SQL answered it
+    #   "matches_power_bi"  every measure used is certified against Power BI
+    #   "differs"           a measure used failed its Power BI comparison
+    #   "unverified"        none of the above
+    trust: Optional[str] = None
+    trust_detail: Optional[str] = None
 
 
 class NLQueryEngine:

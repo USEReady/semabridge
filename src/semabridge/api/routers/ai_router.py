@@ -428,7 +428,81 @@ def resolve_natural_language_query(req: NLQueryRequest, request: Request) -> Que
         plan.answerable = False
         plan.candidate_views = list(scope.candidate_views)
         return plan
-    return _with_answer_source(_resolve_nl(req, engine, dialect, scope), scope)
+    plan = _verified_answer(req, scope, dialect) or _resolve_nl(req, engine, dialect, scope)
+    return _with_trust(_with_answer_source(plan, scope), req.project_id)
+
+
+def _normalize_question(text: str) -> List[str]:
+    import re as _re
+
+    stop = {"the", "a", "an", "of", "for", "by", "in", "what", "is", "are", "show", "me", "please", "?"}
+    return [t for t in _re.findall(r"[a-z0-9]+", str(text or "").lower()) if t not in stop]
+
+
+def _verified_answer(req: NLQueryRequest, scope: ProjectScope, dialect: str) -> Optional[QueryResolutionPlan]:
+    """A saved, reviewed question for this project that matches the prompt
+    answers first (exact wording, or the same key words)."""
+    if not req.project_id:
+        return None
+    try:
+        from semabridge.ai.verified_queries_service import list_verified_queries_for_project
+
+        saved = list_verified_queries_for_project(req.project_id)
+    except Exception:  # noqa: BLE001
+        return None
+    asked = _normalize_question(req.prompt)
+    if not asked:
+        return None
+    asked_set = set(asked)
+    best, best_score = None, 0.0
+    for vq in saved:
+        if str(vq.get("target") or "SNOWFLAKE").upper() not in (dialect, "LOCAL"):
+            continue
+        words = set(_normalize_question(vq.get("question") or ""))
+        if not words:
+            continue
+        score = len(asked_set & words) / len(asked_set | words)
+        if score > best_score:
+            best, best_score = vq, score
+    if best is None or best_score < 0.85:
+        return None
+    return QueryResolutionPlan(
+        original_prompt=req.prompt,
+        detected_metrics=[],
+        detected_dimensions=[],
+        resolved_tables=[best.get("view_name")] if best.get("view_name") else [],
+        generated_sql=str(best.get("sql") or ""),
+        confidence_score=1.0,
+        explanation=f'Verified answer: the reviewed query saved for "{best.get("question")}".',
+        trust="verified",
+        trust_detail=f"Saved by {best.get('verified_by') or 'a reviewer'}",
+    )
+
+
+def _with_trust(plan: QueryResolutionPlan, project_id: Optional[str]) -> QueryResolutionPlan:
+    """Label the answer with what is known about its measures vs Power BI."""
+    if plan.trust == "verified" or not plan.generated_sql or not plan.answerable:
+        return plan
+    try:
+        from semabridge.reconciliation.certification_service import check_sql_certification_status
+
+        status = check_sql_certification_status(plan.generated_sql, project_id=project_id)
+    except Exception:  # noqa: BLE001
+        plan.trust = plan.trust or "unverified"
+        return plan
+    certified = status.get("certified") or []
+    failed = status.get("failed") or []
+    uncertified = status.get("uncertified") or []
+    if failed:
+        plan.trust = "differs"
+        plan.trust_detail = "Failed the Power BI comparison: " + ", ".join(failed)
+    elif certified and not uncertified:
+        plan.trust = "matches_power_bi"
+        plan.trust_detail = "Every measure used matches Power BI: " + ", ".join(certified)
+    else:
+        plan.trust = "unverified"
+        plan.trust_detail = ("Not yet compared with Power BI: " + ", ".join(uncertified)) if uncertified else None
+    return plan
 
 
 def _with_answer_source(plan: QueryResolutionPlan, scope: ProjectScope) -> QueryResolutionPlan:

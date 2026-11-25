@@ -44,7 +44,12 @@ def extract_semantic_view_metrics(sql: str) -> List[str]:
     """Extract logical metric tokens referenced in ``SEMANTIC_VIEW(... METRICS ...)`` SQL."""
     m = _SV_METRICS_RE.search(sql or "")
     if not m:
-        return []
+        # Databricks metric views: MEASURE(`name`) references.
+        return [
+            tok.strip().strip('"').strip("`")
+            for tok in re.findall(r"MEASURE\s*\(\s*([^()]+?)\s*\)", sql or "", flags=re.IGNORECASE)
+            if tok.strip()
+        ]
     raw_items = m.group(1).split(",")
     metrics: List[str] = []
     for item in raw_items:
