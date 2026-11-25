@@ -305,6 +305,18 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Handle URL query parameters (e.g. from Power BI Desktop launcher: /projects/new?source=pbi_desktop&server=...&database=...)
+  const searchParams = useMemo(() => new URLSearchParams(location.search || ''), [location.search]);
+  const preselectedSource = searchParams.get('source');
+  const preselectedServer = searchParams.get('server');
+  const preselectedDatabase = searchParams.get('database');
+
+  useEffect(() => {
+    if (preselectedSource === 'pbi_desktop' || preselectedSource === 'pbidesktop') {
+      setWizardState({ sourceConnector: 'pbi_desktop' });
+    }
+  }, [preselectedSource, setWizardState]);
+
   // Detection logic for resumed draft on mount (only relevant in edit mode)
   useEffect(() => {
     if (sourceConnector === 'pbix') {
@@ -2094,6 +2106,8 @@ export default function CreateProjectPage({ editMode = false, initialData = null
           {step === 2 && (
             <StepConnectorConfig
               sourceConnector={sourceConnector}
+              preselectedServer={preselectedServer}
+              preselectedDatabase={preselectedDatabase}
               targetConnectors={targetConnectors}
               fabricAccountId={selectedConnectionId}
               setFabricAccountId={(nextId) => {

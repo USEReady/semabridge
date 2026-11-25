@@ -5,9 +5,11 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Query, status
 
+from semabridge.sources.base import SourceError, SourceNotFoundError
 from semabridge.sources.pbi_desktop.discovery import discover_running_instances
+from semabridge.sources.pbi_desktop.preselection import validate_preselected_desktop_source
 
 logger = logging.getLogger(__name__)
 
@@ -31,3 +33,37 @@ def list_desktop_instances() -> Dict[str, Any]:
             "total": 0,
             "error": str(exc),
         }
+
+
+@router.get("/validate-preselection")
+def validate_preselection(
+    server: str = Query(..., description="Desktop Analysis Services server (localhost:<port>)"),
+    database: str = Query(..., description="Analysis Services database GUID/name"),
+) -> Dict[str, Any]:
+    """Validate a pre-selected Power BI Desktop instance from launcher params."""
+    try:
+        matched = validate_preselected_desktop_source(server, database)
+        return {
+            "valid": True,
+            "instance": matched.to_dict(),
+        }
+    except SourceNotFoundError as exc:
+        logger.info(f"Pre-selected Desktop instance not found: {exc}")
+        return {
+            "valid": False,
+            "error": "That file isn't open anymore",
+            "message": str(exc),
+            "show_picker": True,
+        }
+    except SourceError as exc:
+        logger.warning(f"Rejected pre-selected Desktop server: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+    except Exception as exc:
+        logger.error(f"Unexpected error validating preselection: {exc}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        )

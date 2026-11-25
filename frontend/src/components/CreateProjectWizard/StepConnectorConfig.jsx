@@ -32,6 +32,8 @@ function getAccountId(account) {
 
 export function StepConnectorConfig({
   sourceConnector,
+  preselectedServer = null,
+  preselectedDatabase = null,
   targetConnectors,
   fabricAccountId,
   setFabricAccountId,
@@ -480,6 +482,8 @@ export function StepConnectorConfig({
         {sourceConnector === 'pbi_desktop' && (
           <PbiDesktopPicker
             selectedInstance={selectedPbixFilePath ? { file_name: selectedPbixFilePath } : null}
+            preselectedServer={preselectedServer}
+            preselectedDatabase={preselectedDatabase}
             onSelectInstance={(inst) => {
               if (inst && onUploadSuccess) {
                 onUploadSuccess(inst.file_path || inst.file_name, inst.file_name);

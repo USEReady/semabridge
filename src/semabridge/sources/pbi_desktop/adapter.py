@@ -34,6 +34,7 @@ from semabridge.sources.base import (
 from semabridge.sources.fabric.report_layer import ReportLayer
 from semabridge.sources.pbi_desktop.discovery import DiscoveredDesktopInstance, discover_running_instances
 from semabridge.sources.pbi_desktop.model_reader import read_tmsl_from_engine
+from semabridge.sources.pbi_desktop.preselection import validate_preselected_desktop_source
 from semabridge.utils.identifiers import clean_pbix_model_name
 
 logger = logging.getLogger(__name__)
@@ -149,24 +150,12 @@ class PbiDesktopAdapter(SemanticSourceAdapter):
 
             if parsed_server is not None:
                 host, port, database = parsed_server
-                # Enforce strictly local host
-                if host.lower() not in ("localhost", "127.0.0.1", "::1"):
-                    raise SourceError(
-                        f"Non-local server rejected: '{host}'. Power BI Desktop adapter only connects to localhost / 127.0.0.1."
-                    )
-
-                # Match running instance by port and database
-                for inst in running_instances:
-                    if inst.port == port and (
-                        not database or inst.database_name.lower() == database.lower()
-                    ):
-                        matched_inst = inst
-                        break
-
-                if not matched_inst:
-                    raise SourceNotFoundError(
-                        f"That file isn't open anymore (no running Power BI Desktop engine on {host}:{port} with database '{database}')."
-                    )
+                server_str = f"{host}:{port}"
+                matched_inst = validate_preselected_desktop_source(
+                    server=server_str,
+                    database=database,
+                    instances_provider=lambda: running_instances,
+                )
             else:
                 # Reference is a file name or file path
                 raw_path = str(ref).strip().strip('"').strip("'")

@@ -6,16 +6,42 @@ export default function PbiDesktopPicker({
   selectedInstance,
   onSelectInstance,
   onSwitchToPbix,
+  preselectedServer = null,
+  preselectedDatabase = null,
 }) {
   const [instances, setInstances] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [fileClosedWarning, setFileClosedWarning] = useState('');
   const [lastRefreshed, setLastRefreshed] = useState(null);
 
   const fetchInstances = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
+      // If pre-selected server & database are provided (e.g. from External Tools launcher)
+      if (preselectedServer && preselectedDatabase) {
+        try {
+          const checkRes = await api.get('/sources/pbi-desktop/validate-preselection', {
+            params: { server: preselectedServer, database: preselectedDatabase },
+          });
+          if (checkRes?.valid && checkRes?.instance) {
+            setFileClosedWarning('');
+            onSelectInstance(checkRes.instance);
+          } else {
+            setFileClosedWarning("That file isn't open anymore. Please select an open Power BI Desktop model from the list below.");
+          }
+        } catch (checkErr) {
+          const detail = checkErr?.response?.data?.detail || checkErr?.message || '';
+          if (detail.toLowerCase().includes('non-local')) {
+            setError(detail);
+            setLoading(false);
+            return;
+          }
+          setFileClosedWarning("That file isn't open anymore. Please select an open Power BI Desktop model from the list below.");
+        }
+      }
+
       const res = await api.get('/sources/pbi-desktop/instances');
       const list = res?.instances || [];
       setInstances(list);
@@ -28,13 +54,14 @@ export default function PbiDesktopPicker({
         );
         if (!stillOpen) {
           // File closed
+          setFileClosedWarning("That file isn't open anymore. Please select an open Power BI Desktop model from the list below.");
           onSelectInstance(null, { fileClosed: true });
         } else {
           // Update instance with latest live status
           onSelectInstance(stillOpen);
         }
-      } else if (list.length === 1) {
-        // Auto-select if only 1 instance is open
+      } else if (!preselectedServer && list.length === 1) {
+        // Auto-select if only 1 instance is open and not pre-selected
         onSelectInstance(list[0]);
       }
     } catch (err) {
@@ -42,11 +69,11 @@ export default function PbiDesktopPicker({
     } finally {
       setLoading(false);
     }
-  }, [selectedInstance, onSelectInstance]);
+  }, [selectedInstance, onSelectInstance, preselectedServer, preselectedDatabase]);
 
   useEffect(() => {
     fetchInstances();
-  }, []);
+  }, [fetchInstances]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -81,6 +108,23 @@ export default function PbiDesktopPicker({
           {loading ? 'Detecting...' : 'Refresh'}
         </button>
       </div>
+
+      {fileClosedWarning && (
+        <div style={{
+          padding: '12px 16px',
+          borderRadius: 8,
+          background: 'rgba(245, 158, 11, 0.1)',
+          border: '1px solid var(--color-warning, #f59e0b)',
+          color: 'var(--color-warning, #f59e0b)',
+          fontSize: 12,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+        }}>
+          <AlertTriangle size={16} />
+          <span>{fileClosedWarning}</span>
+        </div>
+      )}
 
       {error && (
         <div style={{
