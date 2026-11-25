@@ -121,6 +121,23 @@ def changed_since(since: datetime, *, exclude_worker: Optional[str] = None) -> O
         return None
 
 
+def load_collection(collection: str) -> Optional[Dict[str, Any]]:
+    """Every live value of ``collection`` by key (None on error)."""
+    from sqlalchemy import select
+
+    from semabridge.repository.orm.state_models import StateDocument
+
+    try:
+        with _session() as session:
+            rows = session.execute(
+                select(StateDocument).where(StateDocument.collection == collection, StateDocument.deleted.is_(False))
+            ).scalars().all()
+            return {key: value for _c, key, value, _d, _u in _rows_to_changes(rows)}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not read %s state: %s", collection, exc)
+        return None
+
+
 def load_keys(collection: str, keys: Iterable[str]) -> Dict[str, Any]:
     """Live values of ``keys`` in ``collection`` ({} on error)."""
     from sqlalchemy import select

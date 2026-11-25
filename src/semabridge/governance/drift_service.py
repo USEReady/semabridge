@@ -627,7 +627,15 @@ def run_drift_check(
     except Exception as exc:
         logger.info("Drift check Snowflake inspection skipped: %s", exc)
 
-    sim = BlastRadiusSimulator()
+    try:
+        from semabridge.reconciliation.certification_service import get_certified_metric_names
+
+        sim = BlastRadiusSimulator(
+            ontology=ontology_store.get_federated_ontology(),
+            certified_metrics=get_certified_metric_names(project_id),
+        )
+    except Exception:  # noqa: BLE001 -- impact is best-effort
+        sim = BlastRadiusSimulator()
     new_events: List[Dict[str, Any]] = []
     checked = 0
     now = datetime.now(timezone.utc).isoformat()
@@ -984,14 +992,171 @@ def _get_scheduler():
     return _SCHEDULER
 
 
+# ---------------------------------------------------------------------------
+# Schedules: kept in the shared state store (every process, every restart),
+# registered with this process's scheduler, fired only on the scheduler
+# leader, and run against the project's own target.
+# ---------------------------------------------------------------------------
+
+_SCHEDULE_COLLECTION = "drift_schedules"
+
+
+def _stored_schedules() -> List[Dict[str, Any]]:
+    from semabridge.repository import state_store
+
+    state_store.ensure_table()
+    out = [v for v in (state_store.load_collection(_SCHEDULE_COLLECTION) or {}).values() if isinstance(v, dict)]
+    if not out:
+        # Schedules created before they moved to the database.
+        legacy = list(_read_json_file().get("schedules") or [])
+        if legacy:
+            state_store.apply_changes([(_SCHEDULE_COLLECTION, str(e.get("id")), e) for e in legacy if e.get("id")])
+            out = legacy
+    return out
+
+
+def _register_job(entry: Dict[str, Any]) -> None:
+    try:
+        _get_scheduler().add_job(
+            scheduled_drift_job,
+            "interval",
+            minutes=int(entry.get("interval_minutes") or 60),
+            id=str(entry["id"]),
+            replace_existing=True,
+            kwargs={"project_id": entry.get("project_id"), "domain": entry.get("domain"),
+                    "webhook_url": entry.get("webhook_url") or None},
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not register drift schedule %s: %s", entry.get("id"), exc)
+
+
+def restore_schedules() -> int:
+    """Re-register every stored, enabled schedule (call at startup)."""
+    count = 0
+    for entry in _stored_schedules():
+        if entry.get("enabled", True) and entry.get("id"):
+            _register_job(entry)
+            count += 1
+    return count
+
+
+def scheduled_drift_job(project_id: Optional[str] = None, domain: Optional[str] = None,
+                        webhook_url: Optional[str] = None) -> Dict[str, Any]:
+    """A scheduled check. Only the scheduler leader runs it (several server
+    processes each hold the schedule)."""
+    try:
+        from semabridge.core.run_coordination import scheduler_leadership
+
+        if not scheduler_leadership.is_leader():
+            return {"skipped": "not the scheduler leader"}
+    except Exception:  # noqa: BLE001 -- single process: always run
+        pass
+    return run_project_drift_check(project_id=project_id, domain=domain, webhook_url=webhook_url)
+
+
+def run_project_drift_check(project_id: Optional[str], domain: Optional[str] = None,
+                            webhook_url: Optional[str] = None, owner_id: Optional[str] = None,
+                            include_source: bool = True) -> Dict[str, Any]:
+    """Both directions, on the project's own target:
+
+    * target side: the deployed view no longer matches the definitions
+      (Snowflake: expressions; Databricks: views/columns);
+    * source side: the Power BI model changed since the last successful sync.
+    """
+    from semabridge.api.routers.drift_router import _resolve_project_target_type, _run_databricks_drift_check
+
+    target_type = _resolve_project_target_type(project_id)
+    if target_type == "databricks":
+        result = _run_databricks_drift_check(project_id=project_id, owner_id=owner_id)
+    else:
+        result = run_drift_check(project_id=project_id, domain=domain, webhook_url=webhook_url, owner_id=owner_id)
+    result = dict(result or {})
+    result["target_type"] = target_type
+    source_event = check_source_drift(project_id) if include_source else None
+    result["source_changed"] = source_event is not None
+    if source_event is not None:
+        result.setdefault("events", [])
+        if isinstance(result["events"], list):
+            result["events"].append(source_event)
+    return result
+
+
+def check_source_drift(project_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    """A pending "Power BI model changed" event when the source fingerprint
+    differs from the last successful sync's (None if unchanged or unknown).
+    One event per fingerprint: re-checking does not duplicate it."""
+    pid = str(project_id or "").strip()
+    if not pid:
+        return None
+    try:
+        from semabridge.api.services.project_config_store import get_project_config_text
+        from semabridge.api.services.run_records import list_project_runs
+        from semabridge.api.services.run_service import _compat_parse_project_cfg_dict, _project_fingerprint
+
+        parsed = _compat_parse_project_cfg_dict(get_project_config_text(pid) or "")
+        current = _project_fingerprint(pid, parsed)
+        if not current:
+            return None
+        last = next(
+            (r for r in (list_project_runs(pid) or [])
+             if str(r.get("status") or "").lower() in ("success", "warning") and r.get("source_fingerprint")),
+            None,
+        )
+        if not last or last.get("source_fingerprint") == current:
+            return None
+    except Exception as exc:  # noqa: BLE001 -- source drift is best-effort
+        logger.info("Source drift check skipped for %s: %s", pid, exc)
+        return None
+
+    import hashlib
+
+    event_id = "drift-src-" + hashlib.sha256(f"{pid}|{current}".encode()).hexdigest()[:12]
+    state = _load_state()
+    if any(e.get("id") == event_id for e in state["events"]):
+        return None
+    ev = {
+        "id": event_id,
+        "project_id": pid,
+        "domain": None,
+        "metric_name": "(Power BI model)",
+        "drift_type": "SOURCE_CHANGED",
+        "bi_definition": "The Power BI model changed since the last successful sync.",
+        "snowflake_definition": f"Last synced version: {str(last.get('source_fingerprint'))[:24]}",
+        "proposed_snowflake_definition": "Sync the project to apply the changes.",
+        "affected_objects": [],
+        "status": "pending",
+        "resolution_reason": "",
+        "detected_at": datetime.now(timezone.utc).isoformat(),
+        "direction": "source",
+    }
+    state["events"].append(ev)
+    _save_state(state)
+    return ev
+
+
+def resolve_source_drift_events(project_id: str) -> int:
+    """A successful sync applied the source changes: close their events."""
+    state = _load_state()
+    changed = 0
+    for ev in state["events"]:
+        if ev.get("project_id") == project_id and ev.get("direction") == "source" and ev.get("status") == "pending":
+            ev["status"] = "resolved"
+            ev["resolution_reason"] = "Applied by a successful sync."
+            changed += 1
+    if changed:
+        _save_state(state)
+    return changed
+
+
 def create_schedule(
-    *,
     project_id: Optional[str] = None,
     domain: Optional[str] = None,
     interval_minutes: int = 60,
     webhook_url: Optional[str] = None,
     job_type: str = "drift_and_parity",
 ) -> Dict[str, Any]:
+    from semabridge.repository import state_store
+
     sched_id = f"sched-{uuid.uuid4().hex[:8]}"
     entry = {
         "id": sched_id,
@@ -1003,42 +1168,28 @@ def create_schedule(
         "enabled": True,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
-    state = _load_state()
-    state["schedules"].append(entry)
-    _save_state(state)
-
-    try:
-        scheduler = _get_scheduler()
-        scheduler.add_job(
-            run_drift_check,
-            "interval",
-            minutes=entry["interval_minutes"],
-            id=sched_id,
-            replace_existing=True,
-            kwargs={"project_id": project_id, "domain": domain, "webhook_url": webhook_url},
-        )
-    except Exception as exc:
-        logger.warning("Could not register APScheduler job %s: %s", sched_id, exc)
-
+    if state_store.apply_changes([(_SCHEDULE_COLLECTION, sched_id, entry)]) is None:
+        raise RuntimeError("The drift schedule could not be saved.")
+    _register_job(entry)
     return entry
 
 
 def list_schedules(project_id: Optional[str] = None) -> List[Dict[str, Any]]:
-    scheds = _load_state()["schedules"]
+    scheds = _stored_schedules()
     if project_id:
         scheds = [s for s in scheds if s.get("project_id") == project_id]
-    return scheds
+    return sorted(scheds, key=lambda s: str(s.get("created_at") or ""))
 
 
 def delete_schedule(schedule_id: str) -> bool:
-    state = _load_state()
-    before = len(state["schedules"])
-    state["schedules"] = [s for s in state["schedules"] if s["id"] != schedule_id]
-    _save_state(state)
+    from semabridge.repository import state_store
+
+    existed = any(s.get("id") == schedule_id for s in _stored_schedules())
+    state_store.apply_changes([(_SCHEDULE_COLLECTION, schedule_id, None)])
     try:
         if _SCHEDULER is not None:
             _SCHEDULER.remove_job(schedule_id)
     except Exception:
         pass
-    return len(state["schedules"]) < before
+    return existed
 

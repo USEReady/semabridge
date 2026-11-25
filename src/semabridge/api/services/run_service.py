@@ -810,9 +810,18 @@ async def _perform_project_run_impl(run: dict, project_cfg: str, started: float)
 
         if is_scheduled:
             try:
-                from semabridge.governance.drift_service import run_drift_check, list_drift_events
-                drift_check = run_drift_check(project_id=project_id, owner_id=str(user_id) if user_id else None)
-                pending_events = list_drift_events(project_id=project_id, status="pending")
+                from semabridge.governance.drift_service import list_drift_events, run_project_drift_check
+
+                # Target-side drift only (someone changed the deployed view):
+                # a changed Power BI model is what this sync applies, so it
+                # never pauses it. Runs on the project's own target.
+                drift_check = run_project_drift_check(
+                    project_id, owner_id=str(user_id) if user_id else None, include_source=False,
+                )
+                pending_events = [
+                    e for e in list_drift_events(project_id=project_id, status="pending")
+                    if e.get("direction") != "source"
+                ]
                 if drift_check.get("drift_detected", 0) > 0 or len(pending_events) > 0:
                     logger.warning(
                         "[%s] Drift detected on scheduled run (%d pending events). Halting direct upsert to require manual drift approval.",
@@ -934,6 +943,15 @@ async def _perform_project_run_impl(run: dict, project_cfg: str, started: float)
         run["stage_states"] = _build_stage_states(sync_result or {})
         if current_fingerprint:
             run["source_fingerprint"] = current_fingerprint
+
+        # The Power BI changes this sync applied are no longer pending drift.
+        if run["status"] in ("success", "warning"):
+            try:
+                from semabridge.governance.drift_service import resolve_source_drift_events
+
+                resolve_source_drift_events(project_id)
+            except Exception as _drift_exc:  # noqa: BLE001
+                logger.debug("[%s] Source drift resolution skipped: %s", project_id, _drift_exc)
 
         # Verify: after a successful sync, re-check the project's certified
         # measures against Power BI. Non-fatal; a mismatch is a run warning.

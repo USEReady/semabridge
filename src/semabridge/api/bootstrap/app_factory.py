@@ -253,6 +253,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         except Exception as sweep_exc:
             logger.debug('Startup stale-run sweep skipped: %s', sweep_exc)
         _compat_ensure_loaded()
+        try:
+            from semabridge.governance.drift_service import restore_schedules
+
+            logger.info('Drift schedules restored: %d', restore_schedules())
+        except Exception as drift_exc:
+            logger.warning('Drift schedules not restored: %s', drift_exc)
         for project_id, schedule_payload in list(_compat_project_schedules.items()):
             try:
                 # save_project_schedule keeps a disabled schedule (so the UI
