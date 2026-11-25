@@ -410,10 +410,11 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
 
                 # Register allowed model objects for SQL ownership guard
                 from semabridge.connectors.sql_guard import (
+                    reset_guard_scope,
                     set_allowed_model_objects,
-                    clear_allowed_absent_tables,
                 )
-                clear_allowed_absent_tables()
+                # Fresh allowlist for this deploy (scoped to this run only).
+                reset_guard_scope()
                 from semabridge.utils.name_translator import get_target_deployment_name
                 _view_raw = getattr(model, "label", None) or getattr(model, "unique_name", None) or "model"
                 _safe_sv = get_target_deployment_name(_view_raw, "snowflake")

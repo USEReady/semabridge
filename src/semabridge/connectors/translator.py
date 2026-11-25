@@ -941,7 +941,6 @@ class MetricExpressionTranslator:
                         f"Unqualified physical identifier '{ident}' in metric SQL; owners={sorted(set(owners))}"
                     )
                     logger.debug(f"Metric '{metric_name}': {error}")
-                    print(f"DEBUG: Validation failed for '{metric_name}': {error}") # DEBUG PRINT
                     return False, error
             logger.debug(f"No cross-table references found in metric '{metric_name}'")
             return True, None

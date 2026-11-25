@@ -83,6 +83,11 @@ async def readiness():
     except Exception as exc:
         checks["database"] = f"error: {exc}"
 
+    from semabridge.api.bootstrap.startup_state import failures as _startup_failures
+
+    failed_steps = _startup_failures()
+    checks["startup"] = "ok" if not failed_steps else "failed: " + ", ".join(f["step"] for f in failed_steps)
+
     all_ok = all(v == "ok" for v in checks.values())
     return JSONResponse(
         status_code=200 if all_ok else 503,

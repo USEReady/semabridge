@@ -373,6 +373,11 @@ def link_project_account(
     # Ownership check — ensure the account belongs to the requesting user
     if user and account.owner_id != user.id:
         raise HTTPException(status_code=403, detail="Account not found or access denied")
+    # ...and that the requesting user may change this project at all.
+    if user:
+        from semabridge.api.services.project_ownership_service import assert_project_access
+
+        assert_project_access(project_id, str(user.id), log_prefix="LinkAccountAuth")
 
     project.account_id = account.id
     if body.warehouse is not None:

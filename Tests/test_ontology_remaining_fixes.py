@@ -212,7 +212,7 @@ def test_apply_reports_description_and_synonym_changes():
     assert rep["changes"]["synonyms"][0]["new"] == ["Sales"]
     # applying again changes nothing
     rep2 = apply_ontology_to_model(model, domains=[dom])
-    assert rep2["changes"] == {"descriptions": [], "synonyms": []}
+    assert rep2["changes"] == {"descriptions": [], "synonyms": [], "merged_metrics": [], "renamed_metrics": []}
 
 
 def test_changed_verified_queries_lists_only_new_or_modified(monkeypatch):

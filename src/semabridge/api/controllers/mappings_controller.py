@@ -748,8 +748,8 @@ async def _run_dry_run_pipeline(
     )
 
     # Debug: log what we got from the sync result
-    print(f"[DryRun] sync_result status: {sync_result.get('status')}")
-    print(f"[DryRun] preferred_snapshot_id: {preferred_snapshot_id!r}")
+    logger.debug(f"[DryRun] sync_result status: {sync_result.get('status')}")
+    logger.debug(f"[DryRun] preferred_snapshot_id: {preferred_snapshot_id!r}")
     results = sync_result.get("results") or []
     # PBIX only: report-layer field references that don't match any
     # current column/measure (see SourceFormat.unresolved_report_field_references).
@@ -817,7 +817,7 @@ async def _run_dry_run_pipeline(
         if live_schema_error:
             raise HTTPException(status_code=422, detail=live_schema_error)
         target_ddl_drops.extend(summary.get("dropped_entities") or [])
-        print(f"[DryRun] model={r.get('model')!r} sml_snapshot_id={summary.get('sml_snapshot_id')!r}")
+        logger.debug(f"[DryRun] model={r.get('model')!r} sml_snapshot_id={summary.get('sml_snapshot_id')!r}")
         if table_binding_plan is None:
             table_binding_plan = summary.get("table_binding_plan")
         if databricks_plan is None:
@@ -855,12 +855,12 @@ async def _run_dry_run_pipeline(
             snap = _db_manager.get_snapshot(preferred_snapshot_id)
             if snap and isinstance(getattr(snap, "sml_blob", None), dict):
                 sml_blob = snap.sml_blob
-                print(f"[DryRun] Loaded SML blob from preferred_snapshot_id={preferred_snapshot_id[:12]}")
-                print(f"[DryRun] SML unique_name={sml_blob.get('unique_name')!r}")
-                print(f"[DryRun] datasets={[d.get('unique_name') for d in sml_blob.get('datasets', [])]}")
-                print(f"[DryRun] metrics={[m.get('unique_name') for m in sml_blob.get('metrics', [])]}")
+                logger.debug(f"[DryRun] Loaded SML blob from preferred_snapshot_id={preferred_snapshot_id[:12]}")
+                logger.debug(f"[DryRun] SML unique_name={sml_blob.get('unique_name')!r}")
+                logger.debug(f"[DryRun] datasets={[d.get('unique_name') for d in sml_blob.get('datasets', [])]}")
+                logger.debug(f"[DryRun] metrics={[m.get('unique_name') for m in sml_blob.get('metrics', [])]}")
         except Exception as snap_err:
-            print(f"[DryRun] Failed to load preferred snapshot: {snap_err}")
+            logger.debug(f"[DryRun] Failed to load preferred snapshot: {snap_err}")
 
     # Fallback: try each result's snapshot
     if not sml_blob:
@@ -872,7 +872,7 @@ async def _run_dry_run_pipeline(
                 snap = _db_manager.get_snapshot(sid)
                 if snap and isinstance(getattr(snap, "sml_blob", None), dict):
                     sml_blob = snap.sml_blob
-                    print(f"[DryRun] Loaded SML blob from fallback snapshot={sid[:12]}")
+                    logger.debug(f"[DryRun] Loaded SML blob from fallback snapshot={sid[:12]}")
                     break
             except Exception:
                 continue
@@ -1311,9 +1311,7 @@ async def dry_run_mapping(
             },
         )
     except Exception as e:
-        print(f"[Dry Run Error] {str(e)}")
-        import traceback
-        traceback.print_exc()
+        logger.exception("Dry run failed: %s", e)
         return JSONResponse(
             status_code=500,
             content={

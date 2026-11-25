@@ -17,10 +17,11 @@ Strict Allowlist:
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 import os
 import re
-from typing import Any, Callable, List, Optional, Set, Tuple
+from typing import Any, Callable, FrozenSet, List, Optional, Set, Tuple
 from semabridge.core.exceptions import ConnectorError
 from semabridge.utils.logger import get_logger
 
@@ -39,38 +40,54 @@ class SQLOwnershipSecurityError(SQLSecurityGuardError):
     pass
 
 
-# Global or thread-local set of object names allowed for current project/model
-_ALLOWED_MODEL_OBJECTS: Set[str] = set()
-_ALLOWED_ABSENT_TABLES: Set[str] = set()
+# Object names SemaBridge may write for the CURRENT deploy. Each run executes
+# in its own worker thread (and asyncio tasks copy their context), so a
+# ContextVar scopes the allowlist to one run: concurrent runs can neither see
+# nor widen each other's allowlist, and one run clearing its list never
+# clears another's. Call reset_guard_scope() when a deploy starts, because a
+# pooled thread keeps its context between tasks.
+_ALLOWED_MODEL_OBJECTS: ContextVar[FrozenSet[str]] = ContextVar("sb_allowed_model_objects", default=frozenset())
+_ALLOWED_ABSENT_TABLES: ContextVar[FrozenSet[str]] = ContextVar("sb_allowed_absent_tables", default=frozenset())
+
+
+def _normalized(names: Set[str]) -> FrozenSet[str]:
+    return frozenset(n.strip('"').upper() for n in names if n)
+
 
 def set_allowed_model_objects(names: Set[str]) -> None:
-    """Register the set of valid object names (uppercase) produced by SemaBridge for current project/model."""
-    global _ALLOWED_MODEL_OBJECTS
-    _ALLOWED_MODEL_OBJECTS.update({n.strip('"').upper() for n in names if n})
+    """Add object names (uppercase) SemaBridge produces for the current run."""
+    _ALLOWED_MODEL_OBJECTS.set(_ALLOWED_MODEL_OBJECTS.get() | _normalized(names))
+
 
 def get_allowed_model_objects() -> Set[str]:
-    """Get currently registered allowed object names."""
-    return _ALLOWED_MODEL_OBJECTS
+    """Object names allowed for the current run (a copy)."""
+    return set(_ALLOWED_MODEL_OBJECTS.get())
+
 
 def clear_allowed_model_objects() -> None:
-    """Clear registered allowed model objects."""
-    global _ALLOWED_MODEL_OBJECTS
-    _ALLOWED_MODEL_OBJECTS = set()
+    """Clear the current run's allowed model objects."""
+    _ALLOWED_MODEL_OBJECTS.set(frozenset())
 
 
 def set_allowed_absent_tables(names: Set[str]) -> None:
-    """Register uppercase physical table names confirmed absent in the live schema that SemaBridge may create empty."""
-    global _ALLOWED_ABSENT_TABLES
-    _ALLOWED_ABSENT_TABLES.update({n.strip('"').upper() for n in names if n})
+    """Add physical table names confirmed absent that this run may create empty."""
+    _ALLOWED_ABSENT_TABLES.set(_ALLOWED_ABSENT_TABLES.get() | _normalized(names))
+
 
 def get_allowed_absent_tables() -> Set[str]:
-    """Get currently registered allowed absent table names."""
-    return _ALLOWED_ABSENT_TABLES
+    """Absent table names allowed for the current run (a copy)."""
+    return set(_ALLOWED_ABSENT_TABLES.get())
+
 
 def clear_allowed_absent_tables() -> None:
-    """Clear registered allowed absent table names."""
-    global _ALLOWED_ABSENT_TABLES
-    _ALLOWED_ABSENT_TABLES = set()
+    """Clear the current run's allowed absent table names."""
+    _ALLOWED_ABSENT_TABLES.set(frozenset())
+
+
+def reset_guard_scope() -> None:
+    """Start a fresh allowlist scope for a new deploy in this execution context."""
+    clear_allowed_model_objects()
+    clear_allowed_absent_tables()
 
 
 # Strip SQL comments: /* ... */ and -- ...

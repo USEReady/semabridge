@@ -2,13 +2,17 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from semabridge.api.deps import get_db
+from semabridge.api.services.project_ownership_service import (
+    assert_project_access,
+    require_request_user_id,
+)
 from semabridge.repository.orm.models import SynonymOverride
 
 router = APIRouter(prefix="/api/synonyms", tags=["synonyms"])
@@ -37,6 +41,12 @@ class SynonymOverrideRequest(BaseModel):
         if not str(v or "").strip():
             raise ValueError("must not be empty")
         return v.strip()
+
+
+def _guard(request: Request, project_id: str) -> None:
+    """Only the project's owner (or an admin) may read or change its
+    ontology overrides. No-op when auth is disabled."""
+    assert_project_access(project_id, require_request_user_id(request), log_prefix="SynonymAuth")
 
 
 def _clean_synonyms(values: List[str]) -> List[str]:
@@ -72,9 +82,11 @@ def _find_row(
 def get_model_ontology_overrides(
     project_id: str,
     model_name: str,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """Retrieve all ontology overrides for a model."""
+    _guard(request, project_id)
     try:
         rows = db.execute(
             select(SynonymOverride).where(
@@ -103,8 +115,10 @@ def get_synonym_override(
     model_name: str,
     table_name: str,
     column_name: str,
+    request: Request,
     db: Session = Depends(get_db),
 ):
+    _guard(request, project_id)
     try:
         row = _find_row(db, project_id, model_name, table_name, column_name)
         return {
@@ -119,7 +133,8 @@ def get_synonym_override(
 
 @router.post("/")
 @router.patch("/")
-def upsert_synonym_override(req: SynonymOverrideRequest, db: Session = Depends(get_db)):
+def upsert_synonym_override(req: SynonymOverrideRequest, request: Request, db: Session = Depends(get_db)):
+    _guard(request, req.project_id)
     try:
         provided = req.model_fields_set
         row = _find_row(db, req.project_id, req.model_name, req.table_name, req.column_name)
@@ -162,8 +177,10 @@ def delete_synonym_override(
     model_name: str,
     table_name: str,
     column_name: str,
+    request: Request,
     db: Session = Depends(get_db),
 ):
+    _guard(request, project_id)
     try:
         row = _find_row(db, project_id, model_name, table_name, column_name)
         if row is not None:

@@ -339,7 +339,7 @@ def test_override_upsert_is_patch_style():
 
     def call(**fields):
         key = {"project_id": "p-patch", "model_name": "M", "table_name": "T", "column_name": "C"}
-        return upsert_synonym_override(SynonymOverrideRequest(**key, **fields), db=db)
+        return upsert_synonym_override(SynonymOverrideRequest(**key, **fields), request=None, db=db)
 
     call(synonyms=["a"], description="d", business_rules=["r"], data_steward="s")
     # Partial update: only description changes; synonyms / rules / steward untouched.

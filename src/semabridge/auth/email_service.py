@@ -33,8 +33,17 @@ def send_password_reset_email(to_email: str, reset_token: str, username: str) ->
     if not config["host"] or not config["user"]:
         frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:5180")
         reset_url = f"{frontend_url}/auth/reset-password/{reset_token}"
-        # Always print full reset URL when SMTP is not configured so the
-        # developer can complete the flow without reading truncated logs.
+        from semabridge.core.deployment_profile import is_production
+
+        if is_production():
+            # Never write a reset token to a hosted log stream.
+            logger.error(
+                "Password reset requested for %s but SMTP is not configured; no email was sent.",
+                to_email,
+            )
+            return False, None
+        # Local development only: print the full reset URL so the developer
+        # can complete the flow without reading truncated logs.
         print(
             f"\n{'='*60}\n"
             f"[DEV] PASSWORD RESET — SMTP not configured\n"
@@ -199,6 +208,11 @@ def send_run_summary_notification(
     """
 
     if not config["host"] or not config["user"]:
+        from semabridge.core.deployment_profile import is_production
+
+        if is_production():
+            logger.warning("Run notification for %s not sent: SMTP is not configured.", recipient_email)
+            return False
         print(
             f"\n{'='*60}\n"
             f"[DEV] RUN NOTIFICATION — SMTP not configured\n"
