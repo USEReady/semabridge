@@ -486,7 +486,9 @@ class OSIToSMLConverter(BaseConverter):
                 self._flag_reachable_dimension_filters_pending_enrichment(sml)
 
             # 5. Databricks target-specific measure normalization and advisory adaptation
-            if self._target_type == "databricks":
+            # The existing publisher path only: on the planner path the measures
+            # were already translated with the Databricks rules (dialect-correct).
+            if self._target_type == "databricks" and getattr(self.rules, "target", "snowflake") != "databricks":
                 from semabridge.connectors.databricks_measure_translation import (
                     DatabricksMeasureTranslator,
                 )

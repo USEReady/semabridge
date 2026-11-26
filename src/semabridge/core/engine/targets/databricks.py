@@ -134,6 +134,16 @@ def _databricks_connection_for_run(context: RunContext):
 
     cfg = getattr(context.config, "_databricks", None)
     identity_id = str(getattr(target, "identity_id", "") or "").strip()
+    if cfg is None and getattr(context, "project_id", None) is not None:
+        # The resolver the existing deploy path uses (linked account, stored
+        # credentials, then environment): one connection for both paths.
+        try:
+            from semabridge.core.engine.deployment.databricks import resolve_databricks_config_for_context
+
+            cfg = resolve_databricks_config_for_context(context, allow_offline_stub=False)
+        except Exception as exc:  # noqa: BLE001 -- fall back to the account / settings below
+            logger.info("Databricks connection via the deploy resolver unavailable (%s)", type(exc).__name__)
+            cfg = None
     if cfg is None and identity_id:
         try:
             from sqlalchemy import select

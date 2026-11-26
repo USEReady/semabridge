@@ -115,8 +115,11 @@ def _connection(target: Dict[str, Any]):
         global_cfg = get_settings().databricks
     except Exception:
         global_cfg = None
-    ctx = SimpleNamespace(config=SimpleNamespace(target=SimpleNamespace(**target), _databricks=None,
-                                                 databricks=global_cfg))
+    project_id = target.get("_project_id")
+    target = {k: v for k, v in target.items() if k != "_project_id"}
+    ctx = SimpleNamespace(project_id=project_id, account_id=None, run_id=None,
+                          config=SimpleNamespace(target=SimpleNamespace(**target), targets=[dict(target)],
+                                                 _databricks=None, databricks=global_cfg))
     info = _databricks_connection_for_run(ctx)
     if info is None:
         raise HTTPException(status_code=400, detail="no Databricks connection is configured for this project")
@@ -198,7 +201,7 @@ async def preview_deploy(project_id: str, request: Request, body: PreviewRequest
     ctx = _project(project_id, request)
     target = ctx["target"]
     out_dir, plan, _ = _plan(project_id, body.model_subdir, body.cache_project_id)
-    info = _connection(target)
+    info = _connection({**target, "_project_id": project_id})
 
     def work():
         from semabridge.target_backends.databricks.deploy import store
@@ -238,7 +241,7 @@ async def confirm_deploy(project_id: str, request: Request, body: ConfirmRequest
     if intent["status"] == "used":
         return {"run_id": intent["run_id"], "status": "existing"}
     target = ctx["target"]
-    info = _connection(target)
+    info = _connection({**target, "_project_id": project_id})
     live, write_client, _ = await asyncio.to_thread(lambda: _clients(info, run_id=intent["run_id"]))
     await asyncio.to_thread(store.sweep_stale_runs, project_id, str(body.model_subdir or ""))
     from semabridge.core.engine.targets.databricks import stub_form_for_run
@@ -311,7 +314,7 @@ async def reconcile_deploy(project_id: str, request: Request, body: ScopeRequest
 
     ctx = _project(project_id, request)
     target = ctx["target"]
-    info = _connection(target)
+    info = _connection({**target, "_project_id": project_id})
 
     def work():
         live, write_client, _ = _clients(info)
@@ -333,7 +336,7 @@ async def reverify_deploy(project_id: str, request: Request, body: ScopeRequest)
     from semabridge.target_backends.databricks.deploy.execute import reverify
 
     ctx = _project(project_id, request)
-    info = _connection(ctx["target"])
+    info = _connection({**ctx["target"], "_project_id": project_id})
 
     def work():
         live, _, _ = _clients(info)

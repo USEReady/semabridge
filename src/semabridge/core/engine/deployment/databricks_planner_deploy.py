@@ -73,7 +73,13 @@ def deploy_planned_views(context: Any) -> Dict[str, Any]:
         ).strip():
             raise DeploymentError("The project's Databricks target has no catalog or schema: set them in the project settings.")
         out_dir, plan, current = ctl._plan(project_id, model_key)
-        info = ctl._connection(target)
+        from semabridge.core.engine.targets.databricks import _databricks_connection_for_run
+
+        try:
+            info = _databricks_connection_for_run(context)
+        except Exception:  # noqa: BLE001 -- a context without engine config
+            info = None
+        info = info or ctl._connection({**target, "_project_id": project_id})
         live, write_client, warehouse_id = ctl._clients(info)
         staging = ctl._staging(target)
     except HTTPException as exc:

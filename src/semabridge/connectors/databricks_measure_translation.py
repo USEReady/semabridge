@@ -91,14 +91,23 @@ class DatabricksMeasureTranslator:
                         text = text[:open_idx] + replacement + text[cast_end:]
                     continue
             # Simple token/backtick-quoted identifier before ::FLOAT
+            # Take the whole (possibly qualified) name: alias.`col`, `a`.`b`, a.b.c
             tok_start = idx
-            if text[idx] == "`":
-                tok_start = text.rfind("`", 0, idx)
-                if tok_start < 0:
-                    tok_start = idx
-            else:
-                while tok_start > 0 and (text[tok_start - 1].isalnum() or text[tok_start - 1] in "_."):
-                    tok_start -= 1
+            while True:
+                if text[tok_start] == "`":
+                    opening = text.rfind("`", 0, tok_start)
+                    if opening < 0:
+                        break
+                    tok_start = opening
+                else:
+                    while tok_start > 0 and (text[tok_start - 1].isalnum() or text[tok_start - 1] == "_"):
+                        tok_start -= 1
+                if tok_start > 1 and text[tok_start - 1] == "." and (
+                    text[tok_start - 2] == "`" or text[tok_start - 2].isalnum() or text[tok_start - 2] == "_"
+                ):
+                    tok_start -= 2
+                    continue
+                break
             token = text[tok_start : idx + 1].strip()
             if not token:
                 break
