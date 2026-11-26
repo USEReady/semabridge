@@ -207,7 +207,11 @@ class DatabricksSqlClient:
             if response.status == 200:
                 return response
             message = _error_message(response)
-            if response.status in _RETRY_HTTP and attempt < self.max_attempts:
+            # A write is resubmitted only on 429 (the request was rejected, not run). After
+            # 502/503/504 it may already have executed: the caller gets an error and decides
+            # (the deploy treats it as an uncertain outcome; reads are retried as before).
+            if response.status in _RETRY_HTTP and attempt < self.max_attempts and (
+                    resubmit_safe or response.status == 429):
                 self._backoff(attempt, response.retry_after, deadline, f"{method} {path}: HTTP {response.status}")
                 continue
             raise DatabricksSqlError(

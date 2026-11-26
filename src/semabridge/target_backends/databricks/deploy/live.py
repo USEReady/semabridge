@@ -30,6 +30,8 @@ class Live:
     def schema_privileges(self, catalog: str, schema: str, principal: str) -> Optional[FrozenSet[str]]: ...
     def show_create(self, fqn: str) -> Optional[str]: ...
     def has_rows(self, fqn: str) -> Optional[bool]: ...                            # None: could not check
+    def run_read(self, sql: str) -> Any: ...                                         # a guarded READ statement
+    def show_grants(self, fqn: str) -> Optional[List[Tuple[str, str]]]: ...        # [(principal, privilege)]
     def grants(self, securable: str, full_name: str) -> Optional[List[Dict[str, Any]]]: ...   # direct grants
     def owner(self, securable: str, full_name: str) -> Optional[str]: ...
     def statement_status(self, statement_id: str) -> Optional[str]: ...           # PENDING/RUNNING/SUCCEEDED/...
@@ -59,6 +61,10 @@ class DatabricksLive(Live):
         if getattr(getattr(client, "guard", None), "mode", READ) != READ:
             raise LiveError("the live adapter must use a read-only client")
         self.client = client
+
+    @property
+    def warehouse_id(self) -> Optional[str]:
+        return getattr(self.client, "warehouse_id", None)
 
     def _scalar(self, sql: str) -> Optional[str]:
         v = self.client.execute(sql).scalar()
@@ -143,6 +149,36 @@ class DatabricksLive(Live):
         except Exception:
             return None
         return None if not res.rows else str(next(iter(res.rows[0].values())) or "") or None
+
+    def run_read(self, sql: str) -> Any:
+        """A read-only statement (staging validation); raises on failure."""
+        return self.client.execute(sql)
+
+    def show_grants(self, fqn: str) -> Optional[List[Tuple[str, str]]]:
+        try:
+            rows = self.client.execute(f"SHOW GRANTS ON TABLE {_quoted(fqn)}").rows
+        except Exception:
+            return None
+        out = []
+        for r in rows:
+            low = {str(k).lower(): v for k, v in r.items()}
+            principal = low.get("principal") or low.get("grantee")
+            priv = low.get("actiontype") or low.get("action_type") or low.get("privilege")
+            if principal and priv:
+                out.append((str(principal), str(priv).upper()))
+        return sorted(out)
+
+    def view_text(self, fqn: str) -> Optional[str]:
+        """The full stored definition ("View Text" row of DESCRIBE TABLE EXTENDED)."""
+        try:
+            rows = self.client.execute(f"DESCRIBE TABLE EXTENDED {_quoted(fqn)}").rows
+        except Exception:
+            return None
+        for r in rows:
+            vals = list(r.values())
+            if vals and str(vals[0] or "").strip().lower() == "view text":
+                return str(vals[1] or "") or None
+        return None
 
     def has_rows(self, fqn: str) -> Optional[bool]:
         try:

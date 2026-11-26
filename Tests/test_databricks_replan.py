@@ -151,7 +151,8 @@ def test_step6b_writes_the_cache_and_plan_meta(tmp_path, monkeypatch):
     )
     _run_databricks_planner(None, ctx, _table_plan())
     meta = ctx.databricks_view_plan["meta"]
-    assert meta["cache_ref"] == {"project_id": "preview-xyz", "model_subdir": None}
+    # binding_project_id: the real project the (preview) plan belongs to (3.8 deploy ownership)
+    assert meta["cache_ref"] == {"project_id": "preview-xyz", "model_subdir": None, "binding_project_id": "preview-xyz"}
     assert meta["source"] == "dry_run" and meta["basis"]["table_check"] == "live" and meta["basis"]["table_check_at"]
     out = Path("output/databricks/preview-xyz")
     assert (out / replan.CACHE_FILE).exists() and (out / replan.PLAN_MD).exists()

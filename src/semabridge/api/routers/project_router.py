@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from semabridge.api.controllers.composite_controller import router as composite_router
+from semabridge.api.controllers.databricks_deploy_controller import router as databricks_deploy_router
 from semabridge.api.controllers.dry_run_jobs_controller import router as dry_run_jobs_router
 from semabridge.api.controllers.folders_controller import router as folders_router
 from semabridge.api.controllers.graph_controller import router as graph_router
@@ -24,5 +25,6 @@ for child_router in [
     versioning_router,
     pbix_router,
     composite_router,
+    databricks_deploy_router,
 ]:
     router.include_router(child_router)

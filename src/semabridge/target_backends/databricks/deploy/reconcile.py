@@ -38,7 +38,7 @@ FAILURE_STATES = {"FAILED", "CANCELED", "CANCELLED", "CLOSED"}
 
 
 def _live_hash(live: Live, info: Optional[Dict[str, Any]], fqn: str) -> Optional[str]:
-    body = D.extract_yaml((info or {}).get("view_definition")) or D.extract_yaml(live.show_create(fqn))
+    body = D.live_body(live, fqn, info)
     try:
         return D.definition_hash(body) if body else None
     except D.DefinitionError:
@@ -97,6 +97,15 @@ def _decide(live: Live, op: Dict[str, Any], run: Dict[str, Any]) -> Tuple[str, s
     return "uncertain", f"unrecognised statement status {status!r}", info
 
 
+def _stub_names(store: Any, run_id: str, fqn: str) -> List[Dict[str, Any]]:
+    """The stub-table name rows a run's intent planned for the table ``fqn``."""
+    intent = store.intent_for_run(run_id)
+    preview = ((intent or {}).get("intent") or {}).get("preview") or {}
+    datasets = {t.get("name") for t in preview.get("stub_tables") or [] if str(t.get("fqn")) == fqn}
+    return [n for n in preview.get("names_to_record") or []
+            if n.get("kind") == "stub_table" and n.get("view_source") in datasets]
+
+
 def reconcile(destination: str, live: Live, *, lease_run_id: str, store: Any = None) -> Dict[str, Any]:
     if store is None:
         from semabridge.target_backends.databricks.deploy import store as store_mod
@@ -119,25 +128,50 @@ def reconcile(destination: str, live: Live, *, lease_run_id: str, store: Any = N
         if outcome == "succeeded" and op["kind"] == S.CREATE_STAGING:
             staging.append(op["target_fqn"])
         if outcome == "succeeded" and op["kind"] in (S.CREATE_VIEW, S.ALTER_VIEW, S.STUB_TABLE) and run:
+            kind = "stub_table" if op["kind"] == S.STUB_TABLE else "view"
             store.record_object(run_id=op["run_id"], project_id=run["project_id"], model_key=run["model_key"],
-                                kind="stub_table" if op["kind"] == S.STUB_TABLE else "view", fqn=op["target_fqn"],
+                                kind=kind, fqn=op["target_fqn"],
                                 outcome="reconciled", uc_object_id=(info or {}).get("id"),
                                 definition_hash=op.get("definition_hash"),
                                 details={"comment": (info or {}).get("comment")})
+            from semabridge.target_backends.databricks.deploy.execute import names_for
+
+            names = (_stub_names(store, op["run_id"], op["target_fqn"]) if kind == "stub_table"
+                     else names_for(store, op["run_id"], op["target_fqn"], "view", None))
+            if names:
+                store.record_names(run_id=op["run_id"], project_id=run["project_id"], model_key=run["model_key"],
+                                   names=names)
         results.append({**op, "outcome": outcome, "why": why})
     # A run interrupted while "running": partial (something landed), failed (nothing
     # landed) or uncertain (a person must look / statements still running).
     for run_id in sorted({r["run_id"] for r in results}):
         run = runs.get(run_id) or {}
-        if run.get("status") != "running":
+        if run.get("status") not in ("running", "uncertain"):
             continue
         mine = [r for r in results if r["run_id"] == run_id]
         if any(r["outcome"] in ("open", "uncertain") for r in mine):
             status = "uncertain"
         else:
-            status = "partial" if any(r["outcome"] == "succeeded" for r in mine) else "failed"
+            states = {j["state"] for j in store.journal(run_id)}
+            status = "partial" if "succeeded" in states else "failed"
         store.finish_run(run_id, status, {"reconciled": [{k: r[k] for k in ("seq", "kind", "target_fqn", "outcome")}
                                                          for r in mine]})
+    # Staging copies a stopped run definitely created (statement succeeded) but never
+    # dropped: ours if the object is still there, owned by that run's identity, with
+    # the definition that statement set.
+    for left_op in store.leftover_staging(destination):
+        run = runs.setdefault(left_op["run_id"], store.run_info(left_op["run_id"]) or {})
+        try:
+            info = live.table_info(left_op["target_fqn"])
+        except Exception:
+            continue
+        if info is None:
+            continue
+        if _owner_ok(info, run) and _live_hash(live, info, left_op["target_fqn"]) == left_op.get("definition_hash"):
+            staging.append(left_op["target_fqn"])
+        else:
+            results.append({**left_op, "kind": S.CREATE_STAGING, "outcome": "uncertain",
+                            "why": "a leftover staging copy does not match what this run created; left in place"})
     left = [r for r in results if r["outcome"] in ("uncertain", "open")]
     return {"status": "needs_attention" if left else "reconciled", "operations": results,
             "staging_to_drop": sorted(set(staging))}

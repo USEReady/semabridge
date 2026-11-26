@@ -461,3 +461,25 @@ def test_service_permission_audit(monkeypatch) -> None:
                         lambda info, catalog, schema: {"status": "ok", "catalog": catalog, "schema": schema})
     result = asyncio.run(service.audit_databricks_permissions(catalog="workspace", schema="semabridge_dev"))
     assert result == {"status": "ok", "catalog": "workspace", "schema": "semabridge_dev"}
+
+
+def test_server_errors_resubmit_reads_but_never_writes() -> None:
+    """3.8b review: after 502/503/504 a write may already have run -- it is not
+    resubmitted (the deploy treats the error as an uncertain outcome). 429 means
+    the request was rejected, so a write may be retried."""
+    from semabridge.target_backends.databricks.guard import WRITE, DatabricksSqlGuard, WritePlan
+
+    write_sql = "CREATE VIEW `workspace`.`semabridge_dev`.`v` WITH METRICS LANGUAGE YAML AS $$\nversion: 1.1\n$$"
+    guard = DatabricksSqlGuard(WRITE, WritePlan.of(views=["workspace.semabridge_dev.v"]))
+    fake = FakeDatabricks().on("POST", "/api/2.0/sql/statements", HttpResponse(status=503, body={"message": "x"}),
+                               succeeded())
+    with pytest.raises(DatabricksSqlError) as info:
+        client(fake, guard=guard).execute(write_sql)
+    assert info.value.http_status == 503 and len(fake.calls) == 1
+    fake = FakeDatabricks().on("POST", "/api/2.0/sql/statements", HttpResponse(status=503, body={"message": "x"}),
+                               succeeded())
+    assert client(fake).execute("SELECT 1").scalar() == 1 and len(fake.calls) == 2      # reads still retried
+    fake = FakeDatabricks().on("POST", "/api/2.0/sql/statements",
+                               HttpResponse(status=429, body={"message": "slow"}, retry_after=0.1), succeeded())
+    client(fake, guard=guard).execute(write_sql)
+    assert len(fake.calls) == 2

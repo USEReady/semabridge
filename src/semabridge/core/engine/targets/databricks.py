@@ -54,13 +54,14 @@ def _convert_to_databricks_target(self, context: RunContext) -> None:
     from semabridge.core.engine.conversion.rules_choice import databricks_planner_enabled
 
     # With the planner path on, Step 6 wrote Databricks SQL (Phase 3.2); the
-    # existing publisher expects today's SQL, so it must not run on it. The
-    # planner path's own Step 8 lands in Phase 3.8.
+    # existing publisher expects today's SQL, so it must not run on it. Planner-path
+    # deploys (3.8) run only from a confirmed deployment intent.
     if databricks_planner_enabled(context):
         raise ConversionError(
-            "Databricks planner path (behavior.databricks.use_planner_path) is on, but its "
-            "deploy steps are not built yet (Phase 3.8). Dry runs work; to deploy with the "
-            "existing Databricks publisher, turn use_planner_path off."
+            "On the Databricks planner path (behavior.databricks.use_planner_path), metric views are "
+            "deployed from the project's Databricks plan panel (Deploy preview, then Confirm), which shows "
+            "exactly what will run; a sync run never deploys them. To deploy with the existing Databricks "
+            "publisher instead, turn use_planner_path off."
         )
 
     publisher = DatabricksPublisher(context.config.databricks, behavior=context.behavior)
@@ -281,11 +282,18 @@ def databricks_planner_settings(context: RunContext):
     # 3.8 (A5): names already deployed for this model are kept on re-plan.
     from semabridge.target_backends.databricks.deploy.names import reserved_for
 
-    reserved, status = reserved_for(str(getattr(context, "project_id", "") or ""),
-                                    getattr(context, "physical_namespace", None))
+    reserved, status = reserved_for(owning_project_id(context), getattr(context, "physical_namespace", None))
     values.update(reserved)
     context.databricks_names_history = status
     return PlannerSettings(**values)
+
+
+def owning_project_id(context: RunContext) -> str:
+    """The project a dry run belongs to. Dry runs execute as a transient preview
+    project (``preview-...``); the real project travels as ``binding_project_id``.
+    Deployed-name history and plan ownership are the real project's."""
+    payload = getattr(context, "config_payload", None) or {}
+    return str(payload.get("binding_project_id") or getattr(context, "project_id", "") or "")
 
 
 def stub_form_for_run(context: RunContext) -> str:
@@ -401,7 +409,10 @@ def _run_databricks_planner(self, context: RunContext, table_plan) -> None:
     subdir = getattr(context, "physical_namespace", None)
     out_dir = replan.output_dir(context.project_id, subdir)
     revision = replan.now_revision()
-    cache_ref = {"project_id": str(context.project_id), "model_subdir": subdir}
+    cache_ref = {"project_id": str(context.project_id), "model_subdir": subdir,
+                 # the real project this (preview) plan belongs to: deploy accepts the plan
+                 # only for this project, and re-plans read its deployed-name history
+                 "binding_project_id": owning_project_id(context)}
     try:
         plan["meta"] = replan.write_cache(
             out_dir, sml_model=context.sml_model, table_plan=table_plan, security_roles=settings.security_roles,

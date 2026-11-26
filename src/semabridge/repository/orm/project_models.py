@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, func, true, false
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, func, true, false
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from semabridge.repository.orm.base import Base
@@ -256,7 +256,7 @@ class DatabricksDeployment(Base):
     run_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     project_id: Mapped[str] = mapped_column(String(PROJECT_ID_LENGTH), nullable=False)
     model_key: Mapped[str] = mapped_column(String(255), nullable=False, default="")
-    plan_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    plan_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)   # millisecond revision ids
     writer_revision: Mapped[str] = mapped_column(String(32), nullable=False)
     dbsql_version: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     metastore_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -356,3 +356,31 @@ class DatabricksDeployLease(Base):
     holder_run_id: Mapped[str] = mapped_column(String(64), nullable=False)
     acquired_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False)
+
+
+class DatabricksDeployIntent(Base):
+    """A stored deployment intent (3.8b): exactly what a preview showed, bound to
+    the target, identity, bundle and evidence by a fingerprint. Confirming it
+    creates at most one run (``run_id`` is fixed at preview and unique); repeated
+    confirmation returns that run. Unused intents expire."""
+
+    __tablename__ = "databricks_deploy_intents"
+    __table_args__ = (
+        Index("ix_dbx_intent_project", "project_id", "model_key", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    intent_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    project_id: Mapped[str] = mapped_column(String(PROJECT_ID_LENGTH), nullable=False)
+    model_key: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    plan_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)   # millisecond revision ids
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    intent_json: Mapped[str] = mapped_column(Text, nullable=False)
+    # open | used | expired | invalidated
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False)
+    used_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
+    used_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)

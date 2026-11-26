@@ -180,14 +180,15 @@ def _pid() -> str:
 
 
 def test_lease_is_exclusive_renewable_and_expires():
+    FIVE = timedelta(minutes=5)
     key = store.lease_key("ms-" + uuid.uuid4().hex[:6], CAT, SCH)
     t0 = datetime.now(timezone.utc)
-    assert store.acquire_lease(key, "run-a", now=t0)
-    assert not store.acquire_lease(key, "run-b", now=t0 + timedelta(seconds=10))
-    assert store.renew_lease(key, "run-a", now=t0 + timedelta(minutes=4))
-    assert not store.acquire_lease(key, "run-b", now=t0 + timedelta(minutes=8))
-    assert store.acquire_lease(key, "run-b", now=t0 + timedelta(minutes=10))
-    assert not store.renew_lease(key, "run-a", now=t0 + timedelta(minutes=10))
+    assert store.acquire_lease(key, "run-a", ttl=FIVE, now=t0)
+    assert not store.acquire_lease(key, "run-b", ttl=FIVE, now=t0 + timedelta(seconds=10))
+    assert store.renew_lease(key, "run-a", ttl=FIVE, now=t0 + timedelta(minutes=4))
+    assert not store.acquire_lease(key, "run-b", ttl=FIVE, now=t0 + timedelta(minutes=8))
+    assert store.acquire_lease(key, "run-b", ttl=FIVE, now=t0 + timedelta(minutes=10))
+    assert not store.renew_lease(key, "run-a", ttl=FIVE, now=t0 + timedelta(minutes=10))
     assert store.holds_lease(key, "run-b", now=t0 + timedelta(minutes=11))
     store.release_lease(key, "run-b")
     assert store.acquire_lease(key, "run-c")
@@ -748,3 +749,10 @@ def test_reconcile_needs_statement_evidence(tmp_path):
     assert owned[f"{CAT}.{SCH}.ok_by_status"]["uc_object_id"] == "id-ok_by_status"
     assert f"{CAT}.{SCH}.no_evidence" not in owned
     assert store.run_info(run)["status"] == "uncertain"
+
+
+def test_databricks_dimensions_synonym_compares_equal():
+    """Live: Databricks returns `fields` as `dimensions`, re-wrapped and re-ordered."""
+    ours = "version: 1.1\ncomment: a long comment text\nsource: c.s.t\nfields:\n- name: f\n  expr: x\n"
+    theirs = "version: 1.1\n\nsource: c.s.t\n\ncomment: a long\n  comment text\n\ndimensions:\n  - name: f\n    expr: x\n"
+    assert D.definition_hash(ours) == D.definition_hash(theirs)

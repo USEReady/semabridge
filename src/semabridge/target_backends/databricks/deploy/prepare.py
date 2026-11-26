@@ -102,6 +102,8 @@ class DeployPreview:
     missing_grants: List[str] = field(default_factory=list)
     destination_access: Optional[List[Dict[str, Any]]] = None       # shown when incomplete views are published
     names_to_record: List[Dict[str, Any]] = field(default_factory=list)
+    bundle_hashes: Dict[str, str] = field(default_factory=dict)     # view -> body sha256 (bound into the intent)
+    stub_form: Optional[str] = None
     preview_only: bool = True
 
     def block_model(self, code: str, message: str, **details: Any) -> None:
@@ -132,6 +134,8 @@ class DeployPreview:
             "verified_objects": list(self.verified_objects),
             "breaking_changes": list(self.breaking_changes), "unused": list(self.unused),
             "missing_grants": list(self.missing_grants), "destination_access": self.destination_access,
+            "bundle_hashes": dict(self.bundle_hashes), "names_to_record": list(self.names_to_record),
+            "stub_form": self.stub_form,
         }
 
 
@@ -186,7 +190,9 @@ def prepare(req: DeployRequest, live: Live, *, store: Any = None, now: Optional[
     pv.destination = {"catalog": catalog, "schema": schema}
     folder = Path(req.out_dir) / bundle.VIEWS_DIR / str(pv.plan_revision)
     bodies = {v["view"]: (folder / v["file"]).read_bytes().decode("utf-8") for v in manifest.get("views") or []}
+    pv.bundle_hashes = {v["view"]: v["body_sha256"] for v in manifest.get("views") or []}
     stub_form = str(manifest.get("stub_form") or "empty_table")
+    pv.stub_form = stub_form
     if stub_form != str(req.stub_form or "empty_table"):
         pv.block_model("stub_form_changed",
                        f"the plan was made with stub form '{stub_form}' but the project now says "
@@ -247,6 +253,12 @@ def prepare(req: DeployRequest, live: Live, *, store: Any = None, now: Optional[
     except Exception as exc:
         pv.block_model("deploy_history_unreadable", f"the deploy history cannot be read: {exc}")
         owned, history = {}, []
+    ref = meta.get("cache_ref") or {}
+    plan_project = str(ref.get("binding_project_id") or ref.get("project_id") or "")
+    if plan_project and plan_project != str(req.project_id) and (owned or history):
+        pv.block_model("plan_from_other_project",
+                       f"this plan was made under '{plan_project}' (e.g. the wizard), which does not know the names "
+                       "already deployed for this project: run the dry run in this project")
 
     # 6. model-wide / view / table blockers ------------------------------------------------------------
     blocked_views: Dict[str, List[Dict[str, Any]]] = {}
@@ -600,10 +612,11 @@ def _existing_view(item: Item, live: Live, rec: Optional[Dict[str, Any]], identi
         item.block(code, f"{fqn} {msg}")
         return
     item.details["uc_object_id"] = info.get("id")
-    if identity and info.get("owner") and str(info["owner"]).lower() != str(identity).lower():
-        item.block("not_owner", f"{fqn} is owned by {info['owner']}; updating a view's definition requires its owner")
+    if not identity or str(info.get("owner") or "").lower() != str(identity).lower():
+        item.block("not_owner", f"{fqn} is owned by {info.get('owner') or 'an unknown principal'}; updating a "
+                   "view's definition requires its owner")
         return
-    body = D.extract_yaml(info.get("view_definition")) or D.extract_yaml(live.show_create(fqn))
+    body = D.live_body(live, fqn, info)
     if body is None:
         item.block("definition_unreadable", f"the live definition of {fqn} could not be read back")
         return

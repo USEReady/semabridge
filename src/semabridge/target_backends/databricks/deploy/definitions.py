@@ -57,6 +57,10 @@ def canonical(yaml_text: str) -> Dict[str, Any]:
         raise DefinitionError(f"definition is not valid YAML: {exc}") from None
     if not isinstance(doc, dict):
         raise DefinitionError("definition is not a YAML mapping")
+    # Databricks stores the `fields` section under its synonym `dimensions` (seen live):
+    # the same section, so compare them as one.
+    if "dimensions" in doc and "fields" not in doc:
+        doc = {("fields" if k == "dimensions" else k): v for k, v in doc.items()}
     return _norm(doc)
 
 
@@ -99,3 +103,16 @@ def names(yaml_text: str) -> Dict[str, List[str]]:
     fields = [str(f.get("name")) for f in doc.get("fields") or doc.get("dimensions") or [] if isinstance(f, dict)]
     measures = [str(m.get("name")) for m in doc.get("measures") or [] if isinstance(m, dict)]
     return {"fields": fields, "measures": measures}
+
+
+def live_body(live, fqn: str, info=None):
+    """The live definition's YAML. The Unity Catalog table API returns a TRIMMED
+    definition (no comment, display names, synonyms -- seen live), so the full text
+    from DESCRIBE TABLE EXTENDED ("View Text") is preferred, then SHOW CREATE TABLE."""
+    view_text = getattr(live, "view_text", None)
+    for text in ((view_text(fqn) if view_text else None), live.show_create(fqn),
+                 (info or {}).get("view_definition")):
+        body = extract_yaml(text)
+        if body is not None:
+            return body
+    return None

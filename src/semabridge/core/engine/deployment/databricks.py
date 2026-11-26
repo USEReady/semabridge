@@ -57,12 +57,14 @@ def _deploy_to_databricks(self, context: RunContext) -> None:
     from semabridge.core.engine.conversion.rules_choice import databricks_planner_enabled
 
     # Same guard as Step 8: never hand Databricks-dialect SQL (planner path,
-    # Phase 3.2) to the existing publisher. The planner deploy lands in 3.8.
+    # Phase 3.2) to the existing publisher. Planner-path deploys (3.8) run only
+    # from a confirmed deployment intent (api/controllers/databricks_deploy_controller.py).
     if databricks_planner_enabled(context):
         raise DeploymentError(
-            "Databricks planner path (behavior.databricks.use_planner_path) is on, but its "
-            "deploy steps are not built yet (Phase 3.8). To deploy with the existing "
-            "Databricks publisher, turn use_planner_path off."
+            "On the Databricks planner path (behavior.databricks.use_planner_path), metric views are "
+            "deployed from the project's Databricks plan panel (Deploy preview, then Confirm), which shows "
+            "exactly what will run; a sync run never deploys them. To deploy with the existing Databricks "
+            "publisher instead, turn use_planner_path off."
         )
 
     # Check for per-account identity_id scoping

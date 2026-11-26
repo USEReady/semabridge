@@ -183,6 +183,22 @@ def _stored_config(project_id: str) -> Dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _effective_target(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """The target settings a run actually uses -- the same merge as the run engine
+    (core/engine/config.py): ``targets[0]`` filled in under ``target``. A project
+    whose ``target`` holds only a type (written by an older Settings-page save)
+    therefore keeps the catalog/schema of its complete ``targets[0]``. Read-only:
+    returns a new dict; to CHANGE settings use ``_target_block``."""
+    target = cfg.get("target") if isinstance(cfg.get("target"), dict) else None
+    targets = cfg.get("targets")
+    first = targets[0] if isinstance(targets, list) and targets and isinstance(targets[0], dict) else {}
+    if target is None:
+        return dict(first)
+    if first and set(target) <= {"type"} and len(first) > 1:
+        logger.warning("Project target block holds only %r; using the complete targets[0] entry", target)
+    return {**first, **target}
+
+
 def _target_block(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(cfg.get("target"), dict):
         return cfg["target"]
@@ -209,7 +225,7 @@ def _validated_planner_options(opts: Optional[Dict[str, Any]]) -> Optional[Dict[
 
 
 def _require_databricks(project_id: str, cfg: Dict[str, Any]) -> None:
-    target_type = str(_target_block(cfg).get("type") or "").strip().lower()
+    target_type = str(_effective_target(cfg).get("type") or "").strip().lower()
     if target_type and target_type != "databricks":
         raise HTTPException(status_code=400, detail=f"Project '{project_id}' targets {target_type}, not Databricks.")
 
@@ -319,7 +335,7 @@ async def run_databricks_probes(project_id: str, request: Request, body: ProbeRu
     _assert_project_access(project_id, user_id)
     cfg = _stored_config(project_id)
     _require_databricks(project_id, cfg)
-    target = dict(_target_block(cfg))
+    target = dict(_effective_target(cfg))
     target.update(catalog=body.probe_catalog, schema=body.probe_schema)
     try:
         global_cfg = get_settings().databricks

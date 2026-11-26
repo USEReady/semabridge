@@ -1862,6 +1862,48 @@ export const api = {
         return handleResponse(res);
     },
 
+    // ── Databricks deploy (3.8b): preview -> confirm -> run status; reconcile; re-verify ──
+    async previewDatabricksDeploy(projectId, body) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/databricks/deploy/preview`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body || {}),
+        });
+        return handleResponse(res);
+    },
+
+    async confirmDatabricksDeploy(projectId, body) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/databricks/deploy`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body || {}),
+        });
+        return handleResponse(res);
+    },
+
+    async getDatabricksDeployRun(projectId, runId) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/databricks/deploy/runs/${encodeURIComponent(runId)}`);
+        return handleResponse(res);
+    },
+
+    async reconcileDatabricksDeploy(projectId, body) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/databricks/deploy/reconcile`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body || {}),
+        });
+        return handleResponse(res);
+    },
+
+    async reverifyDatabricksDeploy(projectId, body) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/databricks/deploy/reverify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body || {}),
+        });
+        return handleResponse(res);
+    },
+
     async saveDatabricksPlannerOptions(projectId, options) {
         const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/databricks/planner-options`, {
             method: 'PUT',

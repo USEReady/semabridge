@@ -145,6 +145,18 @@ def drop_staging(staging_catalog: str, staging_schema: str, view: str, staging_t
     return Statement(DROP_STAGING, norm, f"DROP VIEW {quoted}", view=view)
 
 
+def drop_staging_fqn(fqn: str) -> Statement:
+    """DROP of a staging view known only by its name (reconcile cleanup)."""
+    from semabridge.target_backends.databricks.guard import _split_name_parts, normalize_name
+    from semabridge.target_backends.databricks.writer import quote_identifier
+
+    parts = _split_name_parts(fqn)
+    if len(parts) != 3 or STAGING_MARKER not in parts[2]:
+        raise StatementError(f"{fqn} is not a staging view")
+    quoted = ".".join(quote_identifier(p) for p in parts)
+    return Statement(DROP_STAGING, normalize_name(quoted), f"DROP VIEW {quoted}", view=parts[2].split(STAGING_MARKER)[0])
+
+
 def write_plan(statements: Iterable[Statement]):
     """The guard WritePlan for exactly these statements."""
     from semabridge.target_backends.databricks.guard import WritePlan

@@ -237,7 +237,7 @@ def _settings(cache: Dict[str, Any], rows: List[Dict[str, Any]], planner_opts: O
     from semabridge.target_backends.databricks.deploy.names import reserved_for
 
     ref = cache.get("cache_ref") or {}
-    history, status = reserved_for(ref.get("project_id"), ref.get("model_subdir"))
+    history, status = reserved_for(ref.get("binding_project_id") or ref.get("project_id"), ref.get("model_subdir"))
     cache["names_history"] = status                   # meta_for (called after) records it
     values["reserved_names"] = history["reserved_names"]
     values["reserved_view_names"] = history["reserved_view_names"]
