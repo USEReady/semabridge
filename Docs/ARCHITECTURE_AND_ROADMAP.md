@@ -1,4 +1,4 @@
-# SemaBridge — Architecture v2 & Priority Roadmap Specification
+# SemaBridge — Architecture  & Priority Roadmap Specification
 
 - **Document Version**: 2.0.0
 - **Verified Branch**: `feature/architecture-v2`
