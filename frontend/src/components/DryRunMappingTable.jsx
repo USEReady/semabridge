@@ -165,33 +165,63 @@ function TableHeader() {
 
 // ─── Single mapping row ───────────────────────────────────────────────────────
 // ─── Single mapping row ───────────────────────────────────────────────────────
-/** Databricks: the planner's final name(s) for this row -- the names that
- * deploy. Several views can name one source field differently. */
-function PlannedNames({ row }) {
+/** Databricks planner: what this row deploys as. null when the planner does
+ * not apply (other targets, planner off, no plan yet). Otherwise
+ * { entries: [{view, name}], names: [unique names], differs } -- differs when
+ * the planner chose a name other than the row's own (e.g. a table prefix
+ * because the name is already used in that metric view). */
+function usePlannedName(row) {
   const planned = useContext(PlannedNamesContext);
   const platform = useTargetPlatform();
   if (!isDatabricks(platform) || !planned) return null;
   const entries = planned.get(String(row.source_path || '')) || [];
-  if (entries.length === 0) {
+  const names = [...new Set(entries.map((e) => e.name))];
+  const own = String(row.target_field || '').toLowerCase();
+  const differs = names.some((n) => String(n).toLowerCase() !== own);
+  return { entries, names, differs };
+}
+
+/** Under the Target Field: a small marker when the planner renamed the field
+ * (reason on hover), or a note when it is in no metric view. */
+function PlannedNames({ row }) {
+  const plan = usePlannedName(row);
+  if (!plan) return null;
+  if (plan.entries.length === 0) {
     return (
       <div style={{ fontSize: 10, color: 'var(--text-tertiary)' }} title="Not in any planned metric view (hidden, left out, or its view is not built)">
         not in a metric view
       </div>
     );
   }
-  const names = [...new Set(entries.map((e) => e.name))];
-  const differs = names.length > 1 || names[0] !== row.target_field;
-  const text = entries.length === 1
-    ? `${entries[0].name} in ${entries[0].view}`
-    : entries.map((e) => `${e.view}: ${e.name}`).join(', ');
+  if (!plan.differs) return null;
+  const views = [...new Set(plan.entries.map((e) => e.view))].join(', ');
   return (
     <div
-      style={{ fontSize: 10, fontWeight: 600, color: differs ? '#fbbf24' : 'var(--text-tertiary)', overflowWrap: 'anywhere' }}
-      title="The planner's final Databricks name (it decides names per metric view)"
+      style={{ fontSize: 10, fontWeight: 600, color: '#fbbf24', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+      title={`"${row.target_field}" is already used by another field in ${views}, so the planner added the table name. Edit to choose the name yourself.`}
     >
-      {differs ? 'Planned: ' : ''}{text}
+      <Info size={10} /> named by the planner
     </div>
   );
+}
+
+/** The Target Field name: the planner's name when it applies (one name, or
+ * each view's name when they differ), else the row's own name. */
+function TargetFieldName({ row }) {
+  const plan = usePlannedName(row);
+  if (plan && plan.names.length > 1) {
+    return (
+      <span style={{ display: 'flex', flexDirection: 'column', gap: 1, whiteSpace: 'normal' }}>
+        {plan.entries.map((e) => (
+          <span key={`${e.view}:${e.name}`}>
+            {e.name} <span style={{ fontWeight: 400, fontSize: 10, color: 'var(--text-tertiary)' }}>in {e.view}</span>
+          </span>
+        ))}
+      </span>
+    );
+  }
+  if (plan && plan.names.length === 1) return plan.names[0];
+  return row.target_field || '— unmapped —';
 }
 
 /** Databricks: put a renamed field back to automatic naming. */
@@ -332,7 +362,7 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
             fontStyle: row.target_field ? 'normal' : 'italic',
             flexShrink: 0,
           }}>
-            {row.target_field || '— unmapped —'}
+            <TargetFieldName row={row} />
           </div>
           {row.target_type && !isMeasure && (
             <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
