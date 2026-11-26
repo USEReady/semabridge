@@ -1,0 +1,279 @@
+"""Pure comparison engine for BI Truth Suite regression verification.
+
+Takes plain values in and returns a verdict out:
+  expected, actual, tolerance, floor, expected_row_count, actual_row_count.
+Does not read a case row, does not import the ORM, does not touch a session.
+Pure arithmetic and data structure comparison.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import Enum
+import math
+import os
+from typing import Any, Dict, List, Optional, Tuple
+
+
+class Verdict(str, Enum):
+    PASS = "PASS"
+    FAIL = "FAIL"
+    ROWS_DIFFER = "ROWS_DIFFER"      # the value agreed, the populations did not
+    NOT_COMPARABLE = "NOT_COMPARABLE"  # nothing could be compared
+
+
+PASS = Verdict.PASS
+FAIL = Verdict.FAIL
+ROWS_DIFFER = Verdict.ROWS_DIFFER
+NOT_COMPARABLE = Verdict.NOT_COMPARABLE
+
+DEFAULT_TOLERANCE_PCT = 0.01   # percent, not a fraction
+DEFAULT_FLOOR = 0.01           # in the measure's own units
+
+
+def get_default_tolerance() -> float:
+    """Retrieve default relative variance tolerance from env or settings (default 0.001 = 0.1%)."""
+    val = os.getenv("SEMABRIDGE_BI_TRUTH_TOLERANCE", "").strip()
+    if val:
+        try:
+            return float(val)
+        except ValueError:
+            pass
+    try:
+        from semabridge.core.settings import get_settings
+        cfg = getattr(get_settings(), "bi_truth", None)
+        if cfg and hasattr(cfg, "tolerance"):
+            return float(cfg.tolerance)
+    except Exception:
+        pass
+    return 1e-3
+
+
+def get_default_absolute_floor() -> float:
+    """Retrieve absolute tolerance floor in measure's own units for values near zero (default 0.0001)."""
+    val = os.getenv("SEMABRIDGE_BI_TRUTH_ABSOLUTE_FLOOR", "").strip()
+    if val:
+        try:
+            return float(val)
+        except ValueError:
+            pass
+    try:
+        from semabridge.core.settings import get_settings
+        cfg = getattr(get_settings(), "bi_truth", None)
+        if cfg and hasattr(cfg, "absolute_floor"):
+            return float(cfg.absolute_floor)
+    except Exception:
+        pass
+    return 1e-4
+
+
+@dataclass
+class Comparison:
+    verdict: Verdict
+    expected: Any = None
+    actual: Any = None
+    variance_pct: Optional[float] = None
+    absolute_difference: Optional[float] = None
+    used_absolute_rule: bool = False
+    tolerance_pct: Optional[float] = None
+    floor: Optional[float] = None
+    expected_row_count: Optional[int] = None
+    actual_row_count: Optional[int] = None
+    reason: str = ""
+    context: Dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def passed(self) -> bool:
+        return self.verdict is Verdict.PASS
+
+
+def _as_number(value: Any) -> Optional[float]:
+    """A float when the value is numeric, otherwise None. Booleans are not numbers."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def compare_values(
+    expected: Any,
+    actual: Any,
+    tolerance_pct: float = DEFAULT_TOLERANCE_PCT,
+    floor: float = DEFAULT_FLOOR,
+    expected_row_count: Optional[int] = None,
+    actual_row_count: Optional[int] = None,
+    context: Optional[Dict[str, Any]] = None,
+) -> Comparison:
+    """Compare one expected value against one actual value.
+
+    Null against null passes: a window with genuinely no data is not a failure.
+    Null against a number fails, and says which side was null.
+    Below the floor the absolute difference decides, because a percentage of a
+    near-zero expected value is meaningless. The floor is in the measure's own
+    units, so a ratio and a currency total do not share one number.
+    A matching value over a differing row count is reported, never passed.
+    """
+    ctx = dict(context or {})
+    base = dict(
+        expected=expected,
+        actual=actual,
+        tolerance_pct=tolerance_pct,
+        floor=floor,
+        expected_row_count=expected_row_count,
+        actual_row_count=actual_row_count,
+        context=ctx,
+    )
+
+    # 1. Nulls, before anything numeric.
+    if expected is None and actual is None:
+        return Comparison(Verdict.PASS, reason="both sides have no value", **base)
+    if expected is None:
+        return Comparison(Verdict.FAIL, reason="the expected value is null and the actual value is not", **base)
+    if actual is None:
+        return Comparison(Verdict.FAIL, reason="the actual value is null and the expected value is not", **base)
+
+    e = _as_number(expected)
+    a = _as_number(actual)
+
+    # 2. Non-numeric values compare as text, case-insensitively.
+    if e is None or a is None:
+        if str(expected).strip().casefold() == str(actual).strip().casefold():
+            return _row_check(Comparison(Verdict.PASS, reason="values match", **base))
+        return Comparison(
+            Verdict.FAIL,
+            reason=f"values differ: expected {expected!r}, got {actual!r}",
+            **base,
+        )
+
+    difference = abs(e - a)
+    base["absolute_difference"] = difference
+
+    # 3. Near zero: the percentage is meaningless, so the floor decides.
+    if abs(e) < floor:
+        base["used_absolute_rule"] = True
+        if difference <= floor:
+            return _row_check(Comparison(
+                Verdict.PASS,
+                reason=f"difference {difference} is within the floor of {floor}",
+                **base,
+            ))
+        return Comparison(
+            Verdict.FAIL,
+            reason=f"difference {difference} exceeds the floor of {floor}",
+            **base,
+        )
+
+    # 4. Everything else: relative variance.
+    variance = (difference / abs(e)) * 100.0
+    base["variance_pct"] = variance
+    if variance <= tolerance_pct:
+        return _row_check(Comparison(
+            Verdict.PASS,
+            reason=f"variance {variance:.6f}% is within {tolerance_pct}%",
+            **base,
+        ))
+    return Comparison(
+        Verdict.FAIL,
+        reason=f"variance {variance:.6f}% exceeds {tolerance_pct}%",
+        **base,
+    )
+
+
+def _row_check(result: Comparison) -> Comparison:
+    """A matching value over a differing population is not a pass."""
+    expected_rows = result.expected_row_count
+    actual_rows = result.actual_row_count
+    if expected_rows is None or actual_rows is None:
+        return result
+    if int(expected_rows) == int(actual_rows):
+        return result
+    result.verdict = Verdict.ROWS_DIFFER
+    result.reason = (
+        f"the value matched but the row counts differ: expected {expected_rows}, "
+        f"got {actual_rows}"
+    )
+    return result
+
+
+def not_comparable(reason: str, context: Optional[Dict[str, Any]] = None) -> Comparison:
+    """For a case or window that could not be evaluated at all."""
+    return Comparison(Verdict.NOT_COMPARABLE, reason=reason, context=dict(context or {}))
+
+
+def summarise(results) -> Dict[str, int]:
+    """Counts by verdict, plus how many were actually compared."""
+    counts = {v.value: 0 for v in Verdict}
+    for r in results:
+        counts[r.verdict.value] += 1
+    counts["compared"] = (
+        counts[Verdict.PASS.value]
+        + counts[Verdict.FAIL.value]
+        + counts[Verdict.ROWS_DIFFER.value]
+    )
+    counts["total"] = sum(1 for _ in results) if not hasattr(results, "__len__") else len(results)
+    return counts
+
+
+def _extract_scalar(val: Any) -> Tuple[Any, Optional[int]]:
+    """Extract single scalar value and row count from query output or benchmark."""
+    if isinstance(val, list):
+        rc = len(val)
+        if rc == 0:
+            return None, 0
+        if rc == 1 and isinstance(val[0], dict):
+            vals = list(val[0].values())
+            if len(vals) == 1:
+                return vals[0], rc
+            chosen = next((v for v in vals if isinstance(v, (int, float))), vals[-1])
+            return chosen, rc
+        return val, rc
+    return val, 1
+
+
+def compare_truth_results(
+    actual: Any,
+    expected: Any,
+    tolerance: Optional[float] = None,
+    absolute_floor: Optional[float] = None,
+    expected_row_count: Optional[int] = None,
+    metric_name: Optional[str] = None,
+) -> Tuple[bool, Optional[str], Dict[str, Any]]:
+    """Backward-compatible adapter for existing bi_truth_service callers."""
+    tol = tolerance if tolerance is not None else get_default_tolerance()
+    floor = absolute_floor if absolute_floor is not None else get_default_absolute_floor()
+
+    act_scalar, act_rc = _extract_scalar(actual)
+    exp_scalar, exp_rc = _extract_scalar(expected)
+
+    effective_expected_rc = expected_row_count if expected_row_count is not None else exp_rc
+
+    # Tolerance is given as fraction e.g. 0.001 (0.1%), convert to percentage for compare_values
+    comp = compare_values(
+        expected=exp_scalar,
+        actual=act_scalar,
+        tolerance_pct=tol * 100.0 if tol < 1.0 else tol,
+        floor=floor,
+        expected_row_count=effective_expected_rc,
+        actual_row_count=act_rc,
+    )
+
+    details = {
+        "tolerance": tol,
+        "absolute_floor": floor,
+        "rule_applied": "absolute_floor" if comp.used_absolute_rule else ("null_match" if comp.expected is None and comp.actual is None else "tolerance"),
+        "expected_row_count": effective_expected_rc,
+        "actual_row_count": act_rc,
+        "delta": comp.absolute_difference,
+        "variance_pct": comp.variance_pct,
+        "verdict": comp.verdict.value,
+        "reason": comp.reason,
+    }
+
+    if comp.verdict is Verdict.PASS:
+        return True, None, details
+    elif comp.verdict is Verdict.ROWS_DIFFER:
+        return False, comp.reason, details
+    else:
+        return False, comp.reason, details
