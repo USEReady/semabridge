@@ -17,6 +17,13 @@ export function parseConfigYamlToInitialData(yamlText, projectMeta) {
     database: '',
     schema: '',
     target_database: '',
+    target_catalog: '',
+    target_source_schemas: '',
+    target_staging_schema: '',
+    target_deploy_principals: '',
+    target_deployers: '',
+    target_stub_form: '',
+    target_on_missing_source: '',
     target_schema: '',
     target_account: '',
     target_warehouse: '',
@@ -41,7 +48,13 @@ export function parseConfigYamlToInitialData(yamlText, projectMeta) {
 
     const parsedSource = tree?.source && typeof tree.source === 'object' ? tree.source : {};
     const targets = Array.isArray(tree?.targets) ? tree.targets : (tree?.target ? [tree.target] : []);
-    const firstTarget = targets[0] && typeof targets[0] === 'object' ? targets[0] : {};
+    const listedTarget = targets[0] && typeof targets[0] === 'object' ? targets[0] : {};
+    // Databricks: target values on top of targets[0], as the backend reads them.
+    const mapTarget = tree?.target && typeof tree.target === 'object' && !Array.isArray(tree.target) ? tree.target : {};
+    const firstTarget = String(listedTarget.type || mapTarget.type || '').toLowerCase() === 'databricks'
+      ? { ...listedTarget, ...mapTarget }
+      : listedTarget;
+    const joinList = (v) => (Array.isArray(v) ? v.map(String).join(', ') : String(v || ''));
     // Fabric target identity/workspace: read from the Fabric target wherever it
     // sits in `targets` (projects saved earlier may list it after a Snowflake
     // target), so editing an existing project shows them filled in.
@@ -84,6 +97,23 @@ export function parseConfigYamlToInitialData(yamlText, projectMeta) {
       database: String(parsedSource.database || ''),
       schema: String(parsedSource.schema || ''),
       target_database: String(firstTarget.database || ''),
+      target_catalog: String(firstTarget.catalog || ''),
+      target_source_schemas: Array.isArray(firstTarget.source_schemas)
+        ? firstTarget.source_schemas.map(String).join(', ')
+        : String(firstTarget.source_schemas || ''),
+      target_staging_schema: String(firstTarget.staging_schema || ''),
+      target_deploy_principals: joinList(firstTarget.deploy_principals),
+      target_deployers: joinList(firstTarget.deployers),
+      target_stub_form: String(firstTarget.stub_form || ''),
+      target_on_missing_source: String(firstTarget.on_missing_source || ''),
+      // Databricks planner options (kept when the project is edited and saved).
+      target_planner: firstTarget.planner && typeof firstTarget.planner === 'object'
+        ? {
+          calculate_mode: firstTarget.planner.calculate_mode ? String(firstTarget.planner.calculate_mode) : undefined,
+          excluded_measures: Array.isArray(firstTarget.planner.excluded_measures)
+            ? firstTarget.planner.excluded_measures.map(String) : [],
+        }
+        : null,
       target_schema: String(firstTarget.schema || ''),
       target_account: String(firstTarget.account || ''),
       target_warehouse: String(firstTarget.warehouse || ''),

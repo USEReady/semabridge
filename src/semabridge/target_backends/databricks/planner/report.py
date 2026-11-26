@@ -1,0 +1,113 @@
+"""A readable Markdown rendering of a plan (PlannerResult.as_dict())."""
+
+from __future__ import annotations
+
+
+def _cell(text) -> str:
+    return str(text if text is not None else "").replace("|", "\\|").replace("\n", " ")
+
+
+def render(plan: dict, title: str) -> str:
+    s = plan["summary"]
+    st = plan["settings"]
+    out = [f"# Databricks metric-view plan: {title}", ""]
+    out.append(f"Mode **{st['calculate_mode']}** · view mode {st['view_mode']} · capabilities "
+               f"{', '.join(st['capabilities']) or 'none'}")
+    out.append("")
+    out.append(f"**{s['views']} views · {s['measures_placed']} measures placed "
+               f"({s['approximate']} approximate, {s['composed']} composed) · {s['measures_left_out']} left out**")
+    out.append("")
+    for v in plan["views"]:
+        out.append(f"## {v['name']}  (source: {v['source_dataset']}, YAML {v['version']}, {v['readiness']})")
+        out.append("")
+        if v["joins"]:
+            out.append("| Join | Table | On | Cardinality | Why | Readiness |")
+            out.append("|---|---|---|---|---|---|")
+            for j in v["joins"]:
+                on = j.get("on_expr") or ", ".join(f"{j['parent']}.{a} = {b}" for a, b in j["on"])
+                out.append(f"| {j['name']} | {j['dataset']} | `` {_cell(on)} `` | {j['cardinality']} | {j['reason']} | {j['readiness']} |")
+            out.append("")
+        out.append(f"**Fields ({len(v['fields'])}):** " + ", ".join(
+            f"{f['name']}{'*' if f['source_verification'] == 'unverified' else ''}" for f in v["fields"]))
+        out.append("")
+        out.append("| Measure | Power BI name | Placement | Status | Readiness | Expression |")
+        out.append("|---|---|---|---|---|---|")
+        for m in v["measures"]:
+            out.append(f"| {m['name']} | {_cell(m['source_name'])} | {m['placement']} | {m['semantic_status']}"
+                       f"{' / unverified' if m['source_verification'] == 'unverified' else ''} | {m['readiness']} | "
+                       f"`` {_cell(m['expr'])} `` |")
+        warned = [m for m in v["measures"] if m["warnings"]]
+        if warned:
+            out.append("")
+            out.append("Warnings:")
+            for m in warned:
+                out.append(f"- **{m['name']}**: " + "; ".join(m["warnings"]))
+        if v["notes"]:
+            out.append("")
+            out.append("Notes:")
+            out += [f"- {n}" for n in v["notes"]]
+        out.append("")
+        out.append(f"Checks for 3.9: {len(v['checks'])} (" + ", ".join(sorted({c['kind'] for c in v['checks']})) + ")")
+        out.append("")
+    if plan["left_out"]:
+        out.append("## Left out")
+        out.append("")
+        out.append("| Measure | Reason | Detail | Root cause |")
+        out.append("|---|---|---|---|")
+        for lo in plan["left_out"]:
+            out.append(f"| {_cell(lo['measure'])} | {lo['reason']} | {_cell(lo['detail'])[:160]} | {_cell(lo['root_cause'])} |")
+        out.append("")
+    if plan.get("tables"):
+        out.append("## Tables")
+        out.append("")
+        out.append("| Model table | Location | Status | Used by |")
+        out.append("|---|---|---|---|")
+        labels = {"bound": "bound (exists)", "proposed_not_created": "proposed — not created",
+                  "unchecked": "proposed — not checked (no connection)"}
+        for t in plan["tables"]:
+            loc = ".".join(str(x) for x in (t.get("catalog"), t.get("schema"), t.get("name")) if x) or "(none)"
+            out.append(f"| {_cell(t['dataset'])} | {_cell(loc)} | {labels.get(t['status'], t['status'])} | "
+                       f"{_cell(', '.join(t.get('views') or []))} |")
+        out.append("")
+    defs = (plan.get("meta") or {}).get("definitions")
+    if defs:
+        out.append("## View definitions")
+        out.append("")
+        if defs.get("status") == "written":
+            out.append(f"Written for plan revision {defs.get('revision')} (writer {defs.get('writer_revision')}); "
+                       "nothing is created in Databricks until deploy (3.8).")
+            out += [f"- {v['view']}: sha256 {v['body_sha256'][:12]}…" + (f" ({len(v['warnings'])} warning(s))" if v["warnings"] else "")
+                    for v in defs.get("views") or []]
+        else:
+            out.append(f"Not written: {_cell(defs.get('error'))}")
+        out.append("")
+    if plan.get("blockers"):
+        out.append("## Publication blockers")
+        out.append("")
+        out.append("Deploy (3.8) refuses to publish while any of these remain.")
+        out.append("")
+        out += [f"- **{b['code']}** [{b.get('scope', 'model')}"
+                f"{': ' + ', '.join(b.get('views') or []) if b.get('views') else ''}]: {_cell(b['message'])}"
+                for b in plan["blockers"]]
+        out.append("")
+    if plan.get("name_requests"):
+        out.append("## Saved names")
+        out.append("")
+        out.append("| Source | Requested | Kind | Result | Views (final name) | Why |")
+        out.append("|---|---|---|---|---|---|")
+        for r in plan["name_requests"]:
+            kind = "your edit (firm)" if r["origin"] == "user" else "saved earlier (soft)"
+            views = ", ".join(f"{v['view']}: {v['final']}" for v in r["views"]) or "-"
+            out.append(f"| {_cell(r['source_path'])} | {r['requested']} | {kind} | {r['status']} | {_cell(views)} | "
+                       f"{_cell(r['reason'])[:200]} |")
+        out.append("")
+    if plan["renames"]:
+        out.append("## Renames")
+        out.append("")
+        out += [f"- {r['view']}: {r['kind']} {r['original']} → {r['final']} ({r['why']})" for r in plan["renames"]]
+        out.append("")
+    if plan["notes"]:
+        out.append("## Notes")
+        out.append("")
+        out += [f"- {n}" for n in plan["notes"]]
+    return "\n".join(out) + "\n"

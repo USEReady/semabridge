@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as _dataclass_field
 from pathlib import Path
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 from semabridge.core.behavior import ConnectorBehavior
 from semabridge.core.settings import Settings
 from semabridge.core.source_format import SourceFormat
@@ -92,6 +92,22 @@ class RunContext:
     # "views": [...], "missing_tables": [...], "blocked": [...], "warnings": [...],
     # "error": None} — see deployment/databricks_preview.py.
     databricks_plan: Optional[Dict[str, Any]] = None
+    # Databricks planner path (Phase 3.4): the bind / stub decision per
+    # table (target_backends/databricks/tables.TablePlan), used by the
+    # planner / YAML writer. Its dict form is table_binding_plan above.
+    databricks_table_plan: Optional[Any] = None
+    # Planner path (Phase 3.6): the metric-view plan (PlannerResult.as_dict()).
+    databricks_view_plan: Optional[Dict[str, Any]] = None
+    # Planner path: saved names as planner requests (the model is not
+    # modified for Databricks); see config.collect_databricks_name_requests.
+    databricks_name_requests: Optional[List[Dict[str, Any]]] = None
+    # PBIX reader that produced the model: "schema" (DataModelSchema JSON,
+    # complete), "pbixray" (binary fallback) or "extract" (other path).
+    pbix_parser: Optional[str] = None
+    # Objects already in the Databricks output schema (lowercase), listed by Step 6b.
+    databricks_existing_objects: Optional[Any] = None
+    # {"host", "warehouse_id"} the dry run talked to (probe evidence lookup, 3.5).
+    databricks_target: Optional[Dict[str, Any]] = None
     # Dry run: Step 8 builds the target DDL (against the live schema) for
     # the preview but writes no target artifacts.
     dry_run: bool = False

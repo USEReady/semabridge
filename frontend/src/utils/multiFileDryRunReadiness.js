@@ -228,17 +228,51 @@ export function flattenSectionRows(sections = []) {
  * model's entry in source.models -- PBIX path or Fabric model name) so one
  * model's rename can never be applied to another model's same-path field.
  */
-export function collectMappingOverrides({ rows = [], sections = null } = {}) {
+export function collectMappingOverrides({ rows = [], sections = null, targetType = '' } = {}) {
+  const databricks = String(targetType || '').toLowerCase().includes('databricks');
   const toOverride = (row) => ({
     source_path: String(row?.source_path || '').trim(),
     target_name: String(row?.target_field || row?.target_name || row?.target || '').trim(),
   });
+  if (!databricks) {
+    // Every row, exactly as before (Snowflake, Fabric, no target).
+    if (Array.isArray(sections) && sections.length > 0) {
+      return sections.flatMap((s) => (s.rows || [])
+        .map((row) => ({ model: s.sourceRef || s.label, ...toOverride(row) }))
+        .filter((o) => o.source_path && o.target_name));
+    }
+    return (Array.isArray(rows) ? rows : []).map(toOverride).filter((o) => o.source_path && o.target_name);
+  }
+  // Databricks: only genuine edits (marked origin "user") and names saved
+  // earlier (kept with their own provenance); suggested names are left to the
+  // planner.
+  const keep = (row, o) => {
+    if (!o.source_path || !o.target_name) return null;
+    const origin = databricksEditOrigin(row, o.target_name);
+    if (origin === null) return null;
+    return origin ? { ...o, origin } : o;
+  };
   if (Array.isArray(sections) && sections.length > 0) {
     return sections.flatMap((s) => (s.rows || [])
-      .map((row) => ({ model: s.sourceRef || s.label, ...toOverride(row) }))
-      .filter((o) => o.source_path && o.target_name));
+      .map((row) => keep(row, { model: s.sourceRef || s.label, ...toOverride(row) }))
+      .filter(Boolean));
   }
-  return (Array.isArray(rows) ? rows : []).map(toOverride).filter((o) => o.source_path && o.target_name);
+  return (Array.isArray(rows) ? rows : []).map((row) => keep(row, toOverride(row))).filter(Boolean);
+}
+
+/**
+ * databricksEditOrigin -- provenance of a Databricks row's name:
+ *   'user'  an explicit edit (edited now, or saved earlier with the marker)
+ *   ''      a name saved earlier without the marker, unchanged (kept, unmarked)
+ *   null    not saved (an automatic or suggested name: the planner names it)
+ */
+export function databricksEditOrigin(row, targetName) {
+  const saved = String(row?.override_origin || '').toLowerCase();
+  const edited = String(row?.status || '').toLowerCase() === 'manual';
+  const changedFromSaved = String(targetName || '') !== String(row?.saved_target_name || '');
+  if (saved === 'user') return 'user';
+  if (saved) return edited && changedFromSaved ? 'user' : '';
+  return edited ? 'user' : null;
 }
 
 /**

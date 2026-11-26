@@ -23,7 +23,7 @@ def test_removed_fields_are_annotated(monkeypatch):
     out = impact.annotate_removed_fields("p1", findings)
     rev, notes = out[0]["removed"]
     assert rev["impact"] == {"certified": True, "severity": "BREAKING", "dependent_metrics": ["Margin %"],
-                             "ai_queries": ["What is revenue by region?"]}
+                             "ai_queries": ["What is revenue by region?"], "reports": []}
     assert notes["impact"]["dependent_metrics"] == [] and notes["impact"]["certified"] is False
     assert out[0]["impact_summary"] == {"fields_with_dependents": 1}
 

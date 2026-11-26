@@ -84,23 +84,19 @@ def _apply_mapping_overrides_from_config(
             target_cfg = targets_cfg[0]
     target_type = str(target_cfg.get("type") or "").strip().lower()
 
-    from semabridge.utils.identifiers import is_column_source_path, is_legacy_auto_column_name, snowflake_target_name
+    from semabridge.target_rules.naming import override_deploy_name
 
     overrides: Dict[str, str] = {}
     for row in raw_overrides:
         if not isinstance(row, dict):
             continue
         source_path = str(row.get("source_path") or "").strip()
-        target_name = str(row.get("target_name") or "").strip()
-        if target_type == "snowflake" and target_name:
-            if is_column_source_path(source_path) and is_legacy_auto_column_name(
-                source_path.split(".columns.", 1)[1], target_name
-            ):
-                # Only the old automatic name (e.g. COL_DATE): not a choice
-                # the user made, so the current rule applies (DATE).
-                continue
-            # Columns: semantic-name rules (DATE stays DATE); metrics: to_alias.
-            target_name = snowflake_target_name(target_name, source_path)
+        # The platform's naming rule (Snowflake: columns use semantic-name
+        # rules, DATE stays DATE; metrics: to_alias). None: only the old
+        # automatic name (e.g. COL_DATE), not a user choice -> current rule.
+        target_name = override_deploy_name(row.get("target_name"), source_path, target_type)
+        if target_name is None:
+            continue
         if source_path and target_name:
             overrides[source_path] = target_name
 
@@ -242,6 +238,71 @@ def _apply_mapping_overrides_from_config(
             renamed_columns,
             renamed_metrics,
         )
+
+def _load_override_rows(config_path: Optional[Path], config_payload: Optional[Dict[str, Any]]) -> list:
+    """The saved ``mappings_overrides`` rows (payload first, else the YAML file)."""
+    if isinstance(config_payload, dict) and isinstance(config_payload.get("mappings_overrides"), list):
+        return list(config_payload.get("mappings_overrides") or [])
+    try:
+        if config_path is None or not Path(config_path).exists():
+            return []
+        parsed = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
+    except Exception as exc:
+        logger.debug("Skipping mapping override load from %s: %s", config_path, exc)
+        return []
+    rows = parsed.get("mappings_overrides") if isinstance(parsed, dict) else None
+    return list(rows) if isinstance(rows, list) else []
+
+
+def collect_databricks_name_requests(
+    config_path: Optional[Path], config_payload: Optional[Dict[str, Any]] = None,
+) -> list:
+    """Databricks planner runs: the saved names as REQUESTS for the planner,
+    without touching the model (labels, names, DAX, synonyms and bindings stay
+    as extracted from Power BI).
+
+    Each request: ``source_path``, ``target_name`` (normalised exactly as the
+    run reads saved names), ``origin`` ("user" = explicit edit -> firm;
+    None = unmarked / historical -> soft) and the original saved text."""
+    from semabridge.api.services.project_config_store import normalize_origin
+    from semabridge.target_rules.naming import override_deploy_name
+
+    requests: Dict[str, Dict[str, Any]] = {}
+    for row in _load_override_rows(config_path, config_payload):
+        if not isinstance(row, dict):
+            continue
+        source_path = str(row.get("source_path") or "").strip()
+        saved = str(row.get("target_name") or "").strip()
+        if not source_path or not saved:
+            continue
+        name = override_deploy_name(saved, source_path, "databricks") or saved
+        # Later duplicates of one path win (same rule as the override table).
+        requests[source_path] = {
+            "source_path": source_path,
+            "target_name": name,
+            "saved_text": saved,
+            "origin": normalize_origin(row.get("origin")),
+        }
+    return list(requests.values())
+
+
+def _apply_overrides_for_run(self, context: RunContext, model: Any, config_path: Any = None,
+                             config_payload: Optional[Dict[str, Any]] = None) -> None:
+    """Saved names for this run. Databricks planner runs collect them as
+    planner requests (the model is not modified); every other run applies them
+    to the model exactly as before."""
+    from semabridge.core.engine.conversion.rules_choice import databricks_planner_enabled
+
+    path = Path(config_path) if config_path is not None else (
+        Path(context.config_path) if context.config_path is not None else None)
+    payload = config_payload if config_payload is not None else context.config_payload
+    if databricks_planner_enabled(context):
+        context.databricks_name_requests = collect_databricks_name_requests(path, payload)
+        return
+    if path is None:
+        return
+    self._apply_mapping_overrides_from_config(model, path, config_payload=payload)
+
 
 def _step1_load_config(
     self,

@@ -154,6 +154,8 @@ def _ast_cache_key(
 
     allow_window_enrichment: bool = False,
 
+    dialect_name: str = "snowflake",
+
 ) -> tuple:
 
     items = tuple(sorted((measure_sql_map or {}).items()))
@@ -224,9 +226,20 @@ def _ast_cache_key(
 
         allow_window_enrichment,
 
+        # The SQL dialect is part of the key: the same DAX renders
+        # differently per target platform, so a cached Snowflake result must
+        # never answer a request for another dialect.
+        dialect_name or "snowflake",
+
     )
 
 from semabridge.utils.naming import sanitize_column, to_alias
+from semabridge.target_rules.base import ReasonCode, SqlDialect
+from semabridge.target_rules.snowflake import SNOWFLAKE_RULES
+
+# Dialect used when a caller does not pass one: Snowflake, which is what
+# every existing caller expects (unchanged behaviour).
+_DEFAULT_DIALECT: SqlDialect = SNOWFLAKE_RULES.dialect
 
 
 
@@ -1917,11 +1930,14 @@ def try_ast_translate(
     model_metadata: Optional[Any] = None,
     dataset_col_lookup: Optional[Dict[str, Any]] = None,
     render_errors: Optional[List[str]] = None,
+    dialect: Optional[SqlDialect] = None,
+    rules: Optional[Any] = None,
 ) -> Optional[str]:
 
     """
 
-    Attempt to translate a DAX expression to Snowflake SQL via AST parsing.
+    Attempt to translate a DAX expression to SQL via AST parsing, spelled
+    in `dialect` (default: Snowflake, as every existing caller expects).
 
 
 
@@ -1971,6 +1987,10 @@ def try_ast_translate(
         table_key_map,
 
         allow_window_enrichment,
+
+        # Platform + dialect: both can change the result.
+        f"{(rules or SNOWFLAKE_RULES).target}:"
+        f"{(dialect or (rules.dialect if rules is not None else _DEFAULT_DIALECT)).name}",
 
     )
 
@@ -2054,6 +2074,8 @@ def try_ast_translate(
 
         model_metadata=model_metadata,
         dataset_col_lookup=dataset_col_lookup,
+        dialect=dialect,
+        rules=rules,
 
     )
 
@@ -2099,7 +2121,7 @@ def try_ast_translate(
 from semabridge.converter.dax import feasibility as _feasibility  # noqa: E402
 from semabridge.converter.dax import sql_renderer as _sql_renderer  # noqa: E402
 
-for _name in ['ADVISORY_CATEGORY_DISCONNECTED_SELECTOR_DECOMPOSED', 'ADVISORY_CATEGORY_PENDING_LIVE_SCHEMA_ENRICHMENT', 'ADVISORY_CATEGORY_UNREACHABLE_DIMENSION', 'BY_DESIGN_EXCLUDED_PREFIX', 'DecomposedSelectorBranch', 'DisconnectedSelectorDecomposition', 'ReachableDimensionFilterPendingEnrichment', 'UnreachableDimensionFilter', '_CONTEXT_TRANSITION_REASON', '_GROUP_GRAIN_TABLE_FUNCS', '_ITERATOR_FUNCS', '_LAG_PERIOD_FUNCS', '_SCOPE_GUARD_FUNCS', '_STRING_PRODUCING_FUNCS', '_ast_contains_func', '_calculate_has_allexcept_modifier', '_calculate_has_direct_all_or_allexcept_modifier', '_calculate_lag_period_of_measure_reference', '_collect_column_ref_tables', '_collect_measure_ref_names', '_dax_text', '_extract_closing_balance_dim', '_find_all_calculate_nodes', '_get_measure_refs', '_get_tables_in_node', '_has_allselected', '_has_case_when_or_if', '_has_closing_balance', '_has_non_decomposable_aggregate', '_has_non_literal_dateadd', '_has_ranking_function', '_has_selectedvalue_in_filter_all', '_has_time_intel_function', '_has_treatas', '_has_window_construct', '_is_empty_branch', '_is_enrichable_all_measure', '_is_leave_one_out', '_is_pure_ratio_or_arithmetic_over_metrics', '_is_selector_over_disconnected_table', '_is_text_producing_node', '_iter_children', '_node_contains_measure_ref', '_node_is_pure_literal', '_refs_any_data', '_resolve_single_branch_dataset', '_walk_if_chain', 'classify_dax_ast_not_applicable', 'dax_calculate_filters_reachable_dimension_pending_enrichment', 'dax_calculate_filters_unreachable_dimension', 'dax_context_transition_failure_reason', 'dax_has_overriding_calculate_filter', 'dax_has_zero_data_dependencies', 'dax_lag_period_of_measure_reference_failure_reason', 'dax_numeric_literal_value', 'dax_root_is_string_producing', 'dax_semantic_fidelity_failure_reason', 'dax_time_intelligence_failure_reason', 'is_by_design_excluded', 'try_decompose_disconnected_selector_metric']:
+for _name in ['ADVISORY_CATEGORY_DISCONNECTED_SELECTOR_DECOMPOSED', 'ADVISORY_CATEGORY_PENDING_LIVE_SCHEMA_ENRICHMENT', 'ADVISORY_CATEGORY_UNREACHABLE_DIMENSION', 'BY_DESIGN_EXCLUDED_PREFIX', 'DecomposedSelectorBranch', 'DisconnectedSelectorDecomposition', 'ReachableDimensionFilterPendingEnrichment', 'UnreachableDimensionFilter', '_CONTEXT_TRANSITION_REASON', '_GROUP_GRAIN_TABLE_FUNCS', '_ITERATOR_FUNCS', '_LAG_PERIOD_FUNCS', '_SCOPE_GUARD_FUNCS', '_STRING_PRODUCING_FUNCS', '_ast_contains_func', '_calculate_has_allexcept_modifier', '_calculate_has_direct_all_or_allexcept_modifier', '_calculate_lag_period_of_measure_reference', '_collect_column_ref_tables', '_collect_measure_ref_names', '_dax_text', '_extract_closing_balance_dim', '_find_all_calculate_nodes', '_get_measure_refs', '_get_tables_in_node', '_has_allselected', '_has_case_when_or_if', '_has_closing_balance', '_has_non_decomposable_aggregate', '_has_non_literal_dateadd', '_has_ranking_function', '_has_selectedvalue_in_filter_all', '_has_time_intel_function', '_has_treatas', '_has_window_construct', '_is_empty_branch', '_is_enrichable_all_measure', '_is_leave_one_out', '_is_pure_ratio_or_arithmetic_over_metrics', '_is_selector_over_disconnected_table', '_is_text_producing_node', '_iter_children', '_node_contains_measure_ref', '_node_is_pure_literal', '_refs_any_data', '_resolve_single_branch_dataset', '_walk_if_chain', 'classify_dax_ast_not_applicable', 'classify_dax_ast_reason', 'dax_calculate_filters_reachable_dimension_pending_enrichment', 'dax_calculate_filters_unreachable_dimension', 'dax_context_transition_failure_reason', 'dax_has_overriding_calculate_filter', 'dax_has_zero_data_dependencies', 'dax_lag_period_of_measure_reference_failure_reason', 'dax_numeric_literal_value', 'dax_root_is_string_producing', 'dax_semantic_fidelity_failure_reason', 'dax_time_intelligence_failure_reason', 'is_by_design_excluded', 'try_decompose_disconnected_selector_metric']:
     if hasattr(_feasibility, _name):  # absent only mid-import; the module back-patches it
         globals()[_name] = getattr(_feasibility, _name)
 if hasattr(_sql_renderer, "DaxSqlRenderer"):

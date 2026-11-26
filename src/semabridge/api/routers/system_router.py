@@ -22,3 +22,13 @@ def demo_status() -> Dict[str, Any]:
         "mock_drift": is_mock_drift_enabled(),
         "default_mode": "live",
     }
+
+
+@router.get("/databricks-planner")
+def databricks_planner_status() -> dict:
+    """Whether Databricks projects deploy through the metric-view planner
+    (behavior.databricks.use_planner_path). Screens use it to show the names
+    that will really deploy."""
+    from semabridge.target_rules.naming import databricks_planner_on
+
+    return {"use_planner_path": databricks_planner_on()}

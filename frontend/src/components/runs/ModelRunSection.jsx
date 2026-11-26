@@ -2,7 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { ChevronDown, ChevronRight, AlertTriangle, Copy, Check, ShieldCheck, Info } from 'lucide-react';
 import StatusBadge from '../common/StatusBadge';
 import UpsertChangesView from '../UpsertChangesView';
-import { PLACEHOLDER_NOTE, isMetricEntry, isPlaceholderEntry, isInternalAutoTable } from '../../utils/placeholderMetric';
+import { platformTerms } from '../../utils/platformTerms';
+import { placeholderNote, isMetricEntry, isPlaceholderEntry, isInternalAutoTable } from '../../utils/placeholderMetric';
 
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
 
@@ -293,7 +294,8 @@ function DroppedItemDetail({ detail, reason }) {
   );
 }
 
-function DroppedFieldsSection({ droppedEntities }) {
+function DroppedFieldsSection({ droppedEntities, targetType = '' }) {
+  const platform = platformTerms(targetType).platform;
   const count = droppedEntities?.length || 0;
   // Hook before the early return: the list can go from empty to non-empty
   // between renders, and hooks must run in the same order every render.
@@ -457,7 +459,7 @@ function DroppedFieldsSection({ droppedEntities }) {
               const isAutoTable = isInternalAutoTable(item);
               const kind = isAutoTable ? 'internal table' : (item.entity_kind || item.kind || item.type || item.entity_type || 'field');
               const rawStage = normalizeStage(item.stage, item.reason);
-              const stageMeta = STAGE_CONFIG[rawStage] || {
+              const stageMeta = (rawStage === 'ddl_deployment' ? { ...STAGE_CONFIG[rawStage], label: `${platform} Deployment` } : STAGE_CONFIG[rawStage]) || {
                 label: item.stage ? String(item.stage).replace(/_/g, ' ') : 'Conversion',
                 color: 'var(--text-secondary)',
                 bg: 'var(--bg-surface-raised)',
@@ -470,7 +472,7 @@ function DroppedFieldsSection({ droppedEntities }) {
               const byDesign = Boolean(item.by_design || isAutoTable);
               const isPlaceholder = isPlaceholderEntry(item);
               const isMetricWarning = !byDesign && isMetricEntry(item);
-              const isSnowflakeReject = !isMetricWarning && (rawStage === 'ddl_deployment' || String(reason).toLowerCase().includes('snowflake'));
+              const isSnowflakeReject = !isMetricWarning && (rawStage === 'ddl_deployment' || String(reason).toLowerCase().includes(platform.toLowerCase()));
 
               return (
                 <div
@@ -534,7 +536,7 @@ function DroppedFieldsSection({ droppedEntities }) {
                         </span>
                       ) : (
                         <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 3, background: 'rgba(239, 68, 68, 0.15)', color: '#ef4444', fontWeight: 700, border: '1px solid rgba(239, 68, 68, 0.3)' }}>
-                          {isSnowflakeReject ? 'Target Rejection' : 'Sync Error'}
+                          {isSnowflakeReject ? `${platform} Rejection` : 'Sync Error'}
                         </span>
                       )}
                     </div>
@@ -552,7 +554,7 @@ function DroppedFieldsSection({ droppedEntities }) {
 
                   {isPlaceholder && (
                     <div style={{ fontSize: 12, color: '#f59e0b', lineHeight: 1.5 }}>
-                      {PLACEHOLDER_NOTE}
+                      {placeholderNote(targetType)}
                     </div>
                   )}
 
@@ -577,6 +579,7 @@ export default function ModelRunSection({
   onToggle,
   formatDuration,
   defaultOpen = false,
+  targetType = '',
 }) {
   const [localOpen, setLocalOpen] = useState(defaultOpen);
   const open = isOpen !== undefined ? isOpen : localOpen;
@@ -660,6 +663,7 @@ export default function ModelRunSection({
           <UpsertChangesView
             delta={entry.upsertDelta}
             modelLabel={entry.label}
+            targetType={targetType || entry.targetType || entry.target_type || ''}
             runContext={{ projectId, runId, model: entry.model }}
           >
             <>
@@ -673,7 +677,7 @@ export default function ModelRunSection({
               <ReconciliationSummary reconciliation={entry.reconciliation} />
 
               {/* Dropped Fields */}
-              <DroppedFieldsSection droppedEntities={entry.droppedEntities || entry.dropped_entities} />
+              <DroppedFieldsSection droppedEntities={entry.droppedEntities || entry.dropped_entities} targetType={targetType || entry.targetType || entry.target_type || ''} />
 
               {/* Execution Stages / Logs */}
               <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', margin: '12px 0 8px 0' }}>

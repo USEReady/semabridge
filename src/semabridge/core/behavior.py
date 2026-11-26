@@ -118,6 +118,35 @@ class CompatibilityBehavior(BaseModel):
 
 class DatabricksBehavior(BaseModel):
     """Databricks-specific deployment behavior controls."""
+    use_planner_path: bool = Field(
+        default=False,
+        description=(
+            "Use the new metric-view planner path (shared DAX translator with Databricks "
+            "rules, planner, YAML writer, guarded deploy). False keeps the existing "
+            "DatabricksPublisher path unchanged."
+        ),
+    )
+    planner_calculate_mode: str = Field(
+        default="approximate",
+        description=(
+            "Planner path: measures whose CALCULATE filters may behave differently under "
+            "slicers. 'approximate' keeps them with a warning (as Snowflake does); 'strict' "
+            "leaves them out."
+        ),
+    )
+    planner_view_mode: str = Field(
+        default="separate_views",
+        description="Planner path: 'separate_views' | 'selected_facts' | 'primary_fact_only'.",
+    )
+    planner_capabilities: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Planner path: ADMIN ALLOW-LIST of optional Databricks features "
+            "('one_to_many_joins', 'mixed_root_views', 'constant_coalesce'). A feature is used "
+            "only when it is ALSO proven by valid probe evidence for the warehouse (Phase 3.5); "
+            "this list can disable a feature but never force an unproven one. Empty = none."
+        ),
+    )
     create_metadata_table: bool = Field(
         default=False,
         description="Create Semabridge metadata Delta table (_semabridge_metadata); disabled by default for metric-view-only deployment"

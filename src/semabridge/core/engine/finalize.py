@@ -386,6 +386,8 @@ def _step10_finalize(
         self._summary.table_binding_plan = context.table_binding_plan
     if context.databricks_plan is not None:
         self._summary.databricks_plan = context.databricks_plan
+    if getattr(context, "databricks_view_plan", None) is not None:
+        self._summary.databricks_view_plan = context.databricks_view_plan
 
     if status == RunStatus.FAILED and self._summary.sml_snapshot_id:
         failure_message = self._summary.errors[-1].message if self._summary.errors else None

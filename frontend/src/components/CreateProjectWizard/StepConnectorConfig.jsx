@@ -56,6 +56,16 @@ export function StepConnectorConfig({
   setTargetDatabase,
   targetSchema,
   setTargetSchema,
+  databricksCatalog = '',
+  setDatabricksCatalog = () => {},
+  databricksSchema = '',
+  setDatabricksSchema = () => {},
+  databricksSourceSchemas = '',
+  setDatabricksSourceSchemas = () => {},
+  databricksStagingSchema = '',
+  setDatabricksStagingSchema = () => {},
+  databricksDeployPrincipals = '',
+  setDatabricksDeployPrincipals = () => {},
   targetAccount,
   setTargetAccount,
   targetWarehouse,
@@ -665,6 +675,7 @@ export function StepConnectorConfig({
 
                 {pbixMultiFileMode ? (
                   <MultiPbixUpload
+                    targetType={[...targetConnectors][0] || ''}
                     entries={pbixFileEntries}
                     onAddFiles={onAddPbixFiles}
                     onRemove={onRemovePbixFile}
@@ -1145,6 +1156,44 @@ export function StepConnectorConfig({
                           {databricksDiscoveryError}
                         </p>
                       )}
+                      <div>
+                        <label style={LABEL}>Source Schemas (where the data tables are)</label>
+                        <input
+                          type="text"
+                          value={databricksSourceSchemas}
+                          onChange={e => setDatabricksSourceSchemas(e.target.value)}
+                          placeholder="e.g. workspace.sb_tests, workspace.sales_data"
+                          style={INPUT}
+                        />
+                        <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
+                          Comma-separated catalog.schema list, searched in order to match the Power BI tables. Leave blank to search the target schema.
+                        </p>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+                        <div>
+                          <label style={LABEL}>Staging Schema (restricted)</label>
+                          <input
+                            type="text"
+                            value={databricksStagingSchema}
+                            onChange={e => setDatabricksStagingSchema(e.target.value)}
+                            placeholder="e.g. workspace.semabridge_staging"
+                            style={INPUT}
+                          />
+                        </div>
+                        <div>
+                          <label style={LABEL}>Staging Access (admin groups)</label>
+                          <input
+                            type="text"
+                            value={databricksDeployPrincipals}
+                            onChange={e => setDatabricksDeployPrincipals(e.target.value)}
+                            placeholder="optional, comma-separated"
+                            style={INPUT}
+                          />
+                        </div>
+                      </div>
+                      <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: -4 }}>
+                        For deploying: an existing schema for temporary copies that only deployers and admins can access. SemaBridge never creates schemas. Can be set later in the project settings.
+                      </p>
                     </div>
                   )}
 

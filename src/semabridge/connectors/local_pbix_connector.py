@@ -1055,6 +1055,15 @@ class LocalPBIXConnector(BaseConnector):
             return None
         return df
 
+    @staticmethod
+    def _query_ran_empty(sh: Any, sql: str) -> bool:
+        """True when the query runs without error and returns no rows."""
+        try:
+            df = sh.execute_query(sql)
+        except Exception:
+            return False
+        return df is not None and len(df) == 0
+
     def _extract_raw_catalog_extras(
         self,
         sh: Any,
@@ -1160,6 +1169,10 @@ class LocalPBIXConnector(BaseConnector):
 
         # Security roles (RLS filters + OLS)
         role_df = self._safe_query(sh, "SELECT * FROM Role")
+        if role_df is None and self._query_ran_empty(sh, "SELECT * FROM Role"):
+            # The Role table was read and holds no rows: "no roles" is known,
+            # not assumed (a failed query leaves the state unknown).
+            extras["roles"] = []
         if role_df is not None:
             perm_codes = {1: "default", 2: "none", 3: "read"}
             model_perm_codes = {1: "none", 2: "read", 3: "readRefresh", 4: "refresh", 5: "administrator"}
@@ -1506,6 +1519,10 @@ class LocalPBIXConnector(BaseConnector):
         for key in ("roles", "perspectives", "cultures"):
             if fallback_result.get(key):
                 model_payload[key] = fallback_result[key]
+        if isinstance(fallback_result.get("roles"), list) and "roles" not in model_payload:
+            # The Role table was read and is empty: "no roles" is known (Databricks
+            # blocks publication when the role state is unknown).
+            model_payload["roles"] = []
 
         logger.info(
             "pbixray fallback TMSL assembled: %s tables, %s relationships",

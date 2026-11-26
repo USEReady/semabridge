@@ -25,6 +25,7 @@ from semabridge.utils.logger import get_logger
 from semabridge.utils.naming import sanitize_column, to_alias
 
 from semabridge.converter.dax_rule_translator import is_simple_metric, rule_based_translation
+from semabridge.target_rules.snowflake import SNOWFLAKE_RULES
 
 from semabridge.connectors.fact_table_naming import tokenize_dataset_name as _tokenize_dataset_name
 
@@ -204,6 +205,18 @@ class DAXTranslator:
     def __init__(self) -> None:
 
         self._tier5_service = None
+        # The target platform's rules for the current translate() call
+        # (default Snowflake, which every existing caller expects): they
+        # word "not applicable" reasons, spell SQL (dialect) and name the
+        # Tier-5 dialect. See translate(rules=...).
+        self._rules = SNOWFLAKE_RULES
+
+    def _shortcut_tiers_enabled(self) -> bool:
+        """The regex shortcut tiers (tier 1, strict CALCULATE, rule-based)
+        and the Snowflake SQL simplifier write Snowflake SQL directly, so
+        they run only for the Snowflake dialect; any other platform goes
+        straight to the shared tree renderer."""
+        return getattr(self, "_rules", SNOWFLAKE_RULES).dialect.name == "snowflake"
 
 
 
@@ -457,7 +470,23 @@ class DAXTranslator:
 
 
 
-    def translate(self,
+    def translate(self, *args: Any, rules: Any = None, **kwargs: Any) -> DAXTranslationResult:
+        """Translate a DAX expression to SQL for a target platform.
+
+        `rules` (TargetRules) picks the platform: its dialect spells the SQL,
+        its policies word "not applicable" reasons, its dialect name goes to
+        Tier 5. Default: the rules of the enclosing call, else Snowflake --
+        so every existing caller is unchanged. All other arguments are those
+        of _translate_impl.
+        """
+        previous = self._rules
+        self._rules = rules if rules is not None else previous
+        try:
+            return self._translate_impl(*args, **kwargs)
+        finally:
+            self._rules = previous
+
+    def _translate_impl(self,
 
                   dax: str,
 
@@ -581,6 +610,7 @@ class DAXTranslator:
                 non_additive_map=measure_non_additive_map,
                 metrics_context=metrics_context,
                 allow_window_enrichment=allow_window_enrichment,
+                rules=self._rules,
             )
             if na_reason:
                 return DAXTranslationResult(
@@ -625,11 +655,13 @@ class DAXTranslator:
                 if parsed_ast is not None and dax_has_overriding_calculate_filter(parsed_ast) and not uses_whole_table_helper:
                     if ADVISORY_CATEGORY_CALCULATE_FILTER_SEMANTICS not in cats:
                         cats.append(ADVISORY_CATEGORY_CALCULATE_FILTER_SEMANTICS)
-                if "CURRENT_DATE()" in result.sql.upper() and not re.search(r"\b(TODAY|NOW)\s*\(", clean_dax, re.IGNORECASE):
+                current_date_sql = self._rules.dialect.current_date().upper()
+                if current_date_sql in result.sql.upper() and not re.search(r"\b(TODAY|NOW)\s*\(", clean_dax, re.IGNORECASE):
                     if ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE not in cats:
                         cats.append(ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE)
-                from semabridge.connectors.snowflake_metric_sql import simplify_dead_arithmetic_sql
-                result.sql = simplify_dead_arithmetic_sql(result.sql)
+                if self._shortcut_tiers_enabled():
+                    from semabridge.connectors.snowflake_metric_sql import simplify_dead_arithmetic_sql
+                    result.sql = simplify_dead_arithmetic_sql(result.sql)
                 result.advisory_categories = cats
                 return result
             if result is not None and result.failure_reason:
@@ -1028,7 +1060,11 @@ class DAXTranslator:
 
 
 
-        rule_sql = rule_based_translation(clean_dax, table_alias, anchor_flag_map=anchor_flag_map)
+        rule_sql = (
+            rule_based_translation(clean_dax, table_alias, anchor_flag_map=anchor_flag_map)
+            if self._shortcut_tiers_enabled()
+            else None
+        )
 
         if rule_sql:
 
@@ -1113,6 +1149,7 @@ class DAXTranslator:
         local_adv: List[str] = []
         if "datasets" not in kwargs and getattr(self, "_current_datasets", None) is not None:
             kwargs["datasets"] = self._current_datasets
+        kwargs.setdefault("rules", getattr(self, "_rules", SNOWFLAKE_RULES))
         sql = try_ast_translate(dax, advisory_categories=local_adv, render_errors=errors, **kwargs)
         if sql:
             for cat in local_adv:
@@ -2158,7 +2195,7 @@ class DAXTranslator:
                         target_col_alias = (ds_aliases.get(ds_n) or ds_n).upper()
                         break
             if is_col_clash:
-                metric_citation = f'{target_col_alias}."{sanitize_column(name, force_uppercase=True)}"'
+                metric_citation = self._rules.dialect.qualify(target_col_alias, sanitize_column(name, force_uppercase=True))
                 resolved[name] = metric_citation
                 if dataset:
                     clean_ds = str(dataset).strip("'\"")
@@ -2275,6 +2312,9 @@ class DAXTranslator:
         dax_ast_parser.DaxSqlRenderer._render_period_to_date).
 
         """
+
+        if not self._shortcut_tiers_enabled():
+            return None  # writes Snowflake SQL directly; other platforms use the tree renderer
 
         clean_dax = " ".join((dax or "").split())
 
@@ -2512,7 +2552,7 @@ class DAXTranslator:
 
         """
 
-        if is_simple_metric(dax):
+        if self._shortcut_tiers_enabled() and is_simple_metric(dax):
 
             logger.info(f"🟢 Metric classified as SIMPLE - using rule-based translation: {metric_name or dax[:50]}")
 
@@ -2554,7 +2594,7 @@ class DAXTranslator:
 
                 metric_name=metric_name,
 
-                dialect="snowflake",
+                dialect=self._rules.dialect.name,
 
             )
 
@@ -2605,6 +2645,27 @@ class DAXTranslator:
     
 
     def batch_translate_tier5(self,
+
+                             metrics_list: List[Tuple[str, str, str, str]],
+
+                             dataset_col_lookup: Optional[Dict[str, set]] = None,
+
+                             dataset_aliases: Optional[Dict[str, str]] = None,
+
+                             relationships: Optional[List[Any]] = None,
+                             rules: Any = None) -> Dict[str, Optional[DAXTranslationResult]]:
+        """`rules` picks the target platform (default: Snowflake); see the
+        full description below."""
+        previous = self._rules
+        self._rules = rules if rules is not None else previous
+        try:
+            return self._batch_translate_tier5_impl(
+                metrics_list, dataset_col_lookup, dataset_aliases, relationships
+            )
+        finally:
+            self._rules = previous
+
+    def _batch_translate_tier5_impl(self,
 
                              metrics_list: List[Tuple[str, str, str, str]],
 
@@ -2714,7 +2775,7 @@ class DAXTranslator:
 
         for metric_name, dax, table_alias, dataset_name in metrics_list:
 
-            if is_simple_metric(dax):
+            if self._shortcut_tiers_enabled() and is_simple_metric(dax):
 
                 simple_metrics.append((metric_name, dax, table_alias, dataset_name))
 
@@ -2826,7 +2887,7 @@ class DAXTranslator:
 
                         metric_name=metric_name,
 
-                        dialect="snowflake",
+                        dialect=self._rules.dialect.name,
 
                         reachable_table_aliases=_reachable_table_aliases_for(dataset_name),
 
@@ -2908,7 +2969,10 @@ class DAXTranslator:
 
     def _try_tier1(self, dax: str, table_alias: str) -> Optional[str]:
 
-        """Attempt Tier 1 translation."""
+        """Attempt Tier 1 translation (a Snowflake-spelling shortcut)."""
+
+        if not self._shortcut_tiers_enabled():
+            return None
 
         match = self._TIER1_PATTERN.match(dax)
 

@@ -1277,6 +1277,36 @@ async def delete_connection(service: str, user_id: int = 0):
         raise InternalError(str(e))
 
 
+def _databricks_connection_info():
+    """Databricks connection details after inject_credentials_to_env: the
+    injected DATABRICKS_* variables (warehouse ID optional, so it can be
+    auto-discovered), else the settings (which also read .env)."""
+    from semabridge.target_backends.databricks.auth import DatabricksAuthError, DatabricksConnectionInfo
+
+    try:
+        return DatabricksConnectionInfo.from_env()
+    except DatabricksAuthError:
+        return DatabricksConnectionInfo.from_config(reload_settings().databricks)
+
+
+async def audit_databricks_permissions(user_id: int = 0, catalog: Optional[str] = None, schema: Optional[str] = None):
+    """Permission audit for the Databricks target (CS-10): can the stored
+    identity create metric views in catalog.schema? REST metadata only; the
+    remediation SQL is returned as text and never executed."""
+    from semabridge.repository.credential_manager import CredentialManager
+    from semabridge.target_backends.databricks.connection import audit_databricks_permissions as _audit
+
+    try:
+        CredentialManager().inject_credentials_to_env("databricks", user_id=user_id)
+    except Exception as e:
+        raise ValidationError(f"No credentials stored: {e}")
+    try:
+        info = _databricks_connection_info()
+        return await asyncio.to_thread(_audit, info, catalog, schema)
+    except Exception as e:
+        return {"status": "failed", "message": str(e)}
+
+
 async def test_connection(service: str, user_id: int = 0):
     """Test the stored credentials for a service by attempting authentication.
 

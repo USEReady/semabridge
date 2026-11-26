@@ -11,6 +11,7 @@ function rows(count) {
  */
 export default function TableBindingPlan({ plan, style }) {
   if (!plan || typeof plan !== 'object') return null;
+  if (plan.platform === 'databricks') return <DatabricksTablePlan plan={plan} style={style} />;
 
   const box = {
     marginTop: 10,
@@ -103,6 +104,97 @@ export default function TableBindingPlan({ plan, style }) {
             {t.dataset} → {t.table} (matched by name only; columns differ)
           </div>
         ))}
+    </div>
+  );
+}
+
+const MATCHED_BY = {
+  mapping: 'explicit mapping',
+  'exact name': 'same name and columns',
+  columns: 'matching columns',
+  'model namespace': "this model's table",
+  saved: 'saved binding',
+};
+
+/**
+ * Databricks planner path (backend: target_backends/databricks/tables.py):
+ * each Power BI table is bound to an existing Unity Catalog table, or uses an
+ * empty table (created at deploy, nothing during a dry run) until the real table
+ * exists, or is skipped -- per the project's on_missing_source setting.
+ */
+function DatabricksTablePlan({ plan, style }) {
+  const box = {
+    marginTop: 10,
+    padding: 10,
+    borderRadius: 6,
+    background: 'var(--bg-input)',
+    fontSize: 12,
+    color: 'var(--text-secondary)',
+    overflowWrap: 'anywhere',
+    ...style,
+  };
+  const tables = Array.isArray(plan.tables) ? plan.tables : [];
+  const warnings = (Array.isArray(plan.warnings) ? plan.warnings : []).map((w) => (typeof w === 'string' ? w : w?.message)).filter(Boolean);
+  const bound = tables.filter((t) => t.action === 'bind');
+  const stubs = tables.filter((t) => t.action === 'stub');
+  const skipped = tables.filter((t) => t.action === 'skip');
+  const sources = Array.isArray(plan.source_schemas) ? plan.source_schemas.join(', ') : '';
+  const accent = plan.error ? 'var(--color-warning)'
+    : (stubs.length || skipped.length || warnings.length ? 'var(--color-warning)' : 'var(--color-success)');
+
+  return (
+    <div style={{ ...box, borderLeft: `3px solid ${accent}` }}>
+      <div style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>
+        Source tables (Unity Catalog){' '}
+        {tables.length > 0 && (
+          <span style={{ color: accent, fontWeight: 600 }}>
+            {bound.length} bound · {stubs.length} stub{skipped.length ? ` · ${skipped.length} skipped` : ''}
+          </span>
+        )}
+      </div>
+      {sources && <div style={{ fontSize: 11 }}>Searched: <span style={{ fontFamily: MONO }}>{sources}</span></div>}
+      {plan.error && <div>Could not check Unity Catalog: {String(plan.error)}</div>}
+      {bound.length > 0 && (
+        <div style={{ marginTop: 4 }}>
+          {bound.map((t) => (
+            <div key={`b-${t.dataset}`} style={{ fontFamily: MONO, fontSize: 11, paddingLeft: 14 }}>
+              {t.dataset} → {t.table}{' '}
+              <span style={{ fontFamily: 'inherit', color: 'var(--text-tertiary)' }}>
+                ({MATCHED_BY[t.matched_by] || t.matched_by || 'matched'})
+                {Array.isArray(t.missing_columns) && t.missing_columns.length > 0
+                  ? ` · missing columns: ${t.missing_columns.join(', ')}` : ''}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      {stubs.length > 0 && (
+        <div style={{ marginTop: 4 }}>
+          <div style={{ color: 'var(--text-primary)' }}>
+            No matching table yet: an empty table is created at deploy (nothing is created during a dry run); load data into it, or a later sync uses the real table once it exists:
+          </div>
+          {stubs.map((t) => (
+            <div key={`s-${t.dataset}`} style={{ fontFamily: MONO, fontSize: 11, paddingLeft: 14 }}>
+              {t.dataset}{Array.isArray(t.stub_columns) ? ` (${t.stub_columns.length} columns)` : ''}
+            </div>
+          ))}
+        </div>
+      )}
+      {skipped.length > 0 && (
+        <div style={{ marginTop: 4 }}>
+          <div style={{ color: 'var(--text-primary)' }}>No matching table: skipped (on_missing_source = skip):</div>
+          {skipped.map((t) => (
+            <div key={`k-${t.dataset}`} style={{ fontFamily: MONO, fontSize: 11, paddingLeft: 14 }}>{t.dataset}</div>
+          ))}
+        </div>
+      )}
+      {warnings.length > 0 && (
+        <div style={{ marginTop: 4 }}>
+          {warnings.map((w, idx) => (
+            <div key={`w-${idx}`} style={{ fontSize: 11, color: 'var(--color-warning)' }}>⚠ {w}</div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -73,7 +73,7 @@ def field_impact(sim: Any, certified: set, name: str, kind: str) -> Dict[str, An
     impact["severity"] = report.severity
     impact["dependent_metrics"] = [i.name for i in report.affected_metrics if i.name.casefold() != name.casefold()][:10]
     impact["ai_queries"] = [i.name for i in report.affected_ai_tools][:10]
-    impact["reports"] = [i.name for i in report.affected_bi_reports if i.source == "report_layout"][:10]
+    impact["reports"] = [i.name for i in (getattr(report, "affected_bi_reports", None) or []) if getattr(i, "source", None) == "report_layout"][:10]
     return impact
 
 

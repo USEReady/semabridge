@@ -9,6 +9,8 @@ import { useState } from 'react';
 import ProtectedRoute from './components/common/ProtectedRoute';
 import { ConfigurationProvider } from './context/ConfigurationContext';
 import ErrorBoundary from './components/ErrorBoundary';
+import { api } from './utils/api';
+import { setDatabricksPlannerOn } from './utils/targetNaming';
 
 // Layouts
 import DashboardLayout from './layouts/DashboardLayout';
@@ -55,6 +57,14 @@ export default function App() {
   const hasHydrated = useUIStore(state => state.hasHydrated);
   const lastNavigatedPath = useUIStore(state => state.lastNavigatedPath);
   const setLastNavigatedPath = useUIStore(state => state.setLastNavigatedPath);
+
+  // Databricks names on screen follow the rule that will deploy (planner path
+  // or the existing publisher): ask the server once.
+  useEffect(() => {
+    api.getDatabricksPlannerStatus()
+      .then((s) => setDatabricksPlannerOn(Boolean(s?.use_planner_path)))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     const checkMobile = () => {

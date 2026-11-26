@@ -26,6 +26,19 @@ const DEFAULT_WIZARD_STATE = {
   snowflakeSchema: '',
   targetDatabase: '',
   targetSchema: '',
+  // Databricks target: Unity Catalog catalog + schema. Kept apart from the
+  // Snowflake target's database/schema above so the two never mix.
+  databricksCatalog: '',
+  databricksSchema: '',
+  // Where to look for the real tables (comma-separated catalog.schema list).
+  databricksSourceSchemas: '',
+  // 3.8 deploy: restricted staging schema and who may access it; deployers and the
+  // stub form are carried through edit mode unchanged (edited on the Settings page).
+  databricksStagingSchema: '',
+  databricksDeployPrincipals: '',
+  databricksDeployers: '',
+  databricksStubForm: '',
+  databricksOnMissingSource: '',
   targetAccount: '',
   targetWarehouse: '',
   modelQueryRegex: false,

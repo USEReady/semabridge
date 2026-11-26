@@ -364,7 +364,7 @@ class ExecutionEngine:
             sml_model = self._step6_convert_to_sml(context, workspace_id, dataset_id, force=force)
             
             if config_path is not None and not context.mapping_overrides_applied:
-                self._apply_mapping_overrides_from_config(sml_model, Path(config_path), config_payload=config_dict)
+                self._apply_overrides_for_run(context, sml_model, Path(config_path), config_dict)
             context.sml_model = sml_model
 
             # Step 6-ontology: per-element user overrides > attached domain
@@ -388,6 +388,15 @@ class ExecutionEngine:
             # here rather than only inside Step 9's real deploy.
             if target == "snowflake":
                 self._step6b_predict_anchor_flag_columns(context)
+
+            # Step 6b (Databricks planner path only): match the model's tables
+            # to Unity Catalog and put the real column names into the measure
+            # SQL before Step 7 persists the model. Read-only.
+            if target == "databricks":
+                from semabridge.core.engine.conversion.rules_choice import databricks_planner_enabled
+
+                if databricks_planner_enabled(context):
+                    self._step6b_databricks_tables(context)
 
             # Step 7: Persist Artifacts
             self._step7_persist_artifacts(context, tag)
@@ -574,6 +583,7 @@ class ExecutionEngine:
 # ?? Method bindings ?? do not edit manually ??????????????????????????????????
 from semabridge.core.engine import config as _cfg
 ExecutionEngine._apply_mapping_overrides_from_config = staticmethod(_cfg._apply_mapping_overrides_from_config)
+ExecutionEngine._apply_overrides_for_run            = _cfg._apply_overrides_for_run
 ExecutionEngine._step1_load_config                   = _cfg._step1_load_config
 ExecutionEngine._step2_init_identifiers              = _cfg._step2_init_identifiers
 
@@ -623,6 +633,7 @@ ExecutionEngine._convert_to_fabric_target     = _tgt_fab._convert_to_fabric_targ
 ExecutionEngine._convert_to_snowflake_target  = _tgt_sf._convert_to_snowflake_target
 ExecutionEngine._convert_to_databricks_target = _tgt_db._convert_to_databricks_target
 ExecutionEngine._step6b_predict_anchor_flag_columns = _tgt_sf._step6b_predict_anchor_flag_columns
+ExecutionEngine._step6b_databricks_tables     = _tgt_db._step6b_databricks_tables
 
 from semabridge.core.engine.deployment import base as _dep_base
 from semabridge.core.engine.deployment import fabric as _dep_fab

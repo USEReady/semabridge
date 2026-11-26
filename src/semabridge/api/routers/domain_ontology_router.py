@@ -835,6 +835,22 @@ def _project_kg_target(project_id: str) -> Dict[str, Optional[str]]:
     return out
 
 
+SNOWFLAKE_ONLY_REASON = "Snowflake only: not available for Databricks projects"
+
+
+def _is_databricks_project(project_id: Optional[str]) -> bool:
+    """True when the project's stored config targets Databricks."""
+    if not project_id:
+        return False
+    try:
+        from semabridge.api.services.project_shared import _compat_stored_target_type
+
+        return _compat_stored_target_type(project_id) == "databricks"
+    except Exception as exc:
+        logger.debug("Target type of project %s unavailable: %s", project_id, exc)
+        return False
+
+
 @project_router.get("/{project_id}/knowledge-graph.sql", response_class=PlainTextResponse)
 async def export_project_knowledge_graph_sql(
     project_id: str,
@@ -855,6 +871,8 @@ async def export_project_knowledge_graph_sql(
     from semabridge.ontology.apply import apply_project_ontology
     from semabridge.utils.synonyms import load_ontology_overrides
 
+    if _is_databricks_project(project_id):
+        raise HTTPException(status_code=409, detail=SNOWFLAKE_ONLY_REASON)
     osi_obj = await (_load_osi_model(project_id, model_id=model_id) if model_id else _load_osi_model(project_id))
     if not osi_obj:
         raise HTTPException(status_code=404, detail=f"No OSI model found for project '{project_id}'.")
@@ -1202,6 +1220,8 @@ def check_snowflake_metric_similarity(req: SnowflakeSimilarityRequest, request: 
     from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
 
     _review_access(request, req.project_id)
+    if _is_databricks_project(req.project_id):
+        return {"available": False, "reason": SNOWFLAKE_ONLY_REASON}
     uid = getattr(request.state, "user_id", None)
     owner_id = str(uid) if uid else None
     target_type = str(req.target_type or "snowflake").strip().lower()

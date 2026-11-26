@@ -1,8 +1,9 @@
-"""Naming preview: the name a field deploys under, from the one naming rule.
+"""Naming preview: the name a field deploys under, from the target's naming rule.
 
 ``GET /api/naming/preview?name=Date&kind=column&target=snowflake`` returns
 ``{"name": "DATE"}``. Read-only; authenticated by the global AuthMiddleware
-like the other read endpoints.
+like the other read endpoints. ``target=databricks`` uses Databricks' naming
+rule (currently the same as Snowflake's, see target_rules/databricks/naming.py).
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ from typing import Dict, Literal
 
 from fastapi import APIRouter, Query
 
-from semabridge.utils.identifiers import databricks_target_name, snowflake_target_name
+from semabridge.target_rules.naming import naming_for
 
 router = APIRouter(prefix="/api/naming", tags=["naming"])
 
@@ -22,13 +23,6 @@ def preview_name(
     kind: Literal["column", "metric"] = Query("column"),
     target: Literal["snowflake", "databricks"] = Query("snowflake"),
 ) -> Dict[str, str]:
-    """Deployed target name for *name* using the single shared naming rule.
-
-    - ``target="snowflake"``: columns (dimensions / facts) use the semantic-alias
-      rule ('Date' -> DATE), metrics use to_alias ('Date' -> COL_DATE).
-    - ``target="databricks"``: matches DatabricksPublisher's identifier rules
-      ('Sales %' -> 'Sales' for columns, 'Sales_Pct' for metrics).
-    """
-    if target == "databricks":
-        return {"name": databricks_target_name(name, entity_kind=kind)}
-    return {"name": snowflake_target_name(name, entity_kind=kind)}
+    """Deployed name for *name*: columns (dimensions / facts) use the
+    semantic-alias rule ('Date' -> DATE), metrics use to_alias ('Date' -> COL_DATE)."""
+    return {"name": naming_for(target).target_name(name, entity_kind=kind)}

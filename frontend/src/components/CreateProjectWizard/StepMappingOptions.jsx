@@ -15,6 +15,8 @@ import UpsertChangesView, { OntologyChangesList } from '../UpsertChangesView';
 import PanelBoundary from '../common/PanelBoundary';
 import TableBindingPlan from '../TableBindingPlan';
 import DatabricksPlan from '../DatabricksPlan';
+import DatabricksPlanPanel from '../DatabricksPlanPanel';
+import { newerPlan, plannedNamesBySourcePath } from '../../utils/databricksPlan.js';
 import { resolveMultiModelReadiness, flattenSectionRows } from '../../utils/multiFileDryRunReadiness';
 
 const hasOntologyChanges = (c) => Boolean(c && typeof c === 'object' && (
@@ -170,6 +172,7 @@ export function StepMappingOptions({
   onBulkResolved,
   onSynonymUpdate,
   projectId,
+  deployProjectId = '',
   // Multi-model dry run (multiple PBIX files or multiple Fabric models):
   // when set, a background dry-run job is in flight/complete -- render one
   // collapsible section per model instead of the single-model table below.
@@ -189,7 +192,25 @@ export function StepMappingOptions({
   onRemoveMultiFile,
   databricksOptions,
   onDatabricksOptionsChange,
+  // Databricks: planner options chosen on screen (written to the project config)
+  // and the per-row "reset to automatic" action.
+  plannerOptions = null,
+  onPlannerOptionsChange,
+  onResetRow,
 }) {
+  // Databricks: the newest plan (dry run, then re-plans; an older response never wins).
+  const dryRunPlan = dryRunData?.databricks_view_plan || null;
+  const [replanned, setReplanned] = useState(null);
+  const currentPlan = useMemo(() => {
+    if (!dryRunPlan) return null;
+    if (!replanned || replanned.__basis !== dryRunPlan) return dryRunPlan;
+    return newerPlan(dryRunPlan, replanned.plan);
+  }, [dryRunPlan, replanned]);
+  const plannedNames = useMemo(
+    () => (String(primaryTargetConnector || '').toLowerCase() === 'databricks' && currentPlan
+      ? plannedNamesBySourcePath(currentPlan) : null),
+    [currentPlan, primaryTargetConnector],
+  );
   const [autoMappingMode, setAutoMappingMode] = useState(true);
   const [rows, setRows] = useState([]);
   const [needsRefresh, setNeedsRefresh] = useState(false);
@@ -303,6 +324,7 @@ export function StepMappingOptions({
   const targetDestination = useMemo(() => {
     const firstMapped = effectiveRows.find((row) => String(row?.target_field || '').trim());
     if (firstMapped?.target_field) return firstMapped.target_field;
+    if (String(primaryTargetConnector || '').toLowerCase().includes('databricks')) return '<catalog>.<schema>.<table>';
     return `${String(primaryTargetConnector || 'target').toUpperCase()}.PUBLIC.<TABLE>`;
   }, [effectiveRows, primaryTargetConnector]);
 
@@ -809,6 +831,7 @@ export function StepMappingOptions({
       {multiDryRunJob?.job_id && (showAllMappings || isLoading || multiJobHasFailures) && (
         <div ref={mappingTableRef}>
           <MultiFileDryRunStatus
+            targetPlatform={primaryTargetConnector || 'snowflake'}
             sections={multiSections}
             jobStatus={multiJobStatus}
             projectId={projectId}
@@ -827,6 +850,9 @@ export function StepMappingOptions({
             onSynonymUpdate={onMultiSynonymUpdate}
             onRetryFile={onRetryMultiFile}
             onRemoveFile={onRemoveMultiFile}
+            plannerOptions={plannerOptions}
+            onPlannerOptionsChange={onPlannerOptionsChange}
+            onResetRow={onResetRow}
           />
         </div>
       )}
@@ -840,6 +866,20 @@ export function StepMappingOptions({
           <PanelBoundary name="Databricks metric views">
             <DatabricksPlan plan={dryRunData?.databricks_plan} style={{ marginTop: 0, marginBottom: 12 }} />
           </PanelBoundary>
+          {currentPlan && String(primaryTargetConnector || '').toLowerCase() === 'databricks' && (
+            <PanelBoundary name="Databricks plan">
+              <DatabricksPlanPanel
+                plan={currentPlan}
+                projectId={projectId}
+                deployProjectId={deployProjectId}
+                rows={detectedMappings}
+                plannerOptions={plannerOptions}
+                onPlannerOptionsChange={onPlannerOptionsChange}
+                onPlanChange={(plan) => setReplanned({ __basis: dryRunPlan, plan })}
+                saveOptions={Boolean(projectId) && projectId !== 'preview' && !String(projectId).startsWith('preview-')}
+              />
+            </PanelBoundary>
+          )}
           {(dryRunData?.blocking_conflicts?.length > 0 ||
             dryRunData?.ontology_changes?.conflict_resolution?.resolved?.length > 0 ||
             hasOntologyChanges(dryRunData?.ontology_changes)) && (
@@ -864,7 +904,7 @@ export function StepMappingOptions({
               />
             </div>
           )}
-          <UpsertChangesView delta={dryRunData?.upsert_delta} modelLabel={dryRunData?.model_name || dryRunData?.label} isDryRun>
+          <UpsertChangesView delta={dryRunData?.upsert_delta} modelLabel={dryRunData?.model_name || dryRunData?.label} isDryRun targetType={primaryTargetConnector || ''}>
             <DryRunMappingTable
               mappings={detectedMappings}
               summary={dryRunData?.summary}
@@ -888,6 +928,10 @@ export function StepMappingOptions({
               onReSync={onRunDryRun}
               droppedEntities={dryRunData?.dropped_entities || []}
               unresolvedReportFieldReferences={dryRunData?.unresolved_report_field_references || []}
+              targetPlatform={primaryTargetConnector || 'snowflake'}
+              sqlDialect={dryRunData?.sql_dialect || null}
+              plannedNames={plannedNames}
+              onResetRow={onResetRow ? (rowId) => onResetRow(rowId, null) : null}
             />
           </UpsertChangesView>
         </div>

@@ -10,6 +10,9 @@ export function buildDryRunPayload({
   targetDatabase,
   targetSchema,
   targetWarehouse,
+  databricksCatalog,
+  databricksSchema,
+  databricksSourceSchemas,
   selectedModelNames,
   selectedDatabricksTables,
   pbixPath,
@@ -74,10 +77,16 @@ export function buildDryRunPayload({
   }
 
   if (targetConfig.type === 'databricks') {
+    // Unity Catalog destination: the catalog / schema picked in the wizard
+    // (dropdowns), else the planner fields; empty values fall back to Settings.
     if (databricksAccountId) targetConfig.identity_id = databricksAccountId;
-    if (targetDatabase) targetConfig.catalog = targetDatabase;
-    if (targetSchema) targetConfig.schema = targetSchema;
+    const catalog = String(targetDatabase || databricksCatalog || '').trim();
+    const schema = String(targetSchema || databricksSchema || '').trim();
+    if (catalog) targetConfig.catalog = catalog;
+    if (schema) targetConfig.schema = schema;
     if (targetWarehouse) targetConfig.warehouse_id = targetWarehouse;
+    const sources = String(databricksSourceSchemas || '').split(',').map((s) => s.trim()).filter(Boolean);
+    if (sources.length) targetConfig.source_schemas = sources;
   }
 
   return { sourceConfig, targetConfig };
@@ -211,6 +220,9 @@ export function buildMappingSignature(input = {}) {
     targetAccount: input.targetAccount || '',
     targetWarehouse: input.targetWarehouse || '',
     databricksAccountId: input.databricksAccountId || '',
+    databricksCatalog: input.databricksCatalog || '',
+    databricksSchema: input.databricksSchema || '',
+    databricksSourceSchemas: input.databricksSourceSchemas || '',
     selectedModels: sorted(input.selectedModels),
     selectedModelNames: sorted(input.selectedModelNames),
     selectedDatabricksTables: sorted(input.selectedDatabricksTables),

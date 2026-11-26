@@ -1283,6 +1283,27 @@ def _compat_refresh_project_statuses_from_runs() -> None:
         logger.debug("Could not refresh project statuses from runs: %s", exc)
 
 
+def _compat_stored_target_type(project_id: str) -> str:
+    """targets[0].type (or target.type) of the project's stored config, '' if none."""
+    try:
+        text = str(_compat_project_configs.get(project_id) or "").strip()
+        if not text:
+            from semabridge.api.services.project_config_store import latest_config_row
+
+            row = latest_config_row(project_id)
+            text = str(getattr(row, "config_yaml", "") or "").strip()
+        if not text:
+            return ""
+        parsed = yaml.safe_load(text) or {}
+        target = parsed.get("target") if isinstance(parsed.get("target"), dict) else {}
+        if not target and isinstance(parsed.get("targets"), list) and parsed["targets"]:
+            target = parsed["targets"][0] if isinstance(parsed["targets"][0], dict) else {}
+        return str((target or {}).get("type") or "").strip().lower()
+    except Exception as exc:
+        logger.debug("Stored target type of %s unreadable: %s", project_id, exc)
+        return ""
+
+
 def _compat_project_entry_from_orm_row(row: Any) -> Dict[str, Any]:
     pid = str(row.project_id or "").strip()
     return {
@@ -1295,7 +1316,10 @@ def _compat_project_entry_from_orm_row(row: Any) -> Dict[str, Any]:
         "workspace_id": row.workspace_id or "",
         "account_id": row.account_id or None,
         "connection_tag": row.connection_tag or None,
-        "target_type": "snowflake",
+        # The project's real target from its stored config (a Databricks
+        # project must not be listed as Snowflake); Snowflake only when no
+        # config says otherwise (the previous default).
+        "target_type": _compat_stored_target_type(pid) or "snowflake",
         "folder_id": None,
         "status": "draft",
         "created_at": row.last_updated.isoformat() if row.last_updated else _compat_now_iso(),

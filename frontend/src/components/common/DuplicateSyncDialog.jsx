@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import Modal from './Modal';
 import { useDuplicateSyncPrompt } from '../../utils/duplicateSyncPrompt';
+import { platformTerms } from '../../utils/platformTerms';
 
 const BTN = { padding: '7px 14px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: 'pointer' };
 const SECONDARY_BTN = { ...BTN, background: 'transparent', border: '1px solid var(--border-main)', color: 'var(--text-secondary)' };
@@ -31,14 +32,14 @@ const TITLES = {
 
 const MAX_REMOVED_SHOWN = 50;
 
-function RemovedFieldsBody({ detail, message }) {
+function RemovedFieldsBody({ detail, message, terms }) {
   const models = Array.isArray(detail?.models) ? detail.models : [];
   const unverifiable = Array.isArray(detail?.unverifiable) ? detail.unverifiable : [];
   const promoted = Boolean(detail?.promoted_from_upsert);
   return (
     <>
       <p style={{ margin: '0 0 8px', fontSize: 13, color: 'var(--text-secondary)' }}>
-        {message || 'Some fields in the deployed semantic view are no longer in the source.'}
+        {message || `Some fields in the deployed ${terms.view} are no longer in the source.`}
       </p>
       {promoted ? (
         <p style={{ margin: '0 0 12px', fontSize: 12.5, color: 'var(--text-tertiary)' }}>
@@ -48,7 +49,7 @@ function RemovedFieldsBody({ detail, message }) {
       ) : (
         <p style={{ margin: '0 0 12px', fontSize: 12.5, color: 'var(--text-tertiary)' }}>
           <b>Remove them</b> runs the Copy sync (full rebuild from the source). <b>Keep them</b> runs this sync
-          as an Upsert: new and changed fields are deployed and these stay in Snowflake.
+          as an Upsert: new and changed fields are deployed and these stay in {terms.platform}.
         </p>
       )}
       {unverifiable.length > 0 && (
@@ -106,7 +107,7 @@ function overlapText(part) {
   return `${part.shared} of ${part.total}`;
 }
 
-function DuplicateBody({ duplicates, message, overwrites }) {
+function DuplicateBody({ duplicates, message, overwrites, terms }) {
   return (
     <>
       <p style={{ margin: '0 0 12px', fontSize: 13, color: 'var(--text-secondary)' }}>
@@ -201,7 +202,7 @@ function BlockedBody({ detail, message }) {
 }
 
 /** Mounted once in the app layout; opened by api.runProjectNow / retryFailedModels. */
-export default function DuplicateSyncDialog() {
+export default function DuplicateSyncDialog({ targetType = '' }) {
   const navigate = useNavigate();
   const { open, kind, projectId, detail, duplicates, message, resolve, close } = useDuplicateSyncPrompt();
 
@@ -219,6 +220,7 @@ export default function DuplicateSyncDialog() {
     }
   };
 
+  const terms = platformTerms(targetType || detail?.target_type || '');
   const overwrites = duplicates.some((d) => d.overwrites);
 
   let footer;
@@ -299,8 +301,8 @@ export default function DuplicateSyncDialog() {
         </p>
       )}
       {kind === 'blocked' && <BlockedBody detail={detail} message={message} />}
-      {kind === 'removed_fields' && <RemovedFieldsBody detail={detail} message={message} />}
-      {kind === 'duplicate' && <DuplicateBody duplicates={duplicates} message={message} overwrites={overwrites} />}
+      {kind === 'removed_fields' && <RemovedFieldsBody detail={detail} message={message} terms={terms} />}
+      {kind === 'duplicate' && <DuplicateBody duplicates={duplicates} message={message} overwrites={overwrites} terms={terms} />}
     </Modal>
   );
 }

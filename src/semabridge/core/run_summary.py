@@ -143,6 +143,13 @@ class RunSummary(BaseModel):
         description="Dry-run Databricks metric-view plan ({target, views, missing_tables, blocked, warnings, error})",
     )
 
+    # Databricks planner path (Phase 3.6): views, joins, fields, measures,
+    # left-out measures with reasons, renames and notes.
+    databricks_view_plan: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Databricks metric-view plan (PlannerResult.as_dict())",
+    )
+
     # Error details for FAILED/PARTIAL
     errors: List[ErrorDetail] = Field(default_factory=list)
 

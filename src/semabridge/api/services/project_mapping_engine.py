@@ -40,6 +40,7 @@ from semabridge.utils.identifiers import (
     databricks_target_name,
     snowflake_target_name,
 )
+from semabridge.target_rules.naming import databricks_planner_on, naming_for
 from semabridge.core.drop_ledger import DropLedger, DropStage
 from semabridge.converter.dax_ast_parser import (
     ADVISORY_CATEGORY_UNREACHABLE_DIMENSION,
@@ -584,16 +585,15 @@ _DATABRICKS_CONNECTORS = ("databricks", "databricks_sql", "dbx", "databricks_met
 def _default_target_identifier(
     source_name: str, target_connector: Optional[str], entity_kind: Optional[str] = None,
 ) -> str:
-    """The name a field deploys under. Snowflake columns (dimensions/facts)
-    use the semantic-name rules: only real Snowflake reserved words get COL_
-    ('Date' -> DATE). Metrics keep to_alias, which their SQL references use.
-    Databricks uses ``databricks_target_name`` (the single shared rule)."""
-    connector = _normalize_connector_name(target_connector)
-    if connector == "snowflake":
-        # The one naming rule (utils/identifiers.snowflake_target_name).
-        return snowflake_target_name(source_name, entity_kind="column" if _is_column_kind(entity_kind) else "metric")
-    if connector in _DATABRICKS_CONNECTORS:
-        return databricks_target_name(source_name, entity_kind="column" if _is_column_kind(entity_kind) else "metric")
+    """The name a field deploys under, from the target platform's naming rule
+    (target_rules/<platform>/naming.py). Snowflake (and Databricks, which
+    reuses it): columns (dimensions/facts) use the semantic-name rules -- only
+    real Snowflake reserved words get COL_ ('Date' -> DATE); metrics keep
+    to_alias, which their SQL references use. Platforms without a naming
+    rule get the generic identifier."""
+    naming = naming_for(_normalize_connector_name(target_connector))
+    if naming is not None:
+        return naming.target_name(source_name, entity_kind="column" if _is_column_kind(entity_kind) else "metric")
     return sanitize_identifier(source_name)
 
 
@@ -606,6 +606,7 @@ def _validate_target_name(
     entity_kind: Optional[str] = None,
 ) -> Dict[str, str]:
     connector = _normalize_connector_name(target_connector)
+    naming = naming_for(connector)
     resolved_target = str(target_name or "").strip()
     fallback = _default_target_identifier(source_name, target_connector, entity_kind)
 
@@ -625,34 +626,39 @@ def _validate_target_name(
             "suggested_target_name": fallback,
         }
 
-    if connector == "snowflake":
+    # Too long first: the other checks would otherwise report the truncation
+    # as "unsupported characters".
+    if connector in _DATABRICKS_CONNECTORS and len(resolved_target) > DATABRICKS_MAX_IDENTIFIER_LENGTH:
+        return {
+            "validation_status": "invalid",
+            "validation_code": "MAX_LENGTH_EXCEEDED",
+            "validation_message": f"Target name exceeds Databricks' {DATABRICKS_MAX_IDENTIFIER_LENGTH}-character limit.",
+            "suggested_target_name": _default_target_identifier(resolved_target, target_connector, entity_kind),
+        }
+
+    if naming is not None and naming.normalizes_user_names:
         upper_name = resolved_target.upper()
-        reserved = SNOWFLAKE_ALIAS_RESERVED_WORDS if _is_column_kind(entity_kind) else SNOWFLAKE_RESERVED_WORDS
+        reserved = naming.reserved_words("column" if _is_column_kind(entity_kind) else "metric")
         if upper_name.lower() in reserved:
             return {
                 "validation_status": "invalid",
                 "validation_code": "RESERVED_KEYWORD",
-                "validation_message": "Target name is a Snowflake reserved keyword.",
+                "validation_message": f"Target name is a {naming.platform_label} reserved keyword.",
                 "suggested_target_name": _default_target_identifier(resolved_target, target_connector, entity_kind),
             }
 
         sanitized = _default_target_identifier(resolved_target, target_connector, entity_kind)
-        if sanitized != upper_name:
+        if not naming.accepts_target_name(
+            resolved_target, entity_kind="column" if _is_column_kind(entity_kind) else "metric"
+        ):
             return {
                 "validation_status": "invalid",
                 "validation_code": "UNSUPPORTED_CHARACTERS",
-                "validation_message": "Target name has unsupported characters for Snowflake.",
+                "validation_message": f"Target name has unsupported characters for {naming.platform_label}.",
                 "suggested_target_name": sanitized,
             }
 
     if connector in ("databricks", "databricks_sql", "dbx", "databricks_metric_view"):
-        if len(resolved_target) > DATABRICKS_MAX_IDENTIFIER_LENGTH:
-            return {
-                "validation_status": "invalid",
-                "validation_code": "MAX_LENGTH_EXCEEDED",
-                "validation_message": f"Target name exceeds Databricks' {DATABRICKS_MAX_IDENTIFIER_LENGTH}-character limit.",
-                "suggested_target_name": _default_target_identifier(resolved_target, target_connector, entity_kind),
-            }
         sanitized = databricks_sanitize_identifier(resolved_target)
         if sanitized != resolved_target:
             return {
@@ -902,7 +908,10 @@ def _flag_hidden_collisions(rows: List[Dict[str, Any]], target_connector: Option
     Rows the user already named (a saved override) are left alone: their
     target name no longer equals the automatic one.
     """
-    platform = "Databricks" if _normalize_connector_name(target_connector) in _DATABRICKS_CONNECTORS else "Snowflake"
+    naming = naming_for(_normalize_connector_name(target_connector))
+    label = naming.platform_label if naming is not None else "Snowflake"
+    dbx = _normalize_connector_name(target_connector) in _DATABRICKS_CONNECTORS
+    view_word = "metric view" if dbx else "semantic view"
     columns_by_table: Dict[Tuple[str, str], Set[str]] = {}
     for row in rows:
         if str(row.get("entity_kind") or "").lower() == "column":
@@ -917,6 +926,8 @@ def _flag_hidden_collisions(rows: List[Dict[str, Any]], target_connector: Option
         if not target:
             continue
         automatic = str(row.get("sanitized_name") or "").strip().upper()
+        # Databricks names are shown as given; Snowflake names are upper-case.
+        shown = str(row.get("target_name") or "").strip() if dbx else target
 
         # 1. Renamed during conversion and still carrying the automatic name.
         if kind == "column" and row.get("renamed_from") and target == automatic:
@@ -925,7 +936,7 @@ def _flag_hidden_collisions(rows: List[Dict[str, Any]], target_connector: Option
             _mark_collision(
                 row,
                 f"'{original}' and another column of {_table_label(row.get('parent_source_path'))} both become "
-                f"{clean} in {platform}, so this one was renamed to {target} automatically. "
+                f"{clean} in {label}, so this one was renamed to {shown} automatically. "
                 "Pick a name (or Resolve All).",
             )
             continue
@@ -936,8 +947,8 @@ def _flag_hidden_collisions(rows: List[Dict[str, Any]], target_connector: Option
             if target in columns_by_table.get(home, set()):
                 _mark_collision(
                     row,
-                    f"Metric and column of {row['home_dataset']} are both named {target} in {platform}; "
-                    "the column would be left out of the semantic view. Rename the metric (or Resolve All).",
+                    f"Metric and column of {row['home_dataset']} are both named {shown} in {label}; "
+                    f"the column would be left out of the {view_word}. Rename the metric (or Resolve All).",
                 )
 
     # 3. Same column name in several tables: advisory only.
@@ -950,22 +961,29 @@ def _flag_hidden_collisions(rows: List[Dict[str, Any]], target_connector: Option
         if str(row.get("entity_kind") or "").lower() != "column":
             continue
         name = str(row.get("target_name") or "").strip().upper()
+        shown = str(row.get("target_name") or "").strip() if dbx else name
         tables = sorted(tables_by_name.get((str(row.get("model_name") or ""), name), set()))
         if len(tables) > 1:
             row["shared_name_tables"] = tables
             others = ', '.join(t for t in tables if t != _table_label(row.get('parent_source_path')))
-            if _normalize_connector_name(target_connector) in _DATABRICKS_CONNECTORS:
-                # A metric view is one flat list of fields: every table's copy
-                # is published as <Table>_<Column> (DatabricksPublisher.
-                # shared_column_names), so this is a real deployed name.
+            if dbx and not databricks_planner_on():
+                # The existing publisher: a metric view is one flat list of
+                # fields, every table's copy is published as <Table>_<Column>
+                # (DatabricksPublisher.shared_column_names), a real deployed name.
                 deployed = (
                     f"{databricks_sanitize_identifier(_table_label(row.get('parent_source_path')))}_"
                     f"{databricks_target_name(row.get('target_name'), entity_kind='column')}"
                 )
                 row["databricks_deployed_name"] = deployed
                 note = (
-                    f"{name} also exists in {others}. A Databricks metric view has one flat list of "
+                    f"{shown} also exists in {others}. A Databricks metric view has one flat list of "
                     f"fields, so it is published as {deployed}. Rename it here to choose another name."
+                )
+            elif dbx:
+                note = (
+                    f"{shown} also exists in {others}. "
+                    "In a Databricks metric view all names share one list, so the planner names one of them "
+                    f"{_table_label(row.get('parent_source_path')).lower()}_{shown}."
                 )
             else:
                 note = (
@@ -1052,7 +1070,7 @@ def build_entity_mappings(
         # and the user never manually edited it, clear it so collision detection re-runs with the
         # improved table-prefix logic (TABLE_FIELD). Hash suffixes are always exactly 4 or 8
         # uppercase hex chars appended after a single underscore.
-        if preferred_target_name and not is_manual:
+        if preferred_target_name and not is_manual and not existing_mapping.get("preserve_name"):
             _last_seg = preferred_target_name.rsplit("_", 1)
             if len(_last_seg) == 2 and re.fullmatch(r"[0-9A-F]{4}|[0-9A-F]{8}", _last_seg[1]):
                 preferred_target_name = ""
@@ -1305,6 +1323,11 @@ def build_entity_mappings(
             "renamed_from": entity.get("renamed_from"),
             "home_dataset": entity.get("home_dataset"),
         })
+        if existing_mapping.get("override_origin"):
+            # Databricks: provenance of the saved name ("user" = firm, "unmarked"
+            # = soft), so a re-save keeps the row and its marker.
+            generated[-1]["override_origin"] = existing_mapping["override_origin"]
+            generated[-1]["saved_target_name"] = existing_mapping.get("saved_target_name") or target_name
 
     # Pass 2: Declarative Validation (Option B)
     by_target_name: Dict[Tuple[str, str], List[int]] = {}

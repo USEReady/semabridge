@@ -675,6 +675,12 @@ export const api = {
         return handleResponse(res);
     },
 
+    /** Whether Databricks projects deploy through the metric-view planner. */
+    async getDatabricksPlannerStatus() {
+        const res = await authFetch(`${API_BASE_URL}/system/databricks-planner`, { timeoutMs: 10000 });
+        return handleResponse(res);
+    },
+
     // ── Configuration ─────────────────────────────────────────────────────
     async getConfig() {
         const res = await authFetch(`${API_BASE_URL}/config`);
@@ -1924,14 +1930,93 @@ export const api = {
         return handleResponse(res);
     },
 
-    async deployMappings(projectId, fieldMappings) {
+    // ── Databricks metric-view plan (re-plan without a new dry run) ──────────
+    async replanDatabricks(projectId, body) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId || 'preview')}/databricks/replan`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body || {}),
+        });
+        return handleResponse(res);
+    },
+
+    async getDatabricksPlan(projectId, { cacheProjectId = '', modelSubdir = '' } = {}) {
+        const qs = new URLSearchParams();
+        if (cacheProjectId) qs.set('cache_project_id', cacheProjectId);
+        if (modelSubdir) qs.set('model_subdir', modelSubdir);
+        const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId || 'preview')}/databricks/plan?${qs}`);
+        return handleResponse(res);
+    },
+
+    // ── Databricks deploy (3.8b): preview -> confirm -> run status; reconcile; re-verify ──
+    async previewDatabricksDeploy(projectId, body) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/databricks/deploy/preview`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body || {}),
+        });
+        return handleResponse(res);
+    },
+
+    async confirmDatabricksDeploy(projectId, body) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/databricks/deploy`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body || {}),
+        });
+        return handleResponse(res);
+    },
+
+    async getDatabricksDeployRun(projectId, runId) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/databricks/deploy/runs/${encodeURIComponent(runId)}`);
+        return handleResponse(res);
+    },
+
+    async reconcileDatabricksDeploy(projectId, body) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/databricks/deploy/reconcile`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body || {}),
+        });
+        return handleResponse(res);
+    },
+
+    async reverifyDatabricksDeploy(projectId, body) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/databricks/deploy/reverify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body || {}),
+        });
+        return handleResponse(res);
+    },
+
+    async saveDatabricksPlannerOptions(projectId, options) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/databricks/planner-options`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(options || {}),
+        });
+        return handleResponse(res);
+    },
+
+    // Reset one field to automatic naming (removes its saved name).
+    async resetMappingOverride(projectId, sourcePath, model = '') {
+        const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/mapping-overrides/reset`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ source_path: sourcePath, ...(model ? { model } : {}) }),
+        });
+        return handleResponse(res);
+    },
+
+    async deployMappings(projectId, fieldMappings, targetType = '') {
         // Same sync-start checks and dialog as Run now (duplicate, removed
         // fields, already running, dry-run blocked).
         const send = async (body, targetProjectId) => {
             const res = await authFetch(`${API_BASE_URL}/projects/${targetProjectId}/deploy`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ...body, field_mappings: fieldMappings }),
+                body: JSON.stringify({ ...body, field_mappings: fieldMappings, ...(targetType ? { target_type: targetType } : {}) }),
             });
             return handleResponse(res);
         };

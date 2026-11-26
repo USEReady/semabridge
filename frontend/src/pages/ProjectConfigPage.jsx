@@ -7,6 +7,7 @@ import {
   HelpCircle, Copy, RefreshCw
 } from 'lucide-react';
 import { parseDocument as parseYamlDocument, stringify as stringifyYaml } from 'yaml';
+import { applyDatabricksTarget, databricksFields } from '../utils/projectTargetSettings';
 import CodeMirror from '@uiw/react-codemirror';
 import { yaml as yamlLang } from '@codemirror/lang-yaml';
 
@@ -24,6 +25,7 @@ import usePageCache from '../hooks/usePageCache';
 
 import ProjectWizard from './CreateProjectPage';
 import Modal from '../components/common/Modal';
+import { platformTerms } from '../utils/platformTerms';
 
 // --- Styled Components for Dashboard ---
 const FormCard = ({ title, subtitle, children }) => (
@@ -268,8 +270,56 @@ function ProjectDashboard({ project, configForm, setConfigForm, connectionStatus
             <FormSelect value={configForm.target_type || 'snowflake'} onChange={e => updateField('target_type', e.target.value)}>
               <option value="snowflake">Snowflake</option>
               <option value="databricks">Databricks</option>
+              {!['snowflake', 'databricks'].includes(String(configForm.target_type || 'snowflake').toLowerCase()) && (
+                <option value={configForm.target_type}>{configForm.target_type}</option>
+              )}
             </FormSelect>
           </div>
+
+          {String(configForm.target_type || '').toLowerCase() === 'databricks' && (
+            <div style={{ gridColumn: 'span 2', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+              <div>
+                <FormLabel>Unity Catalog catalog</FormLabel>
+                <FormInput value={configForm.target_catalog || ''} onChange={e => updateField('target_catalog', e.target.value)}
+                  placeholder="e.g. workspace" />
+              </div>
+              <div>
+                <FormLabel>Schema (where metric views are created)</FormLabel>
+                <FormInput value={configForm.target_schema || ''} onChange={e => updateField('target_schema', e.target.value)}
+                  placeholder="e.g. semabridge_dev" />
+              </div>
+              <div style={{ gridColumn: 'span 2' }}>
+                <FormLabel>Source schemas (where the data tables are)</FormLabel>
+                <FormInput value={configForm.target_source_schemas || ''}
+                  onChange={e => updateField('target_source_schemas', e.target.value)}
+                  placeholder="catalog.schema, comma-separated; empty = the schema above" />
+              </div>
+              <div>
+                <FormLabel>Staging schema (restricted)</FormLabel>
+                <FormInput value={configForm.target_staging_schema || ''}
+                  onChange={e => updateField('target_staging_schema', e.target.value)}
+                  placeholder="e.g. workspace.semabridge_staging" />
+                <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
+                  An existing schema only deployers and admins can access. SemaBridge never creates schemas.
+                </div>
+              </div>
+              <div>
+                <FormLabel>Staging access (Databricks principals)</FormLabel>
+                <FormInput value={configForm.target_deploy_principals || ''}
+                  onChange={e => updateField('target_deploy_principals', e.target.value)}
+                  placeholder="admin groups / users, comma-separated" />
+                <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
+                  Besides the deploying identity. Anyone else with access blocks the deploy.
+                </div>
+              </div>
+              <div style={{ gridColumn: 'span 2' }}>
+                <FormLabel>Designated deployers (SemaBridge user ids)</FormLabel>
+                <FormInput value={configForm.target_deployers || ''}
+                  onChange={e => updateField('target_deployers', e.target.value)}
+                  placeholder="optional; owners and admins can always deploy" />
+              </div>
+            </div>
+          )}
 
           <div style={{ gridColumn: 'span 2' }}>
             {(() => {
@@ -989,9 +1039,14 @@ export default function ProjectConfigPage({ embedded = false } = {}) {
     const tree = parsed && typeof parsed === 'object' ? parsed : {};
 
     const source = tree.source && typeof tree.source === 'object' ? tree.source : {};
-    const target = tree.target && typeof tree.target === 'object'
+    const rawTarget = tree.target && typeof tree.target === 'object'
       ? tree.target
       : (Array.isArray(tree.targets) && tree.targets.length > 0 && typeof tree.targets[0] === 'object' ? tree.targets[0] : {});
+    const firstListed = Array.isArray(tree.targets) && tree.targets[0] && typeof tree.targets[0] === 'object' ? tree.targets[0] : {};
+    const isDatabricksTarget = String(rawTarget.type || firstListed.type || '').toLowerCase() === 'databricks';
+    // Databricks: read like the backend (targets[0] filled in under target), so a
+    // bare `target: {type}` from an older save does not hide catalog/schema.
+    const target = isDatabricksTarget ? { ...firstListed, ...rawTarget } : rawTarget;
     const ui = tree.ui && typeof tree.ui === 'object' ? tree.ui : {};
     const options = tree.options && typeof tree.options === 'object' ? tree.options : {};
 
@@ -1032,6 +1087,7 @@ export default function ProjectConfigPage({ embedded = false } = {}) {
         target_schema: String(target.schema || target.schema_name || ''),
         target_identity_id: String(target.identity_id || ''),
         target_workspace_id: String(target.workspace_id || ''),
+        ...(isDatabricksTarget ? databricksFields(tree) : {}),
         allow_models: allowModels.join(', '),
         block_models: blockedModels.join(', '),
         auto_relationships: options.auto_relationships !== false,
@@ -1060,10 +1116,12 @@ export default function ProjectConfigPage({ embedded = false } = {}) {
         ...((configTree?.source && typeof configTree.source === 'object') ? configTree.source : {}),
         type: formToUse.source_type,
       },
-      target: {
-        ...((configTree?.target && typeof configTree.target === 'object') ? configTree.target : {}),
-        type: formToUse.target_type,
-      },
+      ...(formToUse.target_type === 'databricks' ? {} : {
+        target: {
+          ...((configTree?.target && typeof configTree.target === 'object') ? configTree.target : {}),
+          type: formToUse.target_type,
+        },
+      }),
       ui: {
         ...((configTree?.ui && typeof configTree.ui === 'object') ? configTree.ui : {}),
         output_format: formToUse.output_format,
@@ -1160,7 +1218,11 @@ export default function ProjectConfigPage({ embedded = false } = {}) {
       delete nextTree.selection;
     }
 
-    if (formToUse.target_type === 'snowflake') {
+    if (formToUse.target_type === 'databricks') {
+      const applied = applyDatabricksTarget(nextTree, formToUse);
+      if (applied.target) nextTree.target = applied.target;
+      if (applied.targets) nextTree.targets = applied.targets;
+    } else if (formToUse.target_type === 'snowflake') {
       if (formToUse.target_database) nextTree.target.database = formToUse.target_database;
       else delete nextTree.target.database;
       if (formToUse.target_schema) nextTree.target.schema = formToUse.target_schema;
@@ -3012,7 +3074,7 @@ function FormEditor({
             {Array.isArray(value.pbix_models) && value.pbix_models.length > 0 && (
               <div style={{ gridColumn: '1 / -1', fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>
                 Multi-PBIX project — {value.pbix_models.length} file{value.pbix_models.length === 1 ? '' : 's'} configured
-                from project creation (each becomes its own semantic view): {value.pbix_models.join(', ')}
+                from project creation (each becomes its own {platformTerms(value.target_type).view}): {value.pbix_models.join(', ')}
               </div>
             )}
           </div>

@@ -109,9 +109,7 @@ def _convert_pbix_to_sml(self, context: RunContext) -> SMLModel:
     # (there's no later retry). See _apply_mapping_overrides_from_config's
     # own comment for why the rewrite matters.
     if context.config_path is not None:
-        self._apply_mapping_overrides_from_config(
-            osi_model, Path(context.config_path), config_payload=context.config_payload
-        )
+        self._apply_overrides_for_run(context, osi_model)
         context.mapping_overrides_applied = True
 
     logger.debug(
@@ -127,10 +125,14 @@ def _convert_pbix_to_sml(self, context: RunContext) -> SMLModel:
         [m.unique_name for m in osi_model.metrics],
     )
 
-    # Phase 2: OSI → SML
+    # Phase 2: OSI → SML, measures translated with the target platform's
+    # rules (Databricks only when its planner path is on; else Snowflake).
+    from semabridge.core.engine.conversion.rules_choice import conversion_rules
+
     sml_model = OSIToSMLConverter(
         drop_ledger=context.drop_ledger,
         target_type=getattr(context, "target_type", None) or "snowflake",
+        rules=conversion_rules(context),
     ).from_osi(
         osi_model,
         row_counts=sf.row_counts,

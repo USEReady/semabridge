@@ -23,6 +23,8 @@ import UpsertChangesView from '../UpsertChangesView';
 import PanelBoundary from '../common/PanelBoundary';
 import TableBindingPlan from '../TableBindingPlan';
 import DatabricksPlan from '../DatabricksPlan';
+import DatabricksPlanPanel from '../DatabricksPlanPanel';
+import { newerPlan, plannedNamesBySourcePath } from '../../utils/databricksPlan.js';
 import { resolveCollisionsForRows } from '../../utils/projectHelpers';
 
 function pluralize(count, word) {
@@ -81,8 +83,21 @@ export default function MultiFileDryRunStatus({
   onSynonymUpdate,    // (fileId, rowId, synonyms) => void
   onRetryFile,        // (fileId) => void
   onRemoveFile,       // (fileId) => void
+  targetPlatform = 'snowflake', // the project's target, for the dry-run table's labels
+  // Databricks: planner options (written to the project config), reset to automatic.
+  plannerOptions = null,
+  onPlannerOptionsChange,
+  onResetRow,         // (fileId, rowId) => void
 }) {
   const [expanded, setExpanded] = useState(() => new Set());
+  // Databricks: newest re-plan per model, tied to the dry-run plan it started from.
+  const [replans, setReplans] = useState({});
+  const databricks = String(targetPlatform || '').toLowerCase() === 'databricks';
+  const sectionPlan = (section) => {
+    const base = section.result?.databricks_view_plan || null;
+    const r = replans[section.fileId];
+    return base && r && r.basis === base ? newerPlan(base, r.plan) : base;
+  };
   const [bulkResolvingAll, setBulkResolvingAll] = useState(false);
   const [allResolvedToast, setAllResolvedToast] = useState(null);
 
@@ -119,7 +134,7 @@ export default function MultiFileDryRunStatus({
 
       for (const section of sections) {
         if (!section.loaded || !Array.isArray(section.rows)) continue;
-        const resolvedMap = resolveCollisionsForRows(section.rows);
+        const resolvedMap = resolveCollisionsForRows(section.rows, targetPlatform);
         const count = Object.keys(resolvedMap).length;
         if (count > 0) {
           onBulkResolved(section.fileId, resolvedMap);
@@ -143,7 +158,7 @@ export default function MultiFileDryRunStatus({
       setBulkResolvingAll(false);
       setTimeout(() => setAllResolvedToast(null), 6000);
     }
-  }, [sections, onBulkResolved]);
+  }, [sections, onBulkResolved, targetPlatform]);
 
   if (!jobStatus && sections.length === 0) {
     return (
@@ -357,7 +372,22 @@ export default function MultiFileDryRunStatus({
                     <PanelBoundary name="Databricks metric views">
                       <DatabricksPlan plan={section.result?.databricks_plan} style={{ marginTop: 0, marginBottom: 12 }} />
                     </PanelBoundary>
-                    <UpsertChangesView delta={section.result?.upsert_delta} modelLabel={section.result?.model_name || section.label} isDryRun>
+                    {databricks && sectionPlan(section) && (
+                      <PanelBoundary name="Databricks plan">
+                        <DatabricksPlanPanel
+                          plan={sectionPlan(section)}
+                          projectId={projectId}
+                          rows={section.rows}
+                          plannerOptions={plannerOptions}
+                          onPlannerOptionsChange={onPlannerOptionsChange}
+                          onPlanChange={(plan) => setReplans((prev) => ({
+                            ...prev, [section.fileId]: { basis: section.result?.databricks_view_plan, plan },
+                          }))}
+                          saveOptions={Boolean(projectId) && projectId !== 'preview' && !String(projectId).startsWith('preview-')}
+                        />
+                      </PanelBoundary>
+                    )}
+                    <UpsertChangesView delta={section.result?.upsert_delta} modelLabel={section.result?.model_name || section.label} isDryRun targetType={targetPlatform}>
                       <DryRunMappingTable
                         // key: a re-run (new attempt) starts with fresh filter state.
                         key={section.attempt}
@@ -378,6 +408,10 @@ export default function MultiFileDryRunStatus({
                         onReSync={onRetryFile ? () => onRetryFile(section.fileId) : undefined}
                         droppedEntities={section.result?.dropped_entities || []}
                         unresolvedReportFieldReferences={section.result?.unresolved_report_field_references || []}
+                        targetPlatform={targetPlatform}
+                        sqlDialect={section.result?.sql_dialect || null}
+                        plannedNames={databricks && sectionPlan(section) ? plannedNamesBySourcePath(sectionPlan(section)) : null}
+                        onResetRow={onResetRow ? (rowId) => onResetRow(section.fileId, rowId) : null}
                       />
                     </UpsertChangesView>
                   </div>

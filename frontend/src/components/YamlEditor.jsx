@@ -3,6 +3,7 @@ import CodeMirror from '@uiw/react-codemirror';
 import { yaml } from '@codemirror/lang-yaml';
 import { useTheme } from '../context/ThemeProvider';
 import ErrorPanel from './ErrorPanel';
+import { platformTerms } from '../utils/platformTerms';
 import {
     X,
     FileCode2,
@@ -211,8 +212,9 @@ const DeploySummaryModal = ({ isOpen, onClose, summary, status, results }) => {
     );
 };
 
-const ConflictResolutionModal = ({ isOpen, onClose, onProceed, conflicts, isDeploying }) => {
+const ConflictResolutionModal = ({ isOpen, onClose, onProceed, conflicts, isDeploying, targetType = '' }) => {
     if (!isOpen) return null;
+    const terms = platformTerms(targetType);
 
     return (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 backdrop-blur-md animate-in fade-in duration-300" style={{ background: 'var(--bg-backdrop)' }}>
@@ -225,7 +227,7 @@ const ConflictResolutionModal = ({ isOpen, onClose, onProceed, conflicts, isDepl
                         </div>
                         <div>
                             <h2 className="text-xl font-bold text-primary tracking-tight">Sync Conflict Detected</h2>
-                            <p className="text-sm text-amber-300/80 mt-0.5">External changes detected on Snowflake target</p>
+                            <p className="text-sm text-amber-300/80 mt-0.5">External changes detected on {terms.platform} target</p>
                         </div>
                     </div>
                     <button onClick={onClose} className="p-2 hover:bg-surface-hover rounded-full text-tertiary transition-colors">
@@ -237,7 +239,7 @@ const ConflictResolutionModal = ({ isOpen, onClose, onProceed, conflicts, isDepl
                 <div className="flex-1 overflow-y-auto p-8 space-y-6 custom-scrollbar">
                     <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-5">
                         <p className="text-sm text-secondary leading-relaxed">
-                            We detected <span className="font-bold text-amber-400">{conflicts?.length || 'some'} manual changes</span> in the Snowflake semantic view that are not in your repository.
+                            We detected <span className="font-bold text-amber-400">{conflicts?.length || 'some'} manual changes</span> in the {terms.platform} {terms.view} that are not in your repository.
                             Proceeding will <span className="font-bold text-red-400 underline decoration-red-400/30 underline-offset-4">overwrite</span> these changes with your repository state.
                         </p>
                     </div>
@@ -537,7 +539,7 @@ export default function YamlEditor({ selectedItems = [], activeModelId = null, s
                     }
                 }
                 setShowConflictModal(true);
-                addLog('warning', 'Deploy', 'Sync blocked: manual changes detected on Snowflake. Review required.');
+                addLog('warning', 'Deploy', 'Sync blocked: manual changes detected on ' + platformTerms(targetType).platform + '. Review required.');
                 return;
             }
 
@@ -754,6 +756,7 @@ export default function YamlEditor({ selectedItems = [], activeModelId = null, s
                 isOpen={showConflictModal}
                 onClose={() => setShowConflictModal(false)}
                 onProceed={() => handleDeploy(true)}
+                targetType={targetType}
                 conflicts={conflicts}
                 isDeploying={isDeploying}
             />

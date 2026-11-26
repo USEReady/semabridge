@@ -87,9 +87,7 @@ def _convert_snowflake_to_sml(self, context: RunContext) -> SMLModel:
             # _apply_mapping_overrides_from_config's own comment for why
             # the rewrite matters.
             if context.config_path is not None:
-                self._apply_mapping_overrides_from_config(
-                    osi_model, Path(context.config_path), config_payload=context.config_payload
-                )
+                self._apply_overrides_for_run(context, osi_model)
                 context.mapping_overrides_applied = True
 
             sml_model = OSIToSMLConverter().from_osi(osi_model)

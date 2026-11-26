@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { api } from '../utils/api';
 import PanelBoundary from './common/PanelBoundary';
+import { platformTerms } from '../utils/platformTerms';
 
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
 
@@ -31,10 +32,11 @@ const STATUS_STYLE = {
   placeholder: { color: '#f59e0b', label: 'NULL placeholder' },
   'not deployed': { color: '#f59e0b', label: 'not deployed' },
   'kept in Snowflake': { color: 'var(--text-tertiary)', label: 'kept in Snowflake' },
+  'kept in Databricks': { color: 'var(--text-tertiary)', label: 'kept in Databricks' },
 };
 
-function StatusPill({ item }) {
-  const style = STATUS_STYLE[item.status];
+function StatusPill({ item, platform = 'Snowflake' }) {
+  const style = STATUS_STYLE[item.status === 'kept in Snowflake' ? `kept in ${platform}` : item.status];
   if (!style) return null;
   return (
     <span
@@ -85,7 +87,7 @@ function ShowValue({ runContext, item }) {
   );
 }
 
-function ChangeItem({ item, kindLabel, change, runContext }) {
+function ChangeItem({ item, kindLabel, change, runContext, platform }) {
   const isMetric = kindLabel === 'metric';
   return (
     <div style={{
@@ -101,7 +103,7 @@ function ChangeItem({ item, kindLabel, change, runContext }) {
           </span>
         )}
         {item.table && <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>in <span style={{ fontFamily: MONO }}>{text(item.table)}</span></span>}
-        <StatusPill item={item} />
+        <StatusPill item={item} platform={platform} />
         {isMetric && change !== 'removed' && <ShowValue runContext={runContext} item={item} />}
       </div>
       {change === 'modified' && item.old_description != null && item.old_description !== item.new_description && (
@@ -242,7 +244,8 @@ function OntologyChangesSection({ changes }) {
   );
 }
 
-function DeltaBody({ delta, modelLabel, isDryRun, runContext, ontologyChanges }) {
+function DeltaBody({ delta, modelLabel, isDryRun, runContext, ontologyChanges, targetType = '' }) {
+  const platform = platformTerms(targetType).platform;
   if (delta.error) {
     return <div style={{ fontSize: 12, color: 'var(--color-error)', margin: '10px 0' }}>UPSERT: {text(delta.error)}</div>;
   }
@@ -276,7 +279,7 @@ function DeltaBody({ delta, modelLabel, isDryRun, runContext, ontologyChanges })
   const groups = [
     ['added', isDryRun ? 'Will be added' : 'Added'],
     ['modified', isDryRun ? 'Will be modified' : 'Modified'],
-    ['removed', 'Removed from PBIX (kept in Snowflake)'],
+    ['removed', `Removed from PBIX (kept in ${platform})`],
   ];
 
   return (
@@ -304,6 +307,7 @@ function DeltaBody({ delta, modelLabel, isDryRun, runContext, ontologyChanges })
                     kindLabel={kindLabel}
                     change={change}
                     runContext={runContext}
+                    platform={platform}
                   />
                 ))}
               </div>
@@ -326,12 +330,12 @@ function DeltaBody({ delta, modelLabel, isDryRun, runContext, ontologyChanges })
  * "Full run details" section at the bottom. A rendering error in the delta
  * part never takes the page (or the regular details) down with it.
  */
-export default function UpsertChangesView({ delta, modelLabel, isDryRun = false, runContext = null, ontologyChanges = null, children }) {
+export default function UpsertChangesView({ delta, modelLabel, isDryRun = false, runContext = null, ontologyChanges = null, targetType = '', children }) {
   if (!delta || typeof delta !== 'object') return children ?? null;
   return (
     <div>
       <PanelBoundary name="UPSERT changes">
-        <DeltaBody delta={delta} modelLabel={modelLabel} isDryRun={isDryRun} runContext={runContext} ontologyChanges={ontologyChanges} />
+        <DeltaBody delta={delta} modelLabel={modelLabel} isDryRun={isDryRun} runContext={runContext} ontologyChanges={ontologyChanges} targetType={targetType} />
       </PanelBoundary>
       {children && (
         <Collapsible title={isDryRun ? 'Full dry-run details' : 'Full run details'}>{children}</Collapsible>

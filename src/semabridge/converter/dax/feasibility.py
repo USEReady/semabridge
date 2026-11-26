@@ -15,6 +15,12 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 from semabridge.converter.function_registry import FunctionRegistry
 from semabridge.utils.logger import get_logger
 from semabridge.utils.naming import to_alias
+from semabridge.target_rules.base import ReasonCode, SqlDialect
+from semabridge.target_rules.snowflake import SNOWFLAKE_RULES
+
+# Dialect used when a caller does not pass one: Snowflake, which is what
+# every existing caller expects (unchanged behaviour).
+_DEFAULT_DIALECT: SqlDialect = SNOWFLAKE_RULES.dialect
 from semabridge.utils.relationship_graph import has_relationship_path
 
 logger = get_logger("semabridge.converter.dax_ast_parser")
@@ -739,15 +745,42 @@ def classify_dax_ast_not_applicable(
     non_additive_map: Optional[Dict[str, Any]] = None,
     metrics_context: Optional[Iterable[Any]] = None,
     allow_window_enrichment: bool = False,
+    rules: Optional[Any] = None,
 ) -> Optional[str]:
-    """Classify unrepresentable DAX patterns from AST and model metadata before SQL rendering:
-    1. text result -> 'not applicable: text result'
-    2. constant -> 'not applicable: constant' (numeric literals translated as MAX(<literal>))
-    3. ranking -> 'not applicable: needs window metric (ranking)'
-    4. window metric -> 'not applicable: needs window metric'
-    5. non-additive closing balance + time intelligence -> 'not applicable: depends on non-additive metric'
-    5. non-additive dependency -> 'not applicable: depends on non-additive metric [X]'
-    6. disconnected selector -> 'not applicable: selector over a disconnected table'
+    """The worded "not applicable" reason for an unrepresentable DAX pattern,
+    or None. The pattern is found by classify_dax_ast_reason (neutral); the
+    target platform's rules word it (default: Snowflake, today's text)."""
+    found = classify_dax_ast_reason(
+        parsed_ast,
+        relationships=relationships,
+        non_additive_map=non_additive_map,
+        metrics_context=metrics_context,
+        allow_window_enrichment=allow_window_enrichment,
+    )
+    if found is None:
+        return None
+    code, detail = found
+    policies = (rules or SNOWFLAKE_RULES).policies
+    return policies.reason_text(code, detail)
+
+
+def classify_dax_ast_reason(
+    parsed_ast: DaxNode,
+    relationships: Optional[Iterable[Any]] = None,
+    non_additive_map: Optional[Dict[str, Any]] = None,
+    metrics_context: Optional[Iterable[Any]] = None,
+    allow_window_enrichment: bool = False,
+) -> Optional[Tuple[ReasonCode, Optional[str]]]:
+    """Classify unrepresentable DAX patterns from AST and model metadata
+    before SQL rendering, as a platform-neutral (ReasonCode, detail):
+    1. text result -> TEXT_RESULT
+    2. constant -> CONSTANT (numeric literals translated as MAX(<literal>))
+    3. ranking -> RANKING
+    4. window metric -> NEEDS_WINDOW / NOT_DECOMPOSABLE_WINDOW / ALLSELECTED
+    5. non-additive closing balance + time intelligence -> NON_ADDITIVE_TIME_INTEL
+    5. non-additive dependency -> NON_ADDITIVE_DEPENDENCY (detail: the measure)
+    6. disconnected selector -> DISCONNECTED_SELECTOR
+    The platform's policies decide what each code means and how it is worded.
     """
     if parsed_ast is None:
         return None
@@ -756,56 +789,56 @@ def classify_dax_ast_not_applicable(
         return None
 
     if _has_non_literal_dateadd(parsed_ast):
-        return "not applicable: DATEADD shift amount must be a literal integer"
+        return ReasonCode.DATEADD_NOT_LITERAL, None
 
     node = unwrap_var_body(parsed_ast)
 
     # 1. Text result
     if _is_text_producing_node(node):
-        return "not applicable: text result"
+        return ReasonCode.TEXT_RESULT, None
 
     # 2. Compile-time constant (Rule B: numeric literal -> constant metric MAX(<literal>))
     if not _refs_any_data(parsed_ast):
         if dax_numeric_literal_value(parsed_ast) is not None:
             pass
         else:
-            return "not applicable: constant"
+            return ReasonCode.CONSTANT, None
 
     # CASE WHEN / IF over a window metric (Snowflake error 010258 / 010273)
     if _has_case_when_or_if(parsed_ast) and _has_window_construct(parsed_ast):
-        return "not applicable: CASE WHEN over a window metric is not supported in Snowflake semantic views"
+        return ReasonCode.WINDOW_CASE, None
 
     # Virtual relationships (TREATAS)
     if _has_treatas(parsed_ast):
-        return "not applicable: virtual relationship (TREATAS) not supported in semantic views"
+        return ReasonCode.TREATAS, None
 
     # 3. Ranking functions
     if _has_ranking_function(parsed_ast):
-        return "not applicable: needs window metric (ranking)"
+        return ReasonCode.RANKING, None
 
     # 4. Window metric & report selection
     if _has_allselected(parsed_ast):
-        return "not applicable: depends on report selection (ALLSELECTED)"
+        return ReasonCode.ALLSELECTED, None
     if _has_selectedvalue_in_filter_all(parsed_ast):
         if not _is_leave_one_out(parsed_ast) or _has_non_decomposable_aggregate(parsed_ast):
-            return "not applicable: needs window metric"
+            return ReasonCode.NEEDS_WINDOW, None
     if _calculate_has_direct_all_or_allexcept_modifier(parsed_ast):
         if _is_enrichable_all_measure(parsed_ast):
             pass
         elif _is_leave_one_out(parsed_ast):
             if _has_non_decomposable_aggregate(parsed_ast):
-                return "not applicable: not decomposable for a window"
+                return ReasonCode.NOT_DECOMPOSABLE_WINDOW, None
         elif _calculate_has_allexcept_modifier(parsed_ast):
             if _has_non_decomposable_aggregate(parsed_ast):
-                return "not applicable: not decomposable for a window"
+                return ReasonCode.NOT_DECOMPOSABLE_WINDOW, None
         elif _has_non_decomposable_aggregate(parsed_ast):
-            return "not applicable: not decomposable for a window"
+            return ReasonCode.NOT_DECOMPOSABLE_WINDOW, None
         else:
-            return "not applicable: not decomposable for a window"
+            return ReasonCode.NOT_DECOMPOSABLE_WINDOW, None
 
     # 5. Non-additive closing balance + time intelligence
     if _has_closing_balance(parsed_ast) and _has_time_intel_function(parsed_ast):
-        return "not applicable: depends on non-additive metric"
+        return ReasonCode.NON_ADDITIVE_TIME_INTEL, None
 
     # 5. Non-additive dependencies
     if non_additive_map:
@@ -818,7 +851,7 @@ def classify_dax_ast_not_applicable(
             first_ref = next((m for m in non_add_refs if non_additive_map.get(m) and non_additive_map[m][0]), non_add_refs[0])
             # CASE WHEN over a semi-additive metric triggers Snowflake compilation error 010902
             if _has_case_when_or_if(parsed_ast):
-                return f"not applicable: CASE WHEN over a semi-additive metric is not supported in Snowflake semantic views [{first_ref}]"
+                return ReasonCode.SEMI_ADDITIVE_CASE, first_ref
 
             is_pure_filtered = False
             if isinstance(node, MeasureRefNode):
@@ -841,12 +874,12 @@ def classify_dax_ast_not_applicable(
                     is_pure_filtered = True
 
             if not is_pure_filtered:
-                return f"not applicable: depends on non-additive metric [{first_ref}]"
+                return ReasonCode.NON_ADDITIVE_DEPENDENCY, first_ref
 
     # 6. Disconnected selector
     if relationships is not None:
         if _is_selector_over_disconnected_table(node, relationships):
-            return "not applicable: selector over a disconnected table"
+            return ReasonCode.DISCONNECTED_SELECTOR, None
 
     return None
 
