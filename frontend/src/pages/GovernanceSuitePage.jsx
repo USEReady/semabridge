@@ -1072,7 +1072,9 @@ function BiTruthView({ projectId, targetType = 'snowflake' }) {
         if (data.added_count > 0) {
           setInfoMsg(`Generated ${data.added_count} new test questions from project model.`);
         } else {
-          setInfoMsg('All model questions are already loaded below.');
+          setInfoMsg(cases.length > 0
+            ? 'No new questions: every measure of this project already has one below.'
+            : 'No questions could be generated: the project ontology has no measures.');
         }
         setTimeout(() => setInfoMsg(''), 4000);
       }

@@ -1334,16 +1334,16 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
                 }}
               >
                 {mode === 'comparator'
-                  ? 'Measure certification'
+                  ? 'Metric Comparator'
                   : mode === 'blast-radius'
-                  ? 'Impact'
-                  : 'Catalog'}
+                  ? 'Blast Radius'
+                  : 'Explorer'}
               </h1>
               <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
                 {mode === 'comparator'
-                  ? 'Compare a measure with Power BI and certify it; quality and access checks'
+                  ? 'Golden parity reconciliation, quality linter, and access checks'
                   : mode === 'blast-radius'
-                  ? 'What breaks if you rename, drop or change a metric (also shown before a sync removes fields)'
+                  ? 'What-if impact simulator for metric renames, drops, and formula changes'
                   : 'Shared business definitions every BI tool and AI agent uses'}
               </span>
             </div>
