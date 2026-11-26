@@ -1018,7 +1018,14 @@ class ModelRepository:
                 if row.deployed_at is not None and row.status == "success" and row.view_name:
                     db = row.target_database or proj_db
                     schema = row.target_schema or proj_schema
-                    view = row.view_name.strip().strip('"')
+                    view = row.view_name.strip().strip('"').strip("`")
+                    # Databricks records the view already qualified
+                    # (catalog.schema.view): never prefix it a second time.
+                    view_parts = [p.strip().strip('"').strip("`") for p in view.split(".") if p.strip()]
+                    if len(view_parts) == 3:
+                        db, schema, view = view_parts
+                    elif len(view_parts) == 2:
+                        schema, view = view_parts
                     info["database"] = db
                     info["schema"] = schema
                     info["view_name"] = view

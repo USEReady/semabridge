@@ -170,7 +170,11 @@ def latest_model_snapshots(project_id: str, repo: Any = None, scan_limit: int = 
                 )
                 out[key] = entry
             if entry.semantic_view is None and row.deployed_at is not None and view:
-                parts = [p for p in (row.target_database or proj_db, row.target_schema or proj_schema, view) if p]
+                view_parts = [p.strip().strip('"`') for p in view.split(".") if p.strip()]
+                if len(view_parts) >= 3:  # already catalog.schema.view (Databricks)
+                    parts = view_parts[-3:]
+                else:
+                    parts = [p for p in (row.target_database or proj_db, row.target_schema or proj_schema, *view_parts) if p]
                 entry.semantic_view = ".".join(_q(p) for p in parts)
     return out
 

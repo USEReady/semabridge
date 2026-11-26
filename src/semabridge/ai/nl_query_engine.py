@@ -129,7 +129,12 @@ class NLQueryEngine:
                 buf.append(ch)
         parts.append("".join(buf).strip())
         clean_parts = [p for p in parts if p]
-        return ".".join(cls._q_databricks_ident(p) for p in clean_parts)
+        # A quoted part holding dots is a whole catalog.schema.view that was
+        # prefixed again: use it alone (Unity Catalog names have 3 parts).
+        dotted = [p for p in clean_parts if "." in p]
+        if dotted:
+            clean_parts = [q.strip() for q in dotted[-1].split(".") if q.strip()]
+        return ".".join(cls._q_databricks_ident(p) for p in clean_parts[-3:])
 
     @classmethod
     def _db_dim_ref(cls, concept: Any, attr: Any, lexicon: ProjectLexicon) -> str:

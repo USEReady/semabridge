@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import threading
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -107,12 +108,50 @@ def backfill(project_ids: Optional[Iterable[str]] = None) -> int:
     return created
 
 
+# ``db.schema."catalog.schema.view"``: an already-qualified Databricks view
+# name that was prefixed with the project's default catalog/schema.
+_DOUBLE_QUALIFIED = re.compile(r'^[^"]*"([^"]+\.[^"]+)"$')
+
+
+def fix_view_name(name: Optional[str]) -> Optional[str]:
+    """The real view name of a double-qualified one; other names unchanged."""
+    m = _DOUBLE_QUALIFIED.match(str(name or "").strip())
+    return m.group(1) if m else name
+
+
+def repair_view_names() -> int:
+    """Rewrite domains whose semantic view name was double-qualified. Returns how many."""
+    from semabridge.ontology.store import ontology_store
+
+    fixed = 0
+    for dom in list(ontology_store.domains.values()):
+        names = [dom.semantic_view_name] + [m.semantic_view_name for m in dom.metrics]
+        if not any(fix_view_name(n) != n for n in names if n):
+            continue
+        updated = dom.model_copy(deep=True)
+        updated.semantic_view_name = fix_view_name(updated.semantic_view_name)
+        for m in updated.metrics:
+            m.semantic_view_name = fix_view_name(m.semantic_view_name)
+        try:
+            ontology_store.add_or_update_domain(updated, save_to_disk=True, original=dom.domain)
+            fixed += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not repair the view name of domain %s: %s", dom.domain, exc)
+    if fixed:
+        logger.info("Repaired the semantic view name of %d domain(s)", fixed)
+    return fixed
+
+
 def start_backfill_thread() -> None:
     """Startup: backfill in the background so the API starts immediately."""
     if not enabled():
         return
 
     def _run() -> None:
+        try:
+            repair_view_names()
+        except Exception as exc:  # noqa: BLE001
+            logger.info("View name repair skipped: %s", exc)
         n = backfill()
         if n:
             logger.info("Ontology backfill: generated %d project ontolog%s", n, "y" if n == 1 else "ies")
