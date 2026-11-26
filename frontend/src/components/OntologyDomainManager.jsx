@@ -10,6 +10,7 @@ import {
 import { authFetch } from '../utils/api';
 import OntologyGraph from './OntologyGraph';
 import OverviewView from './ontology/OverviewView';
+import OverviewDrilldown from './ontology/OverviewDrilldown';
 import DomainsView from './ontology/DomainsView';
 import MetricDrawer from './ontology/MetricDrawer';
 import HealthView from './ontology/HealthView';
@@ -161,6 +162,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
   const [editorYaml, setEditorYaml] = useState('');
   const [validationResult, setValidationResult] = useState(null);
   const [showCollisionsModal, setShowCollisionsModal] = useState(false);
+  const [drilldown, setDrilldown] = useState(null); // metrics | concepts | attention
 
   // Upload Modal State
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
@@ -212,7 +214,9 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
   const [reconCustomSql, setReconCustomSql] = useState('');
   const [parityProjectMetrics, setParityProjectMetrics] = useState([]);
   const [reconTable, setReconTable] = useState('');
-  const [reconTargetKind, setReconTargetKind] = useState('semantic_view');
+  // Table / View by default; a Snowflake semantic view is picked when the measure has one.
+  // Databricks projects stay on Table / View: the server queries their metric view itself.
+  const [reconTargetKind, setReconTargetKind] = useState('table');
   const [reconDims, setReconDims] = useState('');
   const [reconDaxText, setReconDaxText] = useState('');
   const [reconSqlText, setReconSqlText] = useState('');
@@ -707,7 +711,10 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
     setReconDaxExpr(m.dax_expression || '');
     const svName = m.semantic_view_name || m.target_table_or_view || inspectingDomainData?.parsed?.semantic_view_name || concept?.physical_table || m.concept || '';
     setReconTable(svName);
-    const isSv = Boolean(m.semantic_view_name || inspectingDomainData?.parsed?.semantic_view_name || m.target_kind === 'semantic_view');
+    const parityProject = projectsList.find((p) => (p.id || p.name) === (govProjectId || selectedProjectSlug));
+    const isDatabricksProject = /databricks/i.test(String(parityProject?.target_type || ''));
+    const isSv = !isDatabricksProject
+      && Boolean(m.semantic_view_name || inspectingDomainData?.parsed?.semantic_view_name || m.target_kind === 'semantic_view');
     setReconTargetKind(isSv ? 'semantic_view' : 'table');
     let chosenDim = '';
     if (m.dimensions?.length) {
@@ -1237,8 +1244,12 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
   };
 
   const unresolvedRefs = domainData.unresolved_references || [];
+  // Only real conflicts (different formulas) need attention; the same name and
+  // formula in several projects is shown as "shared names".
+  const conflictCount = scopedCollisions.filter((c) => String(c.severity || '').toUpperCase() === 'ERROR').length;
   const attention = {
-    collisions: scopedCollisions.length,
+    collisions: conflictCount,
+    shared: scopedCollisions.length - conflictCount,
     unresolved: unresolvedRefs.length,
     parityDrift: driftMetric ? 1 : 0,
   };
@@ -1487,6 +1498,19 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
             onAsk={() => navigate('/ask')}
             onGenerate={openBootstrap}
             onImport={() => setUploadModalOpen(true)}
+            onOpenList={setDrilldown}
+          />
+        )}
+        {drilldown && (
+          <OverviewDrilldown
+            kind={drilldown}
+            domains={visibleDomains}
+            details={domainDetails}
+            collisions={scopedCollisions}
+            unresolved={unresolvedRefs}
+            onClose={() => setDrilldown(null)}
+            onOpenDomain={(name) => { setDrilldown(null); handleOpenDomainInspector(name); }}
+            onResolved={() => fetchDomains()}
           />
         )}
 

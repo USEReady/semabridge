@@ -54,3 +54,31 @@ def test_plain_table_on_databricks_is_left_alone(monkeypatch):
     out = _gen(monkeypatch, "table", view="workspace.default.raw_sales")
     assert out["target_kind"] == "table"
     assert "MEASURE(" not in out["sql_query"]
+
+
+def test_snowflake_semantic_view_uses_table_metric_not_the_formula(monkeypatch):
+    from types import SimpleNamespace
+
+    from semabridge.ai import bi_truth_service
+
+    monkeypatch.setattr(bi_truth_service, "_detect_project_target", lambda pid: "SNOWFLAKE")
+    dom = SimpleNamespace(
+        concepts=[SimpleNamespace(name="SALES", logical_name="sales", attributes=[])],
+        metrics=[SimpleNamespace(name="Regular_Sales_Dollars", logical_name="regular_sales_dollars",
+                                 label=None, concept="SALES")],
+    )
+    monkeypatch.setattr(rr, "_get_project_domains_for_validation", lambda pid: [dom])
+    out = rr.generate_reconciliation_queries(rr.GenerateQueriesRequest(
+        metric_name="Regular_Sales_Dollars",
+        metric_sql_expression='SUM(SALES."SUM_REGULAR_SALES_DOLLARS")',
+        target_table_or_view="DB.SCH.STORE_SALES_SEMANTIC", target_kind="semantic_view",
+        project_id="proj-sf",
+    ))
+    assert "sales.regular_sales_dollars" in out["sql_query"]
+    assert "SUM(" not in out["sql_query"]
+
+
+def test_double_qualified_view_is_cleaned(monkeypatch):
+    out = _gen(monkeypatch, "table", view='main.semabridge."' + VIEW + '"')
+    assert "`main`" not in out["sql_query"]
+    assert "MEASURE(`Total_OTHER_Units_YTD`)" in out["sql_query"]

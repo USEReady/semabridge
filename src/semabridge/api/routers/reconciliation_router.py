@@ -379,6 +379,31 @@ def _effective_semantic_view_metric(metric_sql_expression: str, fallback_metric:
     return (fallback_metric or "").strip()
 
 
+def _clean_view_name(name: str) -> str:
+    """Undo a double-qualified view name (``db.schema."catalog.schema.view"``)."""
+    from semabridge.ontology.auto_bootstrap import fix_view_name
+
+    return fix_view_name(name) or name
+
+
+def _semantic_view_metric_token(project_id: Optional[str], expr: str, metric_name: str) -> str:
+    """``TABLE.METRIC`` for a Snowflake semantic view: the expression when it already
+    is one, else the measure's table (concept) from the project's ontology."""
+    expr = (expr or "").strip()
+    if expr and _QUALIFIED_IDENT_RE.fullmatch(expr):
+        return expr
+    wanted = normalize_separator_ident(metric_name, pct_word=True)
+    for dom in _get_project_domains_for_validation(project_id):
+        concepts = {c.name: c for c in getattr(dom, "concepts", []) or []}
+        for m in getattr(dom, "metrics", []) or []:
+            names = {normalize_separator_ident(n, pct_word=True) for n in (m.name, getattr(m, "logical_name", None), m.label) if n}
+            if wanted in names and m.concept:
+                c = concepts.get(m.concept)
+                table = (getattr(c, "logical_name", None) if c else None) or m.concept
+                return f"{table}.{getattr(m, 'logical_name', None) or m.name}"
+    return metric_name.strip()
+
+
 def _validate_certify_request(req: "CertifyMetricRequest", sql_metric_token: str) -> None:
     """Apply the /generate-queries model validation to the inputs /certify is about to execute."""
     probe = GenerateQueriesRequest(
@@ -391,8 +416,14 @@ def _validate_certify_request(req: "CertifyMetricRequest", sql_metric_token: str
         project_id=req.project_id,
     )
     resolved_kind = _resolve_target_kind(probe)
-    if (resolved_kind or "").strip().lower() == "semantic_view":
-        probe.metric_sql_expression = _effective_semantic_view_metric(probe.metric_sql_expression, sql_metric_token)
+    from semabridge.ai.bi_truth_service import _detect_project_target
+
+    if _detect_project_target(req.project_id) == "DATABRICKS" and (resolved_kind or "") == "semantic_view":
+        resolved_kind = "metric_view"  # names are resolved against the metric view itself
+    elif (resolved_kind or "").strip().lower() == "semantic_view":
+        probe.metric_sql_expression = _semantic_view_metric_token(
+            req.project_id, _effective_semantic_view_metric(probe.metric_sql_expression, sql_metric_token), sql_metric_token
+        )
     _validate_generate_queries_request(probe, resolved_kind)
 
 
@@ -420,14 +451,19 @@ def generate_reconciliation_queries(req: GenerateQueriesRequest, request: Reques
     if not req.metric_name.strip() or not req.target_table_or_view.strip():
         raise HTTPException(status_code=400, detail="metric_name and target_table_or_view must not be blank.")
     verifier = GoldenQueryVerifier()
+    req.target_table_or_view = _clean_view_name(req.target_table_or_view)
     resolved_kind = _resolve_target_kind(req)
-    _validate_generate_queries_request(req, resolved_kind)
     # SQL for the project's own warehouse: a Databricks project's deployed
     # view is a Unity Catalog metric view (MEASURE()), not a Snowflake
     # SEMANTIC_VIEW(...).
     from semabridge.ai.bi_truth_service import _detect_project_target
 
     warehouse_target = _detect_project_target(req.project_id)
+    if warehouse_target == "DATABRICKS" and (resolved_kind or "") == "semantic_view":
+        resolved_kind = "metric_view"
+    elif (resolved_kind or "") == "semantic_view":
+        req.metric_sql_expression = _semantic_view_metric_token(req.project_id, req.metric_sql_expression, req.metric_name)
+    _validate_generate_queries_request(req, resolved_kind)
     sql_expr, sql_dims = req.metric_sql_expression, req.dimensions
     if warehouse_target == "DATABRICKS":
         mv = _databricks_metric_view_inputs(req, resolved_kind, request)
@@ -590,6 +626,7 @@ def certify_metric_end_to_end(req: CertifyMetricRequest, request: Request) -> Di
     if not req.metric_name.strip() or not req.target_table_or_view.strip():
         raise HTTPException(status_code=400, detail="metric_name and target_table_or_view are required.")
 
+    req.target_table_or_view = _clean_view_name(req.target_table_or_view)
     view_metric = (req.view_metric or req.metric_name).strip()
     verifier = GoldenQueryVerifier(default_tolerance=req.tolerance)
     sql_metric_token = view_metric if (req.target_kind or "").lower() == "semantic_view" else req.metric_name
@@ -605,6 +642,8 @@ def certify_metric_end_to_end(req: CertifyMetricRequest, request: Request) -> Di
     warehouse_target = _detect_project_target(req.project_id)
     target_kind = req.target_kind
     sql_expr, sql_dims = req.metric_sql_expression or req.metric_name, req.dimensions
+    if warehouse_target != "DATABRICKS" and (target_kind or "") == "semantic_view":
+        sql_expr = _semantic_view_metric_token(req.project_id, _effective_semantic_view_metric(sql_expr, sql_metric_token), sql_metric_token)
     if warehouse_target == "DATABRICKS":
         mv = _databricks_metric_view_inputs(req, target_kind or "semantic_view", request)
         if mv:
