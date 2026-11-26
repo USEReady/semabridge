@@ -651,7 +651,20 @@ async def _perform_project_run_impl(run: dict, project_cfg: str, started: float)
         if user_id is not None and str(user_id).strip():
             sync_payload["user_id"] = user_id
 
-        # Scheduled run drift guard: When drift is detected on scheduled run, show drift approval and do not directly upsert
+        # Parse project config to check governance gate modes (defaulting to 'report')
+        cfg_dict = _compat_parse_project_cfg_dict(project_cfg)
+        drift_gate_mode = str(
+            cfg_dict.get("drift_gate_mode")
+            or cfg_dict.get("governance", {}).get("drift_gate_mode")
+            or "report"
+        ).strip().lower()
+        bi_truth_gate_mode = str(
+            cfg_dict.get("bi_truth_gate_mode")
+            or cfg_dict.get("governance", {}).get("bi_truth_gate_mode")
+            or "report"
+        ).strip().lower()
+
+        # Scheduled run drift guard
         schedule_label = str(run.get("schedule") or run.get("run_type") or "Manual")
         is_scheduled = "scheduled" in schedule_label.lower() or "cron" in schedule_label.lower()
         if is_scheduled:
@@ -661,33 +674,107 @@ async def _perform_project_run_impl(run: dict, project_cfg: str, started: float)
                 pending_events = list_drift_events(project_id=project_id, status="pending")
                 if drift_check.get("drift_detected", 0) > 0 or len(pending_events) > 0:
                     logger.warning(
-                        "[%s] Drift detected on scheduled run (%d pending events). Halting direct upsert to require manual drift approval.",
-                        project_id, len(pending_events)
-                    )
-                    run["duration_ms"] = elapsed_ms(started)
-                    run["completed_at"] = _compat_now_iso()
-                    run["status"] = "warning"
-                    run["message"] = (
-                        f"Drift detected on scheduled run ({len(pending_events)} metric(s) drifted). "
-                        "Direct upsert paused: drift approval required in Drift Monitoring."
+                        "[%s] Drift detected on scheduled run (%d pending events). Gate mode: %s.",
+                        project_id, len(pending_events), drift_gate_mode
                     )
                     run["summary"] = {
                         "drift_detected": True,
                         "drift_count": len(pending_events),
                         "drift_events": pending_events[:5],
-                        "approval_required": True,
-                        "upsert_executed": False,
-                        "message": "Drift detected on scheduled run. Direct upsert paused pending review.",
+                        "approval_required": (drift_gate_mode == "block"),
+                        "upsert_executed": (drift_gate_mode != "block"),
+                        "message": (
+                            f"Drift detected on scheduled run ({len(pending_events)} metric(s) drifted). "
+                            + ("Direct upsert paused." if drift_gate_mode == "block" else "Direct upsert proceeding in report mode.")
+                        ),
                     }
                     run["logs"] = [
-                        f"WARNING Drift detected on scheduled run for project '{project_id}': {len(pending_events)} drifted metric(s).",
-                        "PAUSED Direct upsert was paused to protect warehouse integrity.",
-                        "ACTION Review and approve changes under Drift Monitoring in navigation to execute upsert.",
+                        *run.get("logs", []),
+                        f"HEAVY WARNING Drift detected on scheduled run: {len(pending_events)} drifted metric(s). Mode: {drift_gate_mode.upper()}.",
+                    ]
+                    if drift_gate_mode == "block":
+                        run["duration_ms"] = elapsed_ms(started)
+                        run["completed_at"] = _compat_now_iso()
+                        run["status"] = "warning"
+                        run["message"] = (
+                            f"Drift detected on scheduled run ({len(pending_events)} metric(s) drifted). "
+                            "Direct upsert paused: drift approval required in Drift Monitoring."
+                        )
+                        run["logs"].extend([
+                            "PAUSED Direct upsert was paused to protect warehouse integrity.",
+                            "ACTION Review and approve changes under Drift Monitoring in navigation to execute upsert.",
+                        ])
+                        _persist_run(run)
+                        return run
+            except Exception as drift_err:
+                logger.warning("[%s] Drift pre-check encountered error: %s", project_id, drift_err)
+                if drift_gate_mode == "block":
+                    run["status"] = "failed"
+                    run["message"] = f"Drift pre-check failed in block mode: {drift_err}"
+                    _persist_run(run)
+                    return run
+
+        # BI Truth Deploy Gate: reports or blocks based on project's configured mode (default: report)
+        try:
+            from semabridge.ai.bi_truth_service import evaluate_project_deploy_gate
+            gate_verdict = evaluate_project_deploy_gate(project_id=project_id, gate_mode=bi_truth_gate_mode)
+            run["summary"] = run.get("summary") or {}
+            run["summary"]["bi_truth_gate"] = {
+                "passed": gate_verdict.passed,
+                "mode": gate_verdict.mode.value if hasattr(gate_verdict.mode, "value") else str(gate_verdict.mode),
+                "status": gate_verdict.status.value if hasattr(gate_verdict.status, "value") else str(gate_verdict.status),
+                "reason": gate_verdict.reason,
+                "findings": [f.to_dict() if hasattr(f, "to_dict") else f.__dict__ for f in gate_verdict.findings],
+            }
+            if not gate_verdict.passed:
+                if gate_verdict.blocks_deploy:
+                    logger.warning("[%s] Deployment blocked by BI Truth Gate (BLOCK mode): %s", project_id, gate_verdict.reason)
+                    run["duration_ms"] = elapsed_ms(started)
+                    run["completed_at"] = _compat_now_iso()
+                    run["status"] = "blocked"
+                    run["message"] = gate_verdict.reason
+                    run["logs"] = [
+                        *run.get("logs", []),
+                        f"DEPLOYMENT BLOCKED by BI Truth Gate: {gate_verdict.reason}",
+                        "ACTION Run the BI Truth regression suite to verify numbers before deployment.",
                     ]
                     _persist_run(run)
                     return run
-            except Exception as drift_err:
-                logger.warning("[%s] Drift pre-check encountered non-fatal error: %s", project_id, drift_err)
+                else:
+                    logger.warning("[%s] BI Truth Gate finding in REPORT mode: %s", project_id, gate_verdict.reason)
+                    run["logs"] = [
+                        *run.get("logs", []),
+                        f"HEAVY WARNING [BI TRUTH GATE - REPORT MODE]: {gate_verdict.reason}",
+                    ]
+                    for f in gate_verdict.findings:
+                        w_label = f" [{f.window_name}]" if f.window_name else ""
+                        run["logs"].append(
+                            f"  - Metric '{f.metric_name}'{w_label}: expected={f.expected}, received={f.received}, variance={f.variance_pct}%, tolerance={f.tolerance}"
+                        )
+            else:
+                run["logs"] = [
+                    *run.get("logs", []),
+                    f"BI Truth Gate: {gate_verdict.reason} (mode: {gate_verdict.mode})",
+                ]
+        except Exception as gate_err:
+            logger.warning("[%s] BI Truth Gate evaluation error: %s", project_id, gate_err)
+            if bi_truth_gate_mode == "block":
+                run["duration_ms"] = elapsed_ms(started)
+                run["completed_at"] = _compat_now_iso()
+                run["status"] = "failed"
+                run["message"] = f"BI Truth Gate evaluation failed in block mode: {gate_err}"
+                run["logs"] = [
+                    *run.get("logs", []),
+                    f"DEPLOYMENT REFUSED: BI Truth Gate evaluation failed in block mode: {gate_err}",
+                ]
+                _persist_run(run)
+                return run
+            else:
+                run["logs"] = [
+                    *run.get("logs", []),
+                    f"WARNING BI Truth Gate evaluation encountered non-fatal error in report mode: {gate_err}",
+                ]
+
         # Forward sync_mode and force so the execution engine applies the correct strategy
         sync_mode = str(run.get("sync_mode") or "copy").lower()
         if sync_mode not in {"copy", "upsert"}:
@@ -768,11 +855,16 @@ async def _perform_project_run_impl(run: dict, project_cfg: str, started: float)
                 _compat_save_store()
             except Exception:
                 pass
-        run["summary"] = (sync_result or {}).get("summary") or {}
+        pre_summary = dict(run.get("summary") or {})
+        pre_logs = list(run.get("logs") or [])
+        run["summary"] = {**pre_summary, **((sync_result or {}).get("summary") or {})}
+        for gov_key in ("bi_truth_gate", "drift_detected", "drift_count", "drift_events", "upsert_executed"):
+            if gov_key in pre_summary:
+                run["summary"][gov_key] = pre_summary[gov_key]
         run["results"] = (sync_result or {}).get("results") or []
         run["models_synced"] = int((sync_result or {}).get("models_synced") or 0)
         run["total_models"] = int((sync_result or {}).get("total_models") or 0)
-        run["logs"] = _build_run_logs(sync_result or {})
+        run["logs"] = pre_logs + _build_run_logs(sync_result or {})
         run["stage_states"] = _build_stage_states(sync_result or {})
 
         # Post-deploy reconciliation: verify every Stage 6 snapshot metric is
