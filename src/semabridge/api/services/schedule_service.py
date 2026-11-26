@@ -112,12 +112,27 @@ async def save_project_schedule_compat(project_id: str, payload: dict):
     _compat_ensure_loaded()
     # Read-through: the database row decides (another process may have
     # created or deleted the project).
-    if _project_shared_mod._compat_get_project(project_id, _compat_projects) is None:
+    project_obj = _project_shared_mod._compat_get_project(project_id, _compat_projects)
+    if project_obj is None:
         raise NotFoundError("Project not found")
     try:
         schedule = scheduler_service.save_project_schedule(project_id, payload or {})
     except ValueError as exc:
         raise ValidationError(str(exc)) from exc
+
+    # Check for Power BI Desktop source scheduled run warning
+    source = project_obj.get("source") if isinstance(project_obj, dict) else {}
+    if (
+        str(source.get("type") or "").lower() == "pbi_desktop"
+        and str(schedule.get("schedule_type") or "manual").lower() != "manual"
+    ):
+        warning_msg = "Scheduled runs require the file to be open in Power BI Desktop."
+        schedule["warning"] = warning_msg
+        logger.warning(
+            "Project '%s' (pbi_desktop) saved schedule with warning: %s",
+            project_id,
+            warning_msg,
+        )
     if str(schedule.get("schedule_type") or "manual") == "manual":
         _compat_project_schedules.pop(project_id, None)
     else:

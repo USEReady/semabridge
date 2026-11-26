@@ -74,6 +74,20 @@ export function parseConfigYamlToInitialData(yamlText, projectMeta) {
     const pbixFilePaths = parsedSourceType === 'pbix'
       ? [...new Set(models.map((m) => String(m || '').trim()).filter(Boolean))]
       : [];
+    const pbiDesktopModels = parsedSourceType === 'pbi_desktop'
+      ? models.map((m) => {
+          if (typeof m === 'object' && m !== null) {
+            return {
+              file_path: String(m.file_path || m.path || ''),
+              display_name: String(m.display_name || m.name || ''),
+            };
+          }
+          return {
+            file_path: String(m || ''),
+            display_name: String(m || ''),
+          };
+        }).filter(m => m.file_path)
+      : [];
 
     return {
       source_type: String(parsedSource.type || fallback.source_type),
@@ -93,6 +107,7 @@ export function parseConfigYamlToInitialData(yamlText, projectMeta) {
       pbix_folder: String(parsedSource.pbix_folder || ''),
       pbix_uploaded_path: String(projectMeta?.pbix_file_path || parsedSource.pbix_file_path || parsedSource.pbix_path || ''),
       pbix_file_paths: pbixFilePaths,
+      pbi_desktop_models: pbiDesktopModels,
       local_folder_id: String(parsedSource.local_folder_id || ''),
       local_folder_tag: String(parsedSource.local_folder_tag || ''),
       // Project mode (chosen at creation) and the per-model view names saved

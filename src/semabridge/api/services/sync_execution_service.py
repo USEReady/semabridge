@@ -455,6 +455,61 @@ def _build_sync_jobs(
             if view_name:
                 sync_jobs.append({"dataset_id": view_name, "pbix_path": None, "model_label": view_name})
 
+    elif source_type == "pbi_desktop":
+        from semabridge.sources.base import get_source_adapter
+
+        adapter = get_source_adapter("pbi_desktop")
+        model_list = source_cfg.get("models") or []
+        if not model_list:
+            single = (
+                source_cfg.get("model")
+                or config.get("model_name")
+                or source_cfg.get("file_path")
+                or source_cfg.get("pbix_path")
+            )
+            if single:
+                model_list = [single]
+
+        if not model_list:
+            raise ValidationError(
+                "Power BI Desktop source requires at least one model in source.models."
+            )
+
+        for raw_model in model_list:
+            ref_str = (
+                str(raw_model.get("file_path") or raw_model.get("path") or raw_model.get("display_name") or "")
+                if isinstance(raw_model, dict) else str(raw_model or "")
+            )
+            fname = Path(ref_str).name or ref_str
+            try:
+                check = adapter.validate_and_resolve([raw_model])
+                ident = check.identities[0]
+                resolved_pbix_path = adapter._resolved_file_paths.get(ident.model_id)
+                sync_jobs.append(
+                    {
+                        "dataset_id": ident.model_id,
+                        "pbix_path": resolved_pbix_path,
+                        "model_label": ident.display_name,
+                        "source_ref": ident.model_id,
+                        "file_path": resolved_pbix_path,
+                    }
+                )
+            except Exception as exc:
+                err_msg = f"Open {fname} in Power BI Desktop and try again"
+                sync_jobs.append(
+                    {
+                        "dataset_id": None,
+                        "pbix_path": None,
+                        "model_label": clean_pbix_model_name(fname) or fname,
+                        "source_ref": ref_str,
+                        "resolution_error": err_msg,
+                    }
+                )
+
+        resolution_failures = [job for job in sync_jobs if job.get("resolution_error")]
+        if resolution_failures and len(resolution_failures) == len(sync_jobs):
+            raise ValidationError(str(resolution_failures[0]["resolution_error"]))
+
     if not sync_jobs:
         raise ValidationError("No sync jobs resolved from config.")
 

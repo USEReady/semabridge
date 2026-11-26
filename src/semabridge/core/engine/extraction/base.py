@@ -74,6 +74,8 @@ def _step4_extract(
             return self._extract_fabric(context, dataset_id, workspace_id)
         elif adapter.source_type == "pbix":
             return self._extract_pbix(context, pbix_path)
+        elif adapter.source_type == "pbi_desktop":
+            return self._extract_pbi_desktop(context, dataset_id, pbix_path)
         else:
             raise ExtractionError(f"Unknown source type: {context.source_type}")
 
@@ -84,3 +86,37 @@ def _step4_extract(
     except Exception as e:
         self._record_step(4, StepStatus.FAILED, str(e))
         raise ExtractionError(f"Extraction failed: {e}") from e
+
+
+def _extract_pbi_desktop(
+    self,
+    context: RunContext,
+    dataset_id: Optional[str],
+    pbix_path: Optional[str] = None,
+) -> SourceFormat:
+    """Extract live semantic model from running Power BI Desktop instance."""
+    from semabridge.core.source_format import from_pbix_tmsl
+    from semabridge.sources.base import ModelIdentity, get_source_adapter
+
+    adapter = get_source_adapter("pbi_desktop")
+    model_ref = dataset_id or pbix_path or getattr(getattr(context.config, "source", None), "model", None)
+    if not model_ref:
+        raise ExtractionError("No target engine or model specified for Power BI Desktop extraction.")
+
+    ident = ModelIdentity(
+        source_type="pbi_desktop",
+        model_id=str(model_ref),
+        display_name=str(context.project_name or "model"),
+    )
+    drop_ledger = getattr(context, "drop_ledger", None)
+    tmsl = adapter.extract_model(ident, drop_ledger=drop_ledger)
+    source_format = from_pbix_tmsl(tmsl)
+
+    if pbix_path:
+        try:
+            report_layer = adapter.extract_report_layer(ident, tmsl=tmsl)
+            source_format.report_layer = report_layer
+        except Exception as exc:
+            logger.warning(f"Failed to extract report layer: {exc}")
+
+    return source_format

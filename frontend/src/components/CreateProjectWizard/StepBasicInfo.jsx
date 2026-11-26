@@ -20,7 +20,8 @@ export function StepBasicInfo({
   targetConnectors, setTargetConnectors,
   intermediateFormat, setIntermediateFormat,
   tags, setTags, tagInput, setTagInput,
-  showValidation, editMode
+  showValidation, editMode,
+  availableConnectors = CONNECTOR_TYPES,
 }) {
   const isSourceMissing = !sourceConnector;
   const isTargetsMissing = targetConnectors.size === 0;
@@ -127,7 +128,7 @@ export function StepBasicInfo({
                 <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 4, background: 'rgba(59, 130, 246, 0.1)', color: 'var(--accent-blue)' }}>SINGLE</span>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10, flex: 1 }}>
-                {CONNECTOR_TYPES.map(c => {
+                {(availableConnectors || CONNECTOR_TYPES).map(c => {
                   const isSelected = sourceConnector === c.value;
                   const shouldDim = Boolean(sourceConnector) && !isSelected;
                   return (

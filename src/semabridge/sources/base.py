@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Literal, Optional
 
 SourceType = Literal["fabric", "pbix", "snowflake", "pbi_desktop"]
-CredentialOrigin = Literal["identity", "account", "interactive", "extractor_default"]
+CredentialOrigin = Literal["identity", "account", "interactive", "extractor_default", "local engine"]
 
 
 @dataclass(frozen=True)

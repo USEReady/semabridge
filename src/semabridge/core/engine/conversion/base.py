@@ -97,7 +97,7 @@ def _step6_convert_to_sml(
             sml_model = self._convert_snowflake_to_sml(context)
         elif context.source_type == "fabric":
             sml_model = self._convert_fabric_to_sml(context, workspace_id, dataset_id)
-        elif context.source_type == "pbix":
+        elif context.source_type in ("pbix", "pbi_desktop"):
             sml_model = self._convert_pbix_to_sml(context)
         else:
             raise ConversionError(f"Unknown source type: {context.source_type}")
@@ -231,7 +231,7 @@ def _upsert_delta_preview_model(self, context: RunContext, preview_overrides: Di
     saved_summary, saved_step = self._summary, self._current_step
     self._summary = None
     try:
-        if context.source_type == "pbix":
+        if context.source_type in ("pbix", "pbi_desktop"):
             converted = self._convert_pbix_to_sml(shadow)
         elif context.source_type == "fabric" and getattr(shadow, "source_format", None) is not None \
                 and getattr(shadow.source_format, "tmsl_definition", None):

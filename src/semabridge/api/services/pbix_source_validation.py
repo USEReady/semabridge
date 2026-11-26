@@ -143,6 +143,88 @@ def normalize_dry_run_sources(sources: Optional[List[str]], *, source_type: str)
 SUPPORTED_SOURCE_TYPES = ("pbix", "fabric", "snowflake")
 
 
+def get_supported_source_types() -> tuple[str, ...]:
+    from semabridge.core.feature_flags import is_pbi_desktop_source_enabled
+
+    if is_pbi_desktop_source_enabled():
+        return ("pbix", "fabric", "snowflake", "pbi_desktop")
+    return ("pbix", "fabric", "snowflake")
+
+
+def validate_pbi_desktop_source_config(source: Optional[dict]) -> None:
+    """Validate a source config for Power BI Desktop source.
+
+    Rules:
+    - source.type == "pbi_desktop"
+    - source.models must be a non-empty list of [{file_path, display_name}] (or strings)
+    - At least one model
+    - Every file_path must be an absolute .pbix path
+    - No duplicate file paths
+    - Never save port, PID, database name (reject if present)
+    """
+    import os
+    from pathlib import Path
+
+    if not isinstance(source, dict):
+        raise ValidationError("Source configuration must be a dictionary.")
+
+    stype = str(source.get("type") or "").strip().lower()
+    if stype != "pbi_desktop":
+        return
+
+    from semabridge.core.feature_flags import is_pbi_desktop_source_enabled
+
+    if not is_pbi_desktop_source_enabled():
+        raise ValidationError(
+            "Power BI Desktop source is disabled (feature flag 'pbi_desktop_source' is off)."
+        )
+
+    # Dynamic session properties that change every session must never be saved
+    for forbidden in ("port", "pid", "msmdsrv_pid", "database", "database_name", "server"):
+        if forbidden in source:
+            raise ValidationError(
+                f"Dynamic session field '{forbidden}' must not be saved in project config."
+            )
+
+    models = source.get("models")
+    if not models or not isinstance(models, list):
+        raise ValidationError(
+            "At least one Power BI Desktop model must be selected (source.models)."
+        )
+
+    seen_paths = set()
+    for entry in models:
+        if isinstance(entry, dict):
+            raw_path = str(entry.get("file_path") or entry.get("path") or "").strip()
+        elif isinstance(entry, str):
+            raw_path = entry.strip()
+        else:
+            raise ValidationError(
+                "Each model entry must be a dictionary with 'file_path' or a path string."
+            )
+
+        if not raw_path:
+            raise ValidationError("Model entry must specify a non-empty 'file_path'.")
+
+        p = Path(raw_path)
+        if p.suffix.lower() != ".pbix":
+            raise ValidationError(f"'{raw_path}' does not look like a .pbix file path.")
+
+        if not p.is_absolute():
+            raise ValidationError(
+                f"'{raw_path}' is not an absolute path. Full absolute .pbix path is required."
+            )
+
+        try:
+            normalized_key = os.path.normcase(str(p.resolve()))
+        except Exception:
+            normalized_key = os.path.normcase(raw_path)
+
+        if normalized_key in seen_paths:
+            raise ValidationError(f"Duplicate model selected: '{raw_path}'.")
+        seen_paths.add(normalized_key)
+
+
 def require_source_type(source_cfg: Optional[dict], *, where: str = "project") -> str:
     """The project's ``source.type``, required at create/save.
 
@@ -151,12 +233,13 @@ def require_source_type(source_cfg: Optional[dict], *, where: str = "project") -
     ``fabric`` and failing later with confusing auth/workspace errors.
     """
     stype = str((source_cfg or {}).get("type") or "").strip().lower()
+    allowed = get_supported_source_types()
     if not stype:
         raise ValidationError(
-            f"The {where} has no source type: set source.type to one of {', '.join(SUPPORTED_SOURCE_TYPES)}."
+            f"The {where} has no source type: set source.type to one of {', '.join(allowed)}."
         )
-    if stype not in SUPPORTED_SOURCE_TYPES:
+    if stype not in allowed:
         raise ValidationError(
-            f"Unsupported source.type '{stype}' for the {where}; use one of {', '.join(SUPPORTED_SOURCE_TYPES)}."
+            f"Unsupported source.type '{stype}' for the {where}; use one of {', '.join(allowed)}."
         )
     return stype

@@ -15,7 +15,8 @@ def client():
     return TestClient(app)
 
 
-def test_get_desktop_instances_mocked(client):
+def test_get_desktop_instances_mocked(client, monkeypatch):
+    monkeypatch.setenv("pbi_desktop_source", "true")
     mock_instance = DiscoveredDesktopInstance(
         port=51234,
         workspace_folder="AnalysisServicesWorkspace_abc",
@@ -47,7 +48,20 @@ def test_get_desktop_instances_mocked(client):
         assert inst["database_name"] == "guid_123"
 
 
-def test_get_desktop_instances_empty(client):
+def test_get_desktop_instances_disabled(client, monkeypatch):
+    monkeypatch.delenv("pbi_desktop_source", raising=False)
+    monkeypatch.delenv("PBI_DESKTOP_SOURCE", raising=False)
+    monkeypatch.delenv("SEMABRIDGE_PBI_DESKTOP_SOURCE", raising=False)
+
+    res = client.get("/api/sources/pbi-desktop/instances")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["total"] == 0
+    assert data["enabled"] is False
+
+
+def test_get_desktop_instances_empty(client, monkeypatch):
+    monkeypatch.setenv("pbi_desktop_source", "true")
     with patch(
         "semabridge.api.routers.pbi_desktop_router.discover_running_instances",
         return_value=[],

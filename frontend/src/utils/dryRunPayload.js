@@ -10,6 +10,7 @@ export function buildDryRunPayload({
   targetSchema,
   selectedModelNames,
   pbixPath,
+  pbiDesktopModels,
 }) {
   const sourceConfig = { type: sourceConnector };
 
@@ -27,7 +28,11 @@ export function buildDryRunPayload({
     sourceConfig.pbix_path = pbixPath;
   }
 
-  if (Array.isArray(selectedModelNames) && selectedModelNames.length > 0) {
+  if (sourceConnector === 'pbi_desktop' && Array.isArray(pbiDesktopModels) && pbiDesktopModels.length > 0) {
+    sourceConfig.models = pbiDesktopModels;
+  }
+
+  if (Array.isArray(selectedModelNames) && selectedModelNames.length > 0 && !sourceConfig.models) {
     sourceConfig.models = selectedModelNames;
   }
 
@@ -97,8 +102,23 @@ export function resolveEffectiveSources({
   pbixUploadPath = '',
   selectedPbixFilePath = '',
   selectedModelNames = [],
+  pbiDesktopModels = [],
 } = {}) {
   const type = String(sourceConnector || '').toLowerCase();
+
+  if (type === 'pbi_desktop') {
+    const rawList = (pbiDesktopModels && pbiDesktopModels.length > 0)
+      ? pbiDesktopModels.map(m => (typeof m === 'object' ? (m.file_path || m.display_name) : m))
+      : selectedModelNames;
+    const list = cleanList(rawList);
+    return {
+      mode: list.length === 0 ? 'none' : list.length > 1 ? 'multi' : 'single',
+      sources: list,
+      singlePbixPath: '',
+      isMulti: false,
+      useMultiFileList: false,
+    };
+  }
 
   if (type === 'pbix') {
     if (pbixSourceMode === 'TAG') {

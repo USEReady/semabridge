@@ -645,6 +645,29 @@ def _describe_source(project_cfg: str, run: Dict[str, Any]) -> Tuple[str, List[s
         models = source_cfg.get("models") or []
         return "Snowflake", [str(m) for m in models] or ["(view name unavailable)"]
 
+    if source_type == "pbi_desktop":
+        models = source_cfg.get("models") or []
+        labels = []
+        for m in models:
+            fn = (
+                (m.get("display_name") or Path(str(m.get("file_path") or "")).name)
+                if isinstance(m, dict)
+                else Path(str(m)).name
+            )
+            if fn:
+                labels.append(fn)
+        if not labels:
+            labels = [
+                str(r.get("model")) for r in (run.get("results") or [])
+                if isinstance(r, dict) and r.get("model")
+            ]
+        has_unsaved = any(
+            r.get("has_unsaved_changes") for r in (run.get("results") or [])
+            if isinstance(r, dict)
+        )
+        suffix = " (includes unsaved changes)" if has_unsaved else ""
+        return "Power BI Desktop", [f"{lbl}{suffix}" for lbl in (labels or ["(open file)"])]
+
     return source_type.title() or "Unknown source", []
 
 
@@ -660,12 +683,23 @@ def _describe_source_for_result(
     pbix_path of its own (single-model runs, and non-PBIX sources, which
     don't fan out into multiple files today).
     """
-    pbix_path = result.get("pbix_path")
-    if pbix_path:
-        return "Local file", [Path(str(pbix_path)).name]
     parsed = _parse_project_cfg(project_cfg)
     source_cfg = parsed.get("source") if isinstance(parsed.get("source"), dict) else {}
     source_type = str(run.get("source_type") or source_cfg.get("type") or "").lower()
+
+    if source_type == "pbi_desktop":
+        fn = (
+            result.get("file_name")
+            or (Path(str(result.get("pbix_path"))).name if result.get("pbix_path") else None)
+            or result.get("model")
+            or "Power BI Desktop Model"
+        )
+        suffix = " (includes unsaved changes)" if result.get("has_unsaved_changes") else ""
+        return "Power BI Desktop", [f"{fn}{suffix}"]
+
+    pbix_path = result.get("pbix_path")
+    if pbix_path:
+        return "Local file", [Path(str(pbix_path)).name]
     model_ref = result.get("dataset_id") or result.get("source_ref") or result.get("model")
     if source_type == "fabric" and model_ref:
         workspace = source_cfg.get("workspace_id")

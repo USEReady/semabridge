@@ -43,7 +43,7 @@ class ExecutionEngine:
     The engine enforces this order and handles failures appropriately.
     """
     
-    SUPPORTED_SOURCES = {"snowflake", "fabric", "pbix"}
+    SUPPORTED_SOURCES = {"snowflake", "fabric", "pbix", "pbi_desktop"}
     SUPPORTED_TARGETS = {"snowflake", "fabric", "databricks", None}
     
     def __init__(self, db_manager: Optional[ModelRepository] = None):
@@ -548,6 +548,7 @@ ExecutionEngine._resolve_snowflake_include_tables = _ext_sf._resolve_snowflake_i
 ExecutionEngine._resolve_snowflake_parallelism    = _ext_sf._resolve_snowflake_parallelism
 ExecutionEngine._extract_fabric                   = _ext_fab._extract_fabric
 ExecutionEngine._extract_pbix                     = _ext_pbix._extract_pbix
+ExecutionEngine._extract_pbi_desktop             = _ext_base._extract_pbi_desktop
 
 from semabridge.core.engine.conversion import base as _conv_base
 from semabridge.core.engine.conversion import snowflake as _conv_sf

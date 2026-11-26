@@ -54,6 +54,7 @@ import { escapeYamlString } from '../utils/yaml';
 import { canProjectUpsert } from '../utils/syncMode';
 import { StepBasicInfo } from '../components/CreateProjectWizard/StepBasicInfo';
 import { StepConnectorConfig } from '../components/CreateProjectWizard/StepConnectorConfig';
+import PbiDesktopStep from '../components/CreateProjectWizard/PbiDesktopStep';
 import { StepSourceBrowser } from '../components/CreateProjectWizard/StepSourceBrowser';
 import { StepMappingOptions } from '../components/CreateProjectWizard/StepMappingOptions';
 import { StepFinish } from '../components/CreateProjectWizard/StepFinish';
@@ -311,23 +312,34 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   const preselectedServer = searchParams.get('server');
   const preselectedDatabase = searchParams.get('database');
 
-  useEffect(() => {
-    if (preselectedSource === 'pbi_desktop' || preselectedSource === 'pbidesktop') {
-      setWizardState({ sourceConnector: 'pbi_desktop' });
+  const [pbiDesktopSelectedFiles, setPbiDesktopSelectedFiles] = useState(() => {
+    if (initialData?.pbi_desktop_models && Array.isArray(initialData.pbi_desktop_models)) {
+      return initialData.pbi_desktop_models;
     }
-  }, [preselectedSource, setWizardState]);
+    return [];
+  });
+  const [pbiDesktopEnabled, setPbiDesktopEnabled] = useState(false);
 
-  // Detection logic for resumed draft on mount (only relevant in edit mode)
   useEffect(() => {
-    if (sourceConnector === 'pbix') {
-      refreshLocalFolders();
-    }
-  }, [refreshLocalFolders, sourceConnector, step]);
+    api.get('/sources/pbi-desktop/status')
+      .then((res) => {
+        if (res?.enabled) setPbiDesktopEnabled(true);
+      })
+      .catch(() => {});
+  }, []);
 
   const setStep = useCallback((nextStep) => {
     const val = typeof nextStep === 'function' ? nextStep(step) : nextStep;
     setWizardState({ currentStepIndex: val });
   }, [step, setWizardState]);
+
+  useEffect(() => {
+    if (preselectedSource === 'pbi_desktop' || preselectedSource === 'pbidesktop') {
+      setWizardState({ sourceConnector: 'pbi_desktop' });
+      // Opens directly at the Desktop step (Step 2)
+      setStep(2);
+    }
+  }, [preselectedSource, setWizardState, setStep]);
 
   // Step 1
   const configMode = 'form';
@@ -703,9 +715,10 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     pbixUploadPath,
     selectedPbixFilePath,
     selectedModelNames,
+    pbiDesktopModels: pbiDesktopSelectedFiles,
   }), [
     sourceConnector, pbixSourceMode, pbixMultiFileMode, pbixFilePaths,
-    pbixUploadPath, selectedPbixFilePath, selectedModelNames,
+    pbixUploadPath, selectedPbixFilePath, selectedModelNames, pbiDesktopSelectedFiles,
   ]);
   const resolvedPbixPath = effectiveSources.singlePbixPath;
 
@@ -1278,6 +1291,13 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       }
     }
 
+    if (sourceConnector === 'pbi_desktop') {
+      source.models = pbiDesktopSelectedFiles.map((f) => ({
+        file_path: f.file_path,
+        display_name: f.file_name,
+      }));
+    }
+
     if (sourceConnector === 'tableau') {
       const tableauPath = effectiveSources.singlePbixPath || pbixUploadPath || selectedPbixFilePath || '';
       if (tableauPath) {
@@ -1494,6 +1514,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   /* ─── Step validity ─── */
   const canAdvance = () => {
     if (step === 1) return name.trim().length > 0;
+    if (step === 2 && sourceConnector === 'pbi_desktop') return pbiDesktopSelectedFiles.length > 0;
     // Fabric: the backend rejects an empty model list -- require >= 1.
     if (step === 3 && sourceConnector === 'fabric') return selectedModelNames.length > 0;
     if (step === 5) return mappingReadyToProceed;
@@ -1947,9 +1968,19 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       setMappingError('Resolve blocking mapping validation issues before continuing.');
       return;
     }
+    if (step === 2 && sourceConnector === 'pbi_desktop') {
+      setStep(4);
+      return;
+    }
     setStep(s => Math.min(6, s + 1));
   };
-  const goBack = () => setStep(s => Math.max(1, s - 1));
+  const goBack = () => {
+    if (step === 4 && sourceConnector === 'pbi_desktop') {
+      setStep(2);
+      return;
+    }
+    setStep(s => Math.max(1, s - 1));
+  };
 
   const handleDeployMapping = useCallback(async (fieldMappings) => {
     try {
@@ -2101,9 +2132,24 @@ export default function CreateProjectPage({ editMode = false, initialData = null
               tagInput={tagInput} setTagInput={setTagInput}
               showValidation={showStep1Validation}
               editMode={editMode}
+              availableConnectors={
+                pbiDesktopEnabled
+                  ? [{ value: 'pbi_desktop', label: 'Power BI Desktop (open file)' }, ...CONNECTOR_TYPES]
+                  : CONNECTOR_TYPES
+              }
             />
           )}
-          {step === 2 && (
+          {step === 2 && sourceConnector === 'pbi_desktop' && (
+            <PbiDesktopStep
+              selectedFiles={pbiDesktopSelectedFiles}
+              onSelectionChange={setPbiDesktopSelectedFiles}
+              onSwitchToPbix={() => setSourceConnector('pbix')}
+              preselectedServer={preselectedServer}
+              preselectedDatabase={preselectedDatabase}
+              isEditMode={editMode}
+            />
+          )}
+          {step === 2 && sourceConnector !== 'pbi_desktop' && (
             <StepConnectorConfig
               sourceConnector={sourceConnector}
               preselectedServer={preselectedServer}

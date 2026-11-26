@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Calendar, Clock, Globe, Sparkles, Check, AlertCircle } from 'lucide-react';
+import { X, Calendar, Clock, Globe, Sparkles, Check, AlertCircle, AlertTriangle } from 'lucide-react';
 import { translateCron, buildCronFromPreset } from '../../utils/cronTranslator';
 import { api } from '../../utils/api';
 
@@ -85,6 +85,8 @@ export default function ScheduleModal({
   if (!open) return null;
 
   const humanPreview = translateCron(cronExpression);
+  const activeProject = projects.find((p) => String(p.id || p.project_id) === String(projectId)) || selectedProject;
+  const isPbiDesktop = String(activeProject?.source?.type || activeProject?.source_type || activeProject?.source || '').toLowerCase() === 'pbi_desktop';
 
   const handleSave = async () => {
     if (!projectId) {
@@ -220,6 +222,25 @@ export default function ScheduleModal({
             >
               <AlertCircle size={15} style={{ flexShrink: 0 }} />
               <span>{error}</span>
+            </div>
+          )}
+
+          {isPbiDesktop && (
+            <div
+              style={{
+                padding: '10px 14px',
+                borderRadius: 8,
+                background: 'rgba(245, 158, 11, 0.1)',
+                border: '1px solid rgba(245, 158, 11, 0.3)',
+                color: '#f59e0b',
+                fontSize: 12,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+              }}
+            >
+              <AlertTriangle size={15} style={{ flexShrink: 0 }} />
+              <span>Scheduled runs require the file to be open in Power BI Desktop.</span>
             </div>
           )}
 

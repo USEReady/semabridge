@@ -74,7 +74,7 @@ def test_validate_and_resolve_file_closed_raises_not_found(monkeypatch):
     monkeypatch.setenv("pbi_desktop_source", "1")
     adapter = PbiDesktopAdapter()
 
-    with pytest.raises(SourceNotFoundError, match="That file isn't open anymore"):
+    with pytest.raises(SourceNotFoundError, match="Open ClosedModel.pbix in Power BI Desktop and try again"):
         adapter.validate_and_resolve(
             ["ClosedModel.pbix"],
             instances_provider=lambda: [],

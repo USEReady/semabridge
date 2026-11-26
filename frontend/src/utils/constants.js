@@ -9,14 +9,20 @@ export const STEPS = [
   { id: 6, label: 'Finish' },
 ];
 
-export const CONNECTOR_TYPES = [
-  { value: 'pbi_desktop', label: 'Power BI Desktop (open file)' },
+export const BASE_CONNECTOR_TYPES = [
   { value: 'pbix', label: 'Local PBIX File' },
   { value: 'fabric', label: 'Microsoft Fabric' },
   { value: 'tableau', label: 'Tableau (.tds / .twb)' },
   { value: 'snowflake', label: 'Snowflake' },
   { value: 'databricks', label: 'Databricks' },
 ];
+
+export const PBI_DESKTOP_CONNECTOR_TYPE = {
+  value: 'pbi_desktop',
+  label: 'Power BI Desktop (open file)',
+};
+
+export const CONNECTOR_TYPES = BASE_CONNECTOR_TYPES;
 
 export const TARGET_CONNECTOR_TYPES = [
   { value: 'snowflake', label: 'Snowflake' },

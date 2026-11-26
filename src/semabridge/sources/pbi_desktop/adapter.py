@@ -86,7 +86,7 @@ class PbiDesktopAdapter(SemanticSourceAdapter):
     ) -> SourceCredentials:
         # Local Desktop runs over local TCP: no cloud token required
         return SourceCredentials(
-            origin="interactive",
+            origin="local engine",
             access_token=None,
             expires_at=None,
             identity_id=identity_id,
@@ -157,8 +157,11 @@ class PbiDesktopAdapter(SemanticSourceAdapter):
                     instances_provider=lambda: running_instances,
                 )
             else:
-                # Reference is a file name or file path
-                raw_path = str(ref).strip().strip('"').strip("'")
+                # Reference is a file name, file path, or model dict
+                if isinstance(ref, dict):
+                    raw_path = str(ref.get("file_path") or ref.get("path") or ref.get("name") or "").strip().strip('"').strip("'")
+                else:
+                    raw_path = str(ref).strip().strip('"').strip("'")
                 clean_ref_name = Path(raw_path).name.lower()
                 clean_ref_stem = Path(raw_path).stem.lower()
 
@@ -176,8 +179,9 @@ class PbiDesktopAdapter(SemanticSourceAdapter):
                         break
 
                 if not matched_inst:
+                    file_name = Path(raw_path).name or raw_path
                     raise SourceNotFoundError(
-                        f"That file isn't open anymore: '{raw_path}' is not currently running in Power BI Desktop."
+                        f"Open {file_name} in Power BI Desktop and try again"
                     )
 
             if matched_inst.is_live_connected:
