@@ -78,9 +78,9 @@ def test_old_publisher_never_runs_on_planner_path_sql() -> None:
     from semabridge.core.execution_engine import ExecutionEngine
 
     engine = ExecutionEngine()
-    with pytest.raises(ConversionError, match="not built yet"):
+    with pytest.raises(ConversionError, match="Deploy preview, then Confirm"):
         engine._convert_to_databricks_target(_context(on=True))
-    with pytest.raises(DeploymentError, match="not built yet"):
+    with pytest.raises(DeploymentError, match="Deploy preview, then Confirm"):
         engine._deploy_to_databricks(_context(on=True))
 
 

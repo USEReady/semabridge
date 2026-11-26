@@ -58,6 +58,13 @@ class _Keys:
                 if status != "ok" and not self.blocked:
                     self.blocked = f"{ds}[{col}]: {status}"
                     self.code = KEY_UNBOUND
+                # A Power BI calculated column is not a physical column: it can be a
+                # join key only when the real Unity Catalog table has a column of that name.
+                if (getattr(graph.column(ds, col), "is_calculated", False)
+                        and bindings.physically_present(ds, col) is not True and not self.blocked):
+                    self.blocked = (f"{ds}[{col}] is a Power BI calculated column with no physical column in "
+                                    "Databricks, so it cannot be a join key")
+                    self.code = KEY_UNBOUND
             p_real, c_real = bindings.real_column(p_ds, p_col), bindings.real_column(c_ds, c_col)
             p_type = bindings.column_type(p_ds, p_col, graph.column(p_ds, p_col)) or "unknown"
             c_type = bindings.column_type(c_ds, c_col, graph.column(c_ds, c_col)) or "unknown"

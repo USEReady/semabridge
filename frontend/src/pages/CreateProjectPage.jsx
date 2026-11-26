@@ -263,6 +263,8 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     fabricWorkspaceId, snowflakeDatabase, snowflakeSchema,
     targetDatabase, targetSchema, targetAccount, targetWarehouse,
     databricksCatalog, databricksSchema, databricksSourceSchemas,
+    databricksStagingSchema, databricksDeployPrincipals, databricksDeployers, databricksStubForm,
+    databricksOnMissingSource,
     modelQueryRegex, pbixSourceMode,
     selectedLocalFolderId, selectedPbixFilePath,
     pbixUploadPath, pbixMultiFileMode, pbixFileEntries,
@@ -360,6 +362,8 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   const setDatabricksCatalog = (val) => setWizardState({ databricksCatalog: val });
   const setDatabricksSchema = (val) => setWizardState({ databricksSchema: val });
   const setDatabricksSourceSchemas = (val) => setWizardState({ databricksSourceSchemas: val });
+  const setDatabricksStagingSchema = (val) => setWizardState({ databricksStagingSchema: val });
+  const setDatabricksDeployPrincipals = (val) => setWizardState({ databricksDeployPrincipals: val });
   const setTargetAccount = (val) => setWizardState({ targetAccount: val });
   const setTargetWarehouse = (val) => setWizardState({ targetWarehouse: val });
   const setModelQueryRegex = (val) => setWizardState({ modelQueryRegex: !!val });
@@ -528,6 +532,14 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         if (initialData.target_catalog != null) setDatabricksCatalog(initialData.target_catalog);
         if (initialData.target_schema != null) setDatabricksSchema(initialData.target_schema);
         if (initialData.target_source_schemas != null) setDatabricksSourceSchemas(initialData.target_source_schemas);
+        // deploy settings: kept on save (staging editable here; deployers etc. carried unchanged)
+        setWizardState({
+          databricksStagingSchema: initialData.target_staging_schema || '',
+          databricksDeployPrincipals: initialData.target_deploy_principals || '',
+          databricksDeployers: initialData.target_deployers || '',
+          databricksStubForm: initialData.target_stub_form || '',
+          databricksOnMissingSource: initialData.target_on_missing_source || '',
+        });
         if (initialData.target_planner) setDatabricksPlannerOptions(initialData.target_planner);
       }
       // sync/write strategy (copy | upsert)
@@ -1312,6 +1324,12 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         if (databricksSchema.trim()) target.schema = databricksSchema.trim();
         const sourceSchemas = databricksSourceSchemas.split(',').map((s) => s.trim()).filter(Boolean);
         if (sourceSchemas.length) target.source_schemas = sourceSchemas;
+        const list = (text) => String(text || '').split(',').map((s) => s.trim()).filter(Boolean);
+        if (String(databricksStagingSchema || '').trim()) target.staging_schema = String(databricksStagingSchema).trim();
+        if (list(databricksDeployPrincipals).length) target.deploy_principals = list(databricksDeployPrincipals);
+        if (list(databricksDeployers).length) target.deployers = list(databricksDeployers);
+        if (String(databricksStubForm || '').trim()) target.stub_form = String(databricksStubForm).trim();
+        if (String(databricksOnMissingSource || '').trim()) target.on_missing_source = String(databricksOnMissingSource).trim();
       }
 
       if (connector === 'tableau_datasource') {
@@ -1378,6 +1396,15 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         lines.push('    source_schemas:');
         target.source_schemas.forEach((s) => lines.push(`      - "${escapeYamlString(s)}"`));
       }
+      if (target.staging_schema) lines.push(`    staging_schema: "${escapeYamlString(target.staging_schema)}"`);
+      ['deploy_principals', 'deployers'].forEach((key) => {
+        if (Array.isArray(target[key]) && target[key].length) {
+          lines.push(`    ${key}:`);
+          target[key].forEach((s) => lines.push(`      - "${escapeYamlString(s)}"`));
+        }
+      });
+      if (target.stub_form) lines.push(`    stub_form: "${escapeYamlString(target.stub_form)}"`);
+      if (target.on_missing_source) lines.push(`    on_missing_source: "${escapeYamlString(target.on_missing_source)}"`);
       if (target.type === 'databricks' && databricksPlannerOptions) {
         const { calculate_mode: calcMode, excluded_measures: excludedMeasures = [] } = databricksPlannerOptions;
         lines.push('    planner:');
@@ -2189,6 +2216,8 @@ export default function CreateProjectPage({ editMode = false, initialData = null
               databricksCatalog={databricksCatalog} setDatabricksCatalog={setDatabricksCatalog}
               databricksSchema={databricksSchema} setDatabricksSchema={setDatabricksSchema}
               databricksSourceSchemas={databricksSourceSchemas} setDatabricksSourceSchemas={setDatabricksSourceSchemas}
+              databricksStagingSchema={databricksStagingSchema} setDatabricksStagingSchema={setDatabricksStagingSchema}
+              databricksDeployPrincipals={databricksDeployPrincipals} setDatabricksDeployPrincipals={setDatabricksDeployPrincipals}
               targetAccount={targetAccount} setTargetAccount={setTargetAccount}
               targetWarehouse={targetWarehouse} setTargetWarehouse={setTargetWarehouse}
               pbixFile={pbixFile}
@@ -2339,6 +2368,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
                 onBulkResolved={handleBulkResolved}
                 onSynonymUpdate={handleSynonymUpdate}
                 projectId={createdProject?.id || createdProject?.project_id || dryRunData?.project_id || 'preview'}
+                deployProjectId={(editMode && initialData?.id) || createdProject?.id || createdProject?.project_id || ''}
                 multiDryRunJob={multiDryRunJob}
                 multiSections={multiJob.sections}
                 multiJobStatus={multiJob.jobStatus}

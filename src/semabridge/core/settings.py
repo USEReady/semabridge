@@ -236,6 +236,9 @@ class DatabricksConfig(BaseSettings):
     warehouse_id: str = Field(..., description="Databricks SQL warehouse ID for statement execution")
     catalog: str = Field(default="main", description="Unity Catalog catalog name for semantic objects")
     schema_name: str = Field(default="semabridge", validation_alias="DATABRICKS_SCHEMA", description="Unity Catalog schema for semantic objects")
+    # 3.8 deploy: default restricted staging schema (catalog.schema) for projects
+    # that do not set their own `staging_schema`. Never created by SemaBridge.
+    staging_schema: Optional[str] = Field(default=None, description="Default restricted staging schema for deploys")
 
     @field_validator("host")
     @classmethod

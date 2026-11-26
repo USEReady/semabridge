@@ -452,3 +452,66 @@ def test_full_migration_chain_creates_deploy_tables(tmp_path):
     _chain(old, "head")
     cols = {c["name"] for c in sa.inspect(old).get_columns("databricks_deploy_journal")}
     assert {"run_id", "seq", "destination", "state", "definition_hash", "previous_hash", "statement_id"} <= cols
+
+
+def test_full_migration_chain_creates_deploy_intents_table(tmp_path):
+    """3.8b: sb0009 adds databricks_deploy_intents after sb0008; one linear chain."""
+    from alembic.script import ScriptDirectory
+
+    from semabridge.repository.alembic_runner import _alembic_config
+
+    script = ScriptDirectory.from_config(_alembic_config(None))
+    assert len(script.get_heads()) == 1
+    assert script.get_revision("sb0009_databricks_deploy_intents").down_revision == "sb0008_databricks_deploy"
+    eng = sa.create_engine(f"sqlite:///{tmp_path / 'i.db'}")
+    _chain(eng, "head")
+    cols = {c["name"] for c in sa.inspect(eng).get_columns("databricks_deploy_intents")}
+    assert {"intent_id", "run_id", "fingerprint", "status", "expires_at", "used_at"} <= cols
+
+
+def test_sb0010_repairs_a_journal_created_with_the_old_column(tmp_path):
+    """A dev build could create databricks_deploy_journal with body_sha256; sb0010
+    renames it to definition_hash. Idempotent on correct databases."""
+    from alembic.script import ScriptDirectory
+
+    from semabridge.repository.alembic_runner import _alembic_config
+
+    script = ScriptDirectory.from_config(_alembic_config(None))
+    assert len(script.get_heads()) == 1
+    assert script.get_revision("sb0010_dbx_journal_repair").down_revision == "sb0009_databricks_deploy_intents"
+    eng = sa.create_engine(f"sqlite:///{tmp_path / 'j.db'}")
+    _chain(eng, "sb0009_databricks_deploy_intents")
+    with eng.begin() as conn:
+        conn.exec_driver_sql("ALTER TABLE databricks_deploy_journal RENAME COLUMN definition_hash TO body_sha256")
+    _chain(eng, "head")
+    cols = {c["name"] for c in sa.inspect(eng).get_columns("databricks_deploy_journal")}
+    assert "definition_hash" in cols and "body_sha256" not in cols
+    fresh = sa.create_engine(f"sqlite:///{tmp_path / 'f.db'}")
+    _chain(fresh, "head")                                   # correct database: no-op
+    assert "definition_hash" in {c["name"] for c in sa.inspect(fresh).get_columns("databricks_deploy_journal")}
+
+
+def test_every_revision_id_fits_postgres_alembic_version():
+    """alembic_version.version_num is VARCHAR(32) on Postgres: a longer revision id
+    fails the upgrade (the whole step is rolled back)."""
+    from alembic.script import ScriptDirectory
+
+    from semabridge.repository.alembic_runner import _alembic_config
+
+    script = ScriptDirectory.from_config(_alembic_config(None))
+    too_long = [r.revision for r in script.walk_revisions() if len(r.revision) > 32]
+    assert not too_long, too_long
+
+
+def test_plan_revision_columns_hold_millisecond_revisions(tmp_path):
+    """Plan revisions are millisecond timestamps (> 2**31): the deploy tables must
+    store them as BIGINT (Postgres refused INTEGER). sb0011 widens older tables."""
+    from semabridge.repository.orm import project_models as m
+
+    for model in (m.DatabricksDeployment, m.DatabricksDeployIntent):
+        assert isinstance(model.__table__.c.plan_revision.type, sa.BigInteger), model.__tablename__
+    eng = sa.create_engine(f"sqlite:///{tmp_path / 'r.db'}")
+    _chain(eng, "head")
+    for table in ("databricks_deployments", "databricks_deploy_intents"):
+        col = next(c for c in sa.inspect(eng).get_columns(table) if c["name"] == "plan_revision")
+        assert isinstance(col["type"], sa.BigInteger), table

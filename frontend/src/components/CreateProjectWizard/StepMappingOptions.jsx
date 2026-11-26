@@ -171,6 +171,7 @@ export function StepMappingOptions({
   onBulkResolved,
   onSynonymUpdate,
   projectId,
+  deployProjectId = '',
   // Multi-model dry run (multiple PBIX files or multiple Fabric models):
   // when set, a background dry-run job is in flight/complete -- render one
   // collapsible section per model instead of the single-model table below.
@@ -721,6 +722,7 @@ export function StepMappingOptions({
               <DatabricksPlanPanel
                 plan={currentPlan}
                 projectId={projectId}
+                deployProjectId={deployProjectId}
                 rows={detectedMappings}
                 plannerOptions={plannerOptions}
                 onPlannerOptionsChange={onPlannerOptionsChange}

@@ -28,7 +28,7 @@ def upgrade() -> None:
             sa.Column("run_id", sa.String(64), nullable=False, unique=True),
             sa.Column("project_id", sa.String(255), nullable=False),
             sa.Column("model_key", sa.String(255), nullable=False, server_default=""),
-            sa.Column("plan_revision", sa.Integer, nullable=False),
+            sa.Column("plan_revision", sa.BigInteger, nullable=False),
             sa.Column("writer_revision", sa.String(32), nullable=False),
             sa.Column("dbsql_version", sa.String(128), nullable=True),
             sa.Column("metastore_id", sa.String(255), nullable=True),

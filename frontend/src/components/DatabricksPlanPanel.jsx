@@ -21,6 +21,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle, ChevronRight, Info, RefreshCw } from 'lucide-react';
 import { api } from '../utils/api';
+import DatabricksDeploySection from './DatabricksDeploySection';
 import {
   approximateMeasureChoices,
   buildReplanBody,
@@ -83,6 +84,7 @@ export default function DatabricksPlanPanel({
   onPlanChange,
   onPlannerOptionsChange,
   saveOptions = false,
+  deployProjectId = '',
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -97,6 +99,9 @@ export default function DatabricksPlanPanel({
   if (!plan) return null;
 
   const { status, basis, revision } = planStatus(plan);
+  // The saved project deploys; the plan itself may sit under the dry run's preview id.
+  const deployTarget = planRequestProjectId(deployProjectId) !== 'preview'
+    ? planRequestProjectId(deployProjectId) : planRequestProjectId(projectId);
   const stale = status === 'stale' || (failedRevision > revision);
   const summary = plan.summary || {};
   const blockers = plan.blockers || [];
@@ -338,6 +343,20 @@ export default function DatabricksPlanPanel({
           </button>
         </div>
       </Section>
+
+      {deployTarget !== 'preview' && !stale ? (
+        <DatabricksDeploySection projectId={deployTarget}
+          cacheProjectId={plan?.meta?.cache_ref?.project_id || ''}
+          modelSubdir={plan?.meta?.cache_ref?.model_subdir || ''} />
+      ) : (
+        <div style={{ ...ROW, color: 'var(--text-tertiary)' }}>
+          <Info size={13} style={{ flexShrink: 0, marginTop: 1 }} />
+          <span>
+            {stale ? 'Re-plan before deploying: the plan shown is out of date.'
+              : 'Deploying is available once the project is saved and a dry run has been made in it.'}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
