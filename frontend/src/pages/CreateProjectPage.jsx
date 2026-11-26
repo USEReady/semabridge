@@ -2342,6 +2342,8 @@ export default function CreateProjectPage({ editMode = false, initialData = null
                 onProceedStateChange={setMappingReadyToProceed}
                 onProceed={goNext}
                 primaryTargetConnector={[...targetConnectors][0] || ''}
+                targetDatabase={targetDatabase || snowflakeDatabase || ''}
+                targetSchema={targetSchema || snowflakeSchema || ''}
                 dryRunData={dryRunData}
                 editingRow={editingRow}
                 setEditingRow={setEditingRow}

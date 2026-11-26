@@ -157,32 +157,81 @@ class PbiDesktopAdapter(SemanticSourceAdapter):
                     instances_provider=lambda: running_instances,
                 )
             else:
-                # Reference is a file name, file path, or model dict
+                saved_file_path: Optional[str] = None
+                saved_display_name: Optional[str] = None
                 if isinstance(ref, dict):
-                    raw_path = str(ref.get("file_path") or ref.get("path") or ref.get("name") or "").strip().strip('"').strip("'")
+                    raw_fp = ref.get("file_path") or ref.get("path")
+                    if raw_fp:
+                        saved_file_path = str(raw_fp).strip().strip('"').strip("'")
+                    raw_dn = ref.get("display_name") or ref.get("name")
+                    if raw_dn:
+                        saved_display_name = str(raw_dn).strip().strip('"').strip("'")
                 else:
-                    raw_path = str(ref).strip().strip('"').strip("'")
-                clean_ref_name = Path(raw_path).name.lower()
-                clean_ref_stem = Path(raw_path).stem.lower()
+                    raw_s = str(ref).strip().strip('"').strip("'")
+                    if raw_s.lower().endswith(".pbix") or "\\" in raw_s or "/" in raw_s:
+                        saved_file_path = raw_s
+                        saved_display_name = Path(raw_s).stem
+                    else:
+                        saved_display_name = raw_s
 
-                for inst in running_instances:
-                    inst_file_name = inst.file_name.lower()
-                    inst_stem = Path(inst.file_name).stem.lower()
-                    inst_full_path = (inst.file_path or "").lower()
+                if saved_file_path:
+                    # Resolution by saved file_path
+                    p_target = Path(saved_file_path)
+                    # 1. First attempt exact path resolution across all running engines
+                    for inst in running_instances:
+                        if inst.file_path:
+                            try:
+                                if Path(inst.file_path).resolve() == p_target.resolve():
+                                    matched_inst = inst
+                                    break
+                            except Exception:
+                                pass
+                    # 2. If no exact path matched, fall back to matching by filename / stem
+                    if not matched_inst:
+                        for inst in running_instances:
+                            if (
+                                inst.file_name.casefold() == p_target.name.casefold()
+                                or Path(inst.file_name).stem.casefold() == p_target.stem.casefold()
+                            ):
+                                matched_inst = inst
+                                break
+                    if not matched_inst:
+                        raise SourceNotFoundError(
+                            f"Open {p_target.name} in Power BI Desktop and try again"
+                        )
+                elif saved_display_name:
+                    # Resolution by exact display name among running engines
+                    target_dn_clean = clean_pbix_model_name(saved_display_name).casefold()
+                    if target_dn_clean in ("untitled", "unsaved new file"):
+                        raise SourceConfigError(
+                            "Cannot use an unsaved file ('Unsaved new file') as a project source. "
+                            "Please save the file in Power BI Desktop first."
+                        )
+                    matches = []
+                    for inst in running_instances:
+                        inst_dn_clean = clean_pbix_model_name(inst.file_name).casefold()
+                        if inst_dn_clean == target_dn_clean:
+                            matches.append(inst)
+                    if len(matches) > 1:
+                        ports_str = ", ".join(f"localhost:{m.port} (PID {m.msmdsrv_pid})" for m in matches)
+                        raise SourceConfigError(
+                            f"Multiple running Power BI Desktop instances match '{saved_display_name}': {ports_str}. "
+                            "Specify a distinct file path or close duplicate instances."
+                        )
+                    elif len(matches) == 1:
+                        matched_inst = matches[0]
+                    else:
+                        raise SourceNotFoundError(
+                            f"Open {saved_display_name} in Power BI Desktop and try again"
+                        )
+                else:
+                    raise SourceConfigError("Power BI Desktop model reference must specify a file_path or display_name.")
 
-                    if (
-                        clean_ref_name == inst_file_name
-                        or clean_ref_stem == inst_stem
-                        or (inst_full_path and Path(raw_path).resolve() == Path(inst.file_path).resolve())
-                    ):
-                        matched_inst = inst
-                        break
-
-                if not matched_inst:
-                    file_name = Path(raw_path).name or raw_path
-                    raise SourceNotFoundError(
-                        f"Open {file_name} in Power BI Desktop and try again"
-                    )
+            if matched_inst.is_unsaved_new_file:
+                raise SourceConfigError(
+                    "Cannot use an unsaved file ('Unsaved new file') as a project source. "
+                    "Please save the file in Power BI Desktop first."
+                )
 
             if matched_inst.is_live_connected:
                 warnings.append(

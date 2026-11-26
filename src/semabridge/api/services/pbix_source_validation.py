@@ -192,37 +192,58 @@ def validate_pbi_desktop_source_config(source: Optional[dict]) -> None:
             "At least one Power BI Desktop model must be selected (source.models)."
         )
 
-    seen_paths = set()
+    seen_keys = set()
     for entry in models:
+        raw_path = ""
+        display_name = ""
         if isinstance(entry, dict):
             raw_path = str(entry.get("file_path") or entry.get("path") or "").strip()
+            display_name = str(entry.get("display_name") or entry.get("name") or "").strip()
         elif isinstance(entry, str):
-            raw_path = entry.strip()
+            s = entry.strip()
+            if s.lower().endswith(".pbix") or "\\" in s or "/" in s:
+                raw_path = s
+                display_name = Path(s).stem
+            else:
+                display_name = s
         else:
             raise ValidationError(
-                "Each model entry must be a dictionary with 'file_path' or a path string."
+                "Each model entry must be a dictionary with 'display_name' (and optional 'file_path') or a string."
             )
 
-        if not raw_path:
-            raise ValidationError("Model entry must specify a non-empty 'file_path'.")
+        if not display_name and raw_path:
+            display_name = Path(raw_path).stem
 
-        p = Path(raw_path)
-        if p.suffix.lower() != ".pbix":
-            raise ValidationError(f"'{raw_path}' does not look like a .pbix file path.")
+        if not display_name:
+            raise ValidationError("Model entry must specify a 'display_name' or 'file_path'.")
 
-        if not p.is_absolute():
+        if display_name.strip().lower() in ("unsaved new file", "untitled", "untitled.pbix"):
             raise ValidationError(
-                f"'{raw_path}' is not an absolute path. Full absolute .pbix path is required."
+                "Cannot save 'Unsaved new file' as a project source. Please save the file in Power BI Desktop first."
             )
 
-        try:
-            normalized_key = os.path.normcase(str(p.resolve()))
-        except Exception:
-            normalized_key = os.path.normcase(raw_path)
+        if raw_path:
+            p = Path(raw_path)
+            if p.suffix.lower() != ".pbix":
+                raise ValidationError(f"'{raw_path}' does not look like a .pbix file path.")
 
-        if normalized_key in seen_paths:
-            raise ValidationError(f"Duplicate model selected: '{raw_path}'.")
-        seen_paths.add(normalized_key)
+            if not p.is_absolute():
+                raise ValidationError(
+                    f"'{raw_path}' is not an absolute path. Full absolute .pbix path is required."
+                )
+
+            try:
+                norm_path = os.path.normcase(str(p.resolve()))
+            except Exception:
+                norm_path = os.path.normcase(raw_path)
+            dedupe_key = f"path:{norm_path}"
+        else:
+            dedupe_key = f"name:{display_name.casefold()}"
+
+        if dedupe_key in seen_keys:
+            ident = raw_path or display_name
+            raise ValidationError(f"Duplicate model selected: '{ident}'.")
+        seen_keys.add(dedupe_key)
 
 
 def require_source_type(source_cfg: Optional[dict], *, where: str = "project") -> str:

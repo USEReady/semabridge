@@ -31,18 +31,23 @@ class DiscoveredDesktopInstance:
     database_name: str
     file_name: str
     file_path: Optional[str]
-    file_method: str  # "command_line" | "window_title" | "none"
+    file_method: str  # "command_line" | "desktop_recent_history" | "window_title" | "none"
     window_title: Optional[str]
-    pbidesktop_exe: Optional[str]
+    pbidesktop_exe: Optional[str] = None
     has_unsaved_changes: bool = False
     is_live_connected: bool = False
+    is_unsaved_new_file: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
 
 def get_window_titles_for_pids() -> Dict[int, List[str]]:
-    """Enumerate top-level visible window titles grouped by process ID on Windows."""
+    """Enumerate top-level visible window titles grouped by process ID on Windows.
+
+    Attempts to attach to the interactive input desktop (Default) so that
+    subshells and service threads can discover interactive user windows.
+    """
     titles_by_pid: Dict[int, List[str]] = {}
     if os.name != "nt":
         return titles_by_pid
@@ -63,10 +68,70 @@ def get_window_titles_for_pids() -> Dict[int, List[str]]:
             return True
 
         EnumWindowsProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-        ctypes.windll.user32.EnumWindows(EnumWindowsProc(enum_proc), 0)
+        cb = EnumWindowsProc(enum_proc)
+
+        h_desk = None
+        try:
+            h_desk = ctypes.windll.user32.OpenInputDesktop(0, False, 0x0100)
+        except Exception:
+            h_desk = None
+
+        if h_desk:
+            try:
+                ctypes.windll.user32.EnumDesktopWindows(h_desk, cb, 0)
+            finally:
+                ctypes.windll.user32.CloseDesktop(h_desk)
+
+        if not titles_by_pid:
+            ctypes.windll.user32.EnumWindows(cb, 0)
     except Exception:
         pass
     return titles_by_pid
+
+
+def get_recent_paths_from_pbi_desktop() -> List[str]:
+    """Read recent .pbix file paths from Power BI Desktop's FileHistory in User.zip.
+
+    Checks both standard Desktop and Windows Store app locations.
+    """
+    import xml.etree.ElementTree as ET
+    import zipfile
+
+    local_app_data = os.environ.get("LOCALAPPDATA", "")
+    user_profile = os.environ.get("USERPROFILE", "")
+    candidates = [
+        Path(local_app_data) / "Microsoft" / "Power BI Desktop" / "User.zip",
+        Path(user_profile) / "Microsoft" / "Power BI Desktop Store App" / "User.zip",
+    ]
+    results: List[str] = []
+    seen = set()
+
+    for user_zip in candidates:
+        if not user_zip.exists():
+            continue
+        try:
+            with zipfile.ZipFile(str(user_zip), "r") as zf:
+                if "UserInterface/Settings.xml" in zf.namelist():
+                    content = zf.read("UserInterface/Settings.xml")
+                    root = ET.fromstring(content)
+                    for entry in root.findall(".//Entry"):
+                        val = entry.attrib.get("Value", "")
+                        if "filePath" in val:
+                            raw_json = val[1:] if val.startswith("s[") and val.endswith("]") else val
+                            try:
+                                data = json.loads(raw_json)
+                                if isinstance(data, list):
+                                    for item in data:
+                                        if isinstance(item, dict):
+                                            p = item.get("filePath")
+                                            if p and p not in seen:
+                                                seen.add(p)
+                                                results.append(p)
+                            except Exception:
+                                pass
+        except Exception:
+            pass
+    return results
 
 
 def parse_port_file(port_file_path: Path) -> Optional[int]:
@@ -162,15 +227,18 @@ def discover_running_instances(
     verify_active: bool = True,
     process_provider: Optional[Callable[[], List[Dict[str, Any]]]] = None,
     window_titles_provider: Optional[Callable[[], Dict[int, List[str]]]] = None,
+    recent_paths_provider: Optional[Callable[[], List[str]]] = None,
     port_checker: Optional[Callable[[int], bool]] = None,
 ) -> List[DiscoveredDesktopInstance]:
     """Discover all running Power BI Desktop Analysis Services instances in deterministic order."""
     get_processes = process_provider or get_process_info_via_powershell
     get_titles = window_titles_provider or get_window_titles_for_pids
+    get_recent = recent_paths_provider or get_recent_paths_from_pbi_desktop
     check_port = port_checker or is_port_listening
 
     processes = get_processes()
     window_titles = get_titles()
+    recent_paths = get_recent()
 
     pbi_desktops: Dict[int, Dict[str, Any]] = {}
     msmdsrv_procs: List[Dict[str, Any]] = []
@@ -239,29 +307,60 @@ def discover_running_instances(
         has_unsaved = False
 
         for t in titles:
-            if "power bi desktop" in t.lower():
-                primary_title = t
-                parts = re.split(r"\s+-\s+Power BI Desktop", t, flags=re.IGNORECASE)
-                raw_name = parts[0].strip()
-                if raw_name.startswith("*") or raw_name.endswith("*"):
-                    has_unsaved = True
-                    raw_name = raw_name.strip("*").strip()
-                if raw_name:
-                    file_from_title = raw_name
+            t_str = str(t).strip()
+            if not t_str:
+                continue
+            primary_title = t_str
+            clean_t = t_str
+            if clean_t.startswith("*") or clean_t.endswith("*"):
+                has_unsaved = True
+                clean_t = clean_t.strip("*").strip()
+            # Strip " - Power BI Desktop" suffix if present
+            parts = re.split(r"\s+-\s+Power BI Desktop", clean_t, flags=re.IGNORECASE)
+            raw_name = parts[0].strip()
+            if raw_name:
+                file_from_title = raw_name
                 break
 
-        if file_from_cmd:
+        is_unsaved_new_file = False
+        file_path: Optional[str] = None
+        file_method: str = "none"
+
+        # Check if title indicates genuinely new unsaved file
+        title_stem = Path(file_from_title).stem.strip() if file_from_title else ""
+        if title_stem.lower() in ("untitled", "unsaved new file") and not file_from_cmd:
+            is_unsaved_new_file = True
+            file_name = "Unsaved new file"
+            file_path = None
+            file_method = "none"
+        elif file_from_cmd:
             file_name = Path(file_from_cmd).name
             file_path = file_from_cmd
             file_method = "command_line"
         elif file_from_title:
-            file_name = file_from_title if file_from_title.lower().endswith(".pbix") else f"{file_from_title}.pbix"
-            file_path = None
-            file_method = "window_title"
+            # Try to match recent files history from User.zip
+            matched_recent: Optional[str] = None
+            clean_target = title_stem.casefold()
+            for rp in recent_paths:
+                p_obj = Path(rp)
+                if p_obj.stem.casefold() == clean_target or p_obj.name.casefold() == file_from_title.casefold():
+                    if p_obj.exists():
+                        matched_recent = str(p_obj)
+                        break
+
+            if matched_recent:
+                file_name = Path(matched_recent).name
+                file_path = matched_recent
+                file_method = "desktop_recent_history"
+            else:
+                file_name = file_from_title if file_from_title.lower().endswith(".pbix") else f"{file_from_title}.pbix"
+                file_path = None
+                file_method = "window_title"
         else:
-            file_name = "Untitled.pbix"
+            file_name = "Unsaved new file"
             file_path = None
             file_method = "none"
+            is_unsaved_new_file = True
 
         # Check for live-connected report (no local model tables)
         # In a live connection, msmdsrv is often not started or has 0 local tabular db files
@@ -283,6 +382,7 @@ def discover_running_instances(
             pbidesktop_exe=pbi_exe,
             has_unsaved_changes=has_unsaved,
             is_live_connected=is_live,
+            is_unsaved_new_file=is_unsaved_new_file,
         )
         instances.append(inst)
 

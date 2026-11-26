@@ -158,7 +158,7 @@ export default function PbiDesktopStep({
   }, [selectedFiles, inspectSummaries, inspectLoading, fetchInspect]);
 
   const toggleSelectInstance = (inst) => {
-    if (inst.is_live_connected) return; // Disabled
+    if (inst.is_live_connected || inst.is_unsaved_new_file) return; // Disabled
 
     const next = toggleDesktopSelection(selectedFiles, inst);
     const added = next.length > selectedFiles.length;
@@ -368,7 +368,7 @@ export default function PbiDesktopStep({
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {instances.map((inst) => {
               const selected = isInstanceSelected(inst);
-              const disabled = inst.is_live_connected;
+              const disabled = inst.is_live_connected || inst.is_unsaved_new_file;
               const inspectKey = inst.file_path || inst.file_name;
               const summary = inspectSummaries[inspectKey];
               const isInspecting = inspectLoading[inspectKey];
@@ -448,14 +448,14 @@ export default function PbiDesktopStep({
                             wordBreak: 'break-all',
                           }}
                         >
-                          {inst.file_path || 'Location: Active Analysis Services Engine'}
+                          {inst.file_path || (inst.is_unsaved_new_file ? 'Unsaved new file (not yet saved to disk)' : 'Location: Active Analysis Services Engine')}
                         </div>
                       </div>
                     </div>
                   </div>
 
                   {/* Live-connected warning disabled banner */}
-                  {disabled && (
+                  {inst.is_live_connected && (
                     <div
                       style={{
                         padding: '8px 12px',
@@ -471,6 +471,26 @@ export default function PbiDesktopStep({
                     >
                       <AlertCircle size={13} />
                       <span>Uses a model in the Power BI service — use the Fabric connector</span>
+                    </div>
+                  )}
+
+                  {/* Unsaved new file banner */}
+                  {inst.is_unsaved_new_file && (
+                    <div
+                      style={{
+                        padding: '8px 12px',
+                        borderRadius: 6,
+                        background: 'rgba(245, 158, 11, 0.08)',
+                        border: '1px solid rgba(245, 158, 11, 0.25)',
+                        color: 'var(--color-warning, #f59e0b)',
+                        fontSize: 11,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                      }}
+                    >
+                      <AlertTriangle size={13} />
+                      <span>Unsaved new file — save this file in Power BI Desktop before adding it as a project source</span>
                     </div>
                   )}
 

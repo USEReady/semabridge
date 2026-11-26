@@ -782,7 +782,7 @@ async def _run_dry_run_pipeline(
                 for e in (summary.get("errors") or [])
                 if isinstance(e, dict) and any(
                     marker in str(e.get("message") or "")
-                    for marker in (LIVE_SCHEMA_UNAVAILABLE, AMBIGUOUS_TABLE_BINDING)
+                    for marker in (LIVE_SCHEMA_UNAVAILABLE,)
                 )
             ),
             None,

@@ -156,6 +156,8 @@ export function StepMappingOptions({
   onRowsChange,
   onProceedStateChange,
   primaryTargetConnector,
+  targetDatabase = '',
+  targetSchema = '',
   // New dry-run → edit → deploy props
   dryRunData,
   editingRow,
@@ -260,8 +262,16 @@ export function StepMappingOptions({
   const targetDestination = useMemo(() => {
     const firstMapped = effectiveRows.find((row) => String(row?.target_field || '').trim());
     if (firstMapped?.target_field) return firstMapped.target_field;
-    return `${String(primaryTargetConnector || 'target').toUpperCase()}.PUBLIC.<TABLE>`;
-  }, [effectiveRows, primaryTargetConnector]);
+    const db = String(targetDatabase || '').trim();
+    const sch = String(targetSchema || '').trim();
+    if (db && sch) {
+      return `${db.toUpperCase()}.${sch.toUpperCase()}.<TABLE>`;
+    }
+    if (db) {
+      return `${db.toUpperCase()}.<TABLE>`;
+    }
+    return `${String(primaryTargetConnector || 'target').toUpperCase()}.<TABLE>`;
+  }, [effectiveRows, primaryTargetConnector, targetDatabase, targetSchema]);
 
   const explicitTables = useMemo(() => {
     const names = isMultiFileRun
@@ -317,6 +327,10 @@ export function StepMappingOptions({
     : (Array.isArray(dryRunData?.schema_conflicts) ? dryRunData.schema_conflicts.length : 0);
   const hasIssues    = blockingCount > 0 || dryRunFailed || schemaIssues > 0 || (compatScore !== null && compatScore < 90);
 
+  const blockedTables = useMemo(() => {
+    return (dryRunData?.table_binding_plan?.tables || []).filter((t) => t.action === 'blocked');
+  }, [dryRunData]);
+
   // The dry-run check must have completed (at least once) before the user can
   // proceed — regardless of mapping mode.  Without this guard the bar shows
   // green immediately because compatScore is null before any run has run.
@@ -326,6 +340,7 @@ export function StepMappingOptions({
     ? multiReadiness.ready
     : (dryRunCompleted &&
       blockingCount === 0 &&
+      blockedTables.length === 0 &&
       (compatScore === null || compatScore >= 70));
 
   useEffect(() => {
@@ -490,6 +505,17 @@ export function StepMappingOptions({
   }
   if (blockingCount > 0) {
     decisions.push({ tone: 'error', text: <><b>{blockingCount} name collision{blockingCount === 1 ? '' : 's'}</b> must be renamed before migrating</>, action: ['Fix now', 'grid'] });
+  }
+  if (blockedTables.length > 0) {
+    decisions.push({
+      tone: 'error',
+      text: (
+        <>
+          <b>{blockedTables.length} ambiguous table binding{blockedTables.length === 1 ? '' : 's'}</b> ({blockedTables.map(t => t.dataset).join(', ')}) — pick a table or save a binding
+        </>
+      ),
+      action: ['Pick table', 'grid'],
+    });
   }
   if (schemaIssues > 0) {
     decisions.push({ tone: 'warning', text: <><b>{schemaIssues} column{schemaIssues === 1 ? '' : 's'}</b> differ from the target schema</>, action: ['Review', 'grid'] });

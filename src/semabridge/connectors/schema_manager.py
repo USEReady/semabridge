@@ -306,6 +306,7 @@ class SnowflakeSchemaManager:
         Each entry: {dataset, action: "bind"|"create"|"blocked", table, matched_by, tie}.
         """
         from semabridge.connectors.table_binding_resolver import (
+            TableBindingAmbiguityError,
             check_table_name_collision_blocker,
             clean_ident,
             resolve_dataset_to_physical_table,
@@ -333,13 +334,27 @@ class SnowflakeSchemaManager:
         for dataset in sml.datasets:
             ds_name = dataset.unique_name
             modeled_cols = self._physical_model_column_names(dataset)
-            bound_table = resolve_dataset_to_physical_table(
-                ds_name,
-                modeled_cols,
-                self._live_schema_metadata,
-                explicit_mapping=mapping_dict,
-                model_name=model_name,
-            )
+            try:
+                bound_table = resolve_dataset_to_physical_table(
+                    ds_name,
+                    modeled_cols,
+                    self._live_schema_metadata,
+                    explicit_mapping=mapping_dict,
+                    model_name=model_name,
+                )
+            except TableBindingAmbiguityError as amb_err:
+                plan.append({
+                    "dataset": ds_name,
+                    "action": "blocked",
+                    "table": ", ".join(amb_err.candidates),
+                    "database": target_db,
+                    "schema": target_schema,
+                    "matched_by": "ambiguous",
+                    "tie": amb_err.candidates,
+                    "candidates": amb_err.candidates,
+                    "message": f"Ambiguous table binding: {', '.join(amb_err.candidates)} match equally. Pick a table or save a binding.",
+                })
+                continue
             logged = (binding_log or {}).get(clean_ident(ds_name)) or {}
             safe_target_name = self._safe_table_name(ds_name)
             was_resolved = bool(logged) or (bound_table.upper() != ds_name.upper())

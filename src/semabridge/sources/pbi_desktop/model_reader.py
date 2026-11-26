@@ -432,3 +432,57 @@ def read_tmsl_from_engine(
     """Extract model from running Desktop Analysis Services engine and return TMSL dict."""
     entities = read_model_entities(port, database_name, query_executor=query_executor)
     return assemble_tmsl_from_entities(entities)
+
+
+def read_pbi_desktop_models(
+    source_config: Dict[str, Any],
+    selected_sources: List[str],
+    *,
+    adapter: Optional[Any] = None,
+    max_models: int = 10,
+) -> Tuple[List[Any], List[Dict[str, str]]]:
+    """(OSI models, per-model errors) for the selected Power BI Desktop models."""
+    from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
+    from semabridge.sources.base import SourceConfigError, SourceError, get_source_adapter
+
+    refs = [str(s).strip() for s in (selected_sources or []) if str(s or "").strip()]
+    if not refs:
+        models_cfg = (source_config or {}).get("models")
+        if isinstance(models_cfg, list):
+            refs = [m for m in models_cfg if m]
+    if not refs:
+        raise SourceConfigError("Select at least one Power BI Desktop model to review its measures.")
+
+    adp = adapter or get_source_adapter("pbi_desktop")
+    check = adp.validate_and_resolve(refs, max_models=max_models)
+
+    models: List[Any] = []
+    errors: List[Dict[str, str]] = []
+
+    for identity in check.identities:
+        try:
+            tmsl = adp.extract_model(identity)
+            if not tmsl or not tmsl.get("model"):
+                raise SourceError(f"Model '{identity.display_name}' returned no definition.")
+
+            field_aliases = []
+            try:
+                rl = adp.extract_report_layer(identity, tmsl=tmsl)
+                field_aliases = getattr(rl, "field_aliases", []) or []
+            except Exception as rl_exc:
+                logger.debug("Report layer extraction skipped for %s: %s", identity.display_name, rl_exc)
+
+            osi = TMSLToOSIConverter().to_osi(
+                {
+                    "tmsl": tmsl,
+                    "dataset_id": identity.model_id,
+                    "display_name": identity.display_name,
+                    "field_aliases": field_aliases,
+                }
+            )
+            models.append(osi)
+        except Exception as exc:
+            logger.warning("Ontology review: could not read Desktop model %s: %s", identity.display_name, exc)
+            errors.append({"source": identity.display_name, "error": str(exc)})
+
+    return models, errors

@@ -128,6 +128,17 @@ async def read_source_models(
         except SourceError as exc:
             raise UnsupportedSourceError(str(exc)) from exc
 
+    if stype == "pbi_desktop" and (selected_sources or not project_id or project_id == "preview"):
+        # Before the dry run: read every selected Power BI Desktop model live through
+        # the Desktop adapter (the PBIX branch above reads the files, Fabric reads its API).
+        from semabridge.sources.base import SourceError
+        from semabridge.sources.pbi_desktop.model_reader import read_pbi_desktop_models
+
+        try:
+            return await asyncio.to_thread(read_pbi_desktop_models, source_config, list(selected_sources or []))
+        except SourceError as exc:
+            raise UnsupportedSourceError(str(exc)) from exc
+
     if project_id and project_id not in ("preview", ""):
         # Multi-model project: review EVERY model's latest snapshot. The project
         # head is only whichever model synced last, which would hide the other

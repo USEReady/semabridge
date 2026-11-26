@@ -562,6 +562,8 @@ async function handleResponse(res) {
             parsed = JSON.parse(text);
             if (typeof parsed?.detail === 'string' && parsed.detail.trim()) {
                 detail = parsed.detail;
+            } else if (Array.isArray(parsed?.detail?.errors)) {
+                detail = parsed.detail.errors.join('; ');
             } else if (typeof parsed?.detail?.message === 'string' && parsed.detail.message.trim()) {
                 detail = parsed.detail.message;
             } else if (typeof parsed?.message === 'string' && parsed.message.trim()) {
@@ -1739,7 +1741,22 @@ export const api = {
             if (!res.ok) {
                 const errorText = await res.text();
                 console.error('[API] Dry run failed:', res.status, errorText);
-                throw new Error(`Dry run failed: ${res.status} - ${errorText}`);
+                let detail = errorText;
+                try {
+                    const parsed = JSON.parse(errorText);
+                    if (typeof parsed?.detail === 'string' && parsed.detail.trim()) {
+                        detail = parsed.detail;
+                    } else if (Array.isArray(parsed?.detail?.errors)) {
+                        detail = parsed.detail.errors.join('; ');
+                    } else if (typeof parsed?.detail?.message === 'string' && parsed.detail.message.trim()) {
+                        detail = parsed.detail.message;
+                    } else if (typeof parsed?.message === 'string' && parsed.message.trim()) {
+                        detail = parsed.message;
+                    }
+                } catch {
+                    // Plain text
+                }
+                throw new Error(detail || `Dry run failed (${res.status})`);
             }
             
             const data = await res.json();

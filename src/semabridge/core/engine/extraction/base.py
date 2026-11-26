@@ -163,6 +163,10 @@ def _extract_pbi_desktop(
         unresolved_report_field_references=unresolved_refs,
         ambiguous_report_aliases=ambiguous_aliases,
     )
+    from semabridge.utils.identifiers import clean_pbix_model_name
+    if hasattr(source_format, "dataset_name"):
+        source_format.dataset_name = clean_pbix_model_name(str(model_name))
+    context.resolved_pbix_display_name = str(model_name)
 
     if report_layer:
         source_format.report_layer = report_layer

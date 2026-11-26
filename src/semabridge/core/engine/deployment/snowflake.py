@@ -218,8 +218,17 @@ def preview_table_bindings(context: RunContext) -> Dict[str, Any]:
         except Exception as exc:
             logger.debug("Cross-project table binding check skipped: %s", exc)
         return {"tables": plan, "blocked": blocked, "warnings": warnings, "error": None}
-    except TableBindingAmbiguityError:
-        raise
+    except TableBindingAmbiguityError as amb:
+        blocked = [{
+            "dataset": amb.dataset_name,
+            "action": "blocked",
+            "table": ", ".join(amb.candidates),
+            "matched_by": "ambiguous",
+            "tie": amb.candidates,
+            "candidates": amb.candidates,
+            "message": f"Ambiguous table binding: {', '.join(amb.candidates)} match equally. Pick a table or save a binding.",
+        }]
+        return {"tables": blocked, "blocked": blocked, "warnings": [], "error": None}
     except Exception as exc:
         raise LiveSchemaUnavailableError(
             f"{LIVE_SCHEMA_UNAVAILABLE} for "
