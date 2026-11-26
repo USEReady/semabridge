@@ -17,6 +17,7 @@ import { defaultReportModel, downloadRunMarkdown } from '../components/runs/runR
 import SchedulesTab from '../components/runs/SchedulesTab';
 import useRunReportCounts, { clearRunCounts } from '../components/runs/useRunReportCounts';
 import { formatAgo, formatDateTime, formatDuration, isActiveStatus, normStatus, parseIso, shortMessage } from '../components/runs/runsFormat';
+import { projectLabel, projectName as projectDisplayName } from '../utils/projectLabel';
 
 const REFRESH_INTERVAL_MS = 4000;
 const PAGE_SIZE = 50;
@@ -307,7 +308,7 @@ export default function ProjectJobsPage() {
   const projectName = (run) => {
     if (run.project_name && run.project_name !== 'Project run') return run.project_name;
     const p = projects.find(x => String(x.id) === String(run.project_id));
-    return p?.name || p?.display_name || run.project_id || 'Project run';
+    return (p && projectDisplayName(p)) || run.project_id || 'Project run';
   };
 
   const filteredRuns = runs.filter((run) => {
@@ -394,7 +395,7 @@ export default function ProjectJobsPage() {
               <MenuItem onClick={() => handleRunNow(null)} label="Run all scheduled projects now" hint="Same as before: every project that has a schedule" />
               {projects.length > 0 && <div style={{ height: 1, background: 'var(--border-main)', margin: '4px 0' }} />}
               {projects.map(p => (
-                <MenuItem key={p.id} onClick={() => handleRunNow(p.id)} label={p.name || p.display_name || p.id} />
+                <MenuItem key={p.id} onClick={() => handleRunNow(p.id)} label={projectLabel(p, projects)} />
               ))}
             </div>
           )}

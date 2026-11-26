@@ -8,6 +8,7 @@ import {
   Trash2, CheckCircle2, AlertTriangle, Code, Sparkles, HelpCircle,
   Plus, Upload, FileText, Download, Zap, Radio, Target, Database,
 } from 'lucide-react';
+import { projectLabel } from '../utils/projectLabel';
 
 const CARD = {
   background: 'var(--bg-surface)',
@@ -1867,7 +1868,7 @@ export default function GovernanceSuitePage({ mode = 'drift' }) {
             <select style={INPUT} value={projectId} onChange={(e) => setProjectId(e.target.value)} aria-label="Project scope">
               <option value="">All projects</option>
               {projects.map((p) => (
-                <option key={p.id || p.name} value={p.id || p.name}>{p.name || p.id}</option>
+                <option key={p.id || p.name} value={p.id || p.name}>{projectLabel(p, projects)}</option>
               ))}
             </select>
           </div>

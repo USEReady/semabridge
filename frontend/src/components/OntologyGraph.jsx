@@ -14,6 +14,7 @@ import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
 import { AlertTriangle, FolderOpen, Layers, Box, BarChart3, Database, RefreshCw, X, Maximize2, Minimize2 } from 'lucide-react';
 import { authFetch } from '../utils/api';
+import { projectLabel } from '../utils/projectLabel';
 
 // Connection Map: projects -> domains -> concepts / metrics -> bound BI objects.
 // Data comes from GET /api/ontology/domains/graph (see semabridge/ontology/graph.py).
@@ -146,7 +147,7 @@ export default function OntologyGraph({ projects = [] }) {
 
   const projectNames = useMemo(() => {
     const m = {};
-    projects.forEach((p) => { m[p.id || p.project_id] = p.name || p.display_name || p.id; });
+    projects.forEach((p) => { m[p.id || p.project_id] = projectLabel(p, projects); });
     return m;
   }, [projects]);
 
@@ -232,7 +233,7 @@ export default function OntologyGraph({ projects = [] }) {
           >
             <option value="">All domains</option>
             {projects.map((p) => (
-              <option key={p.id || p.project_id} value={p.id || p.project_id}>{p.name || p.display_name || p.id}</option>
+              <option key={p.id || p.project_id} value={p.id || p.project_id}>{projectLabel(p, projects)}</option>
             ))}
           </select>
           <label className="flex items-center gap-1.5 text-secondary cursor-pointer">

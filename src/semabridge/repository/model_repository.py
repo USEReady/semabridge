@@ -516,6 +516,24 @@ class ModelRepository:
             )
             return self._row_to_snapshot(row) if row else None
 
+    def get_snapshot_for_run(self, run_id: str) -> Optional[Snapshot]:
+        """The newest successful snapshot an engine run committed (None if none)."""
+        rid = str(run_id or "").strip()
+        if not rid:
+            return None
+        with self._session() as session:
+            row = (
+                session.execute(
+                    select(SnapshotRow)
+                    .where(and_(SnapshotRow.run_id == rid, SnapshotRow.status == 'success'))
+                    .order_by(SnapshotRow.timestamp.desc())
+                    .limit(1)
+                )
+                .scalars()
+                .first()
+            )
+            return self._row_to_snapshot(row) if row else None
+
     def list_snapshots(
         self, project_id: str, limit: int = 10, include_failed: bool = False
     ) -> List[Snapshot]:

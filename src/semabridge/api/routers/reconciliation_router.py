@@ -1004,9 +1004,131 @@ def get_project_reconciliation_metrics(project_id: Optional[str] = None) -> Dict
                 "dimensions": dims,
             })
 
+    source = "ontology"
+    if project_id and not metrics_list:
+        # No ontology was generated for this project: list the measures of its
+        # last successful sync instead (the model snapshot that sync deployed).
+        metrics_list = _last_sync_metrics(project_id, dep_info)
+        source = "last_sync" if metrics_list else "none"
+
     return {
         "project_id": project_id,
         "count": len(metrics_list),
+        "source": source,
         "metrics": metrics_list,
     }
+
+
+_NUMERIC_TYPE_RE = re.compile(r"INT|DEC|FLOAT|NUM|DOUBLE|REAL", re.I)
+
+
+def _last_sync_runs(project_id: str, limit: int = 20) -> List[Dict[str, Any]]:
+    """The project's successful runs, newest first, with their detail blobs."""
+    from semabridge.api.services.project_shared import _compat_project_runs, load_run_details
+    from semabridge.api.services.run_records import list_project_runs
+
+    pid = str(project_id).strip()
+    mem = {str(r.get("run_id") or r.get("id") or ""): r for r in (_compat_project_runs.get(pid) or []) if isinstance(r, dict)}
+    runs = list_project_runs(pid, limit=limit)
+    if runs is None:
+        runs = list(mem.values())
+    ok = [r for r in runs if str(r.get("status") or "").lower() in ("success", "warning", "partial")]
+    ok.sort(key=lambda r: str(r.get("started_at") or ""), reverse=True)
+    missing = [str(r.get("run_id") or "") for r in ok if not (mem.get(str(r.get("run_id") or "")) or r).get("summary")]
+    details = load_run_details(missing) if missing else {}
+    out = []
+    for r in ok:
+        rid = str(r.get("run_id") or "")
+        merged = dict(r)
+        for src in (mem.get(rid) or {}, details.get(rid) or {}):
+            for k, v in src.items():
+                if not merged.get(k):
+                    merged[k] = v
+        out.append(merged)
+    return out
+
+
+def _last_sync_metrics(project_id: str, dep_info: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Measures (DAX + translated SQL) from the newest successful sync's model snapshot(s)."""
+    from semabridge.repository.model_repository import ModelRepository
+
+    try:
+        runs = _last_sync_runs(project_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.info("Could not read runs of %s for parity metrics: %s", project_id, exc)
+        return []
+
+    repo = ModelRepository()
+    for run in runs:
+        # One snapshot per synced model; single-model runs also carry it on the summary.
+        # Older runs carry no snapshot id: the engine run id (per model) finds it.
+        refs: List[Dict[str, Any]] = []
+        for res in run.get("results") or []:
+            if isinstance(res, dict):
+                sid = str((res.get("summary") or {}).get("sml_snapshot_id") or "").strip()
+                engine_run = str(res.get("run_id") or "").strip()
+                if sid or engine_run:
+                    refs.append({"sid": sid, "run": engine_run, "model": res.get("model") or "", "view": res.get("view_name") or ""})
+        top = str((run.get("summary") or {}).get("sml_snapshot_id") or "").strip()
+        if top and not any(r["sid"] == top for r in refs):
+            if len(refs) == 1 and not refs[0]["sid"]:
+                refs[0]["sid"] = top
+            else:
+                refs.append({"sid": top, "run": "", "model": "", "view": ""})
+        if not refs:
+            refs.append({"sid": "", "run": str(run.get("run_id") or ""), "model": "", "view": ""})
+
+        default_view = (dep_info.get("semantic_view") or dep_info.get("view_name") or "") if len(refs) == 1 else ""
+        metrics: List[Dict[str, Any]] = []
+        seen: Set[tuple] = set()
+        for ref in refs:
+            snap = None
+            try:
+                if ref["sid"]:
+                    snap = repo.get_snapshot(ref["sid"])
+                if snap is None and ref["run"]:
+                    snap = repo.get_snapshot_for_run(ref["run"])
+            except Exception:  # noqa: BLE001
+                snap = None
+            blob = getattr(snap, "sml_blob", None)
+            if not isinstance(blob, dict):
+                continue
+            dims_by_dataset: Dict[str, List[str]] = {}
+            for ds in blob.get("datasets") or []:
+                if not isinstance(ds, dict) or ds.get("is_hidden"):
+                    continue
+                dname = ds.get("label") or ds.get("unique_name") or ""
+                dims_by_dataset[str(ds.get("unique_name") or "")] = [
+                    f"{dname}.{c.get('label') or c.get('unique_name')}"
+                    for c in ds.get("columns") or []
+                    if isinstance(c, dict) and not c.get("is_hidden") and not c.get("is_measure_candidate")
+                    and not _NUMERIC_TYPE_RE.search(str(c.get("data_type") or ""))
+                ]
+            view = ref["view"] or default_view
+            domain = ref["model"] or str(blob.get("label") or blob.get("unique_name") or project_id)
+            for m in blob.get("metrics") or []:
+                if not isinstance(m, dict) or m.get("sync_enabled") is False:
+                    continue
+                name = str(m.get("unique_name") or m.get("label") or "").strip()
+                if not name or (view, name) in seen:
+                    continue
+                seen.add((view, name))
+                dataset = str(m.get("dataset") or "")
+                metrics.append({
+                    "name": name,
+                    "logical_name": name,
+                    "label": m.get("label") or name,
+                    "domain": domain,
+                    "domain_id": None,
+                    "model_id": ref["model"] or None,
+                    "dax_expression": m.get("expression") or "",
+                    "sql_expression": m.get("sql_expression") or "",
+                    "target_table_or_view": view or dataset,
+                    "target_kind": "semantic_view" if view else "table",
+                    "concept": dataset,
+                    "dimensions": dims_by_dataset.get(dataset, []),
+                })
+        if metrics:
+            return metrics
+    return []
 

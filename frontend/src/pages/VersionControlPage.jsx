@@ -32,6 +32,7 @@ import {
     summarizeCounts,
     longTime,
 } from '../components/history/historyUtils';
+import { projectLabel } from '../utils/projectLabel';
 
 
 // --- SHARED STYLED COMPONENTS ---
@@ -674,7 +675,7 @@ export default function VersionControlPage() {
                     >
                         {projects.length === 0 && <option value="">No projects</option>}
                         {projects.map(p => (
-                            <option key={normalizeId(p?.id ?? p?.project_id)} value={normalizeId(p?.id ?? p?.project_id)}>{p.name || p.id}</option>
+                            <option key={normalizeId(p?.id ?? p?.project_id)} value={normalizeId(p?.id ?? p?.project_id)}>{projectLabel(p, projects)}</option>
                         ))}
                     </select>
                     <Btn variant="primary" onClick={handleSaveNow} disabled={!selectedProjectId || isSaving}

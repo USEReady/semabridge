@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { BTN_SM, BTN_PRIMARY, INPUT_STYLE, SELECT_STYLE, MONO, plural } from './styles';
 import { Pill } from './ui';
+import { projectLabel } from '../../utils/projectLabel';
 
 const PANEL = {
   padding: 16,
@@ -294,7 +295,7 @@ export function WhatIfSimulator({ gov, metricOptions, onOpenParity }) {
               <option value="">All loaded domains</option>
               {(projectsList || []).map((p) => (
                 <option key={p.id || p.name} value={p.id || p.name}>
-                  {p.name || p.id}
+                  {projectLabel(p, projectsList)}
                 </option>
               ))}
             </select>
@@ -656,7 +657,7 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
             <option value="">All Projects / Global</option>
             {projectsList.map((p) => (
               <option key={p.id || p.name} value={p.id || p.name}>
-                {p.name || p.id}
+                {projectLabel(p, projectsList)}
               </option>
             ))}
           </select>
@@ -672,6 +673,9 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
             style={{ ...SELECT_STYLE, width: '100%', fontSize: 12.5, fontFamily: MONO }}
           >
             <option value="">-- Choose DAX Measure from Project --</option>
+            {govProjectId && availableMetrics.length === 0 && (
+              <option value="" disabled>No measures yet: sync this project first</option>
+            )}
             {availableMetrics.map((m, idx) => {
               const val = m.name || m.logical_name;
               const formulaPreview = m.dax_expression ? ` = ${m.dax_expression.slice(0, 32)}…` : '';

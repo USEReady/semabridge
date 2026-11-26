@@ -26,6 +26,7 @@ import {
   scopeCollisions,
   usedInText,
 } from './ontology/healthChecks';
+import { projectLabel } from '../utils/projectLabel';
 
 // ?tab= values (old and new names) → internal tab ids
 const TAB_ALIASES = {
@@ -1350,7 +1351,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
                 <option value="">All projects</option>
                 {projectsList.map((p) => (
                   <option key={p.id || p.name} value={p.id || p.name}>
-                    {p.name || p.id}
+                    {projectLabel(p, projectsList)}
                   </option>
                 ))}
               </select>
@@ -1988,7 +1989,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
                   <option value="">Select a project...</option>
                   {projectsList.map((p) => (
                     <option key={p.id || p.name} value={p.id || p.name}>
-                      {p.name || p.id}
+                      {projectLabel(p, projectsList)}
                     </option>
                   ))}
                 </select>

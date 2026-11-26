@@ -13,6 +13,7 @@ import {
 } from '../components/ask/askApi';
 import { BTN_PRIMARY } from '../components/ask/askStyles';
 import { api, authFetch } from '../utils/api';
+import { projectLabel } from '../utils/projectLabel';
 
 /**
  * AskAiPage (/ask) — ask a business question in plain language and get an
@@ -364,7 +365,7 @@ export default function AskAiPage() {
             >
               <option value="">All projects</option>
               {projects.map((p) => (
-                <option key={p.id || p.name} value={p.id || p.name}>{p.name || p.id}</option>
+                <option key={p.id || p.name} value={p.id || p.name}>{projectLabel(p, projects)}</option>
               ))}
             </select>
           </label>
