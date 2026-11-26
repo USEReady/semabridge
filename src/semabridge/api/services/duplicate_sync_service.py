@@ -602,7 +602,9 @@ def find_duplicate_deployments(project_id: str, config_yaml: str, strict: bool =
         return blob_cache[row.snapshot_id]
 
     def _project_name(pid: str) -> str:
-        return str((_compat_projects.get(pid) or {}).get("name") or pid)
+        # The name the user gave the project ("name" holds the source model's name).
+        meta = _compat_projects.get(pid) or {}
+        return str(meta.get("display_name") or meta.get("semantic_name") or meta.get("name") or pid)
 
     findings: List[Dict[str, Any]] = []
     for model in planned:

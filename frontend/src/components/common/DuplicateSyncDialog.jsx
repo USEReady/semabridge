@@ -132,6 +132,7 @@ function DuplicateBody({ duplicates, message, overwrites }) {
                 <td style={CELL}>
                   {d.other_project_name}
                   <div style={{ color: 'var(--text-tertiary)', fontSize: 11.5 }}>
+                    {d.target_label ? <b style={{ fontWeight: 600 }}>{d.target_label}: </b> : null}
                     {d.other_view_name ? `${d.target}.${d.other_view_name}` : d.target}
                   </div>
                 </td>

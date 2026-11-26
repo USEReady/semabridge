@@ -59,7 +59,10 @@ def test_preflight_duplicate_check_detects_pbix_already_synced_or_in_progress_be
     assert fhash
 
     other_pid = "proj-ai-sample"
-    project_shared._compat_projects[other_pid] = {"id": other_pid, "name": "ARTIFICIAL_INTELLIGENCE_SAMPLE_1_1"}
+    # "name" is the source model's name; the dialog shows the project's own name.
+    project_shared._compat_projects[other_pid] = {
+        "id": other_pid, "name": "ARTIFICIAL_INTELLIGENCE_SAMPLE_1_1", "display_name": "dbt5",
+    }
 
     job_id = f"dryrun-{uuid.uuid4().hex[:12]}"
     with db_manager.get_session() as s:
@@ -106,7 +109,8 @@ def test_preflight_duplicate_check_detects_pbix_already_synced_or_in_progress_be
         assert len(data["duplicates"]) == 1
         dup = data["duplicates"][0]
         assert dup["other_project_id"] == other_pid
-        assert dup["other_project_name"] == "ARTIFICIAL_INTELLIGENCE_SAMPLE_1_1"
+        assert dup["other_project_name"] == "dbt5"
+        assert dup["target_label"] == "Databricks"
         assert "same_file_in_progress" in dup["reasons"]
 
         # Different target schema -> NOT a duplicate
