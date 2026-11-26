@@ -404,6 +404,14 @@ def generate_reconciliation_queries(req: GenerateQueriesRequest) -> Dict[str, st
     verifier = GoldenQueryVerifier()
     resolved_kind = _resolve_target_kind(req)
     _validate_generate_queries_request(req, resolved_kind)
+    # SQL for the project's own warehouse: a Databricks project's deployed
+    # view is a Unity Catalog metric view (MEASURE()), not a Snowflake
+    # SEMANTIC_VIEW(...).
+    from semabridge.ai.bi_truth_service import _detect_project_target
+
+    warehouse_target = _detect_project_target(req.project_id)
+    if warehouse_target == "DATABRICKS" and (resolved_kind or "") == "semantic_view":
+        resolved_kind = "metric_view"
     dax_query = verifier.generate_dax_query(
         metric_name=req.metric_name,
         dimensions=req.dimensions,
@@ -421,6 +429,7 @@ def generate_reconciliation_queries(req: GenerateQueriesRequest) -> Dict[str, st
         "dax_query": dax_query,
         "sql_query": sql_query,
         "target_kind": resolved_kind or "table",
+        "warehouse_target": warehouse_target,
     }
 
 

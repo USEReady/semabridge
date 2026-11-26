@@ -93,3 +93,29 @@ def test_snapshot_for_run_repository_lookup():
     snap = repo.get_snapshot_for_run("engine-xyz")
     assert snap is not None and snap.sml_blob["metrics"][0]["unique_name"] == "M"
     assert repo.get_snapshot_for_run("nope") is None
+
+
+def _gen(monkeypatch, target):
+    from semabridge.ai import bi_truth_service
+
+    monkeypatch.setattr(bi_truth_service, "_detect_project_target", lambda pid: target)
+    monkeypatch.setattr(rr, "_validate_generate_queries_request", lambda req, kind: None)
+    return rr.generate_reconciliation_queries(rr.GenerateQueriesRequest(
+        metric_name="Total Units", metric_sql_expression="SUM(units)",
+        target_table_or_view="workspace.default.store_sales_mv", target_kind="semantic_view",
+        dimensions=["Sales.Region"], project_id="proj-x",
+    ))
+
+
+def test_databricks_project_gets_metric_view_sql_not_snowflake(monkeypatch):
+    out = _gen(monkeypatch, "DATABRICKS")
+    assert out["warehouse_target"] == "DATABRICKS"
+    assert out["target_kind"] == "metric_view"
+    assert "SEMANTIC_VIEW" not in out["sql_query"].upper()
+    assert "MEASURE(" in out["sql_query"].upper()
+
+
+def test_snowflake_project_keeps_semantic_view_sql(monkeypatch):
+    out = _gen(monkeypatch, "SNOWFLAKE")
+    assert out["warehouse_target"] == "SNOWFLAKE"
+    assert "SEMANTIC_VIEW" in out["sql_query"].upper()

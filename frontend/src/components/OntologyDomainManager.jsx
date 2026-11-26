@@ -916,6 +916,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
     setReconError(null);
     try {
       let query = reconQueries?.sql_query;
+      let generatedTarget = reconQueries?.warehouse_target;
       if (!query && reconMetric.trim() && reconTable.trim()) {
         const qRes = await authFetch('/api/reconciliation/generate-queries', {
           method: 'POST',
@@ -934,18 +935,26 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
           const qData = await qRes.json();
           setReconQueries(qData);
           query = qData.sql_query;
+          generatedTarget = qData.warehouse_target;
         }
       }
       if (!query) {
         setReconError('Please select a metric and deployed view/table first.');
         return;
       }
+      // Run on the project's own warehouse (Databricks projects never go to Snowflake).
+      const projectRow = projectsList.find((p) => (p.id || p.name) === _reconProjectId());
+      const warehouse = String(
+        generatedTarget
+        || (/databricks/i.test(String(projectRow?.target_type || '')) ? 'DATABRICKS' : 'SNOWFLAKE'),
+      ).toUpperCase();
+      const warehouseLabel = warehouse === 'DATABRICKS' ? 'Databricks' : 'Snowflake';
       const res = await authFetch('/api/ai/execute-query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sql: query,
-          target: 'SNOWFLAKE',
+          target: warehouse,
           project_id: _reconProjectId(),
           limit: 500,
         }),
@@ -958,7 +967,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
       const cols = data.columns || [];
       const rowObjs = (data.rows || []).map((r) => Object.fromEntries(cols.map((c, idx) => [c, r[idx]])));
       setReconSqlText(JSON.stringify(rowObjs, null, 2));
-      setStatusMessage({ type: 'success', text: `Successfully executed Snowflake SQL: ${rowObjs.length} rows returned.` });
+      setStatusMessage({ type: 'success', text: `Ran the ${warehouseLabel} SQL: ${rowObjs.length} rows returned.` });
     } catch (err) {
       setReconError(String(err));
     } finally {
