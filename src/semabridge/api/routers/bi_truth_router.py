@@ -76,8 +76,20 @@ def generate_cases(req: GenerateTruthRequest) -> Dict[str, Any]:
                 project_id=req.project_id,
             )
         else:
+            if req.project_id:
+                from semabridge.ontology.auto_bootstrap import ensure_project_ontology, has_ontology
+
+                ensure_project_ontology(req.project_id)
+                if not has_ontology(req.project_id):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="This project has no ontology yet: sync it successfully once, "
+                        "or use Generate from OSI in the Explorer.",
+                    )
             added = generate_truth_cases(project_id=req.project_id, domain=req.domain, limit=req.limit)
         return {"added_count": len(added), "cases": added}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate test cases: {str(e)}")
 

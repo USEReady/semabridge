@@ -479,6 +479,17 @@ async def upload_domain_yaml_files(
     return body
 
 
+def _project_label(project_id: str) -> str:
+    """The name the user gave the project (falls back to its id)."""
+    try:
+        from semabridge.api.services.project_shared import _compat_projects
+
+        meta = _compat_projects.get(project_id) or {}
+        return str(meta.get("display_name") or meta.get("semantic_name") or project_id).strip()
+    except Exception:  # noqa: BLE001
+        return project_id
+
+
 @router.post("/from-osi", response_model=Dict[str, Any])
 async def bootstrap_from_osi(req: FromOsiRequest, request: Request) -> Dict[str, Any]:
     """Bootstrap or re-sync a domain ontology from an OSI model or project snapshot.
@@ -563,6 +574,20 @@ async def bootstrap_from_osi(req: FromOsiRequest, request: Request) -> Dict[str,
                 "Use Sync from OSI (sync_existing=true) to update the existing domain instead of creating a duplicate."
             ),
         )
+
+    # A same-named domain generated from ANOTHER project (two projects syncing
+    # the same Power BI model) is never merged into: this project gets its own
+    # "<project> · <model>" domain.
+    other_pid = str(getattr(existing_domain_obj, "source_project_id", None) or "").strip()
+    if (
+        project_id
+        and existing_domain_obj is not None
+        and existing_for_project is None
+        and other_pid
+        and other_pid.casefold() != project_id.strip().casefold()
+    ):
+        target_domain = f"{_project_label(project_id)} · {target_domain}"
+        existing_domain_obj = ontology_store.get_domain(target_domain)
 
     # When domain display name has been renamed by the user, reuse the project's existing domain in place
     if not existing_domain_obj and existing_for_project is not None:

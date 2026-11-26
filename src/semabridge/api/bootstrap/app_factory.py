@@ -254,6 +254,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.debug('Startup stale-run sweep skipped: %s', sweep_exc)
         _compat_ensure_loaded()
         try:
+            from semabridge.ontology.auto_bootstrap import start_backfill_thread
+
+            start_backfill_thread()
+        except Exception as onto_exc:
+            logger.warning('Ontology backfill not started: %s', onto_exc)
+        try:
             from semabridge.governance.drift_service import restore_schedules
 
             logger.info('Drift schedules restored: %d', restore_schedules())

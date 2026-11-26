@@ -411,10 +411,15 @@ def resolve_natural_language_query(req: NLQueryRequest, request: Request) -> Que
     """Translate a question into governed SQL for the selected project."""
     if not req.prompt or not req.prompt.strip():
         raise HTTPException(status_code=400, detail="Prompt cannot be empty.")
+    _require_project_access(req.project_id, request)
+    if req.project_id:
+        # A synced project without an ontology gets one from its synced model.
+        from semabridge.ontology.auto_bootstrap import ensure_project_ontology
+
+        ensure_project_ontology(req.project_id)
     engine = ontology_store.query_engine
     if not engine:
         raise HTTPException(status_code=500, detail="NL Query Engine not initialized.")
-    _require_project_access(req.project_id, request)
 
     dialect = _normalize_dialect(req)
     scope = _scope_for(req.project_id, explicit_view=req.semantic_view or req.view_name)
@@ -530,11 +535,11 @@ def _resolve_nl(req: NLQueryRequest, engine: Any, dialect: str, scope: ProjectSc
                 tables=[scope.semantic_view] if scope.semantic_view else [],
             )
         if scope.allowed_domains is not None and not scope.allowed_domains:
-            return _empty_plan(req.prompt, "The selected project has no ontology domains attached or generated yet.", ["no project domains"])
+            return _empty_plan(req.prompt, "This project has no ontology yet: sync it successfully once, or use Generate from OSI in the Explorer.", ["no project domains"])
         return _local_plan(engine, req.prompt, dialect, scope, offline_label=True)
 
     if scope.allowed_domains is not None and not scope.allowed_domains:
-        return _empty_plan(req.prompt, "The selected project has no ontology domains attached or generated yet.", ["no project domains"])
+        return _empty_plan(req.prompt, "This project has no ontology yet: sync it successfully once, or use Generate from OSI in the Explorer.", ["no project domains"])
     return _local_plan(engine, req.prompt, dialect, scope, offline_label=explicit_local or req.allow_offline_draft)
 
 

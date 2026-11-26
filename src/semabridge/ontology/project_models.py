@@ -24,6 +24,14 @@ from semabridge.ontology.models import model_key, per_model_domain_id, project_k
 logger = logging.getLogger("semabridge.ontology.project_models")
 
 _SEMANTIC_SUFFIX = re.compile(r"_SEMANTIC$", re.I)
+# Deployed view name -> model name: Snowflake "<model>_SEMANTIC", Databricks
+# "<catalog>.<schema>.<model>_metric_view".
+_VIEW_SUFFIX = re.compile(r"_(SEMANTIC|METRIC_VIEW)$", re.I)
+
+
+def _view_model_base(view: str) -> str:
+    last = str(view or "").strip().split(".")[-1].strip('"`')
+    return _VIEW_SUFFIX.sub("", last)
 
 
 @dataclass
@@ -76,7 +84,7 @@ def configured_models(project_id: str, config_dir: Optional[Path] = None) -> Lis
         base = str(views.get(p) or "").strip() or None
         aliases = [mid]
         if base:
-            aliases.append(model_key(_SEMANTIC_SUFFIX.sub("", base)))
+            aliases.append(model_key(_view_model_base(base)))
         out.append(ProjectModel(model_id=mid, model_name=name, view_base=base, aliases=aliases))
     return out
 
@@ -147,7 +155,7 @@ def latest_model_snapshots(project_id: str, repo: Any = None, scan_limit: int = 
                 continue
             base = str(blob.get("unique_name") or blob.get("label") or "").strip()
             view = str(row.view_name or "").strip().strip('"')
-            key = model_key(_SEMANTIC_SUFFIX.sub("", view)) if view else model_key(base)
+            key = model_key(_view_model_base(view)) if view else model_key(base)
             if not key:
                 continue
             entry = out.get(key)
@@ -155,7 +163,7 @@ def latest_model_snapshots(project_id: str, repo: Any = None, scan_limit: int = 
                 entry = ProjectModel(
                     model_id=key,
                     model_name=str(blob.get("label") or base or key),
-                    view_base=_SEMANTIC_SUFFIX.sub("", view) if view else base or None,
+                    view_base=_view_model_base(view) if view else base or None,
                     snapshot_id=row.snapshot_id,
                     blob=blob,
                     aliases=[key, model_key(base)],

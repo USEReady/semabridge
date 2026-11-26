@@ -953,6 +953,17 @@ async def _perform_project_run_impl(run: dict, project_cfg: str, started: float)
             except Exception as _drift_exc:  # noqa: BLE001
                 logger.debug("[%s] Source drift resolution skipped: %s", project_id, _drift_exc)
 
+        # A synced project always has an ontology (BI-Truth, Ask AI, Blast
+        # Radius read it): generate one from this sync if the project has none.
+        if run["status"] in ("success", "warning"):
+            try:
+                from semabridge.ontology.auto_bootstrap import ensure_project_ontology
+
+                if ensure_project_ontology(project_id):
+                    run.setdefault("logs", []).append("Ontology generated from the synced model.")
+            except Exception as _onto_exc:  # noqa: BLE001
+                logger.debug("[%s] Ontology generation skipped: %s", project_id, _onto_exc)
+
         # Verify: after a successful sync, re-check the project's certified
         # measures against Power BI. Non-fatal; a mismatch is a run warning.
         if run["status"] in ("success", "warning"):
