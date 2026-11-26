@@ -1,15 +1,30 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import React, { useCallback, useEffect, useState, useMemo } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  Activity, Play, Check, X, Clock, AlertTriangle, CheckCircle2,
+  Activity, Play, Check, X, Clock, AlertTriangle, AlertCircle, CheckCircle2,
   Trash2, RefreshCw, Sparkles, Database, Layers, ArrowRight,
-  ShieldCheck, ShieldAlert, Search, ChevronRight, FileText, Zap,
+  ShieldCheck, ShieldAlert, Search, ChevronRight, FileText, Zap, HelpCircle,
 } from 'lucide-react';
-import { authFetch } from '../utils/api';
+import { authFetch, formatApiErrorMessage } from '../utils/api';
 import { useProjects, normalizeProjectId, matchesProjectId } from '../hooks/useProjects';
+import { useDeployedViews, normalizeViewName } from '../hooks/useDeployedViews';
 import Modal from '../components/common/Modal';
 import { ImpactReport } from '../components/ontology/GovernancePanels';
 import DeployedViewSelector from '../components/common/DeployedViewSelector';
+import WarehouseFilter from '../components/common/WarehouseFilter';
+import DriftStatusCard from '../components/drift/DriftStatusCard';
+import GroupedProjectList from '../components/drift/GroupedProjectList';
+import DriftFindingsList from '../components/drift/DriftFindingsList';
+import DriftModeToggle from '../components/drift/DriftModeToggle';
+import DriftSchedules from '../components/drift/DriftSchedules';
+import AIImpactModal from '../components/drift/AIImpactModal';
+import EmptyState from '../components/common/EmptyState';
+import {
+  getCanonicalCategory,
+  computeProjectDriftState,
+  getDriftStateSortPriority,
+  CATEGORY_DETAILS,
+} from '../utils/driftLabels';
 const CARD = {
   background: 'var(--bg-surface)',
   border: '1px solid var(--border-main)',
@@ -72,32 +87,99 @@ function formatOccurred(isoStr) {
 }
 
 export default function DriftMonitoringPage() {
-  const [searchParams] = useSearchParams();
-  const selectedView = searchParams.get('view') || '';
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialMode = (searchParams.get('mode') || 'live').toLowerCase();
 
   const {
     projects,
+    filteredProjects,
+    availableWarehouses,
+    warehouseCounts,
+    selectedWarehouse,
+    setSelectedWarehouse,
     selectedProjectId,
     setSelectedProjectId,
     selectedProject,
-    loading: projectsLoading,
   } = useProjects();
+
+  const {
+    views: deployedViews,
+    selectedView: activeDeployedView,
+    loading: viewsLoading,
+  } = useDeployedViews(selectedProjectId);
+
+  // Sanitized view: only allow view parameter if it genuinely belongs to this project's deployed views
+  const selectedView = useMemo(() => {
+    if (!selectedProjectId || viewsLoading || !deployedViews || deployedViews.length === 0) {
+      return '';
+    }
+    const raw = searchParams.get('view') || '';
+    if (!raw) return activeDeployedView || '';
+    const match = deployedViews.find(
+      (v) =>
+        normalizeViewName(v.semantic_view) === normalizeViewName(raw) ||
+        normalizeViewName(v.view) === normalizeViewName(raw)
+    );
+    return match ? (match.semantic_view || match.view) : (activeDeployedView || '');
+  }, [selectedProjectId, viewsLoading, deployedViews, searchParams, activeDeployedView]);
 
   const [projectSearch, setProjectSearch] = useState('');
   const [allEvents, setAllEvents] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [_loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [statusFilter, setStatusFilter] = useState('all');
   const [checkMsg, setCheckMsg] = useState('');
   const [targetInfo, setTargetInfo] = useState({});
   const [refreshing, setRefreshing] = useState(false);
   const [lastCheckResult, setLastCheckResult] = useState(null);
+  const [capabilities, setCapabilities] = useState(null);
+  const [driftMode, setDriftMode] = useState(initialMode === 'mock' ? 'mock' : 'live');
+  const [showSchedules, setShowSchedules] = useState(false);
+
+  // Paged findings list state
+  const [findingsPage, setFindingsPage] = useState(1);
+  const [findingsPageSize, setFindingsPageSize] = useState(25);
+  const [findingsSearch, setFindingsSearch] = useState('');
+  const [findingsCategory, setFindingsCategory] = useState('ALL');
+  const [findingsKind, setFindingsKind] = useState('ALL');
+  const [findingsStatus, setFindingsStatus] = useState('pending');
+  const [findingsSort, setFindingsSort] = useState('newest');
+
+  const [pagedEvents, setPagedEvents] = useState([]);
+  const [findingsTotalCount, setFindingsTotalCount] = useState(0);
+  const [findingsTotalUnfilteredCount, setFindingsTotalUnfilteredCount] = useState(0);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [countsByCategory, setCountsByCategory] = useState({});
+  const [countsByKind, setCountsByKind] = useState({});
+  const [countsByStatus, setCountsByStatus] = useState({});
+  const [findingsTotalPages, setFindingsTotalPages] = useState(1);
+  const [aiImpactModalOpen, setAiImpactModalOpen] = useState(false);
+  const [selectedAiImpactEvent, setSelectedAiImpactEvent] = useState(null);
+
+  const handleOpenAIImpact = (event) => {
+    setSelectedAiImpactEvent(event);
+    setAiImpactModalOpen(true);
+  };
+
+  useEffect(() => {
+    const modeParam = (searchParams.get('mode') || 'live').toLowerCase();
+    if (modeParam === 'mock' && driftMode !== 'mock') {
+      const timer = setTimeout(() => setDriftMode('mock'), 0);
+      return () => clearTimeout(timer);
+    } else if (modeParam !== 'mock' && driftMode === 'mock') {
+      const timer = setTimeout(() => setDriftMode('live'), 0);
+      return () => clearTimeout(timer);
+    }
+  }, [searchParams, driftMode]);
 
   // Blast Radius Modal state
   const [blastModalOpen, setBlastModalOpen] = useState(false);
+  const [blastFinding, setBlastFinding] = useState(null);
   const [blastTarget, setBlastTarget] = useState('');
   const [blastType, setBlastType] = useState('METRIC');
   const [blastChangeType, setBlastChangeType] = useState('MODIFY_EXPRESSION');
+  const [blastTableContext, setBlastTableContext] = useState('');
+  const [blastExpression, setBlastExpression] = useState('');
   const [blastLoading, setBlastLoading] = useState(false);
   const [blastReport, setBlastReport] = useState(null);
   const [blastError, setBlastError] = useState('');
@@ -114,83 +196,161 @@ export default function DriftMonitoringPage() {
   };
 
   const projectEvents = allEvents.filter((e) => {
-    if (!selectedProjectId) return true;
-    return matchesProject(e.project_id, selectedProject, selectedProjectId);
+    if (selectedProjectId && !matchesProject(e.project_id, selectedProject, selectedProjectId)) {
+      return false;
+    }
+    const evMode = (e.mode || 'live').toLowerCase();
+    return evMode === driftMode.toLowerCase();
   });
 
   const quickTargets = Array.from(new Set(projectMetrics.map((m) => m.name || m.logical_name).filter(Boolean)));
 
+  const warehouseAddedTargets = useMemo(() => {
+    return Array.from(new Set(
+      projectEvents
+        .filter((e) => {
+          const cat = String(e.category || e.drift_type || '').toUpperCase();
+          return cat.includes('ADDITION') || cat.includes('UNMANAGED');
+        })
+        .map((e) => e.metric_name || e.object_name || e.name)
+        .filter(Boolean)
+    ));
+  }, [projectEvents]);
+
   const pendingEvents = projectEvents.filter((e) => e.status === 'pending');
   const approvedEvents = projectEvents.filter((e) => e.status === 'approved');
+  const acceptedEvents = projectEvents.filter((e) => e.status === 'accepted');
   const ignoredEvents = projectEvents.filter((e) => e.status === 'ignored');
-  const supersededEvents = projectEvents.filter((e) => e.status === 'superseded');
 
-  const getProjectTarget = (proj) => {
+  const categoryCounts = useMemo(() => {
+    if (selectedProjectId && countsByCategory && Object.keys(countsByCategory).length > 0) {
+      const cats = {
+        ADDITION: countsByCategory.ADDITION || 0,
+        DELETION: countsByCategory.DELETION || 0,
+        EXPRESSION_DRIFT: countsByCategory.EXPRESSION_DRIFT || 0,
+        DESCRIPTION_DRIFT: countsByCategory.DESCRIPTION_DRIFT || 0,
+      };
+      const sum = Object.values(cats).reduce((a, b) => a + b, 0);
+      return {
+        ALL: sum,
+        ...cats,
+      };
+    }
+    const filteredEvents = findingsStatus === 'pending'
+      ? projectEvents.filter((e) => e.status === 'pending')
+      : projectEvents.filter((e) => e.status !== 'superseded');
+    const sum = filteredEvents.length;
+    return {
+      ALL: sum,
+      ADDITION: filteredEvents.filter((e) => getCanonicalCategory(e.category || e.drift_type) === 'ADDITION').length,
+      DELETION: filteredEvents.filter((e) => getCanonicalCategory(e.category || e.drift_type) === 'DELETION').length,
+      EXPRESSION_DRIFT: filteredEvents.filter((e) => getCanonicalCategory(e.category || e.drift_type) === 'EXPRESSION_DRIFT').length,
+      DESCRIPTION_DRIFT: filteredEvents.filter((e) => getCanonicalCategory(e.category || e.drift_type) === 'DESCRIPTION_DRIFT').length,
+    };
+  }, [selectedProjectId, countsByCategory, findingsStatus, projectEvents]);
+
+  const getProjectTarget = useCallback((proj) => {
     if (!proj) return {};
     const idKey = proj.id ? cleanPid(proj.id) : '';
     const nameKey = proj.name ? cleanPid(proj.name) : '';
-    return (idKey && targetInfo[idKey])
+    const base = (idKey && targetInfo[idKey])
       || (nameKey && targetInfo[nameKey])
       || (proj.id && targetInfo[proj.id])
       || (proj.name && targetInfo[proj.name])
       || {};
-  };
+    return {
+      ...base,
+      platform: base.platform || proj.platform || proj.target_warehouse || 'UNKNOWN',
+    };
+  }, [targetInfo, cleanPid]);
 
-  const curTarget = {
-    ...getProjectTarget(selectedProject),
-    ...(selectedProjectId ? (targetInfo[cleanPid(selectedProjectId)] || targetInfo[selectedProjectId] || {}) : {}),
-    ...(lastCheckResult && matchesProject(lastCheckResult.project_id, selectedProject, selectedProjectId) ? lastCheckResult : {}),
-  };
+  const curTarget = useMemo(() => {
+    const fromProj = getProjectTarget(selectedProject);
+    const fromId = selectedProjectId ? (targetInfo[cleanPid(selectedProjectId)] || targetInfo[selectedProjectId] || {}) : {};
+    const fromLast = (lastCheckResult && matchesProject(lastCheckResult.project_id, selectedProject, selectedProjectId)) ? lastCheckResult : {};
+    return {
+      ...fromProj,
+      ...fromId,
+      ...fromLast,
+      platform: fromLast.platform || fromId.platform || fromProj.platform || selectedProject?.platform || selectedProject?.target_warehouse || 'UNKNOWN',
+    };
+  }, [selectedProject, selectedProjectId, targetInfo, lastCheckResult, cleanPid, getProjectTarget]);
 
-  const isLiveCapture = curTarget.baseline_source === 'live_capture' || curTarget.status === 'IN_SYNC_SINCE_CAPTURE';
-  const displayStatus = (() => {
-    if (pendingEvents.length > 0) return 'DRIFT_DETECTED';
-    if (curTarget.status) {
-      if (curTarget.status === 'IN_SYNC' && isLiveCapture) return 'IN_SYNC_SINCE_CAPTURE';
-      return curTarget.status;
-    }
-    if (projectEvents.length > 0) return isLiveCapture ? 'IN_SYNC_SINCE_CAPTURE' : 'IN_SYNC';
-    return 'NOT_CHECKED';
-  })();
+  const curDriftState = useMemo(() => {
+    return computeProjectDriftState(selectedProject, targetInfo, allEvents);
+  }, [selectedProject, targetInfo, allEvents]);
 
-  const isLiveCaptureSync = displayStatus === 'IN_SYNC_SINCE_CAPTURE' || (displayStatus === 'IN_SYNC' && isLiveCapture);
+  // Filter projects by warehouse and search, sorted by urgency:
+  // Needs Attention first, then Drift Detected, then In Sync, then Never Checked
+  const visibleProjects = useMemo(() => {
+    const term = projectSearch.toLowerCase().trim();
+    const filtered = filteredProjects.filter((p) => {
+      if (!p) return false;
+      if (!term) return true;
+      return (p.name || '').toLowerCase().includes(term) || (p.id || '').toLowerCase().includes(term);
+    });
 
-  const filteredEvents = projectEvents.filter((ev) => {
-    if (statusFilter === 'all') return ev.status !== 'superseded';
-    if (statusFilter === 'superseded') return ev.status === 'superseded';
-    return ev.status === statusFilter;
-  });
-
-  // Filter projects by search
-  const visibleProjects = projects.filter((p) => {
-    if (!p) return false;
-    if (!projectSearch.trim()) return true;
-    const term = projectSearch.toLowerCase();
-    return (p.name || '').toLowerCase().includes(term) || (p.id || '').toLowerCase().includes(term);
-  });
+    return filtered.sort((a, b) => {
+      const stateA = computeProjectDriftState(a, targetInfo, allEvents);
+      const stateB = computeProjectDriftState(b, targetInfo, allEvents);
+      const prioA = getDriftStateSortPriority(stateA);
+      const prioB = getDriftStateSortPriority(stateB);
+      if (prioA !== prioB) return prioA - prioB;
+      return (a.name || a.id || '').localeCompare(b.name || b.id || '');
+    });
+  }, [filteredProjects, projectSearch, targetInfo, allEvents]);
 
   const selectProject = (pid) => {
     setSelectedProjectId(pid);
     setCheckMsg('');
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('view');
+      return next;
+    }, { replace: true });
   };
 
   useEffect(() => {
-    if (!selectedProjectId) {
-      setProjectMetrics([]);
-      return;
+    let ignore = false;
+    if (!selectedProjectId || viewsLoading) {
+      const timer = setTimeout(() => {
+        if (!ignore) setProjectMetrics([]);
+      }, 0);
+      return () => {
+        ignore = true;
+        clearTimeout(timer);
+      };
     }
     const viewParam = selectedView ? `&view=${encodeURIComponent(selectedView)}` : '';
     authFetch(`/api/reconciliation/project-metrics?project_id=${encodeURIComponent(selectedProjectId)}${viewParam}`)
-      .then((r) => r.ok ? r.json() : null)
-      .then((d) => setProjectMetrics(d?.metrics || []))
-      .catch(() => setProjectMetrics([]));
-  }, [selectedProjectId, selectedView, authFetch]);
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!ignore) setProjectMetrics(d?.metrics || []);
+      })
+      .catch(() => {
+        if (!ignore) setProjectMetrics([]);
+      });
+    return () => {
+      ignore = true;
+    };
+  }, [selectedProjectId, selectedView, viewsLoading]);
 
-  const runBlastSimulation = async (targetOverride, changeTypeOverride, typeOverride) => {
+  const runBlastSimulation = async (targetOverride, changeTypeOverride, typeOverride, tableOverride, exprOverride, categoryOverride) => {
     const target = (targetOverride ?? blastTarget).trim();
     if (!target) return;
     const cType = changeTypeOverride ?? blastChangeType;
-    const tType = typeOverride ?? blastType;
+    const cCategory = categoryOverride ?? blastFinding?.category;
+    const rawType = typeOverride ?? blastType;
+    let normType = (rawType || 'METRIC').toUpperCase();
+    if (normType === 'DIMENSION' || normType === 'ATTRIBUTE' || normType === 'COL') {
+      normType = 'COLUMN';
+    } else if (normType === 'MEASURE') {
+      normType = 'METRIC';
+    } else if (normType === 'VIEW') {
+      normType = 'TABLE';
+    }
+    const tbl = tableOverride ?? blastTableContext;
+    const expr = exprOverride ?? blastExpression;
     setBlastLoading(true);
     setBlastError('');
     try {
@@ -199,98 +359,259 @@ export default function DriftMonitoringPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           target_name: target,
-          target_type: tType,
+          target_type: normType,
           change_type: cType,
+          category: cCategory || undefined,
+          table_context: tbl || undefined,
+          expression: expr || undefined,
           project_id: selectedProjectId || undefined,
+          platform: (curTarget?.platform && curTarget.platform !== 'UNKNOWN')
+            ? curTarget.platform
+            : (selectedProject?.target_warehouse?.platform || selectedProject?.platform || undefined),
         }),
       });
       const data = await res.json();
       if (!res.ok) {
-        setBlastError(data.detail || 'Blast radius simulation failed.');
+        setBlastError(formatApiErrorMessage(res, data, 'Blast radius simulation'));
       } else {
         setBlastReport(data);
       }
     } catch (err) {
-      setBlastError(String(err));
+      setBlastError(`Unable to connect to Blast Radius service: ${err.message || String(err)}`);
     } finally {
       setBlastLoading(false);
     }
   };
 
-  const handleOpenBlast = (initialTarget = '') => {
-    const candidate = initialTarget || projectEvents[0]?.metric_name || quickTargets[0] || '';
+  const handleOpenBlast = (initialTarget = '', category = '', kind = '', table = '', expression = '', findingObj = null) => {
+    let ev = findingObj;
+    if (!ev && initialTarget) {
+      ev = projectEvents.find((e) => (e.metric_name || e.object_name || e.name || '') === initialTarget)
+        || allEvents.find((e) => (e.metric_name || e.object_name || e.name || '') === initialTarget);
+    }
+    const candidate = initialTarget || ev?.metric_name || ev?.object_name || quickTargets[0] || '';
     setBlastTarget(candidate);
-    setBlastType('METRIC');
-    setBlastChangeType('MODIFY_EXPRESSION');
+    let cat = String(category || ev?.category || ev?.drift_type || '').toUpperCase();
+    let tbl = table || ev?.table || '';
+    let expr = expression || ev?.live_value || ev?.live_expression || '';
+    let knd = kind ? String(kind).toUpperCase() : (ev?.kind ? String(ev.kind).toUpperCase() : '');
+
+    if (candidate && !ev) {
+      const match = projectEvents.find((e) => (e.metric_name || e.object_name || e.name || '') === candidate)
+        || allEvents.find((e) => (e.metric_name || e.object_name || e.name || '') === candidate);
+      if (match) {
+        if (!cat) cat = String(match.category || match.drift_type || '').toUpperCase();
+        if (!tbl) tbl = match.table || '';
+        if (!expr) expr = match.live_value || match.live_expression || '';
+        if (!knd) knd = String(match.kind || 'METRIC').toUpperCase();
+      }
+    }
+
+    const effectiveFinding = ev || (candidate ? {
+      object_name: candidate,
+      category: cat || 'DRIFT',
+      kind: knd || 'METRIC',
+      table: tbl,
+      live_expression: expr,
+    } : null);
+    setBlastFinding(effectiveFinding);
+
+    let cType = 'MODIFY_EXPRESSION';
+    if (cat.includes('ADDITION') || cat.includes('ADD') || cat.includes('UNMANAGED')) {
+      cType = 'ADD';
+    } else if (cat.includes('DELETION') || cat.includes('MISSING') || cat.includes('DROP')) {
+      cType = 'DROP';
+    } else if (cat.includes('DESCRIPTION')) {
+      cType = 'MODIFY_DESCRIPTION';
+    } else if (cat.includes('TYPE')) {
+      cType = 'MODIFY_TYPE';
+    } else if (cat.includes('RENAME')) {
+      cType = 'RENAME';
+    }
+    const tType = knd || 'METRIC';
+    setBlastType(tType);
+    setBlastChangeType(cType);
+    setBlastTableContext(tbl);
+    setBlastExpression(expr);
     setBlastReport(null);
     setBlastError('');
     setBlastModalOpen(true);
     if (candidate) {
-      runBlastSimulation(candidate, 'MODIFY_EXPRESSION', 'METRIC');
+      runBlastSimulation(candidate, cType, tType, tbl, expr, cat);
     }
   };
+
+  // Reset finding page when switching project or view
+  const [prevScopeKey, setPrevScopeKey] = useState(`${selectedProjectId}|${selectedView}|${driftMode}`);
+  const currentScopeKey = `${selectedProjectId}|${selectedView}|${driftMode}`;
+  if (prevScopeKey !== currentScopeKey) {
+    setPrevScopeKey(currentScopeKey);
+    setFindingsPage(1);
+  }
 
   // Load drift events
   const refreshEvents = useCallback(async () => {
     try {
-      const res = await authFetch('/api/drift/events');
-      if (res.ok) {
-        const data = await res.json();
-        setAllEvents(data.events || []);
-        if (data.last_checks && typeof data.last_checks === 'object') {
-          setTargetInfo((prev) => {
-            const next = { ...prev };
-            Object.entries(data.last_checks).forEach(([k, v]) => {
-              const normK = cleanPid(k);
-              next[normK] = {
-                ...(next[normK] || {}),
-                ...v,
-              };
-            });
-            return next;
-          });
-        }
+      const modeParam = driftMode ? `?mode=${encodeURIComponent(driftMode)}` : '';
+      // Always fetch global drift overview to populate last_checks and all project events
+      const globalRes = await authFetch(`/api/drift/events${modeParam}`);
+      let globalLastChecks = {};
+      let globalEvs = [];
+      if (globalRes.ok) {
+        const globalData = await globalRes.json();
+        globalEvs = globalData.events || [];
+        globalLastChecks = (globalData.last_checks && typeof globalData.last_checks === 'object') ? globalData.last_checks : {};
       }
+
+      let selectedProjectInfo = null;
+
       if (selectedProjectId) {
-        const viewParam = selectedView ? `&view=${encodeURIComponent(selectedView)}` : '';
-        const pRes = await authFetch(`/api/drift/events?project_id=${encodeURIComponent(selectedProjectId)}${viewParam}`);
+        if (viewsLoading) {
+          // Wait for deployed views to finish resolving before requesting project events
+          return;
+        }
+        const queryParams = new URLSearchParams();
+        queryParams.set('project_id', selectedProjectId);
+        if (selectedView) queryParams.set('view', selectedView);
+        if (driftMode) queryParams.set('mode', driftMode);
+        queryParams.set('page', String(findingsPage));
+        queryParams.set('page_size', String(findingsPageSize));
+        if (findingsSearch && findingsSearch.trim()) queryParams.set('search', findingsSearch.trim());
+        if (findingsCategory && findingsCategory !== 'ALL') queryParams.set('category', findingsCategory);
+        if (findingsKind && findingsKind !== 'ALL') queryParams.set('kind', findingsKind);
+        if (findingsStatus && findingsStatus !== 'all') queryParams.set('status', findingsStatus);
+        if (findingsSort) queryParams.set('sort', findingsSort);
+
+        const pRes = await authFetch(`/api/drift/events?${queryParams.toString()}`);
         if (pRes.ok) {
           const pData = await pRes.json();
-          const normPid = cleanPid(selectedProjectId);
-          setTargetInfo((prev) => ({
-            ...prev,
-            [normPid]: {
-              ...(prev[normPid] || {}),
-              views_checked: pData.views_checked || [],
-              checked_at: pData.checked_at || null,
-              status: pData.status,
-              reason: pData.reason || pData.not_checked_reason,
-              not_checked_reason: pData.not_checked_reason,
-              baseline_source: pData.baseline_source,
-              baseline_at: pData.baseline_at,
-              metrics_compared: pData.metrics_compared,
-            },
-          }));
+          if (pData.last_checks && typeof pData.last_checks === 'object') {
+            globalLastChecks = { ...globalLastChecks, ...pData.last_checks };
+          }
+          selectedProjectInfo = {
+            views_checked: pData.views_checked || [],
+            checked_at: pData.checked_at || null,
+            status: pData.status,
+            reason: pData.reason || pData.not_checked_reason,
+            not_checked_reason: pData.not_checked_reason,
+            reason_code: pData.reason_code,
+            baseline_source: pData.baseline_source,
+            baseline_at: pData.baseline_at,
+            metrics_compared: pData.metrics_compared,
+          };
+          setPagedEvents(pData.events || []);
+          setFindingsTotalCount(pData.total_count || 0);
+          setFindingsTotalUnfilteredCount(pData.total_unfiltered_count !== undefined ? pData.total_unfiltered_count : (pData.total_count || 0));
+          setPendingCount(pData.pending_count !== undefined ? pData.pending_count : (pData.counts_by_status?.pending || 0));
+          setCountsByCategory(pData.counts_by_category || {});
+          setCountsByKind(pData.counts_by_kind || {});
+          setCountsByStatus(pData.counts_by_status || {});
+          setFindingsTotalPages(pData.total_pages || 1);
         }
+      } else {
+        setPagedEvents([]);
+        setFindingsTotalCount(0);
+        setFindingsTotalUnfilteredCount(0);
+        setPendingCount(0);
+        setCountsByCategory({});
+        setCountsByKind({});
+        setCountsByStatus({});
+        setFindingsTotalPages(1);
       }
+
+      setAllEvents(globalEvs);
+      setTargetInfo((prev) => {
+        const next = { ...prev };
+        Object.entries(globalLastChecks).forEach(([k, v]) => {
+          const normK = cleanPid(k);
+          next[normK] = {
+            ...(next[normK] || {}),
+            ...v,
+          };
+        });
+        if (selectedProjectId && selectedProjectInfo) {
+          const normPid = cleanPid(selectedProjectId);
+          next[normPid] = {
+            ...(next[normPid] || {}),
+            ...selectedProjectInfo,
+          };
+        }
+        return next;
+      });
     } catch (err) {
       console.error('Failed to load drift events:', err);
     } finally {
       setLoading(false);
     }
-  }, [selectedProjectId, authFetch]);
+  }, [
+    selectedProjectId,
+    selectedView,
+    viewsLoading,
+    driftMode,
+    findingsPage,
+    findingsPageSize,
+    findingsSearch,
+    findingsCategory,
+    findingsKind,
+    findingsStatus,
+    findingsSort,
+    cleanPid,
+  ]);
 
   useEffect(() => {
-    refreshEvents();
-    const interval = setInterval(refreshEvents, 10000);
-    return () => clearInterval(interval);
+    let ignore = false;
+    const timer = setTimeout(() => {
+      if (!ignore) refreshEvents();
+    }, 0);
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return;
+      }
+      refreshEvents();
+    }, 30000);
+    return () => {
+      ignore = true;
+      clearTimeout(timer);
+      clearInterval(interval);
+    };
   }, [refreshEvents]);
 
-  // Event approval / ignore handler
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        refreshEvents();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [refreshEvents]);
+
+  useEffect(() => {
+    authFetch('/api/drift/capabilities')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data) setCapabilities(data);
+      })
+      .catch((err) => console.warn('Failed loading drift capabilities:', err));
+  }, []);
+
+  // Event approval / ignore / accept handler
   const handleResolve = async (id, action) => {
-    const reason = action === 'ignore'
-      ? (window.prompt('Reason for ignoring this drift:') || 'Accepted difference')
-      : 'Approved for sync';
+    let promptMsg = 'Reason for restoring baseline & syncing:';
+    if (action === 'ignore') {
+      promptMsg = 'Reason for ignoring this drift (required):';
+    } else if (action === 'accept') {
+      promptMsg = 'Reason for accepting this warehouse change (required):';
+    } else if (action === 'approve') {
+      promptMsg = 'Reason for approving sync / restoring baseline (required):';
+    }
+    const input = window.prompt(promptMsg);
+    if (input === null) return;
+    const reason = input.trim();
+    if (!reason) {
+      alert('A non-empty reason is required to submit a reviewer action.');
+      return;
+    }
     try {
       await authFetch(`/api/drift/events/${id}/${action}`, {
         method: 'POST',
@@ -300,6 +621,33 @@ export default function DriftMonitoringPage() {
       await refreshEvents();
     } catch (err) {
       alert(`Action failed: ${err}`);
+    }
+  };
+
+  const handleBulkResolve = async ({ kind, category, eventIds, action, reason }) => {
+    try {
+      const res = await authFetch('/api/drift/events/bulk-resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: selectedProjectId,
+          view: selectedView || undefined,
+          kind: kind && kind !== 'ALL' ? kind : undefined,
+          category: category && category !== 'ALL' ? category : undefined,
+          event_ids: eventIds || undefined,
+          action: action || 'ignore',
+          reason: reason || '',
+        }),
+      });
+      if (res.ok) {
+        setCheckMsg(`Bulk action applied: ${action}`);
+        await refreshEvents();
+      } else {
+        const err = await res.json();
+        alert(`Bulk action failed: ${err.detail || 'Error'}`);
+      }
+    } catch (err) {
+      alert(`Bulk action error: ${err}`);
     }
   };
 
@@ -314,6 +662,8 @@ export default function DriftMonitoringPage() {
         body: JSON.stringify({
           project_id: selectedProjectId || undefined,
           view: selectedView || undefined,
+          mode: driftMode,
+          force_refresh: true,
         }),
       });
       const data = await res.json();
@@ -323,9 +673,16 @@ export default function DriftMonitoringPage() {
       } else if (data.status === 'NOT_CHECKED') {
         setCheckMsg(`Check not run: ${data.not_checked_reason || 'Not checked'}`);
       } else if (data.status === 'IN_SYNC') {
-        setCheckMsg(`In sync: Checked ${data.metrics_compared ?? data.checked_metrics} metric(s) · 0 drift detected.`);
+        setCheckMsg(`In sync: Checked ${data.metrics_compared ?? data.checked_metrics} object(s) · 0 drift detected.`);
       } else {
-        setCheckMsg(`Drift detected: Checked ${data.metrics_compared ?? data.checked_metrics} metric(s) · ${data.drift_detected} drift event(s) detected.`);
+        const objCount = data.metrics_compared ?? data.checked_metrics ?? 0;
+        const detCount = data.drift_detected ?? 0;
+        const newCount = data.new_events !== undefined ? data.new_events : detCount;
+        setCheckMsg(
+          newCount > 0 && detCount > newCount
+            ? `Drift detected: Checked ${objCount} object(s) · ${detCount} drift event(s) detected (${newCount} pending review).`
+            : `Drift detected: Checked ${objCount} object(s) · ${detCount} drift event(s) detected.`
+        );
       }
       if (selectedProjectId) {
         const normPid = cleanPid(selectedProjectId);
@@ -338,6 +695,7 @@ export default function DriftMonitoringPage() {
             status: data.status,
             reason: data.reason || data.not_checked_reason,
             not_checked_reason: data.not_checked_reason,
+            reason_code: data.reason_code,
             baseline_source: data.baseline_source,
             baseline_at: data.baseline_at,
             metrics_compared: data.metrics_compared ?? data.checked_metrics,
@@ -423,7 +781,17 @@ export default function DriftMonitoringPage() {
               borderColor: 'rgba(168, 85, 247, 0.35)',
               color: 'var(--accent-purple, #a855f7)',
             }}
-            onClick={() => handleOpenBlast(projectEvents[0]?.metric_name || quickTargets[0] || '')}
+            onClick={() => {
+              const ev = projectEvents[0];
+              handleOpenBlast(
+                ev?.metric_name || quickTargets[0] || '',
+                ev?.category || ev?.drift_type || '',
+                ev?.kind || '',
+                ev?.table || '',
+                ev?.live_value || ev?.live_expression || '',
+                ev
+              );
+            }}
             title="Check Blast Radius: see how metric changes affect downstream BI reports & AI agents"
           >
             <Zap size={13} style={{ color: 'var(--accent-purple, #a855f7)' }} /> Check Blast Radius
@@ -451,11 +819,27 @@ export default function DriftMonitoringPage() {
           flexDirection: 'column',
           flexShrink: 0,
         }}>
-          {/* Projects Search Header */}
-          <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border-main)' }}>
-            <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>
-              Monitored Projects ({projects.length})
+          {/* Projects Search Header & Warehouse Filter */}
+          <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border-main)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                Projects
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', fontWeight: 500 }}>
+                {visibleProjects.length === projects.length
+                  ? `${projects.length} projects`
+                  : `${visibleProjects.length} of ${projects.length} projects`}
+              </div>
             </div>
+
+            <WarehouseFilter
+              warehouses={availableWarehouses}
+              selectedWarehouse={selectedWarehouse}
+              onSelectWarehouse={setSelectedWarehouse}
+              counts={warehouseCounts}
+              totalCount={projects.length}
+            />
+
             <div style={{ position: 'relative' }}>
               <Search size={14} style={{ position: 'absolute', left: 10, top: 9, color: 'var(--text-tertiary)' }} />
               <input
@@ -463,175 +847,70 @@ export default function DriftMonitoringPage() {
                 placeholder="Filter projects…"
                 value={projectSearch}
                 onChange={(e) => setProjectSearch(e.target.value)}
-                style={{ ...INPUT, width: '100%', boxSizing: 'border-box', paddingLeft: 30 }}
+                style={{ ...INPUT, width: '100%', boxSizing: 'border-box', paddingLeft: 30, paddingRight: projectSearch ? 26 : 8 }}
               />
+              {projectSearch && (
+                <button
+                  type="button"
+                  onClick={() => setProjectSearch('')}
+                  style={{
+                    position: 'absolute',
+                    right: 8,
+                    top: 8,
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: 'var(--text-tertiary)',
+                    padding: 0,
+                  }}
+                  title="Clear search"
+                  aria-label="Clear search"
+                >
+                  <X size={13} />
+                </button>
+              )}
             </div>
           </div>
 
-          {/* Projects Scrollable List */}
-          <div style={{ flex: 1, overflowY: 'auto', padding: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {visibleProjects.map((p) => {
-              const pid = p?.id || p?.name;
-              if (!pid) return null;
-              const isSelected = selectedProjectId === pid || cleanPid(selectedProjectId) === cleanPid(pid);
-              const pEvs = allEvents.filter((e) => matchesProject(e.project_id, p, pid));
-              const pPending = pEvs.filter((e) => e.status === 'pending').length;
-
-              return (
-                <button
-                  key={pid}
-                  type="button"
-                  onClick={() => selectProject(pid)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '10px 12px',
-                    borderRadius: 8,
-                    border: '1px solid',
-                    borderColor: isSelected ? 'var(--accent-blue)' : 'transparent',
-                    background: isSelected ? 'rgba(59, 130, 246, 0.08)' : 'transparent',
-                    cursor: 'pointer',
-                    textAlign: 'left',
-                    transition: 'all 0.15s ease',
-                  }}
-                >
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{
-                      fontSize: 13,
-                      fontWeight: isSelected ? 700 : 600,
-                      color: isSelected ? 'var(--accent-blue)' : 'var(--text-primary)',
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                    }}>
-                      {p?.name || pid}
-                    </div>
-                    <div style={{ fontSize: 11, color: 'var(--text-tertiary)', fontFamily: 'monospace' }}>
-                      {pid}
-                    </div>
-                  </div>
-
-                  {/* Status Badge */}
-                  <div style={{ flexShrink: 0, marginLeft: 8 }}>
-                    {(() => {
-                      const pTarget = getProjectTarget(p);
-                      const pStatus = pPending > 0 ? 'DRIFT_DETECTED' : (pTarget.status || (pEvs.length > 0 ? 'IN_SYNC' : 'NOT_CHECKED'));
-                      if (pStatus === 'DRIFT_DETECTED' || pPending > 0) {
-                        return (
-                          <span style={{
-                            fontSize: 10.5,
-                            fontWeight: 700,
-                            padding: '2px 7px',
-                            borderRadius: 12,
-                            background: 'rgba(234, 179, 8, 0.15)',
-                            color: 'var(--color-warning)',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 4,
-                          }}>
-                            <AlertTriangle size={11} /> {pPending > 0 ? `${pPending} Drift${pPending > 1 ? 's' : ''}` : 'Drift Detected'}
-                          </span>
-                        );
-                      }
-                      if (pStatus === 'BASELINE_CAPTURED') {
-                        return (
-                          <span style={{
-                            fontSize: 10.5,
-                            fontWeight: 700,
-                            padding: '2px 7px',
-                            borderRadius: 12,
-                            background: 'rgba(59, 130, 246, 0.15)',
-                            color: 'var(--accent-blue)',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 4,
-                          }}>
-                            <Clock size={11} /> Baseline captured
-                          </span>
-                        );
-                      }
-                      if (pStatus === 'IN_SYNC_SINCE_CAPTURE' || (pStatus === 'IN_SYNC' && pTarget.baseline_source === 'live_capture')) {
-                        return (
-                          <span style={{
-                            fontSize: 10.5,
-                            fontWeight: 700,
-                            padding: '2px 7px',
-                            borderRadius: 12,
-                            background: 'rgba(59, 130, 246, 0.15)',
-                            color: 'var(--accent-blue)',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 4,
-                          }}>
-                            <Clock size={11} /> In sync (live capture)
-                          </span>
-                        );
-                      }
-                      if (pStatus === 'IN_SYNC') {
-                        return (
-                          <span style={{
-                            fontSize: 10.5,
-                            fontWeight: 700,
-                            padding: '2px 7px',
-                            borderRadius: 12,
-                            background: 'rgba(34, 197, 94, 0.12)',
-                            color: 'var(--color-success)',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 4,
-                          }}>
-                            <CheckCircle2 size={11} /> In Sync
-                          </span>
-                        );
-                      }
-                      return (
-                        <span
-                          title={pTarget.not_checked_reason || pTarget.reason || 'Not checked'}
-                          style={{
-                            fontSize: 10.5,
-                            fontWeight: 600,
-                            padding: '2px 7px',
-                            borderRadius: 12,
-                            background: 'var(--bg-surface-raised)',
-                            color: 'var(--text-tertiary)',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 4,
-                            border: '1px solid var(--border-main)',
-                          }}
-                        >
-                          <Clock size={11} /> Not checked
-                        </span>
-                      );
-                    })()}
-                  </div>
-                </button>
-              );
-            })}
+          {/* Projects Scrollable Grouped List */}
+          <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
+            <GroupedProjectList
+              projects={projects}
+              targetInfo={targetInfo}
+              allEvents={allEvents}
+              selectedProjectId={selectedProjectId}
+              onSelectProject={selectProject}
+              selectedWarehouse={selectedWarehouse}
+              searchQuery={projectSearch}
+              onClearFilters={() => {
+                setProjectSearch('');
+                setSelectedWarehouse('');
+              }}
+              loading={_loading && projects.length === 0}
+            />
           </div>
         </div>
 
         {/* ── RIGHT PANE: PROJECT DRIFT MONITORING DETAILS ───────────────── */}
         <div style={{ flex: 1, minWidth: 0, overflowY: 'auto', padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
           {!selectedProjectId ? (
-            <div style={{
-              ...CARD,
-              padding: 48,
-              textAlign: 'center',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 12,
-              marginTop: 40,
-            }}>
-              <Activity size={40} style={{ color: 'var(--text-tertiary)', opacity: 0.6 }} />
-              <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)' }}>Select a Project</div>
-              <div style={{ fontSize: 13, color: 'var(--text-secondary)', maxWidth: 420 }}>
-                Choose a project from the left sidebar to monitor schema drift, view verified metrics, and check synchronization against Snowflake.
-              </div>
-            </div>
+            selectedWarehouse && filteredProjects.length === 0 ? (
+              <EmptyState
+                icon={Database}
+                title={`No projects for ${selectedWarehouse}`}
+                description="There are no projects associated with this warehouse platform."
+                actionLabel="Clear warehouse filter"
+                onAction={() => setSelectedWarehouse('')}
+                style={{ marginTop: 40 }}
+              />
+            ) : (
+              <EmptyState
+                icon={Activity}
+                title="Select a project"
+                description="Choose a project from the left sidebar to monitor schema drift, view verified metrics, and check synchronization against warehouse targets."
+                style={{ marginTop: 40 }}
+              />
+            )
           ) : (
             <>
               {/* Project Header Bar */}
@@ -655,6 +934,21 @@ export default function DriftMonitoringPage() {
                         {selectedProjectId}
                       </code>
                     )}
+                    {curTarget.platform && curTarget.platform !== 'UNKNOWN' && (
+                      <span
+                        style={{
+                          fontSize: 11,
+                          padding: '2px 7px',
+                          borderRadius: 4,
+                          background: 'rgba(59, 130, 246, 0.1)',
+                          border: '1px solid rgba(59, 130, 246, 0.25)',
+                          color: 'var(--color-primary, #3b82f6)',
+                          fontWeight: 600,
+                        }}
+                      >
+                        {curTarget.platform}
+                      </span>
+                    )}
                     {selectedProjectId && (
                       <DeployedViewSelector
                         projectId={selectedProjectId}
@@ -662,533 +956,232 @@ export default function DriftMonitoringPage() {
                       />
                     )}
                   </div>
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                <Database size={13} style={{ color: 'var(--accent-blue)', flexShrink: 0 }} />
-                <span>
-                  {(() => {
-                    const views = curTarget.views_checked || [];
-                    const targetText = views.length > 0
-                      ? `Target View${views.length > 1 ? 's' : ''}: ${views.join(', ')}`
-                      : 'Target: Semantic views (not checked yet)';
-                    const parts = [targetText];
-                    if (curTarget.baseline_source) {
-                      const srcLabel = curTarget.baseline_source === 'deploy'
-                        ? 'Deploy'
-                        : curTarget.baseline_source === 'snapshot'
-                        ? 'Snapshot'
-                        : 'Live capture';
-                      const atText = curTarget.baseline_at ? ` (${formatOccurred(curTarget.baseline_at)})` : '';
-                      parts.push(`Baseline: ${srcLabel}${atText}`);
-                    }
-                    if (curTarget.metrics_compared !== undefined && curTarget.metrics_compared !== null && curTarget.metrics_compared > 0) {
-                      parts.push(`${curTarget.metrics_compared} metrics compared`);
-                    }
-                    if (curTarget.checked_at) {
-                      parts.push(`Checked: ${formatOccurred(curTarget.checked_at)}`);
-                    }
-                    return parts.join(' · ');
-                  })()}
-                </span>
-              </div>
-            </div>
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <Database size={13} style={{ color: 'var(--accent-blue)', flexShrink: 0 }} />
+                    <span>
+                      {(() => {
+                        const views = curTarget.views_checked || [];
+                        const targetText = views.length > 0
+                          ? `Target View${views.length > 1 ? 's' : ''}: ${views.join(', ')}`
+                          : 'Target: Semantic views (not checked yet)';
+                        const parts = [targetText];
+                        if (curTarget.baseline_source) {
+                          const srcLabel = curTarget.baseline_source === 'deploy'
+                            ? 'Deploy'
+                            : curTarget.baseline_source === 'snapshot'
+                              ? 'Snapshot'
+                              : 'Live capture';
+                          const atText = curTarget.baseline_at ? ` (${formatOccurred(curTarget.baseline_at)})` : '';
+                          parts.push(`Baseline: ${srcLabel}${atText}`);
+                        }
+                        if (curTarget.metrics_compared !== undefined && curTarget.metrics_compared !== null && curTarget.metrics_compared > 0) {
+                          parts.push(`${curTarget.metrics_compared} object(s) compared`);
+                        }
+                        if (curTarget.checked_at) {
+                          parts.push(`Checked: ${formatOccurred(curTarget.checked_at)}`);
+                        }
+                        return parts.join(' · ');
+                      })()}
+                    </span>
+                  </div>
+                </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <button
-                type="button"
-                style={BTN_PRIMARY}
-                disabled={busy}
-                onClick={handleCheckNow}
-                title="Execute immediate drift inspection against Snowflake"
-              >
-                <Play size={13} /> {busy ? 'Checking…' : 'Check Drift Now'}
-              </button>
-              <button
-                type="button"
-                style={BTN}
-                onClick={handleRefreshLogs}
-                disabled={refreshing}
-                title="Refresh drift logs from warehouse and semantic models"
-              >
-                <RefreshCw size={13} style={{ animation: refreshing ? 'spin 1s linear infinite' : 'none' }} /> {refreshing ? 'Refreshing…' : 'Refresh'}
-              </button>
-              <button
-                type="button"
-                style={{ ...BTN, color: 'var(--color-error)' }}
-                onClick={handleClearHistory}
-                title="Wipe drift events history for this project"
-              >
-                <Trash2 size={13} /> Clear History
-              </button>
-            </div>
-          </div>
-
-          {/* Warning banner for live-capture baseline */}
-          {(isLiveCapture || isLiveCaptureSync || curTarget.status === 'BASELINE_CAPTURED') && (
-            <div style={{
-              padding: '12px 16px',
-              borderRadius: 8,
-              background: 'rgba(234, 179, 8, 0.12)',
-              border: '1px solid rgba(234, 179, 8, 0.35)',
-              color: 'var(--color-warning, #eab308)',
-              fontSize: 12.5,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-            }}>
-              <AlertTriangle size={18} style={{ flexShrink: 0 }} />
-              <div>
-                <strong>Warning:</strong> No deploy baseline found - changes made before {curTarget.baseline_at ? formatOccurred(curTarget.baseline_at) : (curTarget.checked_at ? formatOccurred(curTarget.checked_at) : 'capture')} cannot be detected. Re-run the sync to record one.
-              </div>
-            </div>
-          )}
-
-          {/* Quick Metrics KPI Bar */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
-            <div style={{ ...CARD, padding: 14 }}>
-              <div style={{ fontSize: 11.5, color: 'var(--text-tertiary)', fontWeight: 600, textTransform: 'uppercase' }}>Drift Status</div>
-              <div style={{
-                fontSize: 18,
-                fontWeight: 800,
-                marginTop: 4,
-                color: displayStatus === 'DRIFT_DETECTED'
-                  ? 'var(--color-warning)'
-                  : isLiveCaptureSync
-                  ? 'var(--accent-blue)'
-                  : displayStatus === 'IN_SYNC'
-                  ? 'var(--color-success)'
-                  : displayStatus === 'BASELINE_CAPTURED'
-                  ? 'var(--accent-blue)'
-                  : 'var(--text-tertiary)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-              }}>
-                {displayStatus === 'DRIFT_DETECTED' ? (
-                  <><AlertTriangle size={18} /> {pendingEvents.length > 0 ? `${pendingEvents.length} Action Needed` : 'Drift Detected'}</>
-                ) : displayStatus === 'BASELINE_CAPTURED' ? (
-                  <><Clock size={18} /> Baseline Captured</>
-                ) : isLiveCaptureSync ? (
-                  <><Clock size={18} /> In sync since {curTarget.baseline_at ? formatOccurred(curTarget.baseline_at) : (curTarget.checked_at ? formatOccurred(curTarget.checked_at) : 'capture')} (live capture)</>
-                ) : displayStatus === 'IN_SYNC' ? (
-                  <><ShieldCheck size={18} /> In Sync (Clean)</>
-                ) : (
-                  <><Clock size={18} /> Not Checked</>
-                )}
-              </div>
-              <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>
-                {displayStatus === 'DRIFT_DETECTED'
-                  ? 'Direct upsert paused on schedule'
-                  : displayStatus === 'BASELINE_CAPTURED'
-                  ? `Baseline captured (${curTarget.metrics_compared || curTarget.baseline_metrics || 'all'} metrics) — next check compares`
-                  : isLiveCaptureSync
-                  ? `${curTarget.metrics_compared ? curTarget.metrics_compared + ' metrics compared against live capture' : 'No drift detected since live capture'}`
-                  : displayStatus === 'IN_SYNC'
-                  ? `Direct upsert permitted · ${curTarget.metrics_compared ? curTarget.metrics_compared + ' metrics verified' : 'No drift detected'}`
-                  : (curTarget.not_checked_reason || curTarget.reason ? `Reason: ${curTarget.not_checked_reason || curTarget.reason}` : 'No drift comparison run yet for this project')}
-              </div>
-            </div>
-
-            <div style={{ ...CARD, padding: 14 }}>
-              <div style={{ fontSize: 11.5, color: 'var(--text-tertiary)', fontWeight: 600, textTransform: 'uppercase' }}>Pending Approvals</div>
-              <div style={{ fontSize: 18, fontWeight: 800, marginTop: 4, color: 'var(--text-primary)' }}>
-                {pendingEvents.length}
-              </div>
-              <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>Awaiting review &amp; sync</div>
-            </div>
-
-            <div style={{ ...CARD, padding: 14 }}>
-              <div style={{ fontSize: 11.5, color: 'var(--text-tertiary)', fontWeight: 600, textTransform: 'uppercase' }}>Approved &amp; Synced</div>
-              <div style={{ fontSize: 18, fontWeight: 800, marginTop: 4, color: 'var(--color-success)' }}>
-                {approvedEvents.length}
-              </div>
-              <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>Deployed to warehouse</div>
-            </div>
-
-            <div style={{ ...CARD, padding: 14 }}>
-              <div style={{ fontSize: 11.5, color: 'var(--text-tertiary)', fontWeight: 600, textTransform: 'uppercase' }}>Ignored / Dismissed</div>
-              <div style={{ fontSize: 18, fontWeight: 800, marginTop: 4, color: 'var(--text-secondary)' }}>
-                {ignoredEvents.length}
-              </div>
-              <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>Accepted variance</div>
-            </div>
-          </div>
-
-          {checkMsg && (
-            <div style={{ padding: '8px 12px', borderRadius: 6, background: 'rgba(59, 130, 246, 0.1)', color: 'var(--accent-blue)', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
-              <CheckCircle2 size={14} /> {checkMsg}
-            </div>
-          )}
-
-          {/* ── DRIFT EVENTS LIST / TABLE ─────────────────────────────────── */}
-          <div style={CARD}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, marginBottom: 12 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Clock size={16} style={{ color: 'var(--accent-blue)' }} />
-                <strong style={{ fontSize: 13.5 }}>
-                  Drift Occurrences &amp; Approvals ({projectEvents.length})
-                </strong>
-              </div>
-
-              {/* Filter Tabs */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                {[
-                  { id: 'all', label: `Active (${projectEvents.length - supersededEvents.length})` },
-                  { id: 'pending', label: `Pending (${pendingEvents.length})` },
-                  { id: 'approved', label: `Approved (${approvedEvents.length})` },
-                  { id: 'ignored', label: `Ignored (${ignoredEvents.length})` },
-                  ...(supersededEvents.length > 0 ? [{ id: 'superseded', label: `Superseded (${supersededEvents.length})` }] : []),
-                ].map((f) => (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <DriftModeToggle
+                    mode={driftMode}
+                    onChangeMode={(newMode) => {
+                      setDriftMode(newMode);
+                      setSearchParams((prev) => {
+                        const next = new URLSearchParams(prev);
+                        next.set('mode', newMode);
+                        return next;
+                      });
+                    }}
+                    capabilities={capabilities}
+                    disabled={busy}
+                  />
                   <button
-                    key={f.id}
                     type="button"
-                    onClick={() => setStatusFilter(f.id)}
                     style={{
                       ...BTN,
-                      padding: '3px 8px',
-                      fontSize: 11,
-                      background: statusFilter === f.id ? 'var(--bg-surface-hover)' : 'transparent',
-                      borderColor: statusFilter === f.id ? 'var(--accent-blue)' : 'var(--border-main)',
-                      color: statusFilter === f.id ? 'var(--accent-blue)' : 'var(--text-secondary)',
+                      background: showSchedules ? 'rgba(59, 130, 246, 0.15)' : 'var(--bg-surface-raised)',
+                      borderColor: showSchedules ? 'var(--accent-blue)' : 'var(--border-main)',
+                      color: showSchedules ? 'var(--accent-blue)' : 'var(--text-primary)',
                     }}
+                    onClick={() => setShowSchedules(!showSchedules)}
+                    title="Manage automated drift monitoring schedules"
                   >
-                    {f.label}
+                    <Clock size={13} /> Schedules
                   </button>
-                ))}
+                  <button
+                    type="button"
+                    style={BTN_PRIMARY}
+                    disabled={busy}
+                    onClick={handleCheckNow}
+                    title="Execute immediate drift inspection"
+                  >
+                    <Play size={13} /> {busy ? 'Checking…' : 'Check Drift Now'}
+                  </button>
+                  <button
+                    type="button"
+                    style={BTN}
+                    onClick={handleRefreshLogs}
+                    disabled={refreshing}
+                    title="Refresh drift logs from warehouse and semantic models"
+                  >
+                    <RefreshCw size={13} style={{ animation: refreshing ? 'spin 1s linear infinite' : 'none' }} /> {refreshing ? 'Refreshing…' : 'Refresh'}
+                  </button>
+                  <button
+                    type="button"
+                    style={{ ...BTN, color: 'var(--color-error)' }}
+                    onClick={handleClearHistory}
+                    title="Wipe drift events history for this project"
+                  >
+                    <Trash2 size={13} /> Clear History
+                  </button>
+                </div>
               </div>
-            </div>
 
-            {filteredEvents.length === 0 ? (
-              <div style={{
-                padding: 36,
-                textAlign: 'center',
-                borderRadius: 8,
-                background: 'var(--bg-app)',
-                border: '1px dashed var(--border-main)',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                gap: 8,
-              }}>
-                {displayStatus === 'BASELINE_CAPTURED' ? (
-                  <>
-                    <Clock size={32} style={{ color: 'var(--accent-blue)' }} />
-                    <strong style={{ fontSize: 14, color: 'var(--text-primary)' }}>
-                      Baseline captured ({curTarget.metrics_compared || curTarget.baseline_metrics || 'all'} metrics) — next check compares
+              {/* Automated Drift Schedules Section */}
+              {showSchedules && (
+                <DriftSchedules
+                  projectId={selectedProjectId}
+                  onScheduleChange={handleRefreshLogs}
+                />
+              )}
+
+              {/* Actionable Drift Status Card */}
+              <DriftStatusCard
+                status={curDriftState.status}
+                reasonCode={curDriftState.reasonCode}
+                reasonMessage={curDriftState.reason}
+                checkedAt={curDriftState.checkedAt}
+                baselineAt={curDriftState.baselineAt}
+                baselineSource={curDriftState.baselineSource}
+                metricsCompared={curTarget.metrics_compared || curTarget.baseline_metrics || 0}
+                driftDetected={countsByStatus.pending !== undefined ? countsByStatus.pending : curDriftState.pendingCount}
+                totalCount={findingsTotalCount}
+                totalUnfilteredCount={findingsTotalUnfilteredCount}
+                pendingCount={pendingCount}
+                activeStatus={findingsStatus}
+                categoryCounts={categoryCounts}
+                selectedCategory={findingsCategory}
+                onSelectCategory={(cat) => {
+                  setFindingsCategory(cat);
+                  setFindingsPage(1);
+                }}
+                showCheckButton={false}
+                onCheckNow={handleCheckNow}
+                onDeploy={() => navigate(`/projects/${selectedProjectId}?tab=deploy`)}
+                onOpenSettings={() => navigate('/settings')}
+                busy={busy}
+                formatTime={formatOccurred}
+              />
+
+              {checkMsg && (
+                <div style={{ padding: '8px 12px', borderRadius: 6, background: 'rgba(59, 130, 246, 0.1)', color: 'var(--accent-blue)', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <CheckCircle2 size={14} /> {checkMsg}
+                </div>
+              )}
+
+              {/* ── DRIFT FINDINGS LIST (PAGED, GROUPED, CLAMPED) ─────────────── */}
+              <div style={CARD}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, marginBottom: 14 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Clock size={16} style={{ color: 'var(--accent-blue)' }} />
+                    <strong style={{ fontSize: 13.5 }}>
+                      Drift Occurrences &amp; Approvals ({findingsTotalCount})
                     </strong>
-                    <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)', maxWidth: 460 }}>
-                      Initial metric definitions recorded. Subsequent scheduled checks will compare and report drift against this baseline.
-                    </p>
-                  </>
-                ) : isLiveCaptureSync ? (
-                  <>
-                    <Clock size={32} style={{ color: 'var(--accent-blue)' }} />
-                    <strong style={{ fontSize: 14, color: 'var(--text-primary)' }}>
-                      In sync since {curTarget.baseline_at ? formatOccurred(curTarget.baseline_at) : (curTarget.checked_at ? formatOccurred(curTarget.checked_at) : 'capture')} (live capture)
-                    </strong>
-                    <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)', maxWidth: 460 }}>
-                      No drift detected between live Snowflake view and the captured baseline. No deploy baseline was found; re-run the sync to record one.
-                    </p>
-                  </>
-                ) : displayStatus === 'NOT_CHECKED' ? (
-                  <>
-                    <Clock size={32} style={{ color: 'var(--text-tertiary)' }} />
-                    <strong style={{ fontSize: 14, color: 'var(--text-primary)' }}>
-                      Not Checked{curTarget.not_checked_reason || curTarget.reason ? ` (${curTarget.not_checked_reason || curTarget.reason})` : ''}
-                    </strong>
-                    <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)', maxWidth: 460 }}>
-                      No drift comparison run yet for this project.{curTarget.not_checked_reason || curTarget.reason ? ` Reason: ${curTarget.not_checked_reason || curTarget.reason}.` : ''}
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <ShieldCheck size={32} style={{ color: 'var(--color-success)' }} />
-                    <strong style={{ fontSize: 14, color: 'var(--text-primary)' }}>
-                      All metrics in sync
-                    </strong>
-                    <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)', maxWidth: 460 }}>
-                      No drift detected between your BI semantic models and deployed warehouse semantic views.
-                      Scheduled parity checks will monitor and display any drift here automatically.
-                    </p>
-                  </>
-                )}
-                <button
-                  type="button"
-                  style={{ ...BTN, marginTop: 8 }}
-                  onClick={handleRefreshLogs}
-                  disabled={refreshing}
-                >
-                  <RefreshCw size={13} style={{ animation: refreshing ? 'spin 1s linear infinite' : 'none' }} /> {refreshing ? 'Refreshing…' : 'Refresh Logs'}
-                </button>
+                  </div>
+
+                  {/* Quick Status Filter Tabs */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'var(--bg-surface-raised)', padding: '2px 4px', borderRadius: 8, border: '1px solid var(--border-main)' }}>
+                    {[
+                      { key: 'all', label: 'All', count: countsByStatus.all ?? (findingsTotalUnfilteredCount || projectEvents.length) },
+                      { key: 'pending', label: 'Pending', count: countsByStatus.pending !== undefined ? countsByStatus.pending : pendingEvents.length, color: 'var(--color-warning, #eab308)' },
+                      { key: 'approved', label: 'Approved', count: countsByStatus.approved !== undefined ? countsByStatus.approved : approvedEvents.length, color: 'var(--color-success, #22c55e)' },
+                      { key: 'accepted', label: 'Accepted', count: countsByStatus.accepted !== undefined ? countsByStatus.accepted : acceptedEvents.length, color: 'var(--accent-blue, #3b82f6)' },
+                      { key: 'ignored', label: 'Ignored', count: countsByStatus.ignored !== undefined ? countsByStatus.ignored : ignoredEvents.length, color: 'var(--text-tertiary)' },
+                      { key: 'resolved', label: 'Resolved', count: countsByStatus.resolved !== undefined ? countsByStatus.resolved : 0, color: 'var(--color-success, #22c55e)' },
+                    ].map((tab) => {
+                      const isSel = findingsStatus === tab.key;
+                      return (
+                        <button
+                          key={tab.key}
+                          type="button"
+                          onClick={() => {
+                            setFindingsStatus(tab.key);
+                            setFindingsPage(1);
+                          }}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 5,
+                            padding: '3px 9px',
+                            borderRadius: 6,
+                            border: 'none',
+                            background: isSel ? 'var(--bg-surface)' : 'transparent',
+                            color: isSel ? 'var(--text-primary)' : 'var(--text-secondary)',
+                            fontWeight: isSel ? 700 : 500,
+                            fontSize: 11.5,
+                            cursor: 'pointer',
+                            boxShadow: isSel ? '0 1px 2px rgba(0,0,0,0.1)' : 'none',
+                            transition: 'all 0.15s ease',
+                          }}
+                        >
+                          <span>{tab.label}</span>
+                          <span style={{ fontSize: 10.5, color: isSel ? (tab.color || 'var(--text-primary)') : 'var(--text-tertiary)', fontWeight: 600 }}>
+                            ({tab.count})
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <DriftFindingsList
+                  events={pagedEvents}
+                  totalCount={findingsTotalCount}
+                  totalUnfilteredCount={findingsTotalUnfilteredCount}
+                  countsByCategory={countsByCategory}
+                  countsByKind={countsByKind}
+                  countsByStatus={countsByStatus}
+                  page={findingsPage}
+                  pageSize={findingsPageSize}
+                  totalPages={findingsTotalPages}
+                  onPageChange={setFindingsPage}
+                  onPageSizeChange={setFindingsPageSize}
+                  search={findingsSearch}
+                  onSearchChange={setFindingsSearch}
+                  selectedCategory={findingsCategory}
+                  onCategoryChange={setFindingsCategory}
+                  selectedKind={findingsKind}
+                  onKindChange={setFindingsKind}
+                  selectedStatus={findingsStatus}
+                  onStatusChange={setFindingsStatus}
+                  sort={findingsSort}
+                  onSortChange={setFindingsSort}
+                  onResolve={handleResolve}
+                  onBulkResolve={handleBulkResolve}
+                  onOpenBlast={handleOpenBlast}
+                  onOpenAIImpact={handleOpenAIImpact}
+                  formatOccurred={formatOccurred}
+                  mode={driftMode}
+                  loading={busy}
+                />
               </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                {filteredEvents.map((ev) => {
-                  const isPending = ev.status === 'pending';
-                  const isApproved = ev.status === 'approved';
-                  const isIgnored = ev.status === 'ignored';
-
-                  return (
-                    <div
-                      key={ev.id}
-                      style={{
-                        padding: 14,
-                        borderRadius: 8,
-                        background: 'var(--bg-app)',
-                        border: `1px solid ${isPending
-                          ? 'rgba(234, 179, 8, 0.4)'
-                          : isApproved
-                            ? 'rgba(34, 197, 94, 0.3)'
-                            : 'var(--border-main)'
-                          }`,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 10,
-                      }}
-                    >
-                      {/* Event Header: Metric name, drift type, status, occurred timestamp */}
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                          <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
-                            {ev.metric_name}
-                          </span>
-                          <code style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, background: 'var(--bg-surface)', border: '1px solid var(--border-main)', color: 'var(--text-tertiary)', fontFamily: 'monospace' }}>
-                            {ev.id}
-                          </code>
-                          {(ev.badges || [ev.drift_type])
-                            .filter((b) => !['PENDING_APPROVAL', 'APPROVED', 'IGNORED', 'PENDING'].includes(String(b).toUpperCase()))
-                            .map((badge, bIdx) => (
-                              <span
-                                key={bIdx}
-                                style={{
-                                  fontSize: 10,
-                                  fontWeight: 700,
-                                  padding: '2px 6px',
-                                  borderRadius: 4,
-                                  textTransform: 'uppercase',
-                                  background: badge.includes('MISMATCH')
-                                    ? 'rgba(234, 179, 8, 0.15)'
-                                    : badge.includes('FILTER')
-                                      ? 'rgba(59, 130, 246, 0.15)'
-                                      : badge.includes('DATE') || badge.includes('WINDOW')
-                                        ? 'rgba(168, 85, 247, 0.15)'
-                                        : badge.includes('APPROVED')
-                                          ? 'rgba(34, 197, 94, 0.15)'
-                                          : badge.includes('IGNORED')
-                                            ? 'rgba(239, 68, 68, 0.15)'
-                                            : 'rgba(107, 114, 128, 0.15)',
-                                  color: badge.includes('MISMATCH')
-                                    ? 'var(--color-warning)'
-                                    : badge.includes('FILTER')
-                                      ? 'var(--accent-blue)'
-                                      : badge.includes('DATE') || badge.includes('WINDOW')
-                                        ? 'var(--accent-purple)'
-                                        : badge.includes('APPROVED')
-                                          ? 'var(--color-success)'
-                                          : badge.includes('IGNORED')
-                                            ? 'var(--color-error)'
-                                            : 'var(--text-secondary)',
-                                }}
-                              >
-                                {badge.replace(/_/g, ' ')}
-                              </span>
-                            ))}
-                          <span style={{
-                            fontSize: 10,
-                            fontWeight: 700,
-                            padding: '2px 6px',
-                            borderRadius: 4,
-                            textTransform: 'uppercase',
-                            background: isApproved ? 'rgba(34,197,94,0.15)' : isIgnored ? 'rgba(239,68,68,0.15)' : 'rgba(234,179,8,0.15)',
-                            color: isApproved ? 'var(--color-success)' : isIgnored ? 'var(--color-error)' : 'var(--color-warning)',
-                          }}>
-                            {isPending ? 'Pending Approval' : ev.status}
-                          </span>
-                        </div>
-
-                        {/* Occurrence Timestamp */}
-                        <div style={{
-                          fontSize: 11.5,
-                          color: 'var(--text-secondary)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 5,
-                          background: 'var(--bg-surface)',
-                          padding: '3px 8px',
-                          borderRadius: 6,
-                          border: '1px solid var(--border-main)',
-                        }}>
-                          <Clock size={12} style={{ color: 'var(--accent-blue)' }} />
-                          <span>Occurred: <strong>{formatOccurred(ev.detected_at)}</strong></span>
-                        </div>
-                      </div>
-
-                      {/* Business Story */}
-                      {ev.story && (
-                        <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.4 }}>
-                          <strong style={{ color: 'var(--text-primary)' }}>Story:</strong> {ev.story}
-                        </div>
-                      )}
-
-                      {/* Pending Drift Warning Banner */}
-                      {isPending && (
-                        <div style={{
-                          padding: '8px 12px',
-                          borderRadius: 6,
-                          background: 'rgba(234, 179, 8, 0.1)',
-                          border: '1px solid rgba(234, 179, 8, 0.25)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 8,
-                          fontSize: 12,
-                          color: 'var(--color-warning)',
-                        }}>
-                          <AlertTriangle size={14} style={{ flexShrink: 0 }} />
-                          <span>
-                            <strong>Drift Approval Required:</strong> Metric formula difference detected during scheduled sync. Direct upsert is paused until approved.
-                          </span>
-                        </div>
-                      )}
-
-                      {/* Side-by-side Formula Comparison (BI Modified vs Snowflake Current vs SemaBridge Logic) */}
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, fontSize: 11.5 }}>
-                        <div style={{ padding: '8px 12px', borderRadius: 6, background: 'var(--bg-surface)', border: '1px solid var(--border-main)' }}>
-                          <div style={{ color: 'var(--accent-blue)', fontWeight: 600, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
-                            <FileText size={12} /> BI Semantic Model (Modified):
-                          </div>
-                          <code style={{ color: 'var(--text-primary)', wordBreak: 'break-all', fontFamily: 'monospace' }}>
-                            {ev.bi_definition || '—'}
-                          </code>
-                        </div>
-
-                        <div style={{ padding: '8px 12px', borderRadius: 6, background: 'var(--bg-surface)', border: '1px solid var(--border-main)' }}>
-                          <div style={{ color: 'var(--text-secondary)', fontWeight: 600, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
-                            <Database size={12} /> Snowflake Warehouse (Current):
-                          </div>
-                          <code style={{ color: 'var(--text-secondary)', wordBreak: 'break-all', fontFamily: 'monospace' }}>
-                            {ev.snowflake_definition || '—'}
-                          </code>
-                        </div>
-
-                        <div style={{
-                          padding: '8px 12px',
-                          borderRadius: 6,
-                          background: 'var(--bg-surface)',
-                          border: '1px solid var(--border-main)',
-                        }}>
-                          <div style={{ color: 'var(--text-primary)', fontWeight: 600, marginBottom: 4, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
-                            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                              <Sparkles size={12} style={{ color: 'var(--accent-blue)' }} /> Proposed Resolution:
-                            </span>
-                            <span style={{ fontSize: 9.5, padding: '1px 5px', borderRadius: 3, background: 'var(--bg-surface-raised)', border: '1px solid var(--border-main)', color: 'var(--text-secondary)', fontWeight: 700 }}>
-                              REDEPLOY
-                            </span>
-                          </div>
-                          <code style={{ color: 'var(--text-primary)', wordBreak: 'break-all', fontFamily: 'monospace', fontWeight: 600 }}>
-                            {ev.proposed_snowflake_definition || 'redeploy from source'}
-                          </code>
-                        </div>
-                      </div>
-
-                      {/* What Changed & Value Impact */}
-                      {((ev.what_changed && ev.what_changed.length > 0) || ev.value_impact) && (
-                        <div style={{
-                          padding: '10px 12px',
-                          borderRadius: 6,
-                          background: 'rgba(255, 255, 255, 0.02)',
-                          border: '1px solid var(--border-main)',
-                          fontSize: 11.5,
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: 6,
-                        }}>
-                          {ev.what_changed && ev.what_changed.length > 0 && (
-                            <div style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}>
-                              <span style={{ color: 'var(--text-secondary)', fontWeight: 600, minWidth: 92 }}>What changed:</span>
-                              <span style={{ color: 'var(--text-tertiary)', flex: 1 }}>{ev.what_changed.join(' · ')}</span>
-                            </div>
-                          )}
-                          {ev.value_impact && (
-                            <div style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}>
-                              <span style={{ color: 'var(--text-secondary)', fontWeight: 600, minWidth: 92 }}>Value impact:</span>
-                              <span style={{ color: 'var(--accent-blue, #60a5fa)', fontWeight: 600, flex: 1 }}>{ev.value_impact}</span>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Blast Radius / Impacted Objects */}
-                      {ev.affected_objects?.length > 0 && (
-                        <div style={{ fontSize: 11, color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                          <Layers size={12} style={{ color: 'var(--text-secondary)' }} />
-                          <span>Impacted Objects:</span>
-                          {ev.affected_objects.map((obj, i) => (
-                            <span key={i} style={{ padding: '1px 5px', borderRadius: 3, background: 'var(--bg-surface)', border: '1px solid var(--border-main)', color: 'var(--text-secondary)', fontFamily: 'monospace' }}>
-                              {obj}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Action Bar / Resolution Details */}
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: 8, marginTop: 2 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <button
-                            type="button"
-                            style={{
-                              ...BTN,
-                              padding: '4px 9px',
-                              fontSize: 11,
-                              background: 'rgba(168, 85, 247, 0.1)',
-                              borderColor: 'rgba(168, 85, 247, 0.3)',
-                              color: 'var(--accent-purple, #a855f7)',
-                            }}
-                            onClick={() => handleOpenBlast(ev.metric_name)}
-                            title="Check Blast Radius: See downstream BI & AI impact of this metric drift"
-                          >
-                            <Zap size={11} style={{ color: 'var(--accent-purple, #a855f7)' }} /> Blast Radius
-                          </button>
-                        </div>
-                        {isPending ? (
-                          <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
-                            <button
-                              type="button"
-                              style={{ ...BTN_PRIMARY, background: 'var(--color-success, #22c55e)', borderColor: 'var(--color-success, #22c55e)', color: '#fff', padding: '5px 12px' }}
-                              onClick={() => handleResolve(ev.id, 'approve')}
-                              title="Approve changes and redeploy from source"
-                            >
-                              <Check size={13} /> Approve &amp; Redeploy
-                            </button>
-                            <button
-                              type="button"
-                              style={{ ...BTN, padding: '5px 12px' }}
-                              onClick={() => handleResolve(ev.id, 'ignore')}
-                              title="Ignore drift and keep current warehouse definition"
-                            >
-                              <X size={13} /> Ignore
-                            </button>
-                          </div>
-                        ) : (
-                          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginLeft: 'auto' }}>
-                            {ev.resolution_reason ? `Resolution: ${ev.resolution_reason}` : ''}
-                            {ev.resolved_at ? ` · Resolved ${formatOccurred(ev.resolved_at)}` : ''}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-          </>
-        )}
+            </>
+          )}
         </div>
       </div>
 
       {/* ── BLAST RADIUS IMPACT MODAL ────────────────────────────────────── */}
       <Modal
         open={blastModalOpen}
-        onClose={() => setBlastModalOpen(false)}
+        onClose={() => {
+          setBlastModalOpen(false);
+          setBlastFinding(null);
+        }}
         title={
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <Zap size={16} style={{ color: 'var(--accent-purple, #a855f7)' }} />
@@ -1200,122 +1193,215 @@ export default function DriftMonitoringPage() {
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
-            Check how approving this metric drift propagates downstream across BI dashboards, semantic layers, and Cortex AI agents.
+            {blastReport?.affected_ai_tools?.length > 0
+              ? 'Check how this metric drift propagates downstream across BI dashboards, semantic layers, and Cortex AI agents.'
+              : 'Evaluates downstream impact across semantic layers and reporting models.'}
           </div>
 
-          {/* Target & Change Type Controls */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 2fr) minmax(110px, 1fr) minmax(140px, 1.2fr) auto', gap: 8, alignItems: 'center' }}>
-            <input
-              type="text"
-              list="drift-blast-metrics"
-              value={blastTarget}
-              onChange={(e) => setBlastTarget(e.target.value)}
-              placeholder="Target metric, table or column"
-              style={{
-                padding: '6px 10px',
-                borderRadius: 6,
-                border: '1px solid var(--border-main)',
-                background: 'var(--bg-surface-raised)',
-                color: 'var(--text-primary)',
-                fontSize: 12,
-                width: '100%',
-                boxSizing: 'border-box',
-              }}
-            />
-            <datalist id="drift-blast-metrics">
-              {quickTargets.map((m) => (
-                <option key={m} value={m} />
-              ))}
-            </datalist>
-
-            <select
-              value={blastType}
-              onChange={(e) => {
-                const newType = e.target.value;
-                setBlastType(newType);
-                runBlastSimulation(blastTarget, blastChangeType, newType);
-              }}
-              style={{
-                padding: '6px 10px',
-                borderRadius: 6,
-                border: '1px solid var(--border-main)',
-                background: 'var(--bg-surface-raised)',
-                color: 'var(--text-primary)',
-                fontSize: 12,
-                cursor: 'pointer',
-              }}
-            >
-              <option value="METRIC">Metric</option>
-              <option value="COLUMN">Column</option>
-              <option value="TABLE">Table</option>
-            </select>
-
-            <select
-              value={blastChangeType}
-              onChange={(e) => {
-                const newChange = e.target.value;
-                setBlastChangeType(newChange);
-                runBlastSimulation(blastTarget, newChange, blastType);
-              }}
-              style={{
-                padding: '6px 10px',
-                borderRadius: 6,
-                border: '1px solid var(--border-main)',
-                background: 'var(--bg-surface-raised)',
-                color: 'var(--text-primary)',
-                fontSize: 12,
-                cursor: 'pointer',
-              }}
-            >
-              <option value="MODIFY_EXPRESSION">MODIFY_EXPRESSION</option>
-              <option value="MODIFY_TYPE">MODIFY_TYPE</option>
-              <option value="RENAME">RENAME</option>
-              <option value="DROP">DROP</option>
-            </select>
-
-            <button
-              type="button"
-              disabled={blastLoading || !blastTarget.trim()}
-              onClick={() => runBlastSimulation()}
-              style={{
-                ...BTN_PRIMARY,
-                background: 'var(--accent-purple, #a855f7)',
-                borderColor: 'var(--accent-purple, #a855f7)',
-                color: '#fff',
-                opacity: blastLoading || !blastTarget.trim() ? 0.6 : 1,
-                whiteSpace: 'nowrap',
-              }}
-            >
-              <Play size={12} /> {blastLoading ? 'Checking…' : 'Check'}
-            </button>
-          </div>
-
-          {/* Quick Target Chips */}
-          {quickTargets.length > 0 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 11 }}>
-              <span style={{ color: 'var(--text-secondary)' }}>Quick Targets:</span>
-              {quickTargets.slice(0, 12).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  style={{
-                    ...BTN,
-                    padding: '2px 7px',
-                    fontSize: 10.5,
-                    fontFamily: 'monospace',
-                    background: blastTarget === t ? 'rgba(168, 85, 247, 0.15)' : 'var(--bg-surface-raised)',
-                    borderColor: blastTarget === t ? 'var(--accent-purple)' : 'var(--border-main)',
-                    color: blastTarget === t ? 'var(--accent-purple)' : 'var(--text-secondary)',
+          {blastFinding ? (
+            /* Finding Context: Runs immediately with finding info, no form, no action dropdown, no quick targets */
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '8px 12px',
+              borderRadius: 8,
+              background: 'var(--bg-surface-raised)',
+              border: '1px solid var(--border-main)',
+              fontSize: 12,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'monospace' }}>
+                  {blastTarget}
+                </span>
+                <span style={{
+                  padding: '2px 8px',
+                  borderRadius: 4,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  background: blastChangeType === 'ADD' ? 'rgba(34, 197, 94, 0.15)' : blastChangeType === 'DROP' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(168, 85, 247, 0.15)',
+                  color: blastChangeType === 'ADD' ? 'var(--color-success, #22c55e)' : blastChangeType === 'DROP' ? 'var(--color-error, #ef4444)' : 'var(--accent-purple, #a855f7)',
+                }}>
+                  {blastFinding.category || blastChangeType}
+                </span>
+                <span style={{ color: 'var(--text-secondary)', fontSize: 11.5 }}>
+                  Kind: <strong style={{ color: 'var(--text-primary)' }}>{blastType}</strong>
+                </span>
+                {blastTableContext && (
+                  <span style={{ color: 'var(--text-secondary)', fontSize: 11.5 }}>
+                    Table: <code style={{ color: 'var(--text-primary)' }}>{blastTableContext}</code>
+                  </span>
+                )}
+              </div>
+              {blastLoading && (
+                <span style={{ fontSize: 11.5, color: 'var(--accent-purple)', fontWeight: 600 }}>
+                  Analyzing impact…
+                </span>
+              )}
+            </div>
+          ) : (
+            <>
+              {/* Target & Change Type Controls */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 2fr) minmax(110px, 1fr) minmax(140px, 1.2fr) auto', gap: 8, alignItems: 'center' }}>
+                <input
+                  type="text"
+                  list="drift-blast-metrics"
+                  value={blastTarget}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setBlastTarget(val);
+                    const term = val.trim().toLowerCase();
+                    if (term) {
+                      const matchedEv = projectEvents.find((ev) =>
+                        (ev.metric_name || ev.object_name || ev.name || '').toLowerCase() === term
+                      ) || allEvents.find((ev) =>
+                        (ev.metric_name || ev.object_name || ev.name || '').toLowerCase() === term
+                      );
+                      if (matchedEv) {
+                        const cat = String(matchedEv.category || matchedEv.drift_type || '').toUpperCase();
+                        if (cat.includes('ADDITION') || cat.includes('UNMANAGED')) {
+                          setBlastChangeType('ADD');
+                        }
+                      }
+                    }
                   }}
-                  onClick={() => {
-                    setBlastTarget(t);
-                    runBlastSimulation(t, blastChangeType, blastType);
+                  placeholder="Target metric, table or column"
+                  style={{
+                    padding: '6px 10px',
+                    borderRadius: 6,
+                    border: '1px solid var(--border-main)',
+                    background: 'var(--bg-surface-raised)',
+                    color: 'var(--text-primary)',
+                    fontSize: 12,
+                    width: '100%',
+                    boxSizing: 'border-box',
+                  }}
+                />
+                <datalist id="drift-blast-metrics">
+                  {warehouseAddedTargets.map((m) => (
+                    <option key={`wh-${m}`} value={m} label="Added in warehouse" />
+                  ))}
+                  {quickTargets.map((m) => (
+                    <option key={m} value={m} />
+                  ))}
+                </datalist>
+
+                <select
+                  value={blastType}
+                  onChange={(e) => {
+                    const newType = e.target.value;
+                    setBlastType(newType);
+                    runBlastSimulation(blastTarget, blastChangeType, newType);
+                  }}
+                  style={{
+                    padding: '6px 10px',
+                    borderRadius: 6,
+                    border: '1px solid var(--border-main)',
+                    background: 'var(--bg-surface-raised)',
+                    color: 'var(--text-primary)',
+                    fontSize: 12,
+                    cursor: 'pointer',
                   }}
                 >
-                  {t}
+                  <option value="METRIC">Metric</option>
+                  <option value="COLUMN">Column</option>
+                  <option value="TABLE">Table</option>
+                </select>
+
+                <select
+                  value={blastChangeType}
+                  onChange={(e) => {
+                    const newChange = e.target.value;
+                    setBlastChangeType(newChange);
+                    runBlastSimulation(blastTarget, newChange, blastType);
+                  }}
+                  style={{
+                    padding: '6px 10px',
+                    borderRadius: 6,
+                    border: '1px solid var(--border-main)',
+                    background: 'var(--bg-surface-raised)',
+                    color: 'var(--text-primary)',
+                    fontSize: 12,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <option value="MODIFY_EXPRESSION">MODIFY_EXPRESSION</option>
+                  <option value="ADD">ADD (New in Warehouse)</option>
+                  <option value="DROP">DROP (Delete from Warehouse)</option>
+                  <option value="MODIFY_DESCRIPTION">MODIFY_DESCRIPTION</option>
+                  <option value="RENAME">RENAME</option>
+                  <option value="MODIFY_TYPE">MODIFY_TYPE</option>
+                </select>
+
+                <button
+                  type="button"
+                  disabled={blastLoading || !blastTarget.trim()}
+                  onClick={() => runBlastSimulation()}
+                  style={{
+                    ...BTN_PRIMARY,
+                    background: 'var(--accent-purple, #a855f7)',
+                    borderColor: 'var(--accent-purple, #a855f7)',
+                    color: '#fff',
+                    opacity: blastLoading || !blastTarget.trim() ? 0.6 : 1,
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  <Play size={12} /> {blastLoading ? 'Checking…' : 'Check'}
                 </button>
-              ))}
-            </div>
+              </div>
+
+              {/* Quick Target Chips */}
+              {(warehouseAddedTargets.length > 0 || quickTargets.length > 0) && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 11 }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>Quick Targets:</span>
+                  {warehouseAddedTargets.map((t) => (
+                    <button
+                      key={`wh-${t}`}
+                      type="button"
+                      style={{
+                        ...BTN,
+                        padding: '2px 8px',
+                        fontSize: 10.5,
+                        fontFamily: 'monospace',
+                        background: blastTarget === t ? 'rgba(34, 197, 94, 0.2)' : 'rgba(34, 197, 94, 0.08)',
+                        borderColor: 'rgba(34, 197, 94, 0.4)',
+                        color: 'var(--color-success, #22c55e)',
+                        fontWeight: 600,
+                      }}
+                      title="Unmanaged warehouse addition"
+                      onClick={() => {
+                        setBlastTarget(t);
+                        setBlastChangeType('ADD');
+                        runBlastSimulation(t, 'ADD', blastType);
+                      }}
+                    >
+                      + {t} (Added in warehouse)
+                    </button>
+                  ))}
+                  {quickTargets.slice(0, 12).map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      style={{
+                        ...BTN,
+                        padding: '2px 7px',
+                        fontSize: 10.5,
+                        fontFamily: 'monospace',
+                        background: blastTarget === t ? 'rgba(168, 85, 247, 0.15)' : 'var(--bg-surface-raised)',
+                        borderColor: blastTarget === t ? 'var(--accent-purple)' : 'var(--border-main)',
+                        color: blastTarget === t ? 'var(--accent-purple)' : 'var(--text-secondary)',
+                      }}
+                      onClick={() => {
+                        setBlastTarget(t);
+                        runBlastSimulation(t, blastChangeType, blastType);
+                      }}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
           )}
 
           {/* Error Message */}
@@ -1336,15 +1422,27 @@ export default function DriftMonitoringPage() {
             <div style={{ marginTop: 4 }}>
               <ImpactReport
                 report={blastReport}
+                isFinding={Boolean(blastFinding)}
                 onPickSuggestion={(sug) => {
                   setBlastTarget(sug);
                   runBlastSimulation(sug);
+                }}
+                onEvaluateAddition={(target) => {
+                  setBlastChangeType('ADD');
+                  runBlastSimulation(target, 'ADD', blastType);
                 }}
               />
             </div>
           )}
         </div>
       </Modal>
+
+      {/* ── AI IMPACT MODAL ────────────────────────────────────────────── */}
+      <AIImpactModal
+        isOpen={aiImpactModalOpen}
+        onClose={() => setAiImpactModalOpen(false)}
+        event={selectedAiImpactEvent}
+      />
     </div>
   );
 }

@@ -29,12 +29,15 @@ export function useProjects() {
   const [error, setError] = useState(null);
 
   // Read initial selection from URL, fallback to stored selection.
-  // Never default to first item, never select a project whose name contains 'comp'.
   const urlPid = searchParams.get('project') || '';
   const storedPid = typeof window !== 'undefined' ? (localStorage.getItem(STORAGE_KEY) || '') : '';
   const initialPid = urlPid || storedPid;
 
   const [selectedProjectId, setSelectedProjectIdState] = useState(initialPid);
+
+  // Read warehouse filter from URL
+  const urlWarehouse = searchParams.get('warehouse') || '';
+  const [selectedWarehouse, setSelectedWarehouseState] = useState(urlWarehouse);
 
   const fetchAllProjects = useCallback(async () => {
     setLoading(true);
@@ -71,19 +74,42 @@ export function useProjects() {
   }, []);
 
   useEffect(() => {
-    fetchAllProjects();
+    let ignore = false;
+    const timer = setTimeout(() => {
+      if (!ignore) {
+        fetchAllProjects();
+      }
+    }, 0);
+    return () => {
+      ignore = true;
+      clearTimeout(timer);
+    };
   }, [fetchAllProjects]);
 
-  // Keep state in sync with URL query param if present
+  // Keep project selection in sync with URL query param if present
   useEffect(() => {
     const qProject = searchParams.get('project');
     if (qProject && qProject !== selectedProjectId) {
-      setSelectedProjectIdState(qProject);
-      if (typeof window !== 'undefined') {
-        localStorage.setItem(STORAGE_KEY, qProject);
-      }
+      const timer = setTimeout(() => {
+        setSelectedProjectIdState(qProject);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem(STORAGE_KEY, qProject);
+        }
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [searchParams, selectedProjectId]);
+
+  // Keep warehouse selection in sync with URL query param
+  useEffect(() => {
+    const qWarehouse = searchParams.get('warehouse') || '';
+    if (qWarehouse !== selectedWarehouse) {
+      const timer = setTimeout(() => {
+        setSelectedWarehouseState(qWarehouse);
+      }, 0);
+      return () => clearTimeout(timer);
+    }
+  }, [searchParams, selectedWarehouse]);
 
   const setSelectedProjectId = useCallback((pid) => {
     const cleanId = String(pid || '').trim();
@@ -98,13 +124,51 @@ export function useProjects() {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
       if (cleanId) {
+        if (cleanId !== selectedProjectId) {
+          next.delete('view');
+        }
         next.set('project', cleanId);
       } else {
         next.delete('project');
+        next.delete('view');
       }
       return next;
     });
-  }, [setSearchParams]);
+  }, [selectedProjectId, setSearchParams]);
+
+  // Warehouse filter setter: updates state & URL; clears selected project if filtered out
+  const setSelectedWarehouse = useCallback((warehouse) => {
+    const cleanWh = String(warehouse || '').trim();
+    setSelectedWarehouseState(cleanWh);
+
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (cleanWh) {
+        next.set('warehouse', cleanWh);
+      } else {
+        next.delete('warehouse');
+      }
+
+      // Check if current project is filtered out by the new warehouse
+      if (cleanWh && selectedProjectId) {
+        const curProject = projects.find((p) => {
+          const pId = p.id || p.project_id || '';
+          return matchesProjectId(pId, selectedProjectId);
+        });
+        const curPlatform = String(curProject?.platform || curProject?.target_warehouse || '').toUpperCase().trim();
+        const normCur = (!curPlatform || curPlatform === 'UNKNOWN' || curPlatform === 'NOT_SET') ? 'NOT_SET' : curPlatform;
+        if (normCur !== cleanWh.toUpperCase()) {
+          next.delete('project');
+          next.delete('view');
+          setSelectedProjectIdState('');
+          if (typeof window !== 'undefined') {
+            localStorage.removeItem(STORAGE_KEY);
+          }
+        }
+      }
+      return next;
+    });
+  }, [selectedProjectId, projects, setSearchParams]);
 
   // Resolve selectedProject object from projects list
   const selectedProject = useMemo(() => {
@@ -116,8 +180,42 @@ export function useProjects() {
     }) || { id: selectedProjectId, name: selectedProjectId };
   }, [projects, selectedProjectId]);
 
+  // Compute available warehouses and counts across all projects
+  const { availableWarehouses, warehouseCounts } = useMemo(() => {
+    const counts = {};
+    projects.forEach((p) => {
+      const raw = String(p.platform || p.target_warehouse || '').toUpperCase().trim();
+      const plat = (!raw || raw === 'UNKNOWN' || raw === 'NOT_SET') ? 'NOT_SET' : raw;
+      counts[plat] = (counts[plat] || 0) + 1;
+    });
+    const regular = Object.keys(counts).filter((k) => k !== 'NOT_SET').sort();
+    if (counts['NOT_SET']) {
+      regular.push('NOT_SET');
+    }
+    return {
+      availableWarehouses: regular,
+      warehouseCounts: counts,
+    };
+  }, [projects]);
+
+  // Filter projects by selected warehouse
+  const filteredProjects = useMemo(() => {
+    if (!selectedWarehouse) return projects;
+    const target = selectedWarehouse.toUpperCase().trim();
+    return projects.filter((p) => {
+      const raw = String(p.platform || p.target_warehouse || '').toUpperCase().trim();
+      const plat = (!raw || raw === 'UNKNOWN' || raw === 'NOT_SET') ? 'NOT_SET' : raw;
+      return plat === target;
+    });
+  }, [projects, selectedWarehouse]);
+
   return {
     projects,
+    filteredProjects,
+    availableWarehouses,
+    warehouseCounts,
+    selectedWarehouse,
+    setSelectedWarehouse,
     selectedProjectId,
     setSelectedProjectId,
     selectedProject,
