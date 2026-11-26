@@ -138,3 +138,62 @@ def test_upsert_never_asks_because_it_keeps_the_fields(db, monkeypatch):
     started = _gate(monkeypatch, REMOVED)
     with pytest.raises(started):
         asyncio.run(rs.run_project_now_compat("proj-chk", object(), {"sync_mode": "upsert"}))
+
+
+# --- same platform, another schema ----------------------------------------------
+
+def _deploy_other(db, schema):
+    from semabridge.repository.orm.snapshot_models import SnapshotRow
+
+    with db.get_session() as s:
+        s.add(SnapshotRow(
+            snapshot_id=str(uuid.uuid4()), project_id="proj-other", timestamp=datetime.now(timezone.utc),
+            view_name="SALES", target_database="DB", target_schema=schema,
+            deployed_at=datetime.now(timezone.utc),
+        ))
+        s.commit()
+
+
+def test_same_model_in_another_schema_of_the_same_platform_needs_confirmation(db, monkeypatch):
+    _deploy_other(db, "OTHER_SCH")
+    monkeypatch.setattr(dss, "_planned_models", lambda cfg: PLANNED)
+    monkeypatch.setattr(dss, "_file_hashes_by_project", lambda: {"proj-other": {"h-sales"}})
+    monkeypatch.setattr(dss, "_resolve_other_project_target_type", lambda *a, **k: "snowflake")
+    findings = dss.find_duplicate_deployments("proj-chk", CONFIG)
+    assert len(findings) == 1
+    f = findings[0]
+    assert f["elsewhere"] is True and f["target"] == "DB.OTHER_SCH"
+    assert "same_platform_elsewhere" in f["reasons"] and "same_view" not in f["reasons"]
+    assert f["overwrites"] is False
+
+
+def test_other_platform_is_not_a_duplicate(db, monkeypatch):
+    _deploy_other(db, "OTHER_SCH")
+    monkeypatch.setattr(dss, "_planned_models", lambda cfg: PLANNED)
+    monkeypatch.setattr(dss, "_file_hashes_by_project", lambda: {"proj-other": {"h-sales"}})
+    monkeypatch.setattr(dss, "_resolve_other_project_target_type", lambda *a, **k: "databricks")
+    assert dss.find_duplicate_deployments("proj-chk", CONFIG) == []
+
+
+def test_confirmed_other_schema_copy_is_not_asked_again(db, monkeypatch):
+    store = {}
+
+    monkeypatch.setattr(dss, "_acknowledged", lambda pid: set(store.get(pid, [])))
+
+    class _SS:
+        @staticmethod
+        def apply_changes(changes):
+            for _c, key, value in changes:
+                store[key] = value
+            return {}
+
+    import semabridge.repository as repo_pkg
+
+    monkeypatch.setattr(repo_pkg, "state_store", _SS, raising=False)
+    elsewhere = {"model": "Sales", "other_project_id": "proj-other", "target": "DB.OTHER_SCH",
+                 "other_view_name": "SALES", "elsewhere": True}
+    same_place = {"model": "Sales", "other_project_id": "proj-x", "target": "DB.SCH",
+                  "other_view_name": "SALES", "elsewhere": False}
+    assert dss.record_acknowledged("proj-chk", [elsewhere, same_place]) == 1
+    left = dss.without_acknowledged("proj-chk", [elsewhere, same_place])
+    assert left == [same_place]  # same-location duplicates always ask

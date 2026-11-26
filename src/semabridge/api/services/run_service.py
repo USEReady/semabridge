@@ -1405,9 +1405,18 @@ async def _sync_safety_checks(
     requested = _effective_sync_mode(project_id, config_yaml, payload)
     mode, promoted = await asyncio.to_thread(_promote_initial_upsert, project_id, config_yaml, requested)
 
+    if bool(payload.get("acknowledge_duplicates", False)) and interactive:
+        # The user confirmed: remember other-schema copies so later runs
+        # (scheduled ones included) do not ask about them again.
+        try:
+            confirmed = await asyncio.to_thread(dss.find_duplicate_deployments, project_id, config_yaml, False)
+            await asyncio.to_thread(dss.record_acknowledged, project_id, confirmed)
+        except Exception as exc:  # noqa: BLE001 -- remembering is best-effort
+            logger.debug("Duplicate confirmations of %s not stored: %s", project_id, exc)
     if not bool(payload.get("acknowledge_duplicates", False)):
         try:
             duplicates = await asyncio.to_thread(dss.find_duplicate_deployments, project_id, config_yaml, True)
+            duplicates = await asyncio.to_thread(dss.without_acknowledged, project_id, duplicates)
         except Exception as exc:  # noqa: BLE001 -- fail closed
             logger.warning("Duplicate check for project %s could not run; sync not started: %s", project_id, exc)
             raise HTTPException(
@@ -1434,6 +1443,8 @@ async def _sync_safety_checks(
                     "message": (
                         f"{len(models)} model(s) in this project are already synced by another project. "
                         "Review them, then confirm to sync anyway."
+                        + (" Copies in another schema are remembered once you confirm."
+                           if any(d.get("elsewhere") for d in duplicates) else "")
                         if interactive else
                         f"{', '.join(models)} already synced by project {', '.join(others)}; "
                         f"{_non_interactive_hint()}"

@@ -318,7 +318,14 @@ def test_cross_platform_targets_snowflake_vs_databricks_do_not_flag_each_other(
             },
         )
         assert res_sf_vs_dbx.status_code == 200
-        assert res_sf_vs_dbx.json()["has_duplicates"] is False, res_sf_vs_dbx.json()
+        sf_vs_dbx = res_sf_vs_dbx.json()["duplicates"]
+        # The Databricks project is never flagged (other platform) ...
+        assert not [d for d in sf_vs_dbx if d["other_project_id"] == dbx_pid], sf_vs_dbx
+        # ... but the Snowflake project's copy in ANALYTICS.GOLD is: same platform,
+        # another schema -> shown and confirmed, never an overwrite.
+        assert [(d["other_project_id"], d["target"], d["elsewhere"], d["overwrites"]) for d in sf_vs_dbx] == [
+            (sf_pid, "ANALYTICS.GOLD", True, False)
+        ]
 
         # Selecting DATABRICKS (workspace.default) -> CONCERN (same platform + same catalog.schema!)
         res_dbx_vs_dbx = client.post(

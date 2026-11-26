@@ -1,5 +1,7 @@
 """Pre-sync duplicate check: is a model in this project already synced by
-another project to the same target database/schema?
+another project to the same target database/schema -- or, on the same
+platform, to another database/schema (``elsewhere``; confirmed once per
+project, model, other project and location)?
 
 A model counts as already synced when another project's latest deployment
 in the same database.schema
@@ -197,15 +199,64 @@ def _file_hashes_by_project() -> Dict[str, Set[str]]:
     return hashes
 
 
-def _latest_snapshots(rows: Iterable[Any]) -> Dict[Tuple[str, str], Any]:
-    """Latest row per (project_id, view_name)."""
-    latest: Dict[Tuple[str, str], Any] = {}
+def _latest_snapshots_by_location(rows: Iterable[Any]) -> Dict[Tuple[str, str, str, str], Any]:
+    """Latest row per (project_id, database, schema, view_name)."""
+    latest: Dict[Tuple[str, str, str, str], Any] = {}
     for row in rows:
-        key = (str(row.project_id), _norm(row.view_name))
+        key = (str(row.project_id), _norm(row.target_database), _norm(row.target_schema), _norm(row.view_name))
         current = latest.get(key)
         if current is None or (row.timestamp and current.timestamp and row.timestamp > current.timestamp):
             latest[key] = row
     return latest
+
+
+# Confirmed "also deploy to another schema of the same platform" decisions.
+# Same-location duplicates (collisions / overwrites) are asked every time.
+_ACK_COLLECTION = "duplicate_acknowledgements"
+
+
+def _ack_signature(finding: Dict[str, Any]) -> str:
+    return "|".join([
+        _norm(finding.get("model")), str(finding.get("other_project_id") or ""),
+        _norm(finding.get("target")), _norm(finding.get("other_view_name")),
+    ])
+
+
+def _acknowledged(project_id: str) -> Set[str]:
+    try:
+        from semabridge.repository import state_store
+
+        state_store.ensure_table()
+        value = state_store.load_keys(_ACK_COLLECTION, [project_id]).get(project_id)
+        return set(value or []) if isinstance(value, list) else set()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Duplicate acknowledgements of %s unavailable: %s", project_id, exc)
+        return set()
+
+
+def record_acknowledged(project_id: str, findings: Iterable[Dict[str, Any]]) -> int:
+    """Remember that the user confirmed these other-location duplicates."""
+    new = {_ack_signature(f) for f in findings if f.get("elsewhere")}
+    if not project_id or not new:
+        return 0
+    try:
+        from semabridge.repository import state_store
+
+        merged = sorted(_acknowledged(project_id) | new)
+        state_store.apply_changes([(_ACK_COLLECTION, project_id, merged)])
+        return len(new)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not store duplicate acknowledgements of %s: %s", project_id, exc)
+        return 0
+
+
+def without_acknowledged(project_id: str, findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Findings still needing confirmation: same-location ones always, other
+    locations only until confirmed once."""
+    if not any(f.get("elsewhere") for f in findings):
+        return findings
+    acked = _acknowledged(project_id)
+    return [f for f in findings if not (f.get("elsewhere") and _ack_signature(f) in acked)]
 
 
 def _latest_blob_of(project_ids: Iterable[str], rows: List[Any], *, view_name: Optional[str] = None,
@@ -583,15 +634,16 @@ def find_duplicate_deployments(project_id: str, config_yaml: str, strict: bool =
 
     from semabridge.api.services.project_shared import _compat_projects
 
+    # Every other project's deployment: same database.schema (would collide or
+    # overwrite) and, on the same platform, other locations (a second copy of
+    # the same semantic layer -- reported as ``elsewhere``).
     deployed = [
         row for row in rows
         if row.deployed_at is not None
         and str(row.project_id) != project_id
         and not str(row.project_id).startswith("preview")
-        and _norm(row.target_database) == database
-        and _norm(row.target_schema) == schema
     ]
-    others = _latest_snapshots(deployed)
+    others = _latest_snapshots_by_location(deployed)
     repo = ModelRepository()
     blob_cache: Dict[str, Optional[dict]] = {}
 
@@ -615,12 +667,13 @@ def find_duplicate_deployments(project_id: str, config_yaml: str, strict: bool =
         )
         own_metrics, own_columns = _blob_fields(own_blob)
         flagged: Set[str] = set()
-        for (other_project, other_view), row in others.items():
+        for (other_project, other_db, other_schema, other_view), row in others.items():
             other_target_type = _resolve_other_project_target_type(
                 other_project, getattr(row, "run_id", None), run_target_types
             )
             if not _targets_same_platform(target_type, other_target_type):
                 continue
+            same_location = other_db == database and other_schema == schema
             other_blob = _blob(row) or {}
             other_metrics, other_columns = _blob_fields(other_blob)
             metric_overlap = _overlap(own_metrics, other_metrics)
@@ -628,7 +681,7 @@ def find_duplicate_deployments(project_id: str, config_yaml: str, strict: bool =
             reasons = []
             if model["content_hash"] and model["content_hash"] in file_hashes.get(other_project, set()):
                 reasons.append("same_file")
-            if other_view == model["view_name"]:
+            if same_location and other_view == model["view_name"]:
                 reasons.append("same_view")
             if model["model_key"] and model["model_key"] in {
                 _norm(other_blob.get("unique_name")), _norm(other_blob.get("label"))
@@ -638,7 +691,18 @@ def find_duplicate_deployments(project_id: str, config_yaml: str, strict: bool =
                 reasons.append("same_content")
             if not reasons:
                 continue
-            if "same_file" in reasons or "same_model" in reasons or "same_view" in reasons:
+            if not same_location:
+                # Another schema of the same platform: nothing is overwritten,
+                # but it is a second copy of the same semantic layer. Only when
+                # both platforms are KNOWN to be the same (an unknown platform
+                # is no evidence of a second copy).
+                mine_p, theirs_p = _canonical_target_type(target_type), _canonical_target_type(other_target_type)
+                if not (mine_p and theirs_p and mine_p == theirs_p):
+                    continue
+                if not ({"same_file", "same_model", "same_content"} & set(reasons)):
+                    continue
+                reasons.append("same_platform_elsewhere")
+            elif "same_file" in reasons or "same_model" in reasons or "same_view" in reasons:
                 flagged.add(other_project)
             resolved_type = target_type or other_target_type
             findings.append({
@@ -647,7 +711,8 @@ def find_duplicate_deployments(project_id: str, config_yaml: str, strict: bool =
                 "other_project_id": other_project,
                 "other_project_name": _project_name(other_project),
                 "other_view_name": other_view,
-                "target": f"{database}.{schema}",
+                "target": f"{other_db}.{other_schema}",
+                "elsewhere": not same_location,
                 "target_type": resolved_type,
                 "target_label": _target_label(resolved_type),
                 "reasons": reasons,
@@ -683,6 +748,7 @@ def find_duplicate_deployments(project_id: str, config_yaml: str, strict: bool =
                 "other_project_name": _project_name(other_project),
                 "other_view_name": "",
                 "target": f"{database}.{schema}",
+                "elsewhere": False,
                 "target_type": resolved_type,
                 "target_label": _target_label(resolved_type),
                 "reasons": ["same_file_in_progress" if other_project in active else "same_file_dry_run"],
@@ -717,6 +783,7 @@ def find_duplicate_deployments(project_id: str, config_yaml: str, strict: bool =
                 "other_project_name": _project_name(other_project),
                 "other_view_name": "",
                 "target": f"{database}.{schema}",
+                "elsewhere": False,
                 "target_type": resolved_type,
                 "target_label": _target_label(resolved_type),
                 "reasons": ["same_model_in_progress" if other_project in active else "same_model_dry_run"],

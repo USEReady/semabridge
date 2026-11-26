@@ -18,6 +18,7 @@ const REASON_LABELS = {
   same_file_dry_run: 'Same PBIX file — dry-run by another project, not synced yet',
   same_model_in_progress: 'Same model — another project is syncing it right now',
   same_model_dry_run: 'Same model — dry-run by another project, not synced yet',
+  same_platform_elsewhere: 'Same platform, another schema — this sync creates a second copy',
 };
 
 const TITLES = {
