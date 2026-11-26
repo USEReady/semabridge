@@ -428,3 +428,27 @@ def test_full_migration_chain_creates_probe_evidence_table(tmp_path):
     _chain(old, "head")
     cols = {c["name"] for c in sa.inspect(old).get_columns("databricks_probe_evidence")}
     assert {"run_id", "workspace_host", "warehouse_id", "outcomes_json", "started_at", "completed_at"} <= cols
+
+
+def test_full_migration_chain_creates_deploy_tables(tmp_path):
+    """3.8: sb0008 adds the deploy record, names, journal and lease tables on a fresh
+    database and on one at the previous head (sb0007), idempotently."""
+    from alembic.script import ScriptDirectory
+
+    from semabridge.repository.alembic_runner import _alembic_config
+
+    script = ScriptDirectory.from_config(_alembic_config(None))
+    assert script.get_revision("sb0008_databricks_deploy").down_revision == "sb0007_databricks_probe_evidence"
+    tables = ("databricks_deployments", "databricks_deployed_objects", "databricks_deployed_names",
+              "databricks_deploy_journal", "databricks_deploy_leases")
+    fresh = sa.create_engine(f"sqlite:///{tmp_path / 'd_fresh.db'}")
+    _chain(fresh, "head")
+    assert all(sa.inspect(fresh).has_table(t) for t in tables)
+    old = sa.create_engine(f"sqlite:///{tmp_path / 'd_old.db'}")
+    _chain(old, "sb0007_databricks_probe_evidence")
+    with old.begin() as conn:
+        for t in tables:
+            conn.exec_driver_sql(f"DROP TABLE IF EXISTS {t}")
+    _chain(old, "head")
+    cols = {c["name"] for c in sa.inspect(old).get_columns("databricks_deploy_journal")}
+    assert {"run_id", "seq", "destination", "state", "definition_hash", "previous_hash", "statement_id"} <= cols

@@ -269,7 +269,20 @@ def databricks_planner_settings(context: RunContext):
     values["output_catalog"], values["output_schema"] = catalog, schema
     existing = getattr(context, "databricks_existing_objects", None)
     values["existing_objects"] = frozenset(existing) if existing is not None else None
+    # 3.8 (A5): names already deployed for this model are kept on re-plan.
+    from semabridge.target_backends.databricks.deploy.names import reserved_for
+
+    values.update(reserved_for(str(getattr(context, "project_id", "") or ""),
+                               getattr(context, "physical_namespace", None)))
     return PlannerSettings(**values)
+
+
+def stub_form_for_run(context: RunContext) -> str:
+    """How missing tables are stood in for (decided at planning, recorded in the
+    plan and bundle; deploy never switches it): empty_table (default) | inline."""
+    target = getattr(context.config, "target", None)
+    form = str(getattr(target, "stub_form", "") or "empty_table").strip().lower()
+    return form if form in ("empty_table", "inline") else "empty_table"
 
 
 def output_location(context: RunContext):
@@ -385,11 +398,13 @@ def _run_databricks_planner(self, context: RunContext, table_plan) -> None:
             cache_ref=cache_ref, revision=revision,
             output={"catalog": settings.output_catalog, "schema": settings.output_schema,
                     "existing_objects": sorted(settings.existing_objects) if settings.existing_objects is not None else None,
-                    "reserved_table_names": dict(settings.reserved_table_names or {})},
+                    "reserved_table_names": dict(settings.reserved_table_names or {}),
+                    "stub_form": stub_form_for_run(context)},
         )
     except Exception as exc:  # the plan is still valid; it just cannot be re-planned without a dry run
         logger.warning("Could not store the Databricks planner input for re-planning: %s", exc)
         plan["meta"] = {"revision": revision, "status": "valid", "source": "dry_run", "cache_ref": None,
+                        "stub_form": stub_form_for_run(context),
                         "basis": {"table_check_at": None, "uc_recheck_required_before_deploy": True}}
     # 3.7: the view definitions (offline text; nothing is sent to Databricks).
     from semabridge.target_backends.databricks import bundle

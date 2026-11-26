@@ -238,3 +238,121 @@ class DatabricksProbeEvidence(Base):
     started_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False)
     completed_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
     created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+
+# --- Databricks deploy (Phase 3.8) -------------------------------------------------------
+
+
+class DatabricksDeployment(Base):
+    """One Databricks deploy run (3.8): what was deployed, where, by whom, on
+    which platform version. Written before any Databricks write."""
+
+    __tablename__ = "databricks_deployments"
+    __table_args__ = (
+        Index("ix_dbx_deploy_target", "project_id", "model_key", "started_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    project_id: Mapped[str] = mapped_column(String(PROJECT_ID_LENGTH), nullable=False)
+    model_key: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    plan_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    writer_revision: Mapped[str] = mapped_column(String(32), nullable=False)
+    dbsql_version: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    metastore_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    catalog: Mapped[str] = mapped_column(String(255), nullable=False)
+    schema_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    workspace_host: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    warehouse_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    identity: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    stub_form: Mapped[str] = mapped_column(String(32), nullable=False, default="empty_table")
+    # running | succeeded | partial | failed | no_op | uncertain
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    summary_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
+
+
+class DatabricksDeployedObject(Base):
+    """An object a deploy run created or updated (view or empty stub table), with
+    the evidence used to recognise it later as SemaBridge's own."""
+
+    __tablename__ = "databricks_deployed_objects"
+    __table_args__ = (
+        Index("ix_dbx_deployed_obj", "project_id", "model_key", "fqn"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    project_id: Mapped[str] = mapped_column(String(PROJECT_ID_LENGTH), nullable=False)
+    model_key: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)          # view | stub_table
+    fqn: Mapped[str] = mapped_column(String(767), nullable=False)          # normalized catalog.schema.name
+    source: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)   # model table
+    uc_object_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    body_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    definition_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)   # normalized definition
+    readiness: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False)       # created | updated | verified
+    details_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    recorded_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False)
+
+
+class DatabricksDeployedName(Base):
+    """A deployed source -> target name (view, field, measure, stub table) per
+    metric-view occurrence. Fed back to the planner as reserved names (A5)."""
+
+    __tablename__ = "databricks_deployed_names"
+    __table_args__ = (
+        Index("ix_dbx_deployed_name", "project_id", "model_key", "run_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    project_id: Mapped[str] = mapped_column(String(PROJECT_ID_LENGTH), nullable=False)
+    model_key: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    view_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    view_source: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)          # view | field | measure | stub_table
+    source_key_json: Mapped[str] = mapped_column(Text, nullable=False)
+    target_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False)
+
+
+class DatabricksDeployJournal(Base):
+    """Per-operation journal: written ``intended`` BEFORE a statement is sent, then
+    updated. Operations left intended / submitted / uncertain are reconciled
+    against Databricks before anything else is done in that schema."""
+
+    __tablename__ = "databricks_deploy_journal"
+    __table_args__ = (
+        Index("ix_dbx_journal_run", "run_id", "seq", unique=True),
+        Index("ix_dbx_journal_dest", "destination", "state"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    destination: Mapped[str] = mapped_column(String(767), nullable=False)  # lease key
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_fqn: Mapped[str] = mapped_column(String(767), nullable=False)
+    statement_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    # normalized definition hashes: what the statement sets, and what was live before it
+    definition_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    previous_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # intended | submitted | succeeded | failed | uncertain | not_executed
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    statement_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False)
+
+
+class DatabricksDeployLease(Base):
+    """A renewable lease: one deploy at a time per metastore + catalog + schema."""
+
+    __tablename__ = "databricks_deploy_leases"
+
+    lease_key: Mapped[str] = mapped_column(String(767), primary_key=True)
+    holder_run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    acquired_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False)
