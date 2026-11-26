@@ -631,7 +631,7 @@ class NLQueryEngine:
             # only when the question states the same aggregation ("sum of amount"
             # -> a SUM over AMOUNT, never an AVG or COUNT over it).
             intent = parsed.aggregation_intent
-            agg_ok = bool(intent) and (
+            agg_ok = (not intent) or (
                 me.aggregation == intent or (intent == "DISTINCT" and me.aggregation == "COUNT_DISTINCT")
             )
             for tok in combined_toks:
@@ -752,12 +752,13 @@ class NLQueryEngine:
                 extra_quals = me.qualifier_lemmas - phrase_set - q_shifts - by_lemmas
                 if extra_quals:
                     score *= max(0.35, 1.0 - 0.12 * min(len(extra_quals), 4))
+                qual_and_desc_lemmas = me.qualifier_lemmas | me.description_lemmas
                 matched_qual = bool(
                     non_concept_toks
                     and any(
                         (
-                            nct in me.qualifier_lemmas
-                            or any((len(ql) >= 3 and len(nct) >= 3 and (nct.startswith(ql) or ql.startswith(nct))) for ql in me.qualifier_lemmas)
+                            nct in qual_and_desc_lemmas
+                            or any((len(ql) >= 3 and len(nct) >= 3 and (nct.startswith(ql) or ql.startswith(nct))) for ql in qual_and_desc_lemmas)
                         )
                         for nct in non_concept_toks
                     )
@@ -968,7 +969,14 @@ class NLQueryEngine:
                         candidates.insert(0, unfiltered[0])
 
             if outcome == "ambiguous":
-                opt_names = [item[2].display_name for item in candidates[:4] if (candidates[0][0] - item[0]) <= 0.15]
+                seen_opt_names = set()
+                opt_names = []
+                for item in candidates[:4]:
+                    if (candidates[0][0] - item[0]) <= 0.15:
+                        d_name = str(getattr(item[2], "display_name", None) or getattr(item[2], "name", "")).strip()
+                        if d_name and d_name.casefold() not in seen_opt_names:
+                            seen_opt_names.add(d_name.casefold())
+                            opt_names.append(d_name)
                 base_cand = [c for c in candidates if not getattr(c[2], "has_filter_clause", False)]
                 if len(opt_names) > 1 and not base_cand:
                     clarification = f"Measure phrase '{m_phrase.raw_text}' is ambiguous between: {', '.join(opt_names)}. Which metric would you like to use?"

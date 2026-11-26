@@ -165,6 +165,14 @@ def _load_config(payload: Dict[str, Any], normalize_yaml_windows_path_fields) ->
         else:
             raise parse_err
 
+    from semabridge.utils.upload_storage import persist_source_uploads
+    if persist_source_uploads(config):
+        try:
+            with open(config_path, "w", encoding="utf-8") as f:
+                yaml.safe_dump(config, f, sort_keys=False)
+        except Exception as save_err:
+            logger.debug("Could not auto-save healed project config %s: %s", config_path, save_err)
+
     return str(config_path), config
 
 def _resolve_target_config(config: Dict[str, Any]) -> Dict[str, Any]:
@@ -227,11 +235,13 @@ def _build_sync_jobs(config: Dict[str, Any]) -> tuple[List[Dict[str, Any]], str,
             )
 
         if explicit_pbix and not models_list:
+            from semabridge.utils.upload_storage import resolve_source_pbix_path
+            resolved_explicit = resolve_source_pbix_path(explicit_pbix) or explicit_pbix
             sync_jobs.append(
                 {
                     "dataset_id": None,
-                    "pbix_path": explicit_pbix,
-                    "model_label": clean_pbix_model_name(explicit_pbix),
+                    "pbix_path": resolved_explicit,
+                    "model_label": clean_pbix_model_name(resolved_explicit),
                     "source_ref": explicit_pbix,
                 }
             )
@@ -373,6 +383,11 @@ def _resolve_pbix_for_model(model_name: str, base_dir: Path) -> tuple[Optional[s
             f"PBIX file not found: '{model_name}' is ambiguous ({len(matches)} files match: {shown}). "
             "Use the exact file name or a full path."
         )
+    from semabridge.utils.upload_storage import resolve_source_pbix_path
+    resolved = resolve_source_pbix_path(model_name)
+    if resolved and Path(resolved).exists():
+        return resolved, None
+
     return None, (
         f"PBIX file not found: '{model_name}' (searched '{base_dir}'). "
         "Ensure the .pbix file exists in source.pbix_folder or set source.pbix_path."

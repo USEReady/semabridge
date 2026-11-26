@@ -34,6 +34,7 @@ const UnauthorizedPage   = lazy(() => import('./pages/UnauthorizedPage'));
 const AskAiPage          = lazy(() => import('./pages/AskAiPage'));
 const GovernanceSuitePage = lazy(() => import('./pages/GovernanceSuitePage'));
 const DriftMonitoringPage = lazy(() => import('./pages/DriftMonitoringPage'));
+const BiTruthPage         = lazy(() => import('./pages/BiTruthPage'));
 
 // Old route names redirect to the new ones, keeping any ?query (bookmarks, links in run reports).
 function RedirectKeepQuery({ to }) {
@@ -120,7 +121,7 @@ export default function App() {
             <Route path="/drift-monitoring"  element={<RedirectKeepQuery to="/drift" />} />
             <Route path="/data-monitoring"   element={<RedirectKeepQuery to="/drift" />} />
             <Route path="/reverse-sync"      element={<ErrorBoundary><Suspense fallback={<PageFallback />}><GovernanceSuitePage mode="reverse-sync" /></Suspense></ErrorBoundary>} />
-            <Route path="/bi-truth"          element={<ErrorBoundary><Suspense fallback={<PageFallback />}><GovernanceSuitePage mode="bi-truth" /></Suspense></ErrorBoundary>} />
+            <Route path="/bi-truth"          element={<ErrorBoundary><Suspense fallback={<PageFallback />}><BiTruthPage /></Suspense></ErrorBoundary>} />
             <Route path="/cross-platform"    element={<ErrorBoundary><Suspense fallback={<PageFallback />}><GovernanceSuitePage mode="cross-platform" /></Suspense></ErrorBoundary>} />
             <Route path="/projects"      element={<ProjectsPage />} />
             <Route path="/projects/new"  element={<ErrorBoundary><Suspense fallback={<PageFallback />}><CreateProjectPage /></Suspense></ErrorBoundary>} />

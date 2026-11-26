@@ -238,6 +238,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 scheduler_service.save_project_schedule(project_id, schedule_payload)
             except Exception as schedule_exc:
                 logger.warning('Failed to restore project schedule %s: %s', project_id, schedule_exc)
+        try:
+            from semabridge.governance.drift_service import restore_drift_schedules
+            await asyncio.to_thread(restore_drift_schedules)
+        except Exception as drift_sched_exc:
+            logger.warning('Failed to restore drift schedules: %s', drift_sched_exc)
     except Exception as exc:
         logger.error('Scheduler startup failed: %s', exc)
 

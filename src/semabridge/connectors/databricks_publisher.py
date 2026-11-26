@@ -190,8 +190,10 @@ class DatabricksPublisher:
         self,
         config: DatabricksConfig,
         behavior: Optional[ConnectorBehavior] = None,
+        project_id: Optional[str] = None,
     ):
         self.config = config
+        self.project_id = str(project_id).strip() if project_id else getattr(config, "project_id", None)
         self._behavior = behavior or ConnectorBehavior()
         self._dbx_behavior: DatabricksBehavior = self._behavior.databricks
         self._session_pool = DatabricksSessionPool(max_retries=3)
@@ -7404,9 +7406,46 @@ class DatabricksPublisher:
                     }
                     for future in as_completed(futures):
                         view_name, success, error_msg, error_class = future.result()
+                        deployed_sql = futures[future]
                         if success:
                             views_success += 1
                             logger.info("✅ Deployed measure view: %s", view_name)
+                            try:
+                                from semabridge.governance.drift.baseline_store import save_deploy_baseline
+                                skipped_metric_names = [
+                                    str(d.get("name") or "").strip()
+                                    for d in (getattr(self, "_last_skipped_details", []) or [])
+                                    if d.get("name")
+                                ]
+                                eff_project_id = str(
+                                    getattr(self, "project_id", "")
+                                    or getattr(self.config, "project_id", "")
+                                    or getattr(sml_model, "project_id", "")
+                                    or sml_model.unique_name
+                                )
+                                save_deploy_baseline(
+                                    project_id=eff_project_id,
+                                    view_name=view_name.strip("`\""),
+                                    definition_text=deployed_sql,
+                                    platform="DATABRICKS",
+                                    not_deployed_objects=skipped_metric_names,
+                                )
+                                try:
+                                    from semabridge.governance.drift.introspection_cache import invalidate_cached_definition
+                                    invalidate_cached_definition("DATABRICKS", view_name.strip("`\""))
+                                except Exception:
+                                    pass
+                                logger.info(
+                                    "Recorded Databricks deploy baseline for view %s (project=%s)",
+                                    view_name,
+                                    eff_project_id,
+                                )
+                            except Exception as baseline_exc:  # noqa: BLE001
+                                logger.warning(
+                                    "Could not capture Databricks deploy baseline for %s (non-fatal): %s",
+                                    view_name,
+                                    baseline_exc,
+                                )
                         else:
                             views_failed += 1
                             failed_view_names.append(view_name)

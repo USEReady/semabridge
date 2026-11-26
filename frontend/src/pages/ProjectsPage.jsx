@@ -2,7 +2,7 @@
  * ProjectsPage — Folder-grouped projects with HP search, drag-drop, and import/export.
  */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import {
@@ -13,6 +13,7 @@ import {
 
 import StatusBadge from '../components/common/StatusBadge';
 import EmptyState from '../components/common/EmptyState';
+import WarehouseFilter from '../components/common/WarehouseFilter';
 import ProjectDetailModal from '../components/projects/ProjectDetailModal';
 import ImportProjectModal from '../components/projects/ImportProjectModal';
 import SmartSearchBar from '../components/common/SmartSearchBar';
@@ -217,7 +218,22 @@ export default function ProjectsPage() {
   const tagFilters = new Set(filterOptions?.tagFilters ?? DEFAULT_FILTER_OPTIONS.tagFilters);
   const viewMode = filterOptions?.viewMode ?? DEFAULT_FILTER_OPTIONS.viewMode;
   const useRegexSearch = filterOptions?.useRegexSearch ?? DEFAULT_FILTER_OPTIONS.useRegexSearch;
-  const isAnyFilterActive = sourceFilter !== 'all' || targetFilters.length > 0 || tagFilters.size > 0;
+
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedWarehouse = searchParams.get('warehouse') || '';
+  const setSelectedWarehouse = useCallback((wh) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (wh) {
+        next.set('warehouse', wh);
+      } else {
+        next.delete('warehouse');
+      }
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  const isAnyFilterActive = sourceFilter !== 'all' || targetFilters.length > 0 || tagFilters.size > 0 || !!selectedWarehouse;
 
   const hasRunning = runningProjectIds.size > 0;
   const [showDrafts, setShowDraftsState] = useState(readShowDrafts);
@@ -227,7 +243,7 @@ export default function ProjectsPage() {
   }, []);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
-  const [showTopologyDeck, setShowTopologyDeck] = useState(true);
+  const [_showTopologyDeck, _setShowTopologyDeck] = useState(true);
 
   const {
     data: projects = [],
@@ -256,6 +272,24 @@ export default function ProjectsPage() {
       return data;
     },
   });
+
+  const warehouseCounts = useMemo(() => {
+    const counts = {};
+    (projects || []).forEach((p) => {
+      const raw = String(p.platform || p.target_warehouse || '').toUpperCase().trim();
+      const plat = (!raw || raw === 'UNKNOWN' || raw === 'NOT_SET') ? 'NOT_SET' : raw;
+      counts[plat] = (counts[plat] || 0) + 1;
+    });
+    return counts;
+  }, [projects]);
+
+  const availableWarehouses = useMemo(() => {
+    const regular = Object.keys(warehouseCounts).filter((k) => k !== 'NOT_SET').sort();
+    if (warehouseCounts['NOT_SET']) {
+      regular.push('NOT_SET');
+    }
+    return regular;
+  }, [warehouseCounts]);
 
   const {
     data: folders = [],
@@ -388,7 +422,7 @@ export default function ProjectsPage() {
     if (viewMode === 'adapter' && projects.length > 0) {
       const systemsWithFailures = new Set();
       const systems = [...new Set(projects.map(p => sourceKeyOf(p)).filter(Boolean))];
-      
+
       systems.forEach(system => {
         const systemProjects = projects.filter(p => sourceKeyOf(p) === system);
         if (hasFailures(systemProjects)) {
@@ -442,14 +476,14 @@ export default function ProjectsPage() {
     }
     if (sourceFilter !== 'all' && sourceKeyOf(p) !== sourceFilter) return false;
     if (targetFilters.length > 0 && !targetFilters.includes(String(p.target_type || '').toLowerCase())) return false;
-    
+
     // Tag filtering - if tags are selected, project must have ALL selected tags
     if (tagFilters.size > 0) {
       const projectTags = new Set(p.tags || []);
       const hasAllTags = [...tagFilters].every(tag => projectTags.has(tag));
       if (!hasAllTags) return false;
     }
-    
+
     // Filter out auto-generated test projects
     const projectName = (p.name || '').trim().toLowerCase();
     const isTestProject = (
@@ -461,9 +495,14 @@ export default function ProjectsPage() {
     );
     if (isTestProject) return false;
     if (!showDrafts && !isActiveProject(p)) return false;
-    
+    if (selectedWarehouse) {
+      const raw = String(p.platform || p.target_warehouse || '').toUpperCase().trim();
+      const plat = (!raw || raw === 'UNKNOWN' || raw === 'NOT_SET') ? 'NOT_SET' : raw;
+      if (plat !== selectedWarehouse.toUpperCase()) return false;
+    }
+
     return true;
-  }), [projects, selectedFolder, sourceFilter, targetFilters, tagFilters, showDrafts]);
+  }), [projects, selectedFolder, sourceFilter, targetFilters, tagFilters, showDrafts, selectedWarehouse]);
 
   const draftCount = useMemo(() => projects.filter(p => !isActiveProject(p)).length, [projects]);
 
@@ -474,22 +513,22 @@ export default function ProjectsPage() {
 
   const filtered = useMemo(() => searchQuery.trim()
     ? folderFiltered.filter((p) => {
-        if (queryMode.mode === 'prefix' && queryMode.strictPrefix) {
-          return matchesSmartQuery(p.name || '', searchQuery, useRegexSearch);
-        }
+      if (queryMode.mode === 'prefix' && queryMode.strictPrefix) {
+        return matchesSmartQuery(p.name || '', searchQuery, useRegexSearch);
+      }
 
-        const haystack = [
-          p.name,
-          p.description,
-          sourceKeyOf(p),
-          p.workspace_id,
-          p.target_type,
-          ...(Array.isArray(p.tags) ? p.tags : []),
-        ].join(' ');
-        return matchesSmartQuery(haystack, searchQuery, useRegexSearch);
-      })
+      const haystack = [
+        p.name,
+        p.description,
+        sourceKeyOf(p),
+        p.workspace_id,
+        p.target_type,
+        ...(Array.isArray(p.tags) ? p.tags : []),
+      ].join(' ');
+      return matchesSmartQuery(haystack, searchQuery, useRegexSearch);
+    })
     : folderFiltered,
-  [folderFiltered, queryMode, searchQuery, useRegexSearch]);
+    [folderFiltered, queryMode, searchQuery, useRegexSearch]);
 
   /* ── Folder actions ── */
   const handleCreateFolder = async () => {
@@ -707,267 +746,267 @@ export default function ProjectsPage() {
 
       {/* ── Folder/Adapter Sidebar ── */}
       {showFolderPanel && (
-      <aside style={{
-        width: sidebarWidth, flexShrink: 0,
-        borderLeft: '1px solid var(--border-main)',
-        borderRight: 'none',
-        display: 'flex', flexDirection: 'column',
-        padding: '16px 0',
-        overflowY: 'auto',
-        position: 'relative',
-        background: 'var(--bg-app)',
-      }}>
-        <div
-          onMouseDown={(e) => {
-            e.preventDefault();
-            setIsResizing(true);
-          }}
-          style={{
-            position: 'absolute',
-            left: -2, top: 0, bottom: 0,
-            width: 4,
-            cursor: 'col-resize',
-            zIndex: 50,
-            transition: 'background 0.2s',
-          }}
-          className={isResizing ? 'bg-accent' : 'hover:bg-accent/40'}
-        />
-        <div style={{ padding: '0 12px', marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
-            <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-                Folders
+        <aside style={{
+          width: sidebarWidth, flexShrink: 0,
+          borderLeft: '1px solid var(--border-main)',
+          borderRight: 'none',
+          display: 'flex', flexDirection: 'column',
+          padding: '16px 0',
+          overflowY: 'auto',
+          position: 'relative',
+          background: 'var(--bg-app)',
+        }}>
+          <div
+            onMouseDown={(e) => {
+              e.preventDefault();
+              setIsResizing(true);
+            }}
+            style={{
+              position: 'absolute',
+              left: -2, top: 0, bottom: 0,
+              width: 4,
+              cursor: 'col-resize',
+              zIndex: 50,
+              transition: 'background 0.2s',
+            }}
+            className={isResizing ? 'bg-accent' : 'hover:bg-accent/40'}
+          />
+          <div style={{ padding: '0 12px', marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
+              <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                  Folders
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowFolderPanel(false)}
+                  title="Hide folders"
+                  aria-label="Hide folders"
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: 2, display: 'flex' }}
+                >
+                  <X size={13} />
+                </button>
               </span>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                <button
+                  onClick={() => updateFilterOption('viewMode', 'folder')}
+                  style={{
+                    border: viewMode === 'folder' ? '1px solid var(--accent-blue)' : '1px solid var(--border-dark, #2d3139)',
+                    borderRadius: 6,
+                    padding: '6px 4px',
+                    fontSize: 11,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    background: viewMode === 'folder' ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
+                    color: viewMode === 'folder' ? 'var(--accent-blue)' : '#888888',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  Group by Folder
+                </button>
+                <button
+                  onClick={() => updateFilterOption('viewMode', 'adapter')}
+                  style={{
+                    border: viewMode === 'adapter' ? '1px solid var(--accent-blue)' : '1px solid var(--border-dark, #2d3139)',
+                    borderRadius: 6,
+                    padding: '6px 4px',
+                    fontSize: 11,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    background: viewMode === 'adapter' ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
+                    color: viewMode === 'adapter' ? 'var(--accent-blue)' : '#888888',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  Group by System
+                </button>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 4, marginLeft: 8 }}>
               <button
-                type="button"
-                onClick={() => setShowFolderPanel(false)}
-                title="Hide folders"
-                aria-label="Hide folders"
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: 2, display: 'flex' }}
-              >
-                <X size={13} />
-              </button>
-            </span>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-              <button
-                onClick={() => updateFilterOption('viewMode', 'folder')}
+                onClick={() => updateFilterOption('viewMode', viewMode === 'folder' ? 'adapter' : 'folder')}
+                title={viewMode === 'folder' ? 'View by system' : 'View by folder'}
                 style={{
-                  border: viewMode === 'folder' ? '1px solid var(--accent-blue)' : '1px solid var(--border-dark, #2d3139)',
-                  borderRadius: 6,
-                  padding: '6px 4px',
-                  fontSize: 11,
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  background: viewMode === 'folder' ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
-                  color: viewMode === 'folder' ? 'var(--accent-blue)' : '#888888',
-                  transition: 'all 0.2s'
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  color: 'var(--text-tertiary)', padding: 2,
+                  display: 'flex', alignItems: 'center',
                 }}
               >
-                Group by Folder
+                <Layers size={13} />
               </button>
-              <button
-                onClick={() => updateFilterOption('viewMode', 'adapter')}
-                style={{
-                  border: viewMode === 'adapter' ? '1px solid var(--accent-blue)' : '1px solid var(--border-dark, #2d3139)',
-                  borderRadius: 6,
-                  padding: '6px 4px',
-                  fontSize: 11,
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  background: viewMode === 'adapter' ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
-                  color: viewMode === 'adapter' ? 'var(--accent-blue)' : '#888888',
-                  transition: 'all 0.2s'
-                }}
-              >
-                Group by System
-              </button>
+              {viewMode === 'folder' && (
+                <button
+                  onClick={() => setNewFolderMode(true)}
+                  title="New folder"
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: 2 }}
+                >
+                  <FolderPlus size={13} />
+                </button>
+              )}
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 4, marginLeft: 8 }}>
-            <button
-              onClick={() => updateFilterOption('viewMode', viewMode === 'folder' ? 'adapter' : 'folder')}
-              title={viewMode === 'folder' ? 'View by system' : 'View by folder'}
-              style={{
-                background: 'none', border: 'none', cursor: 'pointer',
-                color: 'var(--text-tertiary)', padding: 2,
-                display: 'flex', alignItems: 'center',
-              }}
-            >
-              <Layers size={13} />
-            </button>
-            {viewMode === 'folder' && (
-              <button
-                onClick={() => setNewFolderMode(true)}
-                title="New folder"
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: 2 }}
-              >
-                <FolderPlus size={13} />
-              </button>
-            )}
-          </div>
-        </div>
 
-        {/* All Projects */}
-        <SidebarItem
-          color="var(--text-tertiary)"
-          label={`All Projects (${projects.length})`}
-          active={selectedFolder === null}
-          onClick={() => updateFilterOption('selectedFolder', null)}
-          isDraggingGlobal={!!draggingProjectId}
-          onDragOver={e => { e.preventDefault(); setDragOverFolder('all'); }}
-          onDragLeave={() => setDragOverFolder(null)}
-          onDrop={async e => {
-            e.preventDefault();
-            const pid = e.dataTransfer.getData('projectId');
-            if (!pid) return;
-            await api.moveProjectToFolder(pid, null);
-            setProjects(prev => prev.map(p => p.id === pid ? { ...p, folder_id: null } : p));
-            setDraggingProjectId(null);
-            setDragOverFolder(null);
-          }}
-          isDragOver={dragOverFolder === 'all'}
-        />
+          {/* All Projects */}
+          <SidebarItem
+            color="var(--text-tertiary)"
+            label={`All Projects (${projects.length})`}
+            active={selectedFolder === null}
+            onClick={() => updateFilterOption('selectedFolder', null)}
+            isDraggingGlobal={!!draggingProjectId}
+            onDragOver={e => { e.preventDefault(); setDragOverFolder('all'); }}
+            onDragLeave={() => setDragOverFolder(null)}
+            onDrop={async e => {
+              e.preventDefault();
+              const pid = e.dataTransfer.getData('projectId');
+              if (!pid) return;
+              await api.moveProjectToFolder(pid, null);
+              setProjects(prev => prev.map(p => p.id === pid ? { ...p, folder_id: null } : p));
+              setDraggingProjectId(null);
+              setDragOverFolder(null);
+            }}
+            isDragOver={dragOverFolder === 'all'}
+          />
 
-        {/* Folder list or Source list */}
-        {viewMode === 'folder' ? (
-          folders.map(f => {
-            const projectsInFolder = projects.filter(p => p.folder_id === f.id);
-            return (
-              <SidebarFolder
-                key={f.id}
-                folder={f}
-                projectsInFolder={projectsInFolder}
-                active={selectedFolder === f.id}
-                onClick={() => updateFilterOption('selectedFolder', f.id)}
-                isRenaming={renameFolderId === f.id}
-                renameValue={renameFolderName}
-                onRenameChange={setRenameFolderName}
-                onRenameSubmit={() => handleRenameFolder(f.id)}
-                onRenameStart={() => { setRenameFolderId(f.id); setRenameFolderName(f.name); }}
-                onDelete={() => handleDeleteFolder(f.id)}
-                isDragOver={dragOverFolder === f.id}
-                isDraggingGlobal={!!draggingProjectId}
-                onDragOver={e => { e.preventDefault(); setDragOverFolder(f.id); }}
-                onDragLeave={() => setDragOverFolder(null)}
-                onDrop={async e => {
-                  await handleDropOnFolder(e, f.id);
-                  setDraggingProjectId(null);
+          {/* Folder list or Source list */}
+          {viewMode === 'folder' ? (
+            folders.map(f => {
+              const projectsInFolder = projects.filter(p => p.folder_id === f.id);
+              return (
+                <SidebarFolder
+                  key={f.id}
+                  folder={f}
+                  projectsInFolder={projectsInFolder}
+                  active={selectedFolder === f.id}
+                  onClick={() => updateFilterOption('selectedFolder', f.id)}
+                  isRenaming={renameFolderId === f.id}
+                  renameValue={renameFolderName}
+                  onRenameChange={setRenameFolderName}
+                  onRenameSubmit={() => handleRenameFolder(f.id)}
+                  onRenameStart={() => { setRenameFolderId(f.id); setRenameFolderName(f.name); }}
+                  onDelete={() => handleDeleteFolder(f.id)}
+                  isDragOver={dragOverFolder === f.id}
+                  isDraggingGlobal={!!draggingProjectId}
+                  onDragOver={e => { e.preventDefault(); setDragOverFolder(f.id); }}
+                  onDragLeave={() => setDragOverFolder(null)}
+                  onDrop={async e => {
+                    await handleDropOnFolder(e, f.id);
+                    setDraggingProjectId(null);
+                  }}
+                  onRunAll={() => {
+                    projectsInFolder.forEach(p => handleRunNow(p));
+                  }}
+                />
+              );
+            })
+          ) : (
+            // Adapter/Source view (Refined)
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              {[...new Set(projects.map(p => sourceKeyOf(p)).filter(Boolean))]
+                .sort()
+                .map(source => {
+                  const sourceProjects = projects.filter(p => sourceKeyOf(p) === source);
+                  return (
+                    <SidebarSystemGroup
+                      key={source}
+                      systemName={source.toUpperCase()}
+                      projects={sourceProjects}
+                      icon={renderSourceIcon(source, 14)}
+                      expanded={expandedGroups.has(source)}
+                      onToggle={() => {
+                        setExpandedGroups(prev => {
+                          const next = new Set(prev);
+                          if (next.has(source)) next.delete(source);
+                          else next.add(source);
+                          return next;
+                        });
+                      }}
+                      onHeaderClick={() => {
+                        updateFilterOption('selectedFolder', `source:${source}`);
+                      }}
+                      activeProject={selectedFolder && selectedFolder.startsWith('project:') ? projects.find(p => `project:${p.id}` === selectedFolder) : null}
+                      onProjectClick={(project) => {
+                        updateFilterOption('selectedFolder', `project:${project.id}`);
+                        setActiveProjectId(project.id);
+                      }}
+                      onMenuToggle={setMenuOpen}
+                      onRunFailed={() => {
+                        const failed = sourceProjects.filter(p => (p.status || '').toLowerCase() === 'failed');
+                        if (failed.length > 0) {
+                          failed.forEach(p => handleRunNow(p));
+                        } else {
+                          // If none failed, run all that are 'stale' or just run all
+                          sourceProjects.forEach(p => handleRunNow(p));
+                        }
+                      }}
+                      onForceRunAll={() => {
+                        sourceProjects.forEach(p => handleRunNow(p));
+                      }}
+                    />
+                  );
+                })}
+              <SidebarAddButton
+                label="Add New System/Connection"
+                onClick={() => navigate('/connections/new')}
+              />
+            </div>
+          )}
+
+          {/* New folder input */}
+          {viewMode === 'folder' && newFolderMode && (
+            <div style={{ padding: '4px 10px', display: 'flex', alignItems: 'center', gap: 4 }}>
+              <input
+                autoFocus
+                value={newFolderName}
+                onChange={e => setNewFolderName(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') handleCreateFolder();
+                  if (e.key === 'Escape') { setNewFolderMode(false); setNewFolderName(''); }
                 }}
-                onRunAll={() => {
-                  projectsInFolder.forEach(p => handleRunNow(p));
+                placeholder="Folder name"
+                style={{
+                  flex: 1, fontSize: 12, padding: '4px 8px',
+                  background: 'var(--bg-input)', border: '1px solid var(--accent-blue)',
+                  borderRadius: 5, color: 'var(--text-primary)', outline: 'none',
                 }}
               />
-            );
-          })
-        ) : (
-          // Adapter/Source view (Refined)
-          <div style={{ flex: 1, overflowY: 'auto' }}>
-            {[...new Set(projects.map(p => sourceKeyOf(p)).filter(Boolean))]
-              .sort()
-              .map(source => {
-                const sourceProjects = projects.filter(p => sourceKeyOf(p) === source);
-                return (
-                  <SidebarSystemGroup
-                    key={source}
-                    systemName={source.toUpperCase()}
-                    projects={sourceProjects}
-                    icon={renderSourceIcon(source, 14)}
-                    expanded={expandedGroups.has(source)}
-                    onToggle={() => {
-                      setExpandedGroups(prev => {
-                        const next = new Set(prev);
-                        if (next.has(source)) next.delete(source);
-                        else next.add(source);
-                        return next;
-                      });
-                    }}
-                    onHeaderClick={() => {
-                      updateFilterOption('selectedFolder', `source:${source}`);
-                    }}
-                    activeProject={selectedFolder && selectedFolder.startsWith('project:') ? projects.find(p => `project:${p.id}` === selectedFolder) : null}
-                    onProjectClick={(project) => {
-                      updateFilterOption('selectedFolder', `project:${project.id}`);
-                      setActiveProjectId(project.id);
-                    }}
-                    onMenuToggle={setMenuOpen}
-                    onRunFailed={() => {
-                      const failed = sourceProjects.filter(p => (p.status || '').toLowerCase() === 'failed');
-                      if (failed.length > 0) {
-                        failed.forEach(p => handleRunNow(p));
-                      } else {
-                        // If none failed, run all that are 'stale' or just run all
-                        sourceProjects.forEach(p => handleRunNow(p));
-                      }
-                    }}
-                    onForceRunAll={() => {
-                      sourceProjects.forEach(p => handleRunNow(p));
-                    }}
-                  />
-                );
-              })}
-            <SidebarAddButton 
-              label="Add New System/Connection" 
-              onClick={() => navigate('/connections/new')} 
-            />
-          </div>
-        )}
+              <button onClick={handleCreateFolder} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent-blue)' }}>
+                <Check size={13} />
+              </button>
+              <button onClick={() => { setNewFolderMode(false); setNewFolderName(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)' }}>
+                <X size={13} />
+              </button>
+            </div>
+          )}
 
-        {/* New folder input */}
-        {viewMode === 'folder' && newFolderMode && (
-          <div style={{ padding: '4px 10px', display: 'flex', alignItems: 'center', gap: 4 }}>
-            <input
-              autoFocus
-              value={newFolderName}
-              onChange={e => setNewFolderName(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter') handleCreateFolder();
-                if (e.key === 'Escape') { setNewFolderMode(false); setNewFolderName(''); }
-              }}
-              placeholder="Folder name"
-              style={{
-                flex: 1, fontSize: 12, padding: '4px 8px',
-                background: 'var(--bg-input)', border: '1px solid var(--accent-blue)',
-                borderRadius: 5, color: 'var(--text-primary)', outline: 'none',
-              }}
-            />
-            <button onClick={handleCreateFolder} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent-blue)' }}>
-              <Check size={13} />
-            </button>
-            <button onClick={() => { setNewFolderMode(false); setNewFolderName(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)' }}>
-              <X size={13} />
-            </button>
+          {/* Drop-to-root zone */}
+          <div
+            style={{
+              margin: '8px 10px 0',
+              borderRadius: 6,
+              border: draggingProjectId ? '1.5px dashed var(--accent-blue)' : '1px dashed var(--border-subtle)',
+              padding: '8px 10px',
+              fontSize: 11,
+              color: draggingProjectId ? 'var(--accent-blue)' : 'var(--text-tertiary)',
+              textAlign: 'center',
+              background: dragOverFolder === 'root' ? 'var(--accent-blue)10' : 'transparent',
+              transition: 'all 0.2s',
+              opacity: draggingProjectId ? 1 : 0.6,
+            }}
+            onDragOver={e => { e.preventDefault(); setDragOverFolder('root'); }}
+            onDragLeave={() => setDragOverFolder(null)}
+            onDrop={async e => {
+              e.preventDefault();
+              const pid = e.dataTransfer.getData('projectId');
+              if (!pid) return;
+              await api.moveProjectToFolder(pid, null);
+              setProjects(prev => prev.map(p => p.id === pid ? { ...p, folder_id: null } : p));
+              setDraggingProjectId(null);
+              setDragOverFolder(null);
+            }}
+          >
+            {dragOverFolder === 'root' ? 'Release to remove' : ''}
           </div>
-        )}
-
-        {/* Drop-to-root zone */}
-        <div
-          style={{
-            margin: '8px 10px 0',
-            borderRadius: 6,
-            border: draggingProjectId ? '1.5px dashed var(--accent-blue)' : '1px dashed var(--border-subtle)',
-            padding: '8px 10px',
-            fontSize: 11,
-            color: draggingProjectId ? 'var(--accent-blue)' : 'var(--text-tertiary)',
-            textAlign: 'center',
-            background: dragOverFolder === 'root' ? 'var(--accent-blue)10' : 'transparent',
-            transition: 'all 0.2s',
-            opacity: draggingProjectId ? 1 : 0.6,
-          }}
-          onDragOver={e => { e.preventDefault(); setDragOverFolder('root'); }}
-          onDragLeave={() => setDragOverFolder(null)}
-          onDrop={async e => {
-            e.preventDefault();
-            const pid = e.dataTransfer.getData('projectId');
-            if (!pid) return;
-            await api.moveProjectToFolder(pid, null);
-            setProjects(prev => prev.map(p => p.id === pid ? { ...p, folder_id: null } : p));
-            setDraggingProjectId(null);
-            setDragOverFolder(null);
-          }}
-        >
-          {dragOverFolder === 'root' ? 'Release to remove' : ''}
-        </div>
-      </aside>
+        </aside>
       )}
 
       {/* ── Main content ── */}
@@ -1033,6 +1072,13 @@ export default function ProjectsPage() {
               )}
               <option value="__manage">Manage folders…</option>
             </select>
+            <WarehouseFilter
+              warehouses={availableWarehouses}
+              selectedWarehouse={selectedWarehouse}
+              onSelectWarehouse={setSelectedWarehouse}
+              counts={warehouseCounts}
+              compact
+            />
             <div style={{ flex: 1, maxWidth: 440 }}>
               <SmartSearchBar
                 value={searchQuery}
@@ -1304,29 +1350,32 @@ export default function ProjectsPage() {
             runningProjectIds={runningProjectIds}
           />
         ) : (
-        <VirtualProjectGrid
-          ontologyHealth={ontologyHealth}
-          perProject={portfolio?.per_project || {}}
-          filtered={filtered}
-          loading={loading}
-          searchQuery={searchQuery}
-          menuOpen={menuOpen}
-          setMenuOpen={setMenuOpen}
-          setActiveProjectId={setActiveProjectId}
-          setDetailProject={setDetailProject}
-          navigate={navigate}
-          handleRunNow={handleRunNow}
-          runningProjectIds={runningProjectIds}
-          handleDuplicate={handleDuplicate}
-          handleExportSingle={handleExportSingle}
-          handleDelete={handleDelete}
-          selectedIds={selectedIds}
-          onToggleSelect={toggleSelect}
-          handleDragStart={handleDragStart}
-          handleDragEnd={handleDragEnd}
-          setProjectListScrollTop={setProjectListScrollTop}
-          projectListScrollTop={projectListScrollTop}
-        />
+          <VirtualProjectGrid
+            ontologyHealth={ontologyHealth}
+            perProject={portfolio?.per_project || {}}
+            filtered={filtered}
+            loading={loading}
+            searchQuery={searchQuery}
+            setSearchQuery={setSearchQuery}
+            selectedWarehouse={selectedWarehouse}
+            setSelectedWarehouse={setSelectedWarehouse}
+            menuOpen={menuOpen}
+            setMenuOpen={setMenuOpen}
+            setActiveProjectId={setActiveProjectId}
+            setDetailProject={setDetailProject}
+            navigate={navigate}
+            handleRunNow={handleRunNow}
+            runningProjectIds={runningProjectIds}
+            handleDuplicate={handleDuplicate}
+            handleExportSingle={handleExportSingle}
+            handleDelete={handleDelete}
+            selectedIds={selectedIds}
+            onToggleSelect={toggleSelect}
+            handleDragStart={handleDragStart}
+            handleDragEnd={handleDragEnd}
+            setProjectListScrollTop={setProjectListScrollTop}
+            projectListScrollTop={projectListScrollTop}
+          />
         )}
       </div>
 
@@ -1349,7 +1398,7 @@ export default function ProjectsPage() {
 /* ─── Sidebar helpers ─── */
 function FolderStatusDistribution({ projects = [] }) {
   if (projects.length === 0) return null;
-  
+
   const total = projects.length;
   const counts = projects.reduce((acc, p) => {
     const s = (p.status || 'idle').toLowerCase();
@@ -1367,12 +1416,12 @@ function FolderStatusDistribution({ projects = [] }) {
   ];
 
   return (
-    <div style={{ 
-      display: 'flex', 
-      height: 6, 
-      width: 60, 
-      background: 'var(--bg-surface-raised, #1a1d23)', 
-      borderRadius: 99, 
+    <div style={{
+      display: 'flex',
+      height: 6,
+      width: 60,
+      background: 'var(--bg-surface-raised, #1a1d23)',
+      borderRadius: 99,
       overflow: 'hidden',
       marginRight: 8
     }}>
@@ -1380,13 +1429,13 @@ function FolderStatusDistribution({ projects = [] }) {
         const count = counts[s.key] || 0;
         if (count === 0) return null;
         return (
-          <div 
-            key={s.key} 
-            style={{ 
-              width: `${(count / total) * 100}%`, 
-              height: '100%', 
-              background: s.color 
-            }} 
+          <div
+            key={s.key}
+            style={{
+              width: `${(count / total) * 100}%`,
+              height: '100%',
+              background: s.color
+            }}
           />
         );
       })}
@@ -1475,11 +1524,11 @@ function SidebarFolder({
           {folder.name}
         </span>
       )}
-      
+
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         {hover && !isRenaming ? (
           <div className="flex items-center gap-2 animate-fade-in">
-            <button 
+            <button
               onClick={e => { e.stopPropagation(); onRunAll(); }}
               title="Run All"
               style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: 1 }}
@@ -1574,7 +1623,7 @@ const ProjectCard = React.memo(function ProjectCard({
             {renderSourceIcon(sourceKey, 20)}
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.2 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.2, display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={{
                 whiteSpace: 'nowrap',
                 overflow: 'hidden',
@@ -1583,6 +1632,23 @@ const ProjectCard = React.memo(function ProjectCard({
               }}>
                 {project.name}
               </span>
+              {project.platform && project.platform !== 'UNKNOWN' && (
+                <span
+                  style={{
+                    fontSize: 9.5,
+                    padding: '1px 5px',
+                    borderRadius: 3,
+                    background: 'rgba(59, 130, 246, 0.1)',
+                    border: '1px solid rgba(59, 130, 246, 0.25)',
+                    color: 'var(--color-primary, #3b82f6)',
+                    fontWeight: 600,
+                    textTransform: 'uppercase',
+                    flexShrink: 0,
+                  }}
+                >
+                  {project.platform}
+                </span>
+              )}
             </div>
             <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               <span>{routeLabel}</span>
@@ -1803,7 +1869,8 @@ const CARD_MIN_WIDTH = 290;
 const GRID_GAP = 14;
 
 function VirtualProjectGrid({
-  filtered, loading, searchQuery,
+  filtered, loading, searchQuery, setSearchQuery,
+  selectedWarehouse, setSelectedWarehouse,
   menuOpen, setMenuOpen, setActiveProjectId, setDetailProject,
   navigate, handleRunNow, runningProjectIds,
   handleDuplicate, handleExportSingle, handleDelete,
@@ -1873,9 +1940,17 @@ function VirtualProjectGrid({
   }
   if (filtered.length === 0) {
     return (
-      <div style={{ padding: '80px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
-        No projects match "{searchQuery}"
-      </div>
+      <EmptyState
+        icon={Database}
+        title={selectedWarehouse ? `No projects for ${selectedWarehouse}` : 'No matching projects'}
+        description={
+          selectedWarehouse
+            ? `There are no projects configured for ${selectedWarehouse}.`
+            : `No projects match "${searchQuery}".`
+        }
+        actionLabel={selectedWarehouse ? 'Clear warehouse filter' : (searchQuery ? 'Clear search' : null)}
+        onAction={selectedWarehouse ? () => setSelectedWarehouse('') : (searchQuery ? () => setSearchQuery('') : null)}
+      />
     );
   }
 

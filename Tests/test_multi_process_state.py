@@ -303,7 +303,7 @@ def test_old_drift_json_is_imported_once_into_an_empty_table(processes, monkeypa
 
     state_file = tmp_path / "legacy_drift.json"
     monkeypatch.setattr(drift_service, "_state_path", lambda: state_file)
-    drift_service.clear_drift_events()
+    drift_service.clear_drift_events(_allow_all_for_testing=True)
     state_file.write_text(json.dumps({"schedules": [], "events": [
         {"id": "legacy-1", "project_id": "proj-old", "metric_name": "M", "status": "pending",
          "proposed_snowflake_definition": "SUM(X)"},

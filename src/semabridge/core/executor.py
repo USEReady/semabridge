@@ -201,6 +201,26 @@ class CLIExecutor:
         if not self.config.source:
             raise ExecutionError(1, "source configuration is required")
         
+        # Verify source file availability early at Step 1
+        src_type = str(getattr(self.config.source, "type", "")).lower()
+        if src_type in ("pbix", "powerbi", "tableau", "file"):
+            raw_path = (
+                getattr(self.config.source, "pbix_path", None)
+                or getattr(self.config.source, "pbix_file_path", None)
+                or getattr(self.config.source, "path", None)
+            )
+            try:
+                from semabridge.utils.upload_storage import resolve_source_pbix_path
+                resolved = resolve_source_pbix_path(raw_path) if raw_path else None
+            except Exception:
+                resolved = None
+            if not resolved or not Path(resolved).is_file():
+                filename = Path(str(raw_path or self.config.model_name)).name if raw_path else str(self.config.model_name)
+                raise ExecutionError(
+                    1,
+                    f"The source file '{filename}' is no longer available. Please re-upload the source file to run this project."
+                )
+        
         logger.info(f"  Source type: {self.config.source.type}")
         if self.config.target:
             logger.info(f"  Target type: {self.config.target.type}")

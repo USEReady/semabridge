@@ -179,7 +179,7 @@ def test_run_drift_check_detects_live_view_expression_mismatch():
 
 
 def test_live_capture_returns_baseline_captured_never_in_sync():
-    """First check on an existing deployed view with no deploy baseline captures live and returns BASELINE_CAPTURED."""
+    """First check on an existing deployed view with no deploy baseline returns NOT_CHECKED with NO_DEPLOY_BASELINE."""
     mock_domain = MagicMock()
     mock_domain.domain = "ai_sample"
     mock_domain.id = "ai_sample"
@@ -204,14 +204,15 @@ def test_live_capture_returns_baseline_captured_never_in_sync():
         mock_conn.return_value.cursor.return_value = mock_cur
 
         result = run_drift_check(project_id="proj-sample")
-        assert result["status"] == "BASELINE_CAPTURED"
-        assert result["baseline_source"] == "live_capture"
-        assert result["status"] != "IN_SYNC"
+        assert result["status"] == "NOT_CHECKED"
+        assert result["reason_code"] == "NO_DEPLOY_BASELINE"
+        assert result["not_checked_reason"] == "NO_DEPLOY_BASELINE"
+        assert result.get("proposed_action") == "redeploy"
 
-        # State records baseline
+        # State records NOT_CHECKED
         target_info = get_project_drift_target_info("proj-sample")
-        assert target_info["status"] == "BASELINE_CAPTURED"
-        assert target_info["baseline_source"] == "live_capture"
+        assert target_info["status"] == "NOT_CHECKED"
+        assert target_info["not_checked_reason"] == "NO_DEPLOY_BASELINE"
 
 
 def test_source_changed_drift_detection():

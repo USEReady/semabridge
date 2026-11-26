@@ -1227,12 +1227,46 @@ class ModelRepository:
         except Exception as exc:
             logger.debug("Database error listing project deployments: %s", exc)
 
+        # Deduplicate deployments by canonical view name (suffix without quotes/schema)
+        # If multiple entries exist for the same canonical view (e.g. bare vs qualified):
+        # - keep latest deployed_at
+        # - prefer database, schema, and fully-qualified semantic_view if any entry had them
+        deduped: List[Dict[str, Any]] = []
+        canonical_map: Dict[str, Dict[str, Any]] = {}
+        for d in deployments:
+            c_name = str(d.get("view") or "").strip().strip('"').split(".")[-1].upper()
+            if not c_name:
+                continue
+            if c_name not in canonical_map:
+                entry = dict(d)
+                canonical_map[c_name] = entry
+                deduped.append(entry)
+            else:
+                existing = canonical_map[c_name]
+                if not (existing.get("database") and existing.get("schema")) and (d.get("database") and d.get("schema")):
+                    existing["database"] = d["database"]
+                    existing["schema"] = d["schema"]
+                    existing["semantic_view"] = d["semantic_view"]
+                t_exist = str(existing.get("deployed_at") or "")
+                t_new = str(d.get("deployed_at") or "")
+                if t_new and (not t_exist or t_new > t_exist):
+                    existing["deployed_at"] = d["deployed_at"]
+                    if d.get("run_id"):
+                        existing["run_id"] = d["run_id"]
+                    if d.get("snapshot_id"):
+                        existing["snapshot_id"] = d["snapshot_id"]
+                if d.get("managed") and not existing.get("managed"):
+                    existing["managed"] = True
+
+        deployments = deduped
         deployments.sort(
             key=lambda d: str(d.get("deployed_at") or ""),
             reverse=True,
         )
 
         if deployments:
+            for d in deployments:
+                d["is_latest"] = False
             deployments[0]["is_latest"] = True
 
         if include_unmanaged and (proj_db_default or proj_schema_default):
@@ -1244,6 +1278,9 @@ class ModelRepository:
                         v_name = sv_info.get("name") or ""
                         v_db = sv_info.get("database_name") or proj_db_default or ""
                         v_sch = sv_info.get("schema_name") or proj_schema_default or ""
+                        v_canon = v_name.strip().strip('"').split(".")[-1].upper()
+                        if v_canon in canonical_map:
+                            continue
                         norm_key = f"{v_db}.{v_sch}.{v_name}".upper()
                         if norm_key in seen_views:
                             continue

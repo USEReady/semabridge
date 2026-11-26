@@ -17,6 +17,8 @@ import { useProjectPageData, runId, scheduleText } from '../components/project/p
 import { Pill, Chip } from '../components/project/projectUi';
 import { btn, btnPrimary } from '../components/project/projectStyles';
 import { useUIStore } from '../store/uiStore';
+import BiTruthGateStatus from '../components/bitruth/BiTruthGateStatus';
+import { authFetch } from '../utils/api';
 
 const TABS = [
   { key: 'overview', label: 'Overview' },
@@ -87,6 +89,15 @@ export default function ProjectDetailPage() {
   const tabParam = searchParams.get('tab');
   const tab = TABS.some(t => t.key === tabParam) ? tabParam : 'overview';
   const setActiveProjectId = useUIStore(state => state.setActiveProjectId);
+  const [gateVerdict, setGateVerdict] = useState(null);
+
+  useEffect(() => {
+    if (!id) return;
+    authFetch(`/api/bi-truth/gate/${encodeURIComponent(id)}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data && data.status !== 'not_gated') setGateVerdict(data); })
+      .catch(() => {});
+  }, [id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -211,6 +222,13 @@ export default function ProjectDetailPage() {
           {running ? 'Starting…' : 'Run now'}
         </button>
       </div>
+
+      {/* BI Truth Deploy Gate Alert if present */}
+      {gateVerdict && (
+        <div style={{ marginTop: 14 }}>
+          <BiTruthGateStatus verdict={gateVerdict} />
+        </div>
+      )}
 
       {/* Tabs */}
       <div role="tablist" style={{ display: 'flex', gap: 4, marginTop: 14, marginBottom: 18, borderBottom: '1px solid var(--border-main)', overflowX: 'auto' }}>

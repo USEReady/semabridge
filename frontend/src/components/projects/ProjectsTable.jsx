@@ -121,7 +121,25 @@ function Row({ project, summary, health, expanded, onToggleExpand, selected, onT
               {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
             </button>
             <div style={{ minWidth: 0 }}>
-              <b style={{ color: 'var(--text-primary)', fontSize: 12.5 }}>{project.name}</b>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <b style={{ color: 'var(--text-primary)', fontSize: 12.5 }}>{project.name}</b>
+                {project.platform && project.platform !== 'UNKNOWN' && (
+                  <span
+                    style={{
+                      fontSize: 9.5,
+                      padding: '1px 5px',
+                      borderRadius: 3,
+                      background: 'rgba(59, 130, 246, 0.1)',
+                      border: '1px solid rgba(59, 130, 246, 0.25)',
+                      color: 'var(--color-primary, #3b82f6)',
+                      fontWeight: 600,
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    {project.platform}
+                  </span>
+                )}
+              </div>
               <div style={{ ...faint, fontSize: 11, textTransform: 'capitalize' }}>
                 {routeOf(project)}{summary?.models ? ` · ${summary.models} model${summary.models === 1 ? '' : 's'}` : ''}
               </div>

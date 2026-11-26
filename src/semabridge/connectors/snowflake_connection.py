@@ -284,7 +284,7 @@ def get_snowflake_connect_kwargs(config: SnowflakeConfig) -> Dict[str, Any]:
     # Auto-detect authentication type:
     # If auth_type is unset or default 'password', but private_key is provided and password is empty,
     # automatically switch to 'keypair' authentication.
-    auth = (config.auth_type or "").lower().strip()
+    auth = (config.auth_type or "").lower().strip().replace("-", "").replace("_", "")
     if not auth or auth == "password":
         if not config.password and config.private_key:
             auth = "keypair"

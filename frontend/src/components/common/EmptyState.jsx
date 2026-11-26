@@ -1,59 +1,120 @@
+import React from 'react';
+
 /**
- * EmptyState — dashed-border placeholder card shown when a list is empty.
- * Props:
- *   icon        : React element (icon component, e.g. <FolderOpen size={32} />)
- *   title       : string
- *   description : string
- *   actionLabel : string
- *   onAction    : () => void
+ * Shared Empty State Component
+ * Renders an icon, title, one-line explanation, and primary/secondary actions.
  */
-export default function EmptyState({ icon, title, description, actionLabel, onAction }) {
+export default function EmptyState({
+  icon: Icon,
+  title,
+  description,
+  actionLabel,
+  onAction,
+  secondaryLabel,
+  onSecondary,
+  style = {},
+  compact = false,
+}) {
   return (
     <div
-      className="flex flex-col items-center justify-center text-center rounded-xl cursor-pointer"
       style={{
-        border: '2px dashed var(--border-main)',
-        padding: '48px 32px',
-        background: 'transparent',
-        transition: 'border-color 0.2s',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: compact ? '24px 16px' : '44px 24px',
+        textAlign: 'center',
+        background: 'var(--bg-surface)',
+        border: '1px solid var(--border-main)',
+        borderRadius: 10,
+        ...style,
       }}
-      onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--accent-blue)'; }}
-      onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border-main)'; }}
-      onClick={onAction}
     >
-      {icon && (
+      {Icon && (
         <div
-          className="flex items-center justify-center rounded-xl mb-4"
           style={{
-            width: 56,
-            height: 56,
-            background: 'var(--color-accent-faint)',
-            color: 'var(--accent-blue)',
+            width: compact ? 36 : 48,
+            height: compact ? 36 : 48,
+            borderRadius: '50%',
+            background: 'var(--bg-surface-raised, rgba(255, 255, 255, 0.04))',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            marginBottom: 12,
+            color: 'var(--text-secondary)',
           }}
         >
-          {icon}
+          {React.isValidElement(Icon) ? Icon : <Icon size={compact ? 18 : 22} />}
         </div>
       )}
       {title && (
-        <p className="font-semibold text-primary text-sm mb-1">{title}</p>
-      )}
-      {description && (
-        <p className="text-tertiary text-xs mb-4" style={{ maxWidth: 260 }}>{description}</p>
-      )}
-      {actionLabel && (
-        <button
-          onClick={(e) => { e.stopPropagation(); onAction?.(); }}
-          className="rounded-lg text-sm font-medium px-4 py-2 theme-transition"
+        <h3
           style={{
-            background: 'var(--accent-blue)',
-            color: '#fff',
-            border: 'none',
-            cursor: 'pointer',
+            margin: '0 0 6px 0',
+            fontSize: compact ? 14 : 16,
+            fontWeight: 600,
+            color: 'var(--text-primary)',
           }}
         >
-          {actionLabel}
-        </button>
+          {title}
+        </h3>
       )}
+      {description && (
+        <p
+          style={{
+            margin: '0 0 16px 0',
+            fontSize: 13,
+            color: 'var(--text-secondary)',
+            maxWidth: 420,
+            lineHeight: 1.5,
+          }}
+        >
+          {description}
+        </p>
+      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {actionLabel && onAction && (
+          <button
+            type="button"
+            onClick={onAction}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '6px 14px',
+              borderRadius: 6,
+              background: 'var(--color-primary, #3b82f6)',
+              color: '#ffffff',
+              border: '1px solid var(--color-primary, #3b82f6)',
+              fontSize: 12.5,
+              fontWeight: 500,
+              cursor: 'pointer',
+            }}
+          >
+            {actionLabel}
+          </button>
+        )}
+        {secondaryLabel && onSecondary && (
+          <button
+            type="button"
+            onClick={onSecondary}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '6px 14px',
+              borderRadius: 6,
+              background: 'transparent',
+              color: 'var(--text-secondary)',
+              border: '1px solid var(--border-main)',
+              fontSize: 12.5,
+              cursor: 'pointer',
+            }}
+          >
+            {secondaryLabel}
+          </button>
+        )}
+      </div>
     </div>
   );
 }

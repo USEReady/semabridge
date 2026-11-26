@@ -1,6 +1,6 @@
 import React from 'react';
 import { Database, Layers } from 'lucide-react';
-import { useDeployedViews, normalizeViewName, getViewBadgeLabel } from '../../hooks/useDeployedViews';
+import { useDeployedViews, normalizeViewName, getViewBadgeLabel, isViewMatch } from '../../hooks/useDeployedViews';
 
 function formatDeployTime(isoStr) {
   if (!isoStr) return 'No deploy recorded';
@@ -21,6 +21,7 @@ export default function DeployedViewSelector({
   projectSchema = '',
   style = {},
   onViewChange,
+  alwaysDropdown = true,
 }) {
   const {
     views,
@@ -30,19 +31,112 @@ export default function DeployedViewSelector({
     selectView,
   } = useDeployedViews(projectId);
 
-  if (!projectId || loading) {
-    return null;
+  if (!projectId) {
+    return (
+      <div
+        data-testid="deployed-view-empty"
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+          fontSize: 12,
+          opacity: 0.6,
+          ...style,
+        }}
+      >
+        <Database size={13} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
+        <span style={{ color: 'var(--text-secondary)', fontSize: 11.5, fontWeight: 600 }}>View:</span>
+        <select
+          disabled
+          aria-label="Select deployed semantic view"
+          style={{
+            padding: '4px 8px',
+            fontSize: 11.5,
+            borderRadius: 6,
+            border: '1px solid var(--border-main)',
+            background: 'var(--bg-surface)',
+            color: 'var(--text-tertiary)',
+            cursor: 'not-allowed',
+            outline: 'none',
+          }}
+        >
+          <option>Select a project first</option>
+        </select>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div
+        data-testid="deployed-view-loading"
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+          fontSize: 12,
+          ...style,
+        }}
+      >
+        <Database size={13} style={{ color: 'var(--accent-blue)', flexShrink: 0 }} />
+        <span style={{ color: 'var(--text-secondary)', fontSize: 11.5, fontWeight: 600 }}>View:</span>
+        <span style={{ color: 'var(--text-tertiary)', fontSize: 11.5, fontStyle: 'italic' }}>Loading views…</span>
+      </div>
+    );
   }
 
   if (!views || views.length === 0) {
-    return null;
+    return (
+      <div
+        data-testid="deployed-view-none"
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+          fontSize: 12,
+          ...style,
+        }}
+      >
+        <Database size={13} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
+        <span style={{ color: 'var(--text-secondary)', fontSize: 11.5, fontWeight: 600 }}>View:</span>
+        <select
+          disabled
+          aria-label="Select deployed semantic view"
+          style={{
+            padding: '4px 8px',
+            fontSize: 11.5,
+            borderRadius: 6,
+            border: '1px solid var(--border-main)',
+            background: 'var(--bg-surface)',
+            color: 'var(--text-tertiary)',
+            cursor: 'not-allowed',
+            outline: 'none',
+          }}
+        >
+          <option>No deployed views found</option>
+        </select>
+        <span
+          style={{
+            fontSize: 10,
+            fontWeight: 700,
+            padding: '1px 6px',
+            borderRadius: 8,
+            background: 'rgba(239, 68, 68, 0.1)',
+            color: 'var(--color-error, #ef4444)',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          Not Deployed
+        </span>
+      </div>
+    );
   }
 
   // Find currently active view object
   const currentViewObj = views.find(
     (v) =>
-      normalizeViewName(v.semantic_view) === normalizeViewName(selectedView) ||
-      normalizeViewName(v.view) === normalizeViewName(selectedView)
+      isViewMatch(v.semantic_view, selectedView) ||
+      isViewMatch(v.view, selectedView)
   ) || views[0];
 
   const currentLabel = getViewBadgeLabel(currentViewObj, projectSchema);
@@ -63,8 +157,8 @@ export default function DeployedViewSelector({
 
   const badgeStyle = getBadgeColors(currentLabel);
 
-  // If there is only one deployed view, show plain label, no dropdown
-  if (views.length === 1) {
+  // If alwaysDropdown is false and only one view, show single badge
+  if (!alwaysDropdown && views.length === 1) {
     const v = views[0];
     const nameStr = v.schema ? `${v.schema}.${v.view}` : v.view;
     return (
@@ -102,7 +196,7 @@ export default function DeployedViewSelector({
     );
   }
 
-  // Multiple views -> interactive dropdown selector
+  // Interactive dropdown selector
   return (
     <div
       data-testid="deployed-view-selector"
@@ -130,11 +224,11 @@ export default function DeployedViewSelector({
           fontFamily: 'monospace',
           borderRadius: 6,
           border: '1px solid var(--border-main)',
-          background: 'var(--bg-surface)',
+          background: 'var(--bg-surface-raised, var(--bg-surface))',
           color: 'var(--text-primary)',
           cursor: 'pointer',
           outline: 'none',
-          maxWidth: 320,
+          maxWidth: 340,
         }}
       >
         {views.map((v) => {

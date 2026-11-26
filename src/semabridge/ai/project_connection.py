@@ -154,6 +154,13 @@ def resolve_project_warehouse_config(
         if built is not None:
             return built
 
+    # Fall back to active/default account in database if candidate account was missing/stale
+    # and settings base has no credentials configured
+    if not _has_credentials(base, connector):
+        built = _build_from_account(None, connector, base, meta)
+        if built is not None:
+            return built
+
     if connector == "SNOWFLAKE" and base is not None and meta:
         from semabridge.auth.credential_builder import apply_project_snowflake_target
 
@@ -161,13 +168,34 @@ def resolve_project_warehouse_config(
     return base
 
 
-def _build_from_account(account_id: str, connector: str, base, meta: Dict[str, Any]):
+def _build_from_account(account_id: Optional[str], connector: str, base, meta: Dict[str, Any]):
     try:
         from semabridge.repository.account_repository import AccountRepository
         from semabridge.repository.orm.session_factory import db_manager
 
         with db_manager.get_session() as session:
-            account = AccountRepository(session).get_account_by_id(account_id)
+            account = AccountRepository(session).get_account_by_id(account_id) if account_id else None
+            if not account:
+                from sqlalchemy import select
+                from semabridge.repository.orm.models import Account
+                account = session.execute(
+                    select(Account).where(
+                        Account.connector_type == connector,
+                        Account.is_default == True,
+                    )
+                ).scalars().first()
+                if not account:
+                    account = session.execute(
+                        select(Account).where(
+                            Account.connector_type == connector,
+                            Account.status == "Active",
+                        )
+                    ).scalars().first()
+                if account:
+                    logger.info(
+                        "Resolved active %s account %s (%s) (fallback from account_id %s)",
+                        connector, getattr(account, "tag", ""), account.id, account_id,
+                    )
             if not account or str(account.connector_type or "").upper() != connector:
                 return None
             if connector == "SNOWFLAKE":

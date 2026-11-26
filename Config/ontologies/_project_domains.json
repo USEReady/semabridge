@@ -15,6 +15,30 @@
     },
     "shared": []
   },
+  "proj-artificial-intelligence": {
+    "models": {
+      "artificial_intelligence_sample": [
+        "artificial_intelligence__artificial_intelligence_sample"
+      ]
+    },
+    "shared": []
+  },
+  "proj-compe-databricks": {
+    "models": {
+      "competitive_marketing_analysis": [
+        "compe_databricks__competitive_marketing_analysis"
+      ]
+    },
+    "shared": []
+  },
+  "proj-employee_hiring": {
+    "models": {
+      "employee_hiring_and_history": [
+        "employee_hiring__employee_hiring_and_history"
+      ]
+    },
+    "shared": []
+  },
   "proj-hr": {
     "models": {
       "human_resources_sample_pbix": [
@@ -23,10 +47,50 @@
     },
     "shared": []
   },
+  "proj-hr_t": {
+    "models": {
+      "human_resources_sample_pbix": [
+        "hr_t__human_resources_sample_pbix"
+      ]
+    },
+    "shared": []
+  },
   "proj-human-res": {
     "models": {
       "human_resources_sample_pbix": [
         "human_res__human_resources_sample_pbix"
+      ]
+    },
+    "shared": []
+  },
+  "proj-le": {
+    "models": {
+      "life_expectancy_v202009": [
+        "le__life_expectancy_v202009"
+      ]
+    },
+    "shared": []
+  },
+  "proj-le_test_26nov": {
+    "models": {
+      "life_expectancy_v202009": [
+        "le_test_26nov__life_expectancy_v202009"
+      ]
+    },
+    "shared": []
+  },
+  "proj-life-expectancy": {
+    "models": {
+      "life_expectancy_v202009": [
+        "life_expectancy__life_expectancy_v202009"
+      ]
+    },
+    "shared": []
+  },
+  "proj-reveune-opportunities": {
+    "models": {
+      "revenue_opportunities": [
+        "reveune_opportunities__revenue_opportunities"
       ]
     },
     "shared": []

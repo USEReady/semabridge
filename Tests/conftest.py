@@ -196,6 +196,31 @@ def _isolate_compat_store(tmp_path_factory):
 # -----------------------------------------------------------------------------
 
 @pytest.fixture(autouse=True)
+def _isolate_drift_introspection_cache():
+    """Clear the drift introspection cache and database state before and after every test so tests don't pollute each other."""
+    def _clean():
+        try:
+            from semabridge.governance.drift.introspection_cache import clear_cache
+            clear_cache()
+        except Exception:
+            pass
+        try:
+            from semabridge.repository.orm.session_factory import db_manager
+            from semabridge.repository.orm.models import DriftEventRow, DriftBaselineRow, DriftLastCheckRow
+            with db_manager.get_session() as session:
+                session.query(DriftEventRow).delete()
+                session.query(DriftBaselineRow).delete()
+                session.query(DriftLastCheckRow).delete()
+                session.commit()
+        except Exception:
+            pass
+
+    _clean()
+    yield
+    _clean()
+
+
+@pytest.fixture(autouse=True)
 def _isolate_tier5_translation_cache():
     """Replace Tier5Service's shared, process-wide, persistent translation
     cache (dax_translation/tier5/cache.py's default_persistent_cache()

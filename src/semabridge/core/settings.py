@@ -309,6 +309,47 @@ class ModelConfig(BaseSettings):
         return [t.strip().upper() for t in self.exclude_tables.split(",") if t.strip()]
 
 
+class DriftConfig(BaseSettings):
+    """Drift monitoring and normalization limits configuration."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="SEMABRIDGE_DRIFT_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    max_expression_length: int = Field(
+        default=50000,
+        description="Max expression length before falling back to text normalization",
+    )
+    cache_ttl_seconds: int = Field(default=300, description="Cache TTL in seconds")
+    cache_max_size: int = Field(default=500, description="Max cache size")
+    max_baseline_history: int = Field(default=50, description="Max baseline history snapshots")
+    statement_timeout_seconds: int = Field(default=30, description="Drift statement timeout in seconds")
+    diff_typo_similarity: float = Field(default=0.88, description="Minimum typo similarity threshold")
+    diff_typo_max_len_diff: int = Field(default=6, description="Max char diff for typo detection")
+    diff_removal_insert_ratio: float = Field(default=0.5, description="Max ratio of inserted text to deleted text to treat as removal")
+    diff_semantic_overlap: float = Field(default=0.25, description="Minimum semantic overlap to treat edit as replacement")
+    diff_removal_len_ratio: float = Field(default=1.3, description="Ratio threshold where deleted length exceeding inserted length indicates removal")
+
+
+class BITruthConfig(BaseSettings):
+    """BI Truth regression suite configuration."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="SEMABRIDGE_BI_TRUTH_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    tolerance: float = Field(default=1e-3, description="Default relative variance tolerance threshold (default 0.001 = 0.1%)")
+    absolute_floor: float = Field(default=1e-4, description="Floor in measure's own units for comparisons near zero")
+    max_run_seconds: int = Field(default=300, description="Max runtime for a suite run in seconds")
+    max_run_age_seconds: int = Field(default=86400, description="Max acceptable age for truth suite run before considered stale (default 24h)")
+
+
 class LLMConfig(BaseSettings):
     """Configuration for LLM-based features (Cortex, OpenAI)."""
 
@@ -625,6 +666,8 @@ class Settings(BaseSettings):
     _database: Optional[DatabaseConfig] = None
     _llm: Optional[LLMConfig] = None
     _network: Optional[NetworkConfig] = None
+    _drift: Optional[DriftConfig] = None
+    _bi_truth: Optional[BITruthConfig] = None
     _behavior: Optional[object] = None  # ConnectorBehavior (lazy, avoids circular import)
 
     @property
@@ -701,6 +744,20 @@ class Settings(BaseSettings):
         if self._network is None:
             self._network = NetworkConfig()
         return self._network
+
+    @property
+    def drift(self) -> DriftConfig:
+        """Get drift monitoring configuration (lazy loaded)."""
+        if self._drift is None:
+            self._drift = DriftConfig()
+        return self._drift
+
+    @property
+    def bi_truth(self) -> BITruthConfig:
+        """Get BI truth configuration (lazy loaded)."""
+        if self._bi_truth is None:
+            self._bi_truth = BITruthConfig()
+        return self._bi_truth
 
     @property
     def behavior(self):

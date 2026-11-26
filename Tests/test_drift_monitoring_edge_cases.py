@@ -619,17 +619,12 @@ class TestDeployBaselineDrift:
         env.views["DB.S.V1"] = {"SALES": "SUM(T.AMT)"}
         env.domains.append(domain("D1", "DB.S.V1", [metric("SALES", "SUM(T.AMT)")]))
 
-        # First run: captures baseline and returns BASELINE_CAPTURED
+        # First run: returns NOT_CHECKED with NO_DEPLOY_BASELINE
         r1 = env.check()
-        assert r1["status"] == "BASELINE_CAPTURED"
+        assert r1["status"] == "NOT_CHECKED"
+        assert r1["not_checked_reason"] == "NO_DEPLOY_BASELINE"
         assert r1["drift_detected"] == 0
         assert len(r1["events"]) == 0
-        assert r1["checked_metrics"] == 1
-
-        # Second run: baseline exists now, should report IN_SYNC or IN_SYNC_SINCE_CAPTURE
-        r2 = env.check()
-        assert r2["status"] in ("IN_SYNC", "IN_SYNC_SINCE_CAPTURE")
-        assert r2["drift_detected"] == 0
 
     def test_power_bi_source_drift_detected(self, env):
         one_view(env, {"SALES": "SUM(T.AMT)"}, {"SALES": "SUM(T.AMT)"})

@@ -9,6 +9,7 @@ import { api } from '../utils/api';
 import DropZone from '../components/compare/DropZone';
 import CompareResults from '../components/compare/CompareResults';
 import { LLM_PROVIDERS, formatLabel } from '../components/compare/compareUtils';
+import EmptyState from '../components/common/EmptyState';
 
 // Compare (was "Semantic Comparator"): two drop zones, File 1 / File 2.
 // Format detection is automatic; the manual format check and the AI model
@@ -39,16 +40,16 @@ function StatCard({ icon, label, value, accent, breakdown }) {
           <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>{label}</div>
         </div>
       </div>
-      
+
       {breakdown && breakdown.some(b => b.value > 0) && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
           {breakdown.map((b, i) => b.value > 0 && (
-            <div key={i} style={{ 
+            <div key={i} style={{
               display: 'inline-flex', alignItems: 'center', gap: 6,
-              padding: '3px 6px 3px 10px', borderRadius: 20, 
+              padding: '3px 6px 3px 10px', borderRadius: 20,
               background: b.bg,
               border: `1px solid ${b.color}30`,
-              color: b.color, fontSize: 11, fontWeight: 600 
+              color: b.color, fontSize: 11, fontWeight: 600
             }}>
               {b.label}
               <span style={{
@@ -105,7 +106,7 @@ function StatsPanel({ data, fileName }) {
   const filteredCols = data.columns.filter(col => {
     const colType = col.type || 'unknown';
     if (colTypeFilter !== 'All Types' && colType !== colTypeFilter) return false;
-    
+
     if (!colSearch) return true;
     const q = colSearch.toLowerCase();
     return col.name.toLowerCase().includes(q) || col.table.toLowerCase().includes(q);
@@ -138,10 +139,10 @@ function StatsPanel({ data, fileName }) {
           <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{formatLabel(data.format)}</span>
         </div>
         <div style={{ padding: '16px 20px', display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-          <StatCard icon={Layers}   label="Tables"        value={data.summary.total_tables}         accent="var(--accent-blue)" />
-          <StatCard icon={Hash}     label="Columns"       value={data.summary.total_columns}        accent="var(--accent-purple)" />
-          <StatCard icon={BarChart3} label="Measures"       value={data.summary.total_metrics}        accent="var(--accent-orange)" />
-          <StatCard icon={Link2}    label="Relationships" value={data.summary.total_relationships}   accent="var(--accent-cyan)" />
+          <StatCard icon={Layers} label="Tables" value={data.summary.total_tables} accent="var(--accent-blue)" />
+          <StatCard icon={Hash} label="Columns" value={data.summary.total_columns} accent="var(--accent-purple)" />
+          <StatCard icon={BarChart3} label="Measures" value={data.summary.total_metrics} accent="var(--accent-orange)" />
+          <StatCard icon={Link2} label="Relationships" value={data.summary.total_relationships} accent="var(--accent-cyan)" />
         </div>
       </div>
 
@@ -551,9 +552,11 @@ export default function ComparatorPage() {
           <StatsPanel data={singleFile.data} fileName={singleFile.file.name} />
         )}
         {!file1 && !file2 && (
-          <div style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>
-            Add one file to see what's in it, or two files to see what differs.
-          </div>
+          <EmptyState
+            icon={ArrowRightLeft}
+            title="No comparison active"
+            description="Add one file above to inspect its metrics and schema, or two files to compare definitions and measure expressions."
+          />
         )}
       </div>
     </div>

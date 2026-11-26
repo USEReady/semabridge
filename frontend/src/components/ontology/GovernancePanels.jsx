@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { BTN_SM, BTN_PRIMARY, INPUT_STYLE, SELECT_STYLE, MONO, plural } from './styles';
 import { Pill } from './ui';
+import ImpactDependencyGraph from '../governance/ImpactDependencyGraph';
 
 const PANEL = {
   padding: 16,
@@ -103,6 +104,19 @@ function ImpactGroup({ title, items, tone, onOpenParity }) {
                   {mName}
                 </span>
                 <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0, marginTop: 1 }}>
+                  {obj?.risk && (
+                    <span style={{
+                      fontSize: 9,
+                      fontWeight: 700,
+                      padding: '1px 5px',
+                      borderRadius: 4,
+                      background: obj.risk === 'BREAKING' ? 'rgba(239, 68, 68, 0.15)' : obj.risk === 'ADVISORY' ? 'rgba(245, 158, 11, 0.15)' : 'rgba(59, 130, 246, 0.15)',
+                      color: obj.risk === 'BREAKING' ? 'var(--color-error)' : obj.risk === 'ADVISORY' ? 'var(--color-warning)' : 'var(--accent-blue)',
+                      border: `1px solid ${obj.risk === 'BREAKING' ? 'rgba(239, 68, 68, 0.3)' : obj.risk === 'ADVISORY' ? 'rgba(245, 158, 11, 0.3)' : 'rgba(59, 130, 246, 0.3)'}`
+                    }}>
+                      {obj.risk}
+                    </span>
+                  )}
                   {obj && (
                     <span style={{ fontSize: 9, fontWeight: 700, color: hop === 'TRANSITIVE' ? 'var(--color-warning)' : 'var(--accent-blue)' }}>
                       [{hop}]
@@ -136,7 +150,7 @@ function ImpactGroup({ title, items, tone, onOpenParity }) {
   );
 }
 
-export function ImpactReport({ report, onPickSuggestion, onOpenParity }) {
+export function ImpactReport({ report, onOpenParity, onEvaluateAddition, isFinding = false }) {
   if (!report) return null;
   const sev = report.severity;
   const sevTone = sev === 'BREAKING' ? 'bad' : sev === 'SAFE' ? 'ok' : sev === 'NOT_FOUND' ? 'n' : 'warn';
@@ -146,36 +160,166 @@ export function ImpactReport({ report, onPickSuggestion, onOpenParity }) {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Pill tone={sevTone}>{sevLabel}</Pill>
+          {report.risk && (
+            <Pill tone={report.risk === 'BREAKING' ? 'bad' : report.risk === 'ADVISORY' ? 'warn' : 'ok'}>
+              Risk: {report.risk}
+            </Pill>
+          )}
           <strong style={{ fontSize: 13 }}>
             {report.change_type?.replace('_', ' ').toLowerCase()} {report.target_object}
           </strong>
         </div>
         <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-          {sev === 'NOT_FOUND' ? 'Target not found in scope' : `${plural(report.total_impacted_items || 0, 'downstream item')} affected`}
+          {sev === 'NOT_FOUND' ? (report.not_found_reason || `Object '${report.target_object}' is not deployed in SemaBridge baseline.`) : `${plural(report.total_impacted_items || 0, 'downstream item')} affected`}
         </span>
       </div>
 
-      {sev === 'NOT_FOUND' && Array.isArray(report.suggestions) && report.suggestions.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, fontSize: 12 }}>
-          <span style={{ color: 'var(--text-secondary)' }}>Did you mean:</span>
-          {report.suggestions.map((s) => (
-            <button
-              key={s}
-              type="button"
-              style={{ ...BTN_SM, fontFamily: MONO }}
-              onClick={() => onPickSuggestion && onPickSuggestion(s)}
-            >
-              {s}
-            </button>
-          ))}
+      {sev === 'NOT_FOUND' && (
+        <div style={{
+          padding: '10px 12px',
+          borderRadius: 8,
+          background: 'rgba(239, 68, 68, 0.08)',
+          border: '1px solid rgba(239, 68, 68, 0.25)',
+          color: 'var(--text-primary)',
+          fontSize: 12,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 6,
+        }}>
+          <div>
+            <strong>Status:</strong> {report.not_found_reason || `Object '${report.target_object}' is not deployed in the baseline.`}
+          </div>
+          {report.empty_messages?.warehouse_references && (
+            <div style={{ color: 'var(--text-secondary)', fontSize: 11.5 }}>
+              {report.empty_messages.warehouse_references}
+            </div>
+          )}
+          {!isFinding && onEvaluateAddition && (
+            <div style={{ marginTop: 4 }}>
+              <button
+                type="button"
+                style={{
+                  ...BTN_SM,
+                  background: 'var(--accent-purple, #a855f7)',
+                  color: '#fff',
+                  borderColor: 'var(--accent-purple, #a855f7)',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+                onClick={() => onEvaluateAddition(report.target_object)}
+              >
+                + Evaluate as Warehouse Addition (ADD)
+              </button>
+            </div>
+          )}
         </div>
       )}
 
-      {sev !== 'NOT_FOUND' && (
+      {sev !== 'NOT_FOUND' && report.total_impacted_items === 0 && (
+        <div style={{
+          padding: '12px 14px',
+          borderRadius: 8,
+          background: 'rgba(34, 197, 94, 0.08)',
+          border: '1px solid rgba(34, 197, 94, 0.25)',
+          color: 'var(--text-primary)',
+          fontSize: 12,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 6,
+        }}>
+          <div>
+            <strong>Status:</strong> {report.empty_messages?.summary || `Nothing depends on '${report.target_object}'. No downstream metrics, BI dashboards, or AI queries are affected.`}
+          </div>
+          {report.empty_messages?.warehouse_references && (
+            <div style={{ color: 'var(--text-secondary)', fontSize: 11.5 }}>
+              <strong>Warehouse:</strong> {report.empty_messages.warehouse_references}
+            </div>
+          )}
+        </div>
+      )}
+
+      {sev !== 'NOT_FOUND' && report.total_impacted_items > 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10, minWidth: 0 }}>
           <ImpactGroup title="Metrics" items={report.affected_metrics || []} tone="var(--color-warning)" onOpenParity={onOpenParity} />
           <ImpactGroup title="BI reports" items={report.affected_bi_reports || []} tone="var(--color-error)" />
           <ImpactGroup title="AI agents" items={report.affected_ai_tools || []} tone="var(--accent-purple)" />
+        </div>
+      )}
+
+      {/* Interactive Dependency Graph View */}
+      {sev !== 'NOT_FOUND' && (
+        <ImpactDependencyGraph report={report} />
+      )}
+
+      {/* Stated Dimension Constraints in Comment */}
+      {Array.isArray(report.stated_dimension_constraints) && report.stated_dimension_constraints.length > 0 && (
+        <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--bg-surface)', border: '1px solid var(--border-main)', fontSize: 11.5 }}>
+          <strong style={{ color: 'var(--accent-purple)', display: 'block', marginBottom: 4 }}>
+            Stated Query Dimension Constraints (from comment)
+          </strong>
+          <ul style={{ margin: 0, paddingLeft: 18, color: 'var(--text-secondary)' }}>
+            {report.stated_dimension_constraints.map((c, i) => (
+              <li key={i}>
+                <code style={{ color: 'var(--text-primary)', fontWeight: 700 }}>{c.dimension}</code>: {c.details}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Referencing Metrics */}
+      {Array.isArray(report.referencing_metrics) && report.referencing_metrics.length > 0 && (
+        <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--bg-surface)', border: '1px solid var(--border-main)', fontSize: 11.5 }}>
+          <strong style={{ color: 'var(--accent-blue)', display: 'block', marginBottom: 4 }}>
+            Referencing Metrics (in comments or expressions)
+          </strong>
+          <ul style={{ margin: 0, paddingLeft: 18, color: 'var(--text-secondary)' }}>
+            {report.referencing_metrics.map((m, i) => (
+              <li key={i}>
+                <code style={{ color: 'var(--text-primary)', fontWeight: 700 }}>{m.name}</code> ({m.reference_type}): {m.details}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Certified Queries & BI-Truth Cases */}
+      {((report.certified_queries?.length > 0) || (report.bi_truth_cases?.length > 0)) && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
+          {report.certified_queries?.length > 0 && (
+            <div style={{ padding: '8px 12px', borderRadius: 6, background: 'var(--bg-surface)', border: '1px solid var(--border-main)', fontSize: 11.5 }}>
+              <strong style={{ color: 'var(--text-primary)', display: 'block', marginBottom: 4 }}>Certified Queries</strong>
+              <ul style={{ margin: 0, paddingLeft: 16, color: 'var(--text-secondary)' }}>
+                {report.certified_queries.map((q, i) => (
+                  <li key={i}>{q.name}: {q.details}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {report.bi_truth_cases?.length > 0 && (
+            <div style={{ padding: '8px 12px', borderRadius: 6, background: 'var(--bg-surface)', border: '1px solid var(--border-main)', fontSize: 11.5 }}>
+              <strong style={{ color: 'var(--color-success)', display: 'block', marginBottom: 4 }}>BI-Truth Cases</strong>
+              <ul style={{ margin: 0, paddingLeft: 16, color: 'var(--text-secondary)' }}>
+                {report.bi_truth_cases.map((c, i) => (
+                  <li key={i}>{c.name}: {c.details}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Source Model Parity */}
+      {report.source_model_difference && (
+        <div style={{
+          padding: '8px 12px',
+          borderRadius: 6,
+          background: report.source_model_difference.differs ? 'rgba(234, 179, 8, 0.08)' : 'rgba(34, 197, 94, 0.08)',
+          border: '1px solid var(--border-main)',
+          fontSize: 11.5,
+          color: 'var(--text-secondary)',
+        }}>
+          <strong>Source Model Comparison:</strong> {report.source_model_difference.details}
         </div>
       )}
 
@@ -332,7 +476,7 @@ export function WhatIfSimulator({ gov, metricOptions, onOpenParity }) {
   );
 }
 
-export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimensionOptions = [], semanticViewOptions = [] }) {
+export function ParityPanel({ gov = {}, metricOptions = [], dimensionOptions = [], semanticViewOptions = [] }) {
   const {
     govProjectId = '',
     setGovProjectId,
@@ -352,7 +496,7 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
     reconDaxText,
     setReconDaxText,
     reconSqlText,
-    setReconSqlText,
+    setReconSqlText: _setReconSqlText,
     reconAbsTol,
     setReconAbsTol,
     reconRelTol,
@@ -362,10 +506,10 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
     reconRegisterVerified,
     setReconRegisterVerified,
     runningRecon,
-    onGenerateReconQueries,
+    onGenerateReconQueries: _onGenerateReconQueries,
     onRunLiveSql,
     onRunAutoDaxCertify,
-    onRunRecon,
+    onRunRecon: _onRunRecon,
     onResetRecon,
     reconResult,
     reconSliceRows,
@@ -419,12 +563,15 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
     return '';
   }, [reconExpr, reconMetric, availableMetrics]);
 
-  const [editableSql, setEditableSql] = React.useState(effectiveSqlExpr || reconExpr || '');
-  React.useEffect(() => {
-    if (effectiveSqlExpr) {
-      setEditableSql(effectiveSqlExpr);
-    }
-  }, [effectiveSqlExpr]);
+  const [prevEffectiveSql, setPrevEffectiveSql] = React.useState(effectiveSqlExpr);
+  const [userEditableSql, setUserEditableSql] = React.useState(null);
+
+  if (prevEffectiveSql !== effectiveSqlExpr) {
+    setPrevEffectiveSql(effectiveSqlExpr);
+    setUserEditableSql(null);
+  }
+  const editableSql = userEditableSql !== null ? userEditableSql : (effectiveSqlExpr || reconExpr || '');
+  const setEditableSql = setUserEditableSql;
 
   const metricSqlDisplay = React.useMemo(() => {
     if (effectiveSqlExpr) return effectiveSqlExpr;

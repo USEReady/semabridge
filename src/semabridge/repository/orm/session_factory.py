@@ -51,6 +51,18 @@ logger = get_logger(__name__)
 _IN_PROCESS_DIALECTS = frozenset({"sqlite", "duckdb"})
 
 
+def _redact_url(raw_url: Optional[str]) -> str:
+    """Mask credentials in database URLs for safe logging."""
+    if not raw_url:
+        return "unknown"
+    try:
+        from sqlalchemy.engine import make_url
+        return make_url(raw_url).render_as_string(hide_password=True)
+    except Exception:
+        import re
+        return re.sub(r"://([^:]+):([^@]+)@", r"://\1:***@", raw_url)
+
+
 def _convert_jdbc_to_sqlalchemy_url(url: str) -> str:
     """Convert JDBC URL format to SQLAlchemy format.
     
@@ -122,7 +134,7 @@ def _convert_jdbc_to_sqlalchemy_url(url: str) -> str:
             return new_url
         except Exception as e:
             logger.error(f"Failed to convert Snowflake JDBC URL: {e}. Falling back to original URL.")
-            logger.debug(f"Original URL was: {url}")
+            logger.debug("Original URL was: %s", _redact_url(url))
             return url
     
     return url
@@ -433,7 +445,7 @@ class DatabaseManager:
         with self._lock:
             if self._engine is not None:
                 logger.info(
-                    "Disposing database engine (%s)", self._current_url or "unknown"
+                    "Disposing database engine (%s)", _redact_url(self._current_url)
                 )
                 self._engine.dispose()
                 self._engine = None

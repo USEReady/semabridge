@@ -26,11 +26,11 @@ def clean_drift_state(tmp_path, monkeypatch):
     """Isolate drift service state file to tmp_path."""
     state_file = tmp_path / "drift_state.json"
     monkeypatch.setattr(drift_service, "_state_path", lambda: state_file)
-    drift_service.clear_drift_events()
+    drift_service.clear_drift_events(_allow_all_for_testing=True)
     from semabridge.demo import drift_fixtures
     monkeypatch.setattr(drift_fixtures, "_CONFIGURED_DEMO_PROJECT_ID", "proj-comp")
     yield
-    drift_service.clear_drift_events()
+    drift_service.clear_drift_events(_allow_all_for_testing=True)
 
 
 def test_demo_flag_off_routes_return_404(monkeypatch):

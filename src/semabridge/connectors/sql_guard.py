@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Any, Callable, List, Optional, Set, Tuple
+from typing import Any, List, Optional, Set, Tuple
 from semabridge.core.exceptions import ConnectorError
 from semabridge.utils.logger import get_logger
 
@@ -402,15 +402,17 @@ def validate_read_only_sql(sql: str, *, warn_only: Optional[bool] = None) -> boo
             return _reject(f"Read-only SQL guard blocked forbidden operation '{first_kw}': {preview!r}.")
 
     # For nested DML mutations in non-AST constructs
-    mutation_match = re.search(
-        r"\b(DELETE\s+FROM|INSERT\s+INTO|INSERT\s+OVERWRITE|UPDATE\s+\w+\s+SET|DROP\s+(?:TABLE|VIEW|SCHEMA|DATABASE)|TRUNCATE\s+TABLE|ALTER\s+(?:TABLE|SESSION|USER)|CREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMPORARY\s+)?(?:TABLE|VIEW|SEMANTIC\s+VIEW)|GRANT\s+\w+\s+ON|REVOKE\s+\w+\s+ON|EXECUTE\s+IMMEDIATE)\b",
-        code_no_strings,
-        re.IGNORECASE,
-    )
-    if mutation_match:
-        kw = mutation_match.group(1).upper()
-        preview = clean[:120].replace("\n", " ")
-        return _reject(f"Read-only SQL guard blocked forbidden operation '{kw}': {preview!r}.")
+    is_show_or_desc = bool(re.match(r"^\s*(SHOW|DESCRIBE|DESC)\b", clean, re.IGNORECASE))
+    if not is_show_or_desc:
+        mutation_match = re.search(
+            r"\b(DELETE\s+FROM|INSERT\s+INTO|INSERT\s+OVERWRITE|UPDATE\s+\w+\s+SET|DROP\s+(?:TABLE|VIEW|SCHEMA|DATABASE)|TRUNCATE\s+TABLE|ALTER\s+(?:TABLE|SESSION|USER)|CREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMPORARY\s+)?(?:TABLE|VIEW|SEMANTIC\s+VIEW)|GRANT\s+\w+\s+ON|REVOKE\s+\w+\s+ON|EXECUTE\s+IMMEDIATE)\b",
+            code_no_strings,
+            re.IGNORECASE,
+        )
+        if mutation_match:
+            kw = mutation_match.group(1).upper()
+            preview = clean[:120].replace("\n", " ")
+            return _reject(f"Read-only SQL guard blocked forbidden operation '{kw}': {preview!r}.")
 
     for pattern, op_name in _EXPLICIT_FORBIDDEN_PATTERNS:
         if pattern.search(clean):

@@ -300,6 +300,92 @@ class SemanticSearchIndex:
                 self.inverted_index[tok] = set()
             self.inverted_index[tok].add(doc_id)
 
+    def clone(self) -> "SemanticSearchIndex":
+        """Return a fast clone of the search index without re-indexing all documents."""
+        cloned = SemanticSearchIndex(vector_dim=self.vector_dim)
+        cloned.docs = {k: dict(v) for k, v in self.docs.items()}
+        cloned.doc_vectors = {k: list(v) for k, v in self.doc_vectors.items()}
+        cloned.inverted_index = {k: set(v) for k, v in self.inverted_index.items()}
+        cloned.doc_lengths = dict(self.doc_lengths)
+        cloned.avg_doc_len = self.avg_doc_len
+        return cloned
+
+    def remove_document(self, doc_id: str) -> bool:
+        """Remove a document from the index, updating inverted index and vectors."""
+        if doc_id not in self.docs:
+            return False
+        old_doc = self.docs.pop(doc_id)
+        self.doc_vectors.pop(doc_id, None)
+        self.doc_lengths.pop(doc_id, None)
+        old_tokens = set(old_doc.get("tokens") or [])
+        for tok in old_tokens:
+            posting = self.inverted_index.get(tok)
+            if posting:
+                posting.discard(doc_id)
+                if not posting:
+                    self.inverted_index.pop(tok, None)
+        return True
+
+    def override_description(
+        self,
+        name: str,
+        item_type: str,
+        new_description: Optional[str],
+        table: Optional[str] = None,
+    ) -> int:
+        """Override description for matching items without rebuilding the whole index."""
+        target_name = (name or "").strip().casefold()
+        target_type = (item_type or "").strip().upper()
+        target_table = (table or "").strip().casefold() if table else None
+
+        updated = 0
+        matching_doc_ids = []
+        for doc_id, doc in self.docs.items():
+            if doc.get("name", "").casefold() != target_name:
+                continue
+            if doc.get("item_type") != target_type:
+                continue
+            if target_type == "ATTRIBUTE" and target_table:
+                doc_tags = [str(t).casefold() for t in doc.get("tags") or []]
+                if target_table not in doc_tags:
+                    continue
+            matching_doc_ids.append(doc_id)
+
+        for doc_id in matching_doc_ids:
+            doc = self.docs[doc_id]
+            self.remove_document(doc_id)
+            d_name = doc.get("name", "")
+            d_lbl = doc.get("label") or ""
+            d_syns = doc.get("synonyms") or []
+            d_rules = doc.get("business_rules") or []
+            d_tags = doc.get("tags") or []
+            desc_str = new_description or ""
+            if target_type == "METRIC":
+                corpus_text = f"{d_name} {d_lbl} {desc_str} {' '.join(d_syns)} {' '.join(d_rules)} {' '.join(d_tags)}"
+            else:
+                corpus_text = f"{d_name} {desc_str} {' '.join(d_syns)} {' '.join(d_tags)}"
+
+            self._add_document(
+                doc_id=doc_id,
+                name=d_name,
+                label=doc.get("label"),
+                item_type=target_type,
+                domain=doc.get("domain"),
+                description=new_description,
+                corpus_text=corpus_text,
+                sql_expression=doc.get("sql_expression"),
+                synonyms=d_syns,
+                business_rules=d_rules,
+                data_steward=doc.get("data_steward"),
+                tags=d_tags,
+            )
+            updated += 1
+
+        if updated:
+            total_len = sum(self.doc_lengths.values())
+            self.avg_doc_len = (total_len / len(self.docs)) if self.docs else 1.0
+        return updated
+
     def search(
         self,
         query: str,

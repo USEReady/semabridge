@@ -205,3 +205,165 @@ metrics:
     tbl_report = sim.simulate_impact("LookupTable", target_type="TABLE", change_type="DROP")
     # Verify relationship cleanup remediation is emitted when table has metrics/joins cleanly
     assert len(tbl_report.remediation_steps) > 0
+
+
+def test_blast_radius_addition_finding_does_not_search_ontology():
+    dom = FederatedOntologyLoader.parse_yaml_string(SAMPLE_ONTOLOGY_YAML)
+    fed = FederatedOntologyLoader.merge_domains([dom])
+    sim = BlastRadiusSimulator(ontology=fed)
+
+    # ADDITION finding exists only in warehouse, not in ontology
+    report = sim.simulate_impact(
+        target_name="DRIFT_TEST_HEADCOUNT",
+        target_type="METRIC",
+        change_type="ADD",
+        table_context="EMPLOYEE",
+        expression="COUNT(DISTINCT EMPLOYEE.EMPLID)",
+        category="ADDITION",
+    )
+    assert report.severity == "SAFE"
+    assert report.status == "ok"
+    assert report.total_impacted_items == 0
+    assert report.suggestions == []
+    assert "not deployed" in report.not_found_reason.lower()
+    # Check that warehouse references are reported
+    assert any("EMPLOYEE.EMPLID" in e.get("from", "") or "EMPLOYEE" in e.get("from", "") for e in report.dependency_graph_edges)
+    assert any("not deployed" in step.lower() for step in report.remediation_steps)
+    assert any("warehouse references" in step.lower() for step in report.remediation_steps)
+
+
+def test_blast_radius_drift_finding_not_found_drops_did_you_mean():
+    dom = FederatedOntologyLoader.parse_yaml_string(SAMPLE_ONTOLOGY_YAML)
+    fed = FederatedOntologyLoader.merge_domains([dom])
+    sim = BlastRadiusSimulator(ontology=fed)
+
+    # When checking a drift finding for an unmanaged object missing from baseline with expression drift
+    report = sim.simulate_impact(
+        target_name="UNKNOWN_WH_METRIC",
+        target_type="METRIC",
+        change_type="MODIFY_EXPRESSION",
+        category="EXPRESSION_DRIFT",
+    )
+    assert report.severity == "NOT_FOUND"
+    assert report.status == "not_found"
+    assert report.suggestions == []  # Did you mean dropped on finding path
+    assert "not deployed" in report.not_found_reason.lower()
+
+
+def test_blast_radius_no_cross_project_event_leakage(monkeypatch):
+    """Blast radius for Project A must never inherit drift event details from Project B."""
+    dom = FederatedOntologyLoader.parse_yaml_string(SAMPLE_ONTOLOGY_YAML)
+    fed = FederatedOntologyLoader.merge_domains([dom])
+    sim = BlastRadiusSimulator(ontology=fed, mock_mode=False)
+
+    fake_events = [
+        {
+            "id": "ev_proj_b_shared_metric",
+            "project_id": "proj-b",
+            "object_name": "HEADCOUNT",
+            "table": "CUSTOM_TABLE_B",
+            "live_value": "SUM(CUSTOM_B.AMT)",
+            "category": "DESCRIPTION_DRIFT",
+            "live_description": "Project B specific description comment",
+        }
+    ]
+
+    import semabridge.governance.drift_service as ds
+    monkeypatch.setattr(ds, "list_drift_events", lambda project_id=None: [e for e in fake_events if e.get("project_id") == project_id])
+
+    # Run for proj-a: must NOT inherit proj-b's table, expression, or category
+    rep_a = sim.simulate_impact(
+        target_name="HEADCOUNT",
+        target_type="METRIC",
+        change_type="MODIFY_EXPRESSION",
+        project_id="proj-a",
+    )
+    assert rep_a.target_object == "HEADCOUNT"
+    # Project B's custom table and expression must not leak into Project A report
+    for edge in rep_a.dependency_graph_edges:
+        assert "CUSTOM_TABLE_B" not in edge.get("from", "")
+        assert "CUSTOM_TABLE_B" not in edge.get("to", "")
+
+
+def test_blast_radius_uniform_response_shape_across_all_four_categories():
+    """All 4 drift categories (ADDITION, DELETION, EXPRESSION_DRIFT, DESCRIPTION_DRIFT) return identical response shape."""
+    dom = FederatedOntologyLoader.parse_yaml_string(SAMPLE_ONTOLOGY_YAML)
+    fed = FederatedOntologyLoader.merge_domains([dom])
+    sim = BlastRadiusSimulator(ontology=fed, mock_mode=False)
+
+    expected_keys = {
+        "target_object", "target_type", "change_type", "severity", "risk", "status",
+        "suggestions", "not_found_reason", "total_impacted_items", "affected_metrics",
+        "affected_bi_reports", "affected_ai_tools", "remediation_steps",
+        "dependency_graph_edges", "referencing_metrics", "stated_dimension_constraints",
+        "certified_queries", "bi_truth_cases", "source_model_difference", "empty_messages",
+    }
+
+    # 1. ADDITION
+    rep_add = sim.simulate_impact("NEW_METRIC", target_type="METRIC", change_type="ADD", category="ADDITION")
+    assert set(rep_add.model_dump().keys()) == expected_keys
+    assert "referencing_metrics" in rep_add.empty_messages
+    assert "stated_dimension_constraints" in rep_add.empty_messages
+    assert "certified_queries" in rep_add.empty_messages
+    assert "bi_truth_cases" in rep_add.empty_messages
+
+    # 2. DELETION
+    rep_del = sim.simulate_impact("HEADCOUNT", target_type="METRIC", change_type="DROP", category="DELETION")
+    assert set(rep_del.model_dump().keys()) == expected_keys
+
+    # 3. EXPRESSION_DRIFT
+    rep_expr = sim.simulate_impact("HEADCOUNT", target_type="METRIC", change_type="MODIFY_EXPRESSION", category="EXPRESSION_DRIFT")
+    assert set(rep_expr.model_dump().keys()) == expected_keys
+
+    # 4. DESCRIPTION_DRIFT
+    rep_desc = sim.simulate_impact("HEADCOUNT", target_type="METRIC", change_type="MODIFY_DESCRIPTION", category="DESCRIPTION_DRIFT")
+    assert set(rep_desc.model_dump().keys()) == expected_keys
+
+
+def test_blast_radius_live_mode_never_contains_mock_fixture_names():
+    """Live results (mock_mode=False) must never invent or return mock fixture report names."""
+    dom = FederatedOntologyLoader.parse_yaml_string(SAMPLE_ONTOLOGY_YAML)
+    fed = FederatedOntologyLoader.merge_domains([dom])
+    sim = BlastRadiusSimulator(ontology=fed, mock_mode=False)
+
+    from semabridge.demo.blast_radius_fixtures import MOCK_BI_REPORTS, MOCK_AI_TOOLS
+    mock_bi_names = {r["name"].casefold() for r in MOCK_BI_REPORTS}
+    mock_ai_names = {t["name"].casefold() for t in MOCK_AI_TOOLS}
+
+    report = sim.simulate_impact("HEADCOUNT", target_type="METRIC", change_type="DROP", mock_mode=False)
+    for bi in report.affected_bi_reports:
+        assert bi.name.casefold() not in mock_bi_names, f"Mock report leaked into live result: {bi.name}"
+    for ai in report.affected_ai_tools:
+        assert ai.name.casefold() not in mock_ai_names, f"Mock AI tool leaked into live result: {ai.name}"
+
+
+def test_dimension_constraint_extractor_best_effort_and_empty_messages():
+    """Unrecognized description comments are recorded distinctly from missing comments."""
+    from semabridge.governance.blast_radius import extract_stated_dimension_constraints
+    assert "best-effort" in (extract_stated_dimension_constraints.__doc__ or "").lower()
+
+    dom = FederatedOntologyLoader.parse_yaml_string(SAMPLE_ONTOLOGY_YAML)
+    fed = FederatedOntologyLoader.merge_domains([dom])
+    sim = BlastRadiusSimulator(ontology=fed, mock_mode=False)
+
+    # 1. Unrecognized constraint phrasing in description
+    rep_unrec = sim.simulate_impact(
+        "HEADCOUNT",
+        target_type="METRIC",
+        change_type="MODIFY_DESCRIPTION",
+        expression="Active headcount metric. This should ideally be viewed quarterly by finance teams.",
+    )
+    assert len(rep_unrec.stated_dimension_constraints) == 0
+    assert "no standard dimension constraint phrasing was recognized" in rep_unrec.empty_messages.get("stated_dimension_constraints", "")
+
+    # 2. No comment at all
+    rep_none = sim.simulate_impact(
+        "HEADCOUNT",
+        target_type="METRIC",
+        change_type="MODIFY_DESCRIPTION",
+        expression="",
+    )
+    assert len(rep_none.stated_dimension_constraints) == 0
+    assert "No description comment or required query dimensions stated" in rep_none.empty_messages.get("stated_dimension_constraints", "")
+
+

@@ -1,10 +1,17 @@
 import assert from 'node:assert/strict';
-import { getViewBadgeLabel, normalizeViewName } from '../../utils/viewUtils.js';
+import { getViewBadgeLabel, normalizeViewName, canonicalViewName, isViewMatch } from '../../utils/viewUtils.js';
 
 // 1. normalizeViewName tests
 assert.equal(normalizeViewName('"DB"."SCHEMA"."VIEW"'), 'db.schema.view');
 assert.equal(normalizeViewName('  MY_VIEW  '), 'my_view');
 assert.equal(normalizeViewName(''), '');
+
+// 1b. canonicalViewName and isViewMatch tests
+assert.equal(canonicalViewName('"DB"."SCHEMA"."VIEW"'), 'view');
+assert.equal(canonicalViewName('MY_VIEW'), 'my_view');
+assert.equal(isViewMatch('"DB"."SCHEMA"."MY_VIEW"', 'MY_VIEW'), true);
+assert.equal(isViewMatch('"DB"."SCHEMA"."MY_VIEW"', '"MY_VIEW"'), true);
+assert.equal(isViewMatch('MY_VIEW', 'OTHER_VIEW'), false);
 
 // 2. getViewBadgeLabel tests
 const latestView = {

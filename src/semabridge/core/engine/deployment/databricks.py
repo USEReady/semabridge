@@ -97,7 +97,11 @@ def _deploy_to_databricks(self, context: RunContext) -> None:
                 "Databricks deployment scoped to account %s (%s) — thread-safe config, no os.environ mutation",
                 account.tag, identity_id,
             )
-            publisher = DatabricksPublisher(databricks_cfg, behavior=context.behavior)
+            publisher = DatabricksPublisher(
+                databricks_cfg,
+                behavior=context.behavior,
+                project_id=str(context.project_id) if context.project_id else None,
+            )
             context.target_artifact_path = publisher.publish(context.sml_model)
             publish_summary = publisher.get_last_publish_summary()
             context.routing_summary = publish_summary.get("routing_summary") if isinstance(publish_summary, dict) else None
@@ -105,7 +109,11 @@ def _deploy_to_databricks(self, context: RunContext) -> None:
             return
 
     # Default: use global env vars
-    publisher = DatabricksPublisher(context.config.databricks, behavior=context.behavior)
+    publisher = DatabricksPublisher(
+        context.config.databricks,
+        behavior=context.behavior,
+        project_id=str(context.project_id) if context.project_id else None,
+    )
     context.target_artifact_path = publisher.publish(context.sml_model)
     publish_summary = publisher.get_last_publish_summary()
     context.routing_summary = publish_summary.get("routing_summary") if isinstance(publish_summary, dict) else None

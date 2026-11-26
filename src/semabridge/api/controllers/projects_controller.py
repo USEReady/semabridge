@@ -335,6 +335,24 @@ def enrich_projects_with_ontology_and_sync_status(projects: List[Dict[str, Any]]
         cfg_obj = p.get("source_config") if isinstance(p.get("source_config"), dict) else {}
         p["source_file"] = str(p.get("pbix_file_path") or src_obj.get("pbix_path") or cfg_obj.get("pbix_path") or "")
 
+        try:
+            from semabridge.ai.project_connection import _project_meta
+            from semabridge.governance.drift.adapters.registry import resolve_project_platform
+            meta = _project_meta(pid)
+            plat = resolve_project_platform(meta)
+            if not plat or plat == "NOT_SET":
+                plat = resolve_project_platform(p)
+            if not plat or plat == "NOT_SET":
+                from semabridge.repository.model_repository import ModelRepository
+                deps = ModelRepository().list_project_deployments(pid)
+                if deps:
+                    d_plat = deps[0].get("platform")
+                    if d_plat:
+                        plat = str(d_plat).upper().strip()
+            p["platform"] = plat if (plat and plat != "UNKNOWN") else "NOT_SET"
+        except Exception:
+            p["platform"] = "NOT_SET"
+
     return projects
 
 
@@ -361,7 +379,7 @@ async def list_projects(
 @router.get("/api/projects/duplicates")
 async def list_duplicate_projects(request: Request):
     """Admin view: group projects by normalized name and by source hash."""
-    user_id = require_request_user_id(request)
+    require_request_user_id(request)
     all_projects = await list_projects_compat(limit=1000, offset=0)
     enriched = enrich_projects_with_ontology_and_sync_status(all_projects)
 
@@ -425,7 +443,7 @@ async def list_duplicate_projects(request: Request):
 @router.post("/api/projects/{project_id}/archive")
 async def archive_project_endpoint(project_id: str, request: Request):
     """Soft delete a project: marks deleted_at in DB, hides from active lists, preserves data."""
-    user_id = require_request_user_id(request)
+    require_request_user_id(request)
     from semabridge.repository.orm.session_factory import db_manager
     from semabridge.repository.orm.models import Project
     from semabridge.api.services.project_shared import (
@@ -458,7 +476,7 @@ async def archive_project_endpoint(project_id: str, request: Request):
 @router.post("/api/projects/{project_id}/restore")
 async def restore_project_endpoint(project_id: str, request: Request):
     """Restore an archived project intact."""
-    user_id = require_request_user_id(request)
+    require_request_user_id(request)
     from semabridge.repository.orm.session_factory import db_manager
     from semabridge.repository.orm.models import Project
     from semabridge.api.services.project_shared import (

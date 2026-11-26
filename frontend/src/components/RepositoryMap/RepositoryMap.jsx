@@ -15,6 +15,7 @@ import DetailPanel from './DetailPanel';
 import ModelDataPanel from './ModelDataPanel';
 import { ReactFlowProvider } from '@xyflow/react';
 import usePageCache from '../../hooks/usePageCache';
+import EmptyState from '../common/EmptyState';
 
 // ── Inline micro-styles ──
 const iconBtnStyle = {
@@ -183,7 +184,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
     const [includeSystemTables, setIncludeSystemTables] = usePageCache('explore:includeSystemTables', false);
 
     const [syncing, setSyncing] = useState(false);
-    const [loading, setLoading] = useState(true);
+    const [_loading, setLoading] = useState(true);
     const [treeLoading, setTreeLoading] = useState(true);
     const [graphLoading, setGraphLoading] = useState(true);
     const [diffLoading, setDiffLoading] = useState(false);
@@ -1330,7 +1331,17 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
 
                 {/* Main area */}
                 <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-                    {view === 'diagram' ? (
+                    {(!renderedGraphData?.nodes || renderedGraphData.nodes.length === 0) && !graphLoading ? (
+                        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 32 }}>
+                            <EmptyState
+                                icon={Database}
+                                title="Nothing deployed yet"
+                                description="Deploy a semantic model to inspect warehouse views, tables, and metric relationships."
+                                actionLabel="Go to Projects"
+                                onAction={() => navigate('/projects')}
+                            />
+                        </div>
+                    ) : view === 'diagram' ? (
                         <>
                             {(erMode || filterType === 'tables') && fullScreen && (
                                 <div style={{

@@ -185,10 +185,12 @@ def preview_table_bindings(context: RunContext) -> Dict[str, Any]:
 
     sf_cfg = target_snowflake_config(context)
     try:
+        cur_project_id = (context.config_payload or {}).get("binding_project_id") or context.project_id
         emitter = SnowflakeEmitter(
             sf_cfg,
             behavior=context.behavior,
             physical_namespace=emitter_physical_namespace(context),
+            project_id=str(cur_project_id) if cur_project_id else None,
         )
         emitter.binding_scope = table_binding_scope(context)
         plan = emitter.preview_table_bindings(context.sml_model)
@@ -259,10 +261,12 @@ def _do_snowflake_deploy(self, context: RunContext, sf_cfg) -> None:
     from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
     from semabridge.core.engine.targets.snowflake import emitter_physical_namespace
 
+    cur_project_id = (context.config_payload or {}).get("binding_project_id") or context.project_id
     emitter = SnowflakeEmitter(
         sf_cfg,
         behavior=context.behavior,
         physical_namespace=emitter_physical_namespace(context),
+        project_id=str(cur_project_id) if cur_project_id else None,
     )
     emitter.binding_scope = table_binding_scope(context)
     deployment_method = getattr(sf_cfg, "deployment_method", "ddl") or "ddl"

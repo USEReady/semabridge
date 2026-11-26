@@ -1,0 +1,2813 @@
+domain: life-expectancy · Life expectancy v202009
+id: life_expectancy__life_expectancy_v202009
+version: 1.0.0
+source_project_id: proj-life-expectancy
+source_model_id: life_expectancy_v202009
+source_model_name: Life expectancy v202009
+semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+concepts:
+- name: Buckets
+  logical_name: BUCKETS
+  label: Buckets
+  concept_type: DIMENSION
+  domain: life-expectancy · Life expectancy v202009
+  synonyms: []
+  business_rules: []
+  physical_table: Buckets
+  attributes:
+  - name: Bucket
+    logical_name: BUCKET
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Category
+    logical_name: CATEGORY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Bucket Sort
+    logical_name: BUCKET_SORT
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Bucket_2
+    logical_name: BUCKET_2
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Country
+  logical_name: COUNTRY
+  label: Country
+  concept_type: DIMENSION
+  domain: life-expectancy · Life expectancy v202009
+  synonyms: []
+  business_rules: []
+  physical_table: Country
+  attributes:
+  - name: Country
+    logical_name: COUNTRY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Country Code
+    logical_name: COUNTRY_CODE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Region
+    logical_name: REGION
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Continent
+    logical_name: CONTINENT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: World
+    logical_name: WORLD
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Extra Year
+  logical_name: EXTRA_YEAR
+  label: Extra Year
+  concept_type: DIMENSION
+  domain: life-expectancy · Life expectancy v202009
+  synonyms: []
+  business_rules: []
+  physical_table: Extra Year
+  attributes:
+  - name: Extra year
+    logical_name: EXTRA_YEAR
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Flags
+  logical_name: FLAGS
+  label: Flags
+  concept_type: ENTITY
+  domain: life-expectancy · Life expectancy v202009
+  synonyms: []
+  business_rules: []
+  physical_table: Flags
+  attributes:
+  - name: Country Code
+    logical_name: COUNTRY_CODE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Country
+    logical_name: COUNTRY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Images File Name
+    logical_name: IMAGES_FILE_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: ImageURL
+    logical_name: IMAGEURL
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Indicators
+  logical_name: INDICATORS
+  label: Indicators
+  concept_type: ENTITY
+  domain: life-expectancy · Life expectancy v202009
+  synonyms: []
+  business_rules: []
+  physical_table: Indicators
+  attributes:
+  - name: Year
+    logical_name: YEAR
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Region
+    logical_name: REGION
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Country Code
+    logical_name: COUNTRY_CODE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Country
+    logical_name: COUNTRY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Sex
+    logical_name: SEX
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Cholera case fatality rate
+    logical_name: CHOLERA_CASE_FATALITY_RATE
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Number of neonatal deaths (thousands)
+    logical_name: NUMBER_OF_NEONATAL_DEATHS_THOUSANDS
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Malaria - number of reported deaths
+    logical_name: MALARIA_NUMBER_OF_REPORTED_DEATHS
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Estimated number of malaria deaths
+    logical_name: ESTIMATED_NUMBER_OF_MALARIA_DEATHS
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Under-five mortality rate (probability of dying by age 5 per 1000 live births)
+    logical_name: UNDER_FIVE_MORTALITY_RATE_PROBABILITY_OF_DYING_BY_AGE_5_PER_1000_LIVE_BIRTHS
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Children aged <5 years sleeping under insecticide-treated nets (%)
+    logical_name: CHILDREN_AGED_LT5_YEARS_SLEEPING_UNDER_INSECTICIDE_TREATED_NETS_PCT
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Incidence of tuberculosis (per 100 000 population per year)
+    logical_name: INCIDENCE_OF_TUBERCULOSIS_PER_100_000_POPULATION_PER_YEAR
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Prevalence of tuberculosis (per 100 000 population)
+    logical_name: PREVALENCE_OF_TUBERCULOSIS_PER_100_000_POPULATION
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Births attended by skilled health personnel, among girls aged 15-19 (%)
+    logical_name: BIRTHS_ATTENDED_BY_SKILLED_HEALTH_PERSONNEL_AMONG_GIRLS_AGED_15_19_PCT
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Maternal mortality ratio (per 100 000 live births)
+    logical_name: MATERNAL_MORTALITY_RATIO_PER_100_000_LIVE_BIRTHS
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Life expectancy at birth (years)
+    logical_name: LIFE_EXPECTANCY_AT_BIRTH_YEARS
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Neonatal mortality rate (per 1000 live births)
+    logical_name: NEONATAL_MORTALITY_RATE_PER_1000_LIVE_BIRTHS
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Life expectancy at age 60 (years)
+    logical_name: LIFE_EXPECTANCY_AT_AGE_60_YEARS
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Hepatitis B (HepB3) immunization coverage among 1-year-olds (%)
+    logical_name: HEPATITIS_B_HEPB3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Hib (Hib3) immunization coverage among 1-year-olds (%)
+    logical_name: HIB_HIB3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Hospital beds (per 10 000 population)
+    logical_name: HOSPITAL_BEDS_PER_10_000_POPULATION
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: General government expenditure on health as a percentage of total government
+      expenditure
+    logical_name: GENERAL_GOVERNMENT_EXPENDITURE_ON_HEALTH_AS_A_PERCENTAGE_OF_TOTAL_GOVERNMENT_EXPENDITURE
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: General government expenditure on health as a percentage of total expenditure
+      on health
+    logical_name: GENERAL_GOVERNMENT_EXPENDITURE_ON_HEALTH_AS_A_PERCENTAGE_OF_TOTAL_EXPENDITURE_ON_HEALTH
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Measles-containing-vaccine first-dose (MCV1) immunization coverage among
+      1-year-olds (%)
+    logical_name: MEASLES_CONTAINING_VACCINE_FIRST_DOSE_MCV1_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Gross national income per capita (PPP int. $)
+    logical_name: GROSS_NATIONAL_INCOME_PER_CAPITA_PPP_INT_DOL
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Number of community health workers
+    logical_name: NUMBER_OF_COMMUNITY_HEALTH_WORKERS
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Community health workers density (per 10 000 population)
+    logical_name: COMMUNITY_HEALTH_WORKERS_DENSITY_PER_10_000_POPULATION
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Children aged <5 years with ARI symptoms who took antibiotic treatment (%)
+    logical_name: CHILDREN_AGED_LT5_YEARS_WITH_ARI_SYMPTOMS_WHO_TOOK_ANTIBIOTIC_TREATMENT_PCT
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Income share held by lowest 20%
+    logical_name: INCOME_SHARE_HELD_BY_LOWEST_20PCT
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: '% of population living on less than $1.90 per day'
+    logical_name: PCT_OF_POPULATION_LIVING_ON_LESS_THAN_DOL1_90_PER_DAY
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Net national income per capita
+    logical_name: NET_NATIONAL_INCOME_PER_CAPITA
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: GDP per capita (current US$)
+    logical_name: GDP_PER_CAPITA_CURRENT_USDOL
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Percentage of female population with no education
+    logical_name: PERCENTAGE_OF_FEMALE_POPULATION_WITH_NO_EDUCATION
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Female pupils below minimum reading proficiency at end of primary (%)
+    logical_name: FEMALE_PUPILS_BELOW_MINIMUM_READING_PROFICIENCY_AT_END_OF_PRIMARY_PCT
+    data_type: DECIMAL(18,2)
+    is_primary_key: false
+    is_hidden: false
+    format_string: \$#,0.###############;(\$#,0.###############);\$#,0.###############
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Life expectancy (yrs)
+    logical_name: LIFE_EXPECTANCY_YRS
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: GDP per capita (US $)
+    logical_name: GDP_PER_CAPITA_US_DOL
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Income share held by lowest 20% (bins)
+    logical_name: INCOME_SHARE_HELD_BY_LOWEST_20PCT_BINS
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: General government expenditure on health as a percentage of total expenditure
+      on health (bins)
+    logical_name: GENERAL_GOVERNMENT_EXPENDITURE_ON_HEALTH_AS_A_PERCENTAGE_OF_TOTAL_EXPENDITURE_ON_HEALTH_BINS
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: High/Low
+    logical_name: HIGH_LOW
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: GDP per capita (current US $) (bins)
+    logical_name: GDP_PER_CAPITA_CURRENT_US_DOL_BINS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: People using at least basic drinking water services (% of population)
+    logical_name: PEOPLE_USING_AT_LEAST_BASIC_DRINKING_WATER_SERVICES_PCT_OF_POPULATION
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: People using safely managed drinking water services (% of population)
+    logical_name: PEOPLE_USING_SAFELY_MANAGED_DRINKING_WATER_SERVICES_PCT_OF_POPULATION
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: '% of income held by poorest 20%'
+    logical_name: PCT_OF_INCOME_HELD_BY_POOREST_20PCT
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Basic drinking water services (% of population)
+    logical_name: BASIC_DRINKING_WATER_SERVICES_PCT_OF_POPULATION
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Safe drinking water services (% of population)
+    logical_name: SAFE_DRINKING_WATER_SERVICES_PCT_OF_POPULATION
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Hospital beds per 10,000 people
+    logical_name: HOSPITAL_BEDS_PER_10_000_PEOPLE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Hib3 immunization coverage among 1 year olds (%)
+    logical_name: HIB3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Life Exp Buckets
+    logical_name: LIFE_EXP_BUCKETS
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: All Cells
+    logical_name: ALL_CELLS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Measles - number of reported cases
+    logical_name: MEASLES_NUMBER_OF_REPORTED_CASES
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Diphtheria tetanus toxoid and pertussis (DTP3) immunization coverage among
+      1-year-olds (%)
+    logical_name: DIPHTHERIA_TETANUS_TOXOID_AND_PERTUSSIS_DTP3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Legend
+  logical_name: LEGEND
+  label: Legend
+  concept_type: DIMENSION
+  domain: life-expectancy · Life expectancy v202009
+  synonyms: []
+  business_rules: []
+  physical_table: Legend
+  attributes:
+  - name: Metric
+    logical_name: METRIC
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Bubble01
+    logical_name: BUBBLE01
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Bubble02
+    logical_name: BUBBLE02
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Bubble03
+    logical_name: BUBBLE03
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Bubble04
+    logical_name: BUBBLE04
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Bubble05
+    logical_name: BUBBLE05
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Metrics
+  logical_name: METRICS
+  label: Metrics
+  concept_type: DIMENSION
+  domain: life-expectancy · Life expectancy v202009
+  synonyms: []
+  business_rules: []
+  physical_table: Metrics
+  attributes:
+  - name: Column1
+    logical_name: COLUMN1
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Population
+  logical_name: POPULATION
+  label: Population
+  concept_type: ENTITY
+  domain: life-expectancy · Life expectancy v202009
+  synonyms: []
+  business_rules: []
+  physical_table: Population
+  attributes:
+  - name: Entity
+    logical_name: ENTITY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Code
+    logical_name: CODE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Year
+    logical_name: YEAR
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Population
+    logical_name: POPULATION
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '#,0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Sex
+  logical_name: SEX
+  label: Sex
+  concept_type: DIMENSION
+  domain: life-expectancy · Life expectancy v202009
+  synonyms: []
+  business_rules: []
+  physical_table: Sex
+  attributes:
+  - name: Sex
+    logical_name: SEX
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Variance Analysis
+  logical_name: VARIANCE_ANALYSIS
+  label: Variance Analysis
+  concept_type: DIMENSION
+  domain: life-expectancy · Life expectancy v202009
+  synonyms: []
+  business_rules: []
+  physical_table: Variance Analysis
+  attributes:
+  - name: Maternal Mortality Change
+    logical_name: MATERNAL_MORTALITY_CHANGE
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Maternal Mortality
+    logical_name: MATERNAL_MORTALITY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Malaria Cases Change
+    logical_name: MALARIA_CASES_CHANGE
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Malaria Cases
+    logical_name: MALARIA_CASES
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Neonatal Mortality Change
+    logical_name: NEONATAL_MORTALITY_CHANGE
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Neonatal Mortality
+    logical_name: NEONATAL_MORTALITY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: GDP Change
+    logical_name: GDP_CHANGE
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: GDP per capita
+    logical_name: GDP_PER_CAPITA
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Pupil Teacher Ratio
+    logical_name: PUPIL_TEACHER_RATIO
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Pupil Teacher Ratio Change
+    logical_name: PUPIL_TEACHER_RATIO_CHANGE
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Tuberculosis Incidents Change
+    logical_name: TUBERCULOSIS_INCIDENTS_CHANGE
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Tuberculosis Incidents
+    logical_name: TUBERCULOSIS_INCIDENTS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Country
+    logical_name: COUNTRY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Measles Vaccine
+    logical_name: MEASLES_VACCINE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Measles Vaccines
+    logical_name: MEASLES_VACCINES
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Hib3 Immunizations %
+    logical_name: HIB3_IMMUNIZATIONS_PCT
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Hib3 Immunizations
+    logical_name: HIB3_IMMUNIZATIONS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Water Services
+    logical_name: WATER_SERVICES
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Water Services Access
+    logical_name: WATER_SERVICES_ACCESS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Year
+  logical_name: YEAR
+  label: Year
+  concept_type: DIMENSION
+  domain: life-expectancy · Life expectancy v202009
+  synonyms: []
+  business_rules: []
+  physical_table: Year
+  attributes:
+  - name: Year
+    logical_name: YEAR
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Date
+    logical_name: DATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: Long Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Years
+  logical_name: YEARS
+  label: Years
+  concept_type: DIMENSION
+  domain: life-expectancy · Life expectancy v202009
+  synonyms: []
+  business_rules: []
+  physical_table: Years
+  attributes:
+  - name: Years
+    logical_name: YEARS
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: All
+    logical_name: COL_ALL
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+metrics:
+- name: EXTRA_YEAR_VALUE
+  logical_name: EXTRA_YEAR_VALUE
+  label: Extra year Value
+  sql_expression: IFF(COUNT(DISTINCT EXTRA_YEAR."EXTRA_YEAR") + MAX(IFF(EXTRA_YEAR."EXTRA_YEAR"
+    IS NULL, 1, 0)) = 1, MAX(EXTRA_YEAR."EXTRA_YEAR"), NULL)
+  dax_expression: SELECTEDVALUE('Extra Year'[Extra year])
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Extra year Value
+  - EXTRA_YEAR_VALUE
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Extra Year
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: HEALTH_EXPENDITURE_GOVERNMENT_CHANGE
+  logical_name: HEALTH_EXPENDITURE_GOVERNMENT_CHANGE
+  label: HEALTH_EXPENDITURE_GOVERNMENT_CHANGE
+  sql_expression: CAST(NULL AS DOUBLE)
+  dax_expression: If(not(isblank(CALCULATE(AVERAGE(Indicators[Per capita government
+    expenditure on health (PPP int. $)]), 'Year'[Year] = 2016))) && not(isblank(CALCULATE(AVERAGE(Indicators[Per
+    capita government expenditure on health (PPP int. $)]), 'Year'[Year] = 2010))),
+    CALCULATE(AVERAGE([Per capita government expenditure on health (PPP int. $)]),
+    'Year'[Year] = 2016) - CALCULATE(AVERAGE(Indicators[Per capita government expenditure
+    on health (PPP int. $)]), 'Year'[Year] = 2010))
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - HEALTH_EXPENDITURE_GOVERNMENT_CHANGE
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: MEASURE
+  logical_name: MEASURE
+  label: Measure
+  sql_expression: 'NULL'
+  dax_expression: BLANK()
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Measure
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: MEASURE_2
+  logical_name: MEASURE_2
+  label: Measure 2
+  sql_expression: 'NULL'
+  dax_expression: BLANK()
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Measure 2
+  - MEASURE_2
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: LIFE_EXPECTANCY
+  logical_name: LIFE_EXPECTANCY
+  label: Life expectancy
+  sql_expression: AVG(INDICATORS."LIFE_EXPECTANCY_YRS")
+  dax_expression: average(Indicators[Life expectancy (yrs)])
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Life expectancy
+  - LIFE_EXPECTANCY
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: LIFE_EXPECTANCY_2
+  logical_name: LIFE_EXPECTANCY_2
+  label: Life Expectancy 2
+  sql_expression: SIGN(AVG(INDICATORS."LIFE_EXPECTANCY_YRS"::FLOAT)) * CEIL(ABS(AVG(INDICATORS."LIFE_EXPECTANCY_YRS"::FLOAT)),
+    0)
+  dax_expression: ROUNDUP(AVERAGE(Indicators[Life expectancy (yrs)]),0)
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Life Expectancy 2
+  - LIFE_EXPECTANCY_2
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: LIFE_EXPECTANCY_YOYPCT_2
+  logical_name: LIFE_EXPECTANCY_YOYPCT_2
+  label: Life Expectancy YoY% 2
+  sql_expression: (CASE WHEN (AVG(INDICATORS."LIFE_EXPECTANCY_YRS"::FLOAT)) IS NULL
+    AND (AVG(CASE WHEN YEAR(YEAR."COL_DATE") = YEAR(DATEADD(YEAR, -14, CURRENT_DATE()))
+    AND YEAR."COL_DATE" BETWEEN DATEADD(YEAR, -14, DATE_TRUNC('YEAR', CURRENT_DATE()))
+    AND DATEADD(YEAR, -14, CURRENT_DATE()) THEN INDICATORS."LIFE_EXPECTANCY_YRS"::FLOAT
+    END)) IS NULL THEN NULL ELSE COALESCE(AVG(INDICATORS."LIFE_EXPECTANCY_YRS"::FLOAT),
+    0) - COALESCE((AVG(CASE WHEN YEAR(YEAR."COL_DATE") = YEAR(DATEADD(YEAR, -14, CURRENT_DATE()))
+    AND YEAR."COL_DATE" BETWEEN DATEADD(YEAR, -14, DATE_TRUNC('YEAR', CURRENT_DATE()))
+    AND DATEADD(YEAR, -14, CURRENT_DATE()) THEN INDICATORS."LIFE_EXPECTANCY_YRS"::FLOAT
+    END)), 0) END) / NULLIF((AVG(CASE WHEN YEAR(YEAR."COL_DATE") = YEAR(DATEADD(YEAR,
+    -14, CURRENT_DATE())) AND YEAR."COL_DATE" BETWEEN DATEADD(YEAR, -14, DATE_TRUNC('YEAR',
+    CURRENT_DATE())) AND DATEADD(YEAR, -14, CURRENT_DATE()) THEN INDICATORS."LIFE_EXPECTANCY_YRS"::FLOAT
+    END)), 0)
+  dax_expression: "\nIF(\n\tISFILTERED('Year'[Date]),\n\tERROR(\"Time intelligence\
+    \ quick measures can only be grouped or filtered by the Power BI-provided date\
+    \ hierarchy or primary date column.\"),\n\tVAR __PREV_YEAR = CALCULATE(AVERAGE(Indicators[Life\
+    \ expectancy (yrs)]), DATEADD('Year'[Date].[Date], -14, YEAR))\n\tRETURN\n\t\t\
+    DIVIDE(AVERAGE(Indicators[Life expectancy (yrs)]) - __PREV_YEAR, __PREV_YEAR)\n\
+    )"
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Life Expectancy YoY% 2
+  - LIFE_EXPECTANCY_YOYPCT_2
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: MALARIA_CASES_CHANGE
+  logical_name: MALARIA_CASES_CHANGE
+  label: MALARIA_CASES_CHANGE
+  sql_expression: CAST(NULL AS DOUBLE)
+  dax_expression: If(not(isblank(CALCULATE(AVERAGE(Indicators[Malaria - number of
+    reported confirmed cases]), 'Year'[Year] = 2016))) && not(isblank(CALCULATE(AVERAGE(Indicators[Malaria
+    - number of reported confirmed cases]), 'Year'[Year] = 2010))), CALCULATE(AVERAGE(Indicators[Malaria
+    - number of reported confirmed cases]), 'Year'[Year] = 2016) - CALCULATE(AVERAGE(Indicators[Malaria
+    - number of reported confirmed cases]), 'Year'[Year] = 2010))
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - MALARIA_CASES_CHANGE
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: GDP_CHANGE
+  logical_name: GDP_CHANGE
+  label: GDP Change
+  sql_expression: CASE WHEN ((AVG(CASE WHEN YEAR."YEAR" = 2016 THEN INDICATORS."GDP_PER_CAPITA_US_DOL"
+    END::FLOAT) IS NOT NULL)) AND ((AVG(CASE WHEN YEAR."YEAR" = 2010 THEN INDICATORS."GDP_PER_CAPITA_US_DOL"
+    END::FLOAT) IS NOT NULL)) THEN CASE WHEN (AVG(CASE WHEN YEAR."YEAR" = 2016 THEN
+    INDICATORS."GDP_PER_CAPITA_US_DOL" END::FLOAT)) IS NULL AND (AVG(CASE WHEN YEAR."YEAR"
+    = 2010 THEN INDICATORS."GDP_PER_CAPITA_US_DOL" END::FLOAT)) IS NULL THEN NULL
+    ELSE COALESCE(AVG(CASE WHEN YEAR."YEAR" = 2016 THEN INDICATORS."GDP_PER_CAPITA_US_DOL"
+    END::FLOAT), 0) - COALESCE(AVG(CASE WHEN YEAR."YEAR" = 2010 THEN INDICATORS."GDP_PER_CAPITA_US_DOL"
+    END::FLOAT), 0) END END
+  dax_expression: If(not(isblank(CALCULATE(AVERAGE(Indicators[GDP per capita (US $)]),
+    'Year'[Year] = 2016))) && not(isblank(CALCULATE(AVERAGE(Indicators[GDP per capita
+    (US $)]), 'Year'[Year] = 2010))), CALCULATE(AVERAGE(Indicators[GDP per capita
+    (US $)]), 'Year'[Year] = 2016) - CALCULATE(AVERAGE(Indicators[GDP per capita (US
+    $)]), 'Year'[Year] = 2010))
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - GDP Change
+  - GDP_CHANGE
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: INCOME_CHANGE
+  logical_name: INCOME_CHANGE
+  label: Income Change
+  sql_expression: CASE WHEN ((AVG(CASE WHEN YEAR."YEAR" = 2016 THEN INDICATORS."INCOME_SHARE_HELD_BY_LOWEST_20PCT"
+    END::FLOAT) IS NOT NULL)) AND ((AVG(CASE WHEN YEAR."YEAR" = 2010 THEN INDICATORS."INCOME_SHARE_HELD_BY_LOWEST_20PCT"
+    END::FLOAT) IS NOT NULL)) THEN CASE WHEN (AVG(CASE WHEN YEAR."YEAR" = 2016 THEN
+    INDICATORS."INCOME_SHARE_HELD_BY_LOWEST_20PCT" END::FLOAT)) IS NULL AND (AVG(CASE
+    WHEN YEAR."YEAR" = 2010 THEN INDICATORS."INCOME_SHARE_HELD_BY_LOWEST_20PCT" END::FLOAT))
+    IS NULL THEN NULL ELSE COALESCE(AVG(CASE WHEN YEAR."YEAR" = 2016 THEN INDICATORS."INCOME_SHARE_HELD_BY_LOWEST_20PCT"
+    END::FLOAT), 0) - COALESCE(AVG(CASE WHEN YEAR."YEAR" = 2010 THEN INDICATORS."INCOME_SHARE_HELD_BY_LOWEST_20PCT"
+    END::FLOAT), 0) END END
+  dax_expression: IF(NOT(ISBLANK(CALCULATE(AVERAGE(Indicators[Income share held by
+    lowest 20%]), 'Year'[Year] = 2016))) && NOT(ISBLANK(CALCULATE(AVERAGE(Indicators[Income
+    share held by lowest 20%]), 'Year'[Year] = 2010 ))), CALCULATE(AVERAGE(Indicators[Income
+    share held by lowest 20%]), 'Year'[Year] = 2016) - CALCULATE(AVERAGE(Indicators[Income
+    share held by lowest 20%]), 'Year'[Year] = 2010))
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Income Change
+  - INCOME_CHANGE
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: GDP_OLD
+  logical_name: GDP_OLD
+  label: GDP Old
+  sql_expression: CASE WHEN (AVG(CASE WHEN YEAR."YEAR" = 2016 THEN INDICATORS."GDP_PER_CAPITA_US_DOL"
+    END::FLOAT)) IS NULL AND (AVG(CASE WHEN YEAR."YEAR" = 2010 THEN INDICATORS."GDP_PER_CAPITA_US_DOL"
+    END::FLOAT)) IS NULL THEN NULL ELSE COALESCE(AVG(CASE WHEN YEAR."YEAR" = 2016
+    THEN INDICATORS."GDP_PER_CAPITA_US_DOL" END::FLOAT), 0) - COALESCE(AVG(CASE WHEN
+    YEAR."YEAR" = 2010 THEN INDICATORS."GDP_PER_CAPITA_US_DOL" END::FLOAT), 0) END
+  dax_expression: CALCULATE(AVERAGE(Indicators[GDP per capita (US $)]), 'Year'[Year]
+    = 2016) - CALCULATE(AVERAGE(Indicators[GDP per capita (US $)]), 'Year'[Year] =
+    2010)
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - GDP Old
+  - GDP_OLD
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: NEONATAL_MORTALITY
+  logical_name: NEONATAL_MORTALITY
+  label: Neonatal mortality
+  sql_expression: CASE WHEN ((AVG(CASE WHEN YEAR."YEAR" = 2016 THEN INDICATORS."NEONATAL_MORTALITY_RATE_PER_1000_LIVE_BIRTHS"
+    END::FLOAT) IS NOT NULL)) AND ((AVG(CASE WHEN YEAR."YEAR" = 2010 THEN INDICATORS."NEONATAL_MORTALITY_RATE_PER_1000_LIVE_BIRTHS"
+    END::FLOAT) IS NOT NULL)) THEN CASE WHEN (AVG(CASE WHEN YEAR."YEAR" = 2016 THEN
+    INDICATORS."NEONATAL_MORTALITY_RATE_PER_1000_LIVE_BIRTHS" END::FLOAT)) IS NULL
+    AND (AVG(CASE WHEN YEAR."YEAR" = 2010 THEN INDICATORS."NEONATAL_MORTALITY_RATE_PER_1000_LIVE_BIRTHS"
+    END::FLOAT)) IS NULL THEN NULL ELSE COALESCE(AVG(CASE WHEN YEAR."YEAR" = 2016
+    THEN INDICATORS."NEONATAL_MORTALITY_RATE_PER_1000_LIVE_BIRTHS" END::FLOAT), 0)
+    - COALESCE(AVG(CASE WHEN YEAR."YEAR" = 2010 THEN INDICATORS."NEONATAL_MORTALITY_RATE_PER_1000_LIVE_BIRTHS"
+    END::FLOAT), 0) END END
+  dax_expression: If(not(isblank(CALCULATE(AVERAGE(Indicators[Neonatal mortality rate
+    (per 1000 live births)]), 'Year'[Year] = 2016))) && not(isblank(CALCULATE(AVERAGE(Indicators[Neonatal
+    mortality rate (per 1000 live births)]), 'Year'[Year] = 2010))), CALCULATE(AVERAGE(Indicators[Neonatal
+    mortality rate (per 1000 live births)]), 'Year'[Year] = 2016) - CALCULATE(AVERAGE(Indicators[Neonatal
+    mortality rate (per 1000 live births)]), 'Year'[Year] = 2010))
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Neonatal mortality
+  - NEONATAL_MORTALITY
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: MATERNAL_MORTALITY_CHANGE
+  logical_name: MATERNAL_MORTALITY_CHANGE
+  label: Maternal Mortality Change
+  sql_expression: CASE WHEN ((AVG(CASE WHEN YEAR."YEAR" = 2016 THEN INDICATORS."MATERNAL_MORTALITY_RATIO_PER_100_000_LIVE_BIRTHS"
+    END::FLOAT) IS NOT NULL)) AND ((AVG(CASE WHEN YEAR."YEAR" = 2010 THEN INDICATORS."MATERNAL_MORTALITY_RATIO_PER_100_000_LIVE_BIRTHS"
+    END::FLOAT) IS NOT NULL)) THEN CASE WHEN (AVG(CASE WHEN YEAR."YEAR" = 2016 THEN
+    INDICATORS."MATERNAL_MORTALITY_RATIO_PER_100_000_LIVE_BIRTHS" END::FLOAT)) IS
+    NULL AND (AVG(CASE WHEN YEAR."YEAR" = 2010 THEN INDICATORS."MATERNAL_MORTALITY_RATIO_PER_100_000_LIVE_BIRTHS"
+    END::FLOAT)) IS NULL THEN NULL ELSE COALESCE(AVG(CASE WHEN YEAR."YEAR" = 2016
+    THEN INDICATORS."MATERNAL_MORTALITY_RATIO_PER_100_000_LIVE_BIRTHS" END::FLOAT),
+    0) - COALESCE(AVG(CASE WHEN YEAR."YEAR" = 2010 THEN INDICATORS."MATERNAL_MORTALITY_RATIO_PER_100_000_LIVE_BIRTHS"
+    END::FLOAT), 0) END END
+  dax_expression: If(not(isblank( CALCULATE(AVERAGE(Indicators[Maternal mortality
+    ratio (per 100 000 live births)]), 'Year'[Year] = 2016))) && not(isblank(CALCULATE(AVERAGE(Indicators[Maternal
+    mortality ratio (per 100 000 live births)]), 'Year'[Year] = 2010))), CALCULATE(AVERAGE(Indicators[Maternal
+    mortality ratio (per 100 000 live births)]), 'Year'[Year] = 2016) - CALCULATE(AVERAGE(Indicators[Maternal
+    mortality ratio (per 100 000 live births)]), 'Year'[Year] = 2010))
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Maternal Mortality Change
+  - MATERNAL_MORTALITY_CHANGE
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: PUPIL_TEACHER_RATIO_CHANGE
+  logical_name: PUPIL_TEACHER_RATIO_CHANGE
+  label: PUPIL_TEACHER_RATIO_CHANGE
+  sql_expression: CAST(NULL AS DOUBLE)
+  dax_expression: If(not(isblank( CALCULATE(AVERAGE(Indicators[Pupil-teacher ratio
+    in lower secondary education (headcount basis)]), 'Year'[Year] = 2016))) && (not(isblank(CALCULATE(AVERAGE(Indicators[Pupil-teacher
+    ratio in lower secondary education (headcount basis)]), 'Year'[Year] = 2010)))),
+    CALCULATE(AVERAGE(Indicators[Pupil-teacher ratio in lower secondary education
+    (headcount basis)]), 'Year'[Year] = 2016) - CALCULATE(AVERAGE(Indicators[Pupil-teacher
+    ratio in lower secondary education (headcount basis)]), 'Year'[Year] = 2010))
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - PUPIL_TEACHER_RATIO_CHANGE
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: TUBERCULOSIS_INCIDENTS
+  logical_name: TUBERCULOSIS_INCIDENTS
+  label: Tuberculosis Incidents
+  sql_expression: CASE WHEN ((AVG(CASE WHEN YEAR."YEAR" = 2016 THEN INDICATORS."INCIDENCE_OF_TUBERCULOSIS_PER_100_000_POPULATION_PER_YEAR"
+    END::FLOAT) IS NOT NULL)) AND ((AVG(CASE WHEN YEAR."YEAR" = 2010 THEN INDICATORS."INCIDENCE_OF_TUBERCULOSIS_PER_100_000_POPULATION_PER_YEAR"
+    END::FLOAT) IS NOT NULL)) THEN CASE WHEN (AVG(CASE WHEN YEAR."YEAR" = 2016 THEN
+    INDICATORS."INCIDENCE_OF_TUBERCULOSIS_PER_100_000_POPULATION_PER_YEAR" END::FLOAT))
+    IS NULL AND (AVG(CASE WHEN YEAR."YEAR" = 2010 THEN INDICATORS."INCIDENCE_OF_TUBERCULOSIS_PER_100_000_POPULATION_PER_YEAR"
+    END::FLOAT)) IS NULL THEN NULL ELSE COALESCE(AVG(CASE WHEN YEAR."YEAR" = 2016
+    THEN INDICATORS."INCIDENCE_OF_TUBERCULOSIS_PER_100_000_POPULATION_PER_YEAR" END::FLOAT),
+    0) - COALESCE(AVG(CASE WHEN YEAR."YEAR" = 2010 THEN INDICATORS."INCIDENCE_OF_TUBERCULOSIS_PER_100_000_POPULATION_PER_YEAR"
+    END::FLOAT), 0) END END
+  dax_expression: If(not(isblank(CALCULATE(AVERAGE(Indicators[Incidence of tuberculosis
+    (per 100 000 population per year)]), 'Year'[Year] = 2016))) && not(isblank( CALCULATE(AVERAGE(Indicators[Incidence
+    of tuberculosis (per 100 000 population per year)]), 'Year'[Year] = 2010))), CALCULATE(AVERAGE(Indicators[Incidence
+    of tuberculosis (per 100 000 population per year)]), 'Year'[Year] = 2016) - CALCULATE(AVERAGE(Indicators[Incidence
+    of tuberculosis (per 100 000 population per year)]), 'Year'[Year] = 2010))
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Tuberculosis Incidents
+  - TUBERCULOSIS_INCIDENTS
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: IMMUNIZATIONS
+  logical_name: IMMUNIZATIONS
+  label: Immunizations
+  sql_expression: (((((SUM(INDICATORS."HIB_HIB3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT_SUM"::FLOAT)
+    OVER (PARTITION BY EXCLUDING YEAR."YEAR") / NULLIF(SUM(INDICATORS."HIB_HIB3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT_CNT"::FLOAT)
+    OVER (PARTITION BY EXCLUDING YEAR."YEAR"), 0) + SUM(INDICATORS."MEASLES_CONTAINING_VACCINE_FIRST_DOSE_MCV1_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT_SUM"::FLOAT)
+    OVER (PARTITION BY EXCLUDING YEAR."YEAR") / NULLIF(SUM(INDICATORS."MEASLES_CONTAINING_VACCINE_FIRST_DOSE_MCV1_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT_CNT"::FLOAT)
+    OVER (PARTITION BY EXCLUDING YEAR."YEAR"), 0)) + SUM(INDICATORS."HEPATITIS_B_HEPB3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT_SUM"::FLOAT)
+    OVER (PARTITION BY EXCLUDING YEAR."YEAR") / NULLIF(SUM(INDICATORS."HEPATITIS_B_HEPB3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT_CNT"::FLOAT)
+    OVER (PARTITION BY EXCLUDING YEAR."YEAR"), 0)) + SUM(INDICATORS."DIPHTHERIA_TETANUS_TOXOID_AND_PERTUSSIS_DTP3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT_SUM"::FLOAT)
+    OVER (PARTITION BY EXCLUDING YEAR."YEAR") / NULLIF(SUM(INDICATORS."DIPHTHERIA_TETANUS_TOXOID_AND_PERTUSSIS_DTP3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT_CNT"::FLOAT)
+    OVER (PARTITION BY EXCLUDING YEAR."YEAR"), 0))) / 4) / 100
+  dax_expression: CALCULATE(DIVIDE(DIVIDE((AVERAGE(Indicators[Hib (Hib3) immunization
+    coverage among 1-year-olds (%)])+AVERAGE(Indicators[Measles-containing-vaccine
+    first-dose (MCV1) immunization coverage among 1-year-olds (%)])+AVERAGE(Indicators[Hepatitis
+    B (HepB3) immunization coverage among 1-year-olds (%)])+AVERAGE(Indicators[Diphtheria
+    tetanus toxoid and pertussis (DTP3) immunization coverage among 1-year-olds (%)])),4,0),100,0),
+    ALL('Year'[Year]))
+  format_string: 0%;-0%;0%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Immunizations
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: CHOLERA_FATALITY_RATE_PCT
+  logical_name: CHOLERA_FATALITY_RATE_PCT
+  label: Cholera Fatality Rate (%)
+  sql_expression: SUM(INDICATORS."CHOLERA_CASE_FATALITY_RATE_SUM"::FLOAT) OVER (PARTITION
+    BY EXCLUDING YEAR."YEAR") / NULLIF(SUM(INDICATORS."CHOLERA_CASE_FATALITY_RATE_CNT"::FLOAT)
+    OVER (PARTITION BY EXCLUDING YEAR."YEAR"), 0) / 100
+  dax_expression: DIVIDE(CALCULATE(AVERAGE(Indicators[Cholera case fatality rate]),ALL('Year'[Year])),100,0)
+  format_string: 0%;-0%;0%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Cholera Fatality Rate (%)
+  - CHOLERA_FATALITY_RATE_PCT
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: GOVERMENT_EXPENDITURE_ON_HEALTH_PCT
+  logical_name: GOVERMENT_EXPENDITURE_ON_HEALTH_PCT
+  label: Goverment Expenditure on Health (%)
+  sql_expression: SUM(INDICATORS."GENERAL_GOVERNMENT_EXPENDITURE_ON_HEALTH_AS_A_PERCENTAGE_OF_TOTAL_EXPENDITURE_ON_HEALTH_SUM"::FLOAT)
+    OVER (PARTITION BY EXCLUDING YEAR."YEAR") / NULLIF(SUM(INDICATORS."GENERAL_GOVERNMENT_EXPENDITURE_ON_HEALTH_AS_A_PERCENTAGE_OF_TOTAL_EXPENDITURE_ON_HEALTH_CNT"::FLOAT)
+    OVER (PARTITION BY EXCLUDING YEAR."YEAR"), 0) / 100
+  dax_expression: DIVIDE(CALCULATE(AVERAGE(Indicators[General government expenditure
+    on health as a percentage of total expenditure on health]),ALL('Year'[Year])),100,0)
+  format_string: 0%;-0%;0%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Goverment Expenditure on Health (%)
+  - GOVERMENT_EXPENDITURE_ON_HEALTH_PCT
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: GDP_PER_CAPITA_USD
+  logical_name: GDP_PER_CAPITA_USD
+  label: GDP Per Capita (USD)
+  sql_expression: SUM(INDICATORS."GDP_PER_CAPITA_CURRENT_USDOL_SUM"::FLOAT) OVER (PARTITION
+    BY EXCLUDING YEAR."YEAR") / NULLIF(SUM(INDICATORS."GDP_PER_CAPITA_CURRENT_USDOL_CNT"::FLOAT)
+    OVER (PARTITION BY EXCLUDING YEAR."YEAR"), 0)
+  dax_expression: CALCULATE(AVERAGE(Indicators[GDP per capita (current US$)]),ALL('Year'[Year]))
+  format_string: \$#,0.00;(\$#,0.00);\$#,0.00
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - GDP Per Capita (USD)
+  - GDP_PER_CAPITA_USD
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: GDP_BLACK
+  logical_name: GDP_BLACK
+  label: GDP Black
+  sql_expression: CASE WHEN Metrics."GDPT" >= 10000 THEN Metrics."GDP_PER_CAPITA_USD"
+    END
+  dax_expression: IF([GDPT]>=10000,[GDP_PER_CAPITA_USD],"")
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - GDP Black
+  - GDP_BLACK
+  business_rules: []
+  derives_from:
+  - GDPT
+  - GDP_PER_CAPITA_USD
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: GDP_GOAL
+  logical_name: GDP_GOAL
+  label: GDP Goal
+  sql_expression: MAX(10000)
+  dax_expression: '10000'
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - GDP Goal
+  - GDP_GOAL
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: LAST_YEAR
+  logical_name: LAST_YEAR
+  label: last year
+  sql_expression: MAX(YEAR."COL_DATE")
+  dax_expression: LASTDATE('Year'[Date])
+  format_string: General Date
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - last year
+  - LAST_YEAR
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: GEH_BLACK
+  logical_name: GEH_BLACK
+  label: GEH Black
+  sql_expression: CASE WHEN Metrics."GEHT" >= 0.5 THEN Metrics."GOVERMENT_EXPENDITURE_ON_HEALTH_PCT"
+    END
+  dax_expression: IF([GEHT]>=.5,[GOVERMENT_EXPENDITURE_ON_HEALTH_PCT],"")
+  format_string: 0%;-0%;0%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - GEH Black
+  - GEH_BLACK
+  business_rules: []
+  derives_from:
+  - GEHT
+  - GOVERMENT_EXPENDITURE_ON_HEALTH_PCT
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: GEH_GOAL
+  logical_name: GEH_GOAL
+  label: GEH Goal
+  sql_expression: MAX(0.6)
+  dax_expression: '.6'
+  format_string: 0%;-0%;0%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - GEH Goal
+  - GEH_GOAL
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: IMM_BLACK
+  logical_name: IMM_BLACK
+  label: IMM Black
+  sql_expression: CASE WHEN Metrics."IMMT" >= 0.7 THEN Metrics."IMMUNIZATIONS" END
+  dax_expression: IF([IMMT]>=.7,[IMMUNIZATIONS],"")
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - IMM Black
+  - IMM_BLACK
+  business_rules: []
+  derives_from:
+  - IMMT
+  - IMMUNIZATIONS
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: IMM_RED
+  logical_name: IMM_RED
+  label: IMM Red
+  sql_expression: MAX(0.85)
+  dax_expression: '.85'
+  format_string: 0%;-0%;0%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - IMM Red
+  - IMM_RED
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: CFR_RED
+  logical_name: CFR_RED
+  label: CFR Red
+  sql_expression: MAX(0.02)
+  dax_expression: '.02'
+  format_string: 0%;-0%;0%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - CFR Red
+  - CFR_RED
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: CFR_BLACK
+  logical_name: CFR_BLACK
+  label: CFR Black
+  sql_expression: CASE WHEN COALESCE(Metrics."CFRT", 0) < 2 THEN Metrics."CHOLERA_FATALITY_RATE_PCT"
+    END
+  dax_expression: IF([CFRT]<2,[CHOLERA_FATALITY_RATE_PCT],"")
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - CFR Black
+  - CFR_BLACK
+  business_rules: []
+  derives_from:
+  - CFRT
+  - CHOLERA_FATALITY_RATE_PCT
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: CHILD_MORTALITY_RATE
+  logical_name: CHILD_MORTALITY_RATE
+  label: Child Mortality Rate
+  sql_expression: AVG(INDICATORS."UNDER_FIVE_MORTALITY_RATE_PROBABILITY_OF_DYING_BY_AGE_5_PER_1000_LIVE_BIRTHS")
+  dax_expression: AVERAGE(Indicators[Under-five mortality rate (probability of dying
+    by age 5 per 1000 live births)])
+  format_string: '#,0.00'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Child Mortality Rate
+  - CHILD_MORTALITY_RATE
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: GDPT
+  logical_name: GDPT
+  label: GDPT
+  sql_expression: (SUM(INDICATORS."GDP_PER_CAPITA_CURRENT_USDOL_SUM"::FLOAT) OVER
+    (PARTITION BY EXCLUDING YEAR."YEAR") / NULLIF(SUM(INDICATORS."GDP_PER_CAPITA_CURRENT_USDOL_CNT"::FLOAT)
+    OVER (PARTITION BY EXCLUDING YEAR."YEAR"), 0))
+  dax_expression: '
+
+    var LatestYearWithGDP = LASTNONBLANK(ALL(Years[Years]), [GDP_PER_CAPITA_USD])
+
+    return CALCULATE([GDP_PER_CAPITA_USD], LatestYearWithGDP)'
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - GDPT
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: GEHT
+  logical_name: GEHT
+  label: GEHT
+  sql_expression: (SUM(INDICATORS."GENERAL_GOVERNMENT_EXPENDITURE_ON_HEALTH_AS_A_PERCENTAGE_OF_TOTAL_EXPENDITURE_ON_HEALTH_SUM"::FLOAT)
+    OVER (PARTITION BY EXCLUDING YEAR."YEAR") / NULLIF(SUM(INDICATORS."GENERAL_GOVERNMENT_EXPENDITURE_ON_HEALTH_AS_A_PERCENTAGE_OF_TOTAL_EXPENDITURE_ON_HEALTH_CNT"::FLOAT)
+    OVER (PARTITION BY EXCLUDING YEAR."YEAR"), 0) / 100)
+  dax_expression: '
+
+    var LatestYearWithGDP = LASTNONBLANK(ALL(Years[Years]), [GOVERMENT_EXPENDITURE_ON_HEALTH_PCT])
+
+    return CALCULATE([GOVERMENT_EXPENDITURE_ON_HEALTH_PCT], LatestYearWithGDP)'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - GEHT
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: IMMT
+  logical_name: IMMT
+  label: IMMT
+  sql_expression: ((((((SUM(INDICATORS."HIB_HIB3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT_SUM"::FLOAT)
+    OVER (PARTITION BY EXCLUDING YEAR."YEAR") / NULLIF(SUM(INDICATORS."HIB_HIB3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT_CNT"::FLOAT)
+    OVER (PARTITION BY EXCLUDING YEAR."YEAR"), 0) + SUM(INDICATORS."MEASLES_CONTAINING_VACCINE_FIRST_DOSE_MCV1_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT_SUM"::FLOAT)
+    OVER (PARTITION BY EXCLUDING YEAR."YEAR") / NULLIF(SUM(INDICATORS."MEASLES_CONTAINING_VACCINE_FIRST_DOSE_MCV1_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT_CNT"::FLOAT)
+    OVER (PARTITION BY EXCLUDING YEAR."YEAR"), 0)) + SUM(INDICATORS."HEPATITIS_B_HEPB3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT_SUM"::FLOAT)
+    OVER (PARTITION BY EXCLUDING YEAR."YEAR") / NULLIF(SUM(INDICATORS."HEPATITIS_B_HEPB3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT_CNT"::FLOAT)
+    OVER (PARTITION BY EXCLUDING YEAR."YEAR"), 0)) + SUM(INDICATORS."DIPHTHERIA_TETANUS_TOXOID_AND_PERTUSSIS_DTP3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT_SUM"::FLOAT)
+    OVER (PARTITION BY EXCLUDING YEAR."YEAR") / NULLIF(SUM(INDICATORS."DIPHTHERIA_TETANUS_TOXOID_AND_PERTUSSIS_DTP3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT_CNT"::FLOAT)
+    OVER (PARTITION BY EXCLUDING YEAR."YEAR"), 0))) / 4) / 100)
+  dax_expression: '
+
+    var LatestYearWithGDP = LASTNONBLANK(ALL(Years[Years]), [IMMUNIZATIONS])
+
+    return CALCULATE([IMMUNIZATIONS], LatestYearWithGDP)'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - IMMT
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: CFRT
+  logical_name: CFRT
+  label: CFRT
+  sql_expression: (SUM(INDICATORS."CHOLERA_CASE_FATALITY_RATE_SUM"::FLOAT) OVER (PARTITION
+    BY EXCLUDING YEAR."YEAR") / NULLIF(SUM(INDICATORS."CHOLERA_CASE_FATALITY_RATE_CNT"::FLOAT)
+    OVER (PARTITION BY EXCLUDING YEAR."YEAR"), 0) / 100)
+  dax_expression: '
+
+    var LatestYearWithGDP = LASTNONBLANK(ALL(Years[Years]), [CHOLERA_FATALITY_RATE_PCT])
+
+    return CALCULATE([CHOLERA_FATALITY_RATE_PCT], LatestYearWithGDP)'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - CFRT
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: LEXT
+  logical_name: LEXT
+  label: LEXT
+  sql_expression: (SIGN(AVG(INDICATORS."LIFE_EXPECTANCY_YRS"::FLOAT)) * CEIL(ABS(AVG(INDICATORS."LIFE_EXPECTANCY_YRS"::FLOAT)),
+    0))
+  dax_expression: '
+
+    var LatestYearWithGDP = LASTNONBLANK(ALL(Years[Years]), [LIFE_EXPECTANCY_2])
+
+    return CALCULATE([LIFE_EXPECTANCY_2], LatestYearWithGDP)'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - LEXT
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: CLE
+  logical_name: CLE
+  label: CLE
+  sql_expression: COUNT(DISTINCT INDICATORS."COUNTRY_CODE")
+  dax_expression: '
+
+    var LatestYearWithGDP = LASTNONBLANK(''Years''[Years], [CHILD_MORTALITY_RATE])
+
+    return CALCULATE(DISTINCTCOUNT(Indicators[Country Code]), LatestYearWithGDP)'
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - CLE
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: LE_100
+  logical_name: LE_100
+  label: LE-100
+  sql_expression: (100 - COALESCE((SIGN(AVG(INDICATORS."LIFE_EXPECTANCY_YRS"::FLOAT))
+    * CEIL(ABS(AVG(INDICATORS."LIFE_EXPECTANCY_YRS"::FLOAT)), 0)), 0))
+  dax_expression: 100-[LIFE_EXPECTANCY_2]
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - LE-100
+  - LE_100
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: HEALTH
+  logical_name: HEALTH
+  label: HEALTH
+  sql_expression: CAST(NULL AS DOUBLE)
+  dax_expression: SUM(Indicators[Deaths due to HIV/AIDS (per 100 000 population)])+SUM(Indicators[Plague
+    - number of reported cases])+Sum(Indicators[Cholera - number of reported cases])+Sum(Indicators[Diphtheria
+    - number of reported cases])+ Sum(Indicators[Estimated number of malaria deaths])+Sum(Indicators[H5N1
+    influenza - number of reported cases])+Sum(Indicators[Malaria - number of reported
+    deaths])+sum(Indicators[Prevalence of tuberculosis (per 100 000 population)])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - HEALTH
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: HEALTH_EXPENDITURE
+  logical_name: HEALTH_EXPENDITURE
+  label: HEALTH_EXPENDITURE
+  sql_expression: CAST(NULL AS DOUBLE)
+  dax_expression: SUM(Indicators[Community health workers density (per 10 000 population)])+
+    SUM(Indicators[Per capita total expenditure on health (PPP int. $)])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - HEALTH_EXPENDITURE
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: LE_GOAL
+  logical_name: LE_GOAL
+  label: LE-Goal
+  sql_expression: MAX(80)
+  dax_expression: '80'
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - LE-Goal
+  - LE_GOAL
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: LIFE_EXPECTANCY_FOR_CHART
+  logical_name: LIFE_EXPECTANCY_FOR_CHART
+  label: Life Expectancy For Chart
+  dax_expression: CALCULATE([LIFE_EXPECTANCY_2], TREATAS(VALUES('Extra Year'[Extra
+    year]), 'Year'[Year]), ALL('Years'))
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Life Expectancy For Chart
+  - LIFE_EXPECTANCY_FOR_CHART
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: LIFE_EXPECTANCY_COLOUR_CODING_FOR_CHART
+  logical_name: LIFE_EXPECTANCY_COLOUR_CODING_FOR_CHART
+  label: Life Expectancy Colour Coding For Chart
+  sql_expression: CASE WHEN IFF(COUNT(DISTINCT YEARS."YEARS") + MAX(IFF(YEARS."YEARS"
+    IS NULL, 1, 0)) = 1, MAX(YEARS."YEARS"), NULL) < IFF(COUNT(DISTINCT EXTRA_YEAR."EXTRA_YEAR")
+    + MAX(IFF(EXTRA_YEAR."EXTRA_YEAR" IS NULL, 1, 0)) = 1, MAX(EXTRA_YEAR."EXTRA_YEAR"),
+    NULL) THEN '#dddddd' WHEN COALESCE(Metrics."LIFE_EXPECTANCY_FOR_CHART", 0) <=
+    30 THEN '#D64550' WHEN COALESCE(Metrics."LIFE_EXPECTANCY_FOR_CHART", 0) <= 45
+    THEN '#DE6A3E' WHEN COALESCE(Metrics."LIFE_EXPECTANCY_FOR_CHART", 0) <= 60 THEN
+    '#E89928' WHEN COALESCE(Metrics."LIFE_EXPECTANCY_FOR_CHART", 0) <= 70 THEN '#E89928'
+    WHEN COALESCE(Metrics."LIFE_EXPECTANCY_FOR_CHART", 0) <= 80 THEN '#65606A' ELSE
+    '#474A7D' END
+  dax_expression: "\nSWITCH(\n    TRUE(),\n    SELECTEDVALUE('Years'[Years])<SELECTEDVALUE('Extra\
+    \ Year'[Extra year]), \"#dddddd\", \n    [LIFE_EXPECTANCY_FOR_CHART]<=30, \"#D64550\"\
+    ,\n    [LIFE_EXPECTANCY_FOR_CHART]<=45, \"#DE6A3E\",\n    [LIFE_EXPECTANCY_FOR_CHART]<=60,\
+    \ \"#E89928\",\n    [LIFE_EXPECTANCY_FOR_CHART]<=70, \"#E89928\",\n    [LIFE_EXPECTANCY_FOR_CHART]<=80,\
+    \ \"#65606A\",\n    \"#474A7D\")"
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Life Expectancy Colour Coding For Chart
+  - LIFE_EXPECTANCY_COLOUR_CODING_FOR_CHART
+  business_rules: []
+  derives_from:
+  - LIFE_EXPECTANCY_FOR_CHART
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: LIFE_EXPECTANCY_LABEL
+  logical_name: LIFE_EXPECTANCY_LABEL
+  label: Life Expectancy label
+  dax_expression: 'CONCATENATE("Life Expectancy: ", CONCATENATE(FORMAT([LIFE_EXPECTANCY_2],"#,##"),
+    " years old"))'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Life Expectancy label
+  - LIFE_EXPECTANCY_LABEL
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: WATER_SERVICES_ACCESS
+  logical_name: WATER_SERVICES_ACCESS
+  label: Water Services Access
+  sql_expression: CASE WHEN ((AVG(CASE WHEN YEAR."YEAR" = 2016 THEN INDICATORS."PEOPLE_USING_AT_LEAST_BASIC_DRINKING_WATER_SERVICES_PCT_OF_POPULATION"
+    END::FLOAT) IS NOT NULL)) AND ((AVG(CASE WHEN YEAR."YEAR" = 2010 THEN INDICATORS."PEOPLE_USING_AT_LEAST_BASIC_DRINKING_WATER_SERVICES_PCT_OF_POPULATION"
+    END::FLOAT) IS NOT NULL)) THEN CASE WHEN (AVG(CASE WHEN YEAR."YEAR" = 2016 THEN
+    INDICATORS."PEOPLE_USING_AT_LEAST_BASIC_DRINKING_WATER_SERVICES_PCT_OF_POPULATION"
+    END::FLOAT)) IS NULL AND (AVG(CASE WHEN YEAR."YEAR" = 2010 THEN INDICATORS."PEOPLE_USING_AT_LEAST_BASIC_DRINKING_WATER_SERVICES_PCT_OF_POPULATION"
+    END::FLOAT)) IS NULL THEN NULL ELSE COALESCE(AVG(CASE WHEN YEAR."YEAR" = 2016
+    THEN INDICATORS."PEOPLE_USING_AT_LEAST_BASIC_DRINKING_WATER_SERVICES_PCT_OF_POPULATION"
+    END::FLOAT), 0) - COALESCE(AVG(CASE WHEN YEAR."YEAR" = 2010 THEN INDICATORS."PEOPLE_USING_AT_LEAST_BASIC_DRINKING_WATER_SERVICES_PCT_OF_POPULATION"
+    END::FLOAT), 0) END END
+  dax_expression: If(not(isblank(CALCULATE(AVERAGE(Indicators[People using at least
+    basic drinking water services (% of population)]), 'Year'[Year] = 2016))) && not(isblank(CALCULATE(AVERAGE(Indicators[People
+    using at least basic drinking water services (% of population)]), 'Year'[Year]
+    = 2010))), CALCULATE(AVERAGE(Indicators[People using at least basic drinking water
+    services (% of population)]), 'Year'[Year] = 2016) - CALCULATE(AVERAGE(Indicators[People
+    using at least basic drinking water services (% of population)]), 'Year'[Year]
+    = 2010))
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Water Services Access
+  - WATER_SERVICES_ACCESS
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: MEASLES_VACCINE
+  logical_name: MEASLES_VACCINE
+  label: Measles Vaccine
+  sql_expression: CASE WHEN ((AVG(CASE WHEN YEAR."YEAR" = 2016 THEN INDICATORS."MEASLES_CONTAINING_VACCINE_FIRST_DOSE_MCV1_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT"
+    END::FLOAT) IS NOT NULL)) AND ((AVG(CASE WHEN YEAR."YEAR" = 2010 THEN INDICATORS."MEASLES_CONTAINING_VACCINE_FIRST_DOSE_MCV1_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT"
+    END::FLOAT) IS NOT NULL)) THEN CASE WHEN (AVG(CASE WHEN YEAR."YEAR" = 2016 THEN
+    INDICATORS."MEASLES_CONTAINING_VACCINE_FIRST_DOSE_MCV1_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT"
+    END::FLOAT)) IS NULL AND (AVG(CASE WHEN YEAR."YEAR" = 2010 THEN INDICATORS."MEASLES_CONTAINING_VACCINE_FIRST_DOSE_MCV1_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT"
+    END::FLOAT)) IS NULL THEN NULL ELSE COALESCE(AVG(CASE WHEN YEAR."YEAR" = 2016
+    THEN INDICATORS."MEASLES_CONTAINING_VACCINE_FIRST_DOSE_MCV1_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT"
+    END::FLOAT), 0) - COALESCE(AVG(CASE WHEN YEAR."YEAR" = 2010 THEN INDICATORS."MEASLES_CONTAINING_VACCINE_FIRST_DOSE_MCV1_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT"
+    END::FLOAT), 0) END END
+  dax_expression: If(not(isblank(CALCULATE(AVERAGE(Indicators[Measles-containing-vaccine
+    first-dose (MCV1) immunization coverage among 1-year-olds (%)]), 'Year'[Year]
+    = 2016))) && not(isblank(CALCULATE(AVERAGE(Indicators[Measles-containing-vaccine
+    first-dose (MCV1) immunization coverage among 1-year-olds (%)]), 'Year'[Year]
+    = 2010))), CALCULATE(AVERAGE(Indicators[Measles-containing-vaccine first-dose
+    (MCV1) immunization coverage among 1-year-olds (%)]), 'Year'[Year] = 2016) - CALCULATE(AVERAGE(Indicators[Measles-containing-vaccine
+    first-dose (MCV1) immunization coverage among 1-year-olds (%)]), 'Year'[Year]
+    = 2010))
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Measles Vaccine
+  - MEASLES_VACCINE
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: HIB3_IMMUNIZATIONS
+  logical_name: HIB3_IMMUNIZATIONS
+  label: Hib3 Immunizations
+  sql_expression: CASE WHEN ((AVG(CASE WHEN YEAR."YEAR" = 2016 THEN INDICATORS."HIB_HIB3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT"
+    END::FLOAT) IS NOT NULL)) AND ((AVG(CASE WHEN YEAR."YEAR" = 2010 THEN INDICATORS."HIB_HIB3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT"
+    END::FLOAT) IS NOT NULL)) THEN CASE WHEN (AVG(CASE WHEN YEAR."YEAR" = 2016 THEN
+    INDICATORS."HIB_HIB3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT" END::FLOAT))
+    IS NULL AND (AVG(CASE WHEN YEAR."YEAR" = 2010 THEN INDICATORS."HIB_HIB3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT"
+    END::FLOAT)) IS NULL THEN NULL ELSE COALESCE(AVG(CASE WHEN YEAR."YEAR" = 2016
+    THEN INDICATORS."HIB_HIB3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT" END::FLOAT),
+    0) - COALESCE(AVG(CASE WHEN YEAR."YEAR" = 2010 THEN INDICATORS."HIB_HIB3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT"
+    END::FLOAT), 0) END END
+  dax_expression: If(not(isblank(CALCULATE(AVERAGE(Indicators[Hib (Hib3) immunization
+    coverage among 1-year-olds (%)]), 'Year'[Year] = 2016))) && not(isblank(CALCULATE(AVERAGE(Indicators[Hib
+    (Hib3) immunization coverage among 1-year-olds (%)]), 'Year'[Year] = 2010))),
+    CALCULATE(AVERAGE(Indicators[Hib (Hib3) immunization coverage among 1-year-olds
+    (%)]), 'Year'[Year] = 2016) - CALCULATE(AVERAGE(Indicators[Hib (Hib3) immunization
+    coverage among 1-year-olds (%)]), 'Year'[Year] = 2010))
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Hib3 Immunizations
+  - HIB3_IMMUNIZATIONS
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Metrics
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: YEARS_VALUE
+  logical_name: YEARS_VALUE
+  label: Years Value
+  sql_expression: IFF(COUNT(DISTINCT YEARS."YEARS") + MAX(IFF(YEARS."YEARS" IS NULL,
+    1, 0)) = 1, MAX(YEARS."YEARS"), NULL)
+  dax_expression: SELECTEDVALUE('Years'[Years])
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Years Value
+  - YEARS_VALUE
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Years
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_CHOLERA_CASE_FATALITY_RATE
+  logical_name: SUM_OF_CHOLERA_CASE_FATALITY_RATE
+  label: SUM_OF_CHOLERA_CASE_FATALITY_RATE
+  sql_expression: SUM(INDICATORS."CHOLERA_CASE_FATALITY_RATE")
+  dax_expression: SUM('Indicators'[Cholera case fatality rate])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_CHOLERA_CASE_FATALITY_RATE
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_NUMBER_OF_NEONATAL_DEATHS_THOUSANDS
+  logical_name: SUM_OF_NUMBER_OF_NEONATAL_DEATHS_THOUSANDS
+  label: SUM_OF_NUMBER_OF_NEONATAL_DEATHS_THOUSANDS
+  sql_expression: SUM(INDICATORS."NUMBER_OF_NEONATAL_DEATHS_THOUSANDS")
+  dax_expression: SUM('Indicators'[Number of neonatal deaths (thousands)])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_NUMBER_OF_NEONATAL_DEATHS_THOUSANDS
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_MALARIA_NUMBER_OF_REPORTED_DEATHS
+  logical_name: SUM_OF_MALARIA_NUMBER_OF_REPORTED_DEATHS
+  label: SUM_OF_MALARIA_NUMBER_OF_REPORTED_DEATHS
+  sql_expression: SUM(INDICATORS."MALARIA_NUMBER_OF_REPORTED_DEATHS")
+  dax_expression: SUM('Indicators'[Malaria - number of reported deaths])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_MALARIA_NUMBER_OF_REPORTED_DEATHS
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_ESTIMATED_NUMBER_OF_MALARIA_DEATHS
+  logical_name: SUM_OF_ESTIMATED_NUMBER_OF_MALARIA_DEATHS
+  label: SUM_OF_ESTIMATED_NUMBER_OF_MALARIA_DEATHS
+  sql_expression: SUM(INDICATORS."ESTIMATED_NUMBER_OF_MALARIA_DEATHS")
+  dax_expression: SUM('Indicators'[Estimated number of malaria deaths])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_ESTIMATED_NUMBER_OF_MALARIA_DEATHS
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_UNDER_FIVE_MORTALITY_RATE_PROBABILITY_OF_DYING_BY_AGE_5_PER_1000_LIVE_BIRTHS
+  logical_name: SUM_OF_UNDER_FIVE_MORTALITY_RATE_PROBABILITY_OF_DYING_BY_AGE_5_PER_1000_LIVE_BIRTHS
+  label: SUM_OF_UNDER_FIVE_MORTALITY_RATE_PROBABILITY_OF_DYING_BY_AGE_5_PER_1000_LIVE_BIRTHS
+  sql_expression: SUM(INDICATORS."UNDER_FIVE_MORTALITY_RATE_PROBABILITY_OF_DYING_BY_AGE_5_PER_1000_LIVE_BIRTHS")
+  dax_expression: SUM('Indicators'[Under-five mortality rate (probability of dying
+    by age 5 per 1000 live births)])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_UNDER_FIVE_MORTALITY_RATE_PROBABILITY_OF_DYING_BY_AGE_5_PER_1000_LIVE_BIRTHS
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_CHILDREN_AGED_5_YEARS_SLEEPING_UNDER_INSECTICIDE_TREATED_NETS
+  logical_name: SUM_OF_CHILDREN_AGED_5_YEARS_SLEEPING_UNDER_INSECTICIDE_TREATED_NETS
+  label: SUM_OF_CHILDREN_AGED_5_YEARS_SLEEPING_UNDER_INSECTICIDE_TREATED_NETS
+  sql_expression: SUM(INDICATORS."CHILDREN_AGED_LT5_YEARS_SLEEPING_UNDER_INSECTICIDE_TREATED_NETS_PCT")
+  dax_expression: SUM('Indicators'[Children aged <5 years sleeping under insecticide-treated
+    nets (%)])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_CHILDREN_AGED_5_YEARS_SLEEPING_UNDER_INSECTICIDE_TREATED_NETS
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_INCIDENCE_OF_TUBERCULOSIS_PER_100_000_POPULATION_PER_YEAR
+  logical_name: SUM_OF_INCIDENCE_OF_TUBERCULOSIS_PER_100_000_POPULATION_PER_YEAR
+  label: SUM_OF_INCIDENCE_OF_TUBERCULOSIS_PER_100_000_POPULATION_PER_YEAR
+  sql_expression: SUM(INDICATORS."INCIDENCE_OF_TUBERCULOSIS_PER_100_000_POPULATION_PER_YEAR")
+  dax_expression: SUM('Indicators'[Incidence of tuberculosis (per 100 000 population
+    per year)])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_INCIDENCE_OF_TUBERCULOSIS_PER_100_000_POPULATION_PER_YEAR
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_PREVALENCE_OF_TUBERCULOSIS_PER_100_000_POPULATION
+  logical_name: SUM_OF_PREVALENCE_OF_TUBERCULOSIS_PER_100_000_POPULATION
+  label: SUM_OF_PREVALENCE_OF_TUBERCULOSIS_PER_100_000_POPULATION
+  sql_expression: SUM(INDICATORS."PREVALENCE_OF_TUBERCULOSIS_PER_100_000_POPULATION")
+  dax_expression: SUM('Indicators'[Prevalence of tuberculosis (per 100 000 population)])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_PREVALENCE_OF_TUBERCULOSIS_PER_100_000_POPULATION
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_BIRTHS_ATTENDED_BY_SKILLED_HEALTH_PERSONNEL_AMONG_GIRLS_AGED_15_19
+  logical_name: SUM_OF_BIRTHS_ATTENDED_BY_SKILLED_HEALTH_PERSONNEL_AMONG_GIRLS_AGED_15_19
+  label: SUM_OF_BIRTHS_ATTENDED_BY_SKILLED_HEALTH_PERSONNEL_AMONG_GIRLS_AGED_15_19
+  sql_expression: SUM(INDICATORS."BIRTHS_ATTENDED_BY_SKILLED_HEALTH_PERSONNEL_AMONG_GIRLS_AGED_15_19_PCT")
+  dax_expression: SUM('Indicators'[Births attended by skilled health personnel, among
+    girls aged 15-19 (%)])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_BIRTHS_ATTENDED_BY_SKILLED_HEALTH_PERSONNEL_AMONG_GIRLS_AGED_15_19
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_MATERNAL_MORTALITY_RATIO_PER_100_000_LIVE_BIRTHS
+  logical_name: SUM_OF_MATERNAL_MORTALITY_RATIO_PER_100_000_LIVE_BIRTHS
+  label: SUM_OF_MATERNAL_MORTALITY_RATIO_PER_100_000_LIVE_BIRTHS
+  sql_expression: SUM(INDICATORS."MATERNAL_MORTALITY_RATIO_PER_100_000_LIVE_BIRTHS")
+  dax_expression: SUM('Indicators'[Maternal mortality ratio (per 100 000 live births)])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_MATERNAL_MORTALITY_RATIO_PER_100_000_LIVE_BIRTHS
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_LIFE_EXPECTANCY_AT_BIRTH_YEARS
+  logical_name: SUM_OF_LIFE_EXPECTANCY_AT_BIRTH_YEARS
+  label: SUM_OF_LIFE_EXPECTANCY_AT_BIRTH_YEARS
+  sql_expression: SUM(INDICATORS."LIFE_EXPECTANCY_AT_BIRTH_YEARS")
+  dax_expression: SUM('Indicators'[Life expectancy at birth (years)])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_LIFE_EXPECTANCY_AT_BIRTH_YEARS
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_NEONATAL_MORTALITY_RATE_PER_1000_LIVE_BIRTHS
+  logical_name: SUM_OF_NEONATAL_MORTALITY_RATE_PER_1000_LIVE_BIRTHS
+  label: SUM_OF_NEONATAL_MORTALITY_RATE_PER_1000_LIVE_BIRTHS
+  sql_expression: SUM(INDICATORS."NEONATAL_MORTALITY_RATE_PER_1000_LIVE_BIRTHS")
+  dax_expression: SUM('Indicators'[Neonatal mortality rate (per 1000 live births)])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_NEONATAL_MORTALITY_RATE_PER_1000_LIVE_BIRTHS
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_LIFE_EXPECTANCY_AT_AGE_60_YEARS
+  logical_name: SUM_OF_LIFE_EXPECTANCY_AT_AGE_60_YEARS
+  label: SUM_OF_LIFE_EXPECTANCY_AT_AGE_60_YEARS
+  sql_expression: SUM(INDICATORS."LIFE_EXPECTANCY_AT_AGE_60_YEARS")
+  dax_expression: SUM('Indicators'[Life expectancy at age 60 (years)])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_LIFE_EXPECTANCY_AT_AGE_60_YEARS
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_HEPATITIS_B_HEPB3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS
+  logical_name: SUM_OF_HEPATITIS_B_HEPB3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS
+  label: SUM_OF_HEPATITIS_B_HEPB3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS
+  sql_expression: SUM(INDICATORS."HEPATITIS_B_HEPB3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT")
+  dax_expression: SUM('Indicators'[Hepatitis B (HepB3) immunization coverage among
+    1-year-olds (%)])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_HEPATITIS_B_HEPB3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_HIB_HIB3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS
+  logical_name: SUM_OF_HIB_HIB3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS
+  label: SUM_OF_HIB_HIB3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS
+  sql_expression: SUM(INDICATORS."HIB_HIB3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT")
+  dax_expression: SUM('Indicators'[Hib (Hib3) immunization coverage among 1-year-olds
+    (%)])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_HIB_HIB3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_HOSPITAL_BEDS_PER_10_000_POPULATION
+  logical_name: SUM_OF_HOSPITAL_BEDS_PER_10_000_POPULATION
+  label: SUM_OF_HOSPITAL_BEDS_PER_10_000_POPULATION
+  sql_expression: SUM(INDICATORS."HOSPITAL_BEDS_PER_10_000_POPULATION")
+  dax_expression: SUM('Indicators'[Hospital beds (per 10 000 population)])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_HOSPITAL_BEDS_PER_10_000_POPULATION
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_GENERAL_GOVERNMENT_EXPENDITURE_ON_HEALTH_AS_A_PERCENTAGE_OF_TOTAL_GOVERNMENT_EXPENDITURE
+  logical_name: SUM_OF_GENERAL_GOVERNMENT_EXPENDITURE_ON_HEALTH_AS_A_PERCENTAGE_OF_TOTAL_GOVERNMENT_EXPENDITURE
+  label: SUM_OF_GENERAL_GOVERNMENT_EXPENDITURE_ON_HEALTH_AS_A_PERCENTAGE_OF_TOTAL_GOVERNMENT_EXPENDITURE
+  sql_expression: SUM(INDICATORS."GENERAL_GOVERNMENT_EXPENDITURE_ON_HEALTH_AS_A_PERCENTAGE_OF_TOTAL_GOVERNMENT_EXPENDITURE")
+  dax_expression: SUM('Indicators'[General government expenditure on health as a percentage
+    of total government expenditure])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_GENERAL_GOVERNMENT_EXPENDITURE_ON_HEALTH_AS_A_PERCENTAGE_OF_TOTAL_GOVERNMENT_EXPENDITURE
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_GENERAL_GOVERNMENT_EXPENDITURE_ON_HEALTH_AS_A_PERCENTAGE_OF_TOTAL_EXPENDITURE_ON_HEALTH
+  logical_name: SUM_OF_GENERAL_GOVERNMENT_EXPENDITURE_ON_HEALTH_AS_A_PERCENTAGE_OF_TOTAL_EXPENDITURE_ON_HEALTH
+  label: SUM_OF_GENERAL_GOVERNMENT_EXPENDITURE_ON_HEALTH_AS_A_PERCENTAGE_OF_TOTAL_EXPENDITURE_ON_HEALTH
+  sql_expression: SUM(INDICATORS."GENERAL_GOVERNMENT_EXPENDITURE_ON_HEALTH_AS_A_PERCENTAGE_OF_TOTAL_EXPENDITURE_ON_HEALTH")
+  dax_expression: SUM('Indicators'[General government expenditure on health as a percentage
+    of total expenditure on health])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_GENERAL_GOVERNMENT_EXPENDITURE_ON_HEALTH_AS_A_PERCENTAGE_OF_TOTAL_EXPENDITURE_ON_HEALTH
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_MEASLES_CONTAINING_VACCINE_FIRST_DOSE_MCV1_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS
+  logical_name: SUM_OF_MEASLES_CONTAINING_VACCINE_FIRST_DOSE_MCV1_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS
+  label: SUM_OF_MEASLES_CONTAINING_VACCINE_FIRST_DOSE_MCV1_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS
+  sql_expression: SUM(INDICATORS."MEASLES_CONTAINING_VACCINE_FIRST_DOSE_MCV1_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT")
+  dax_expression: SUM('Indicators'[Measles-containing-vaccine first-dose (MCV1) immunization
+    coverage among 1-year-olds (%)])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_MEASLES_CONTAINING_VACCINE_FIRST_DOSE_MCV1_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_GROSS_NATIONAL_INCOME_PER_CAPITA_PPP_INT
+  logical_name: SUM_OF_GROSS_NATIONAL_INCOME_PER_CAPITA_PPP_INT
+  label: SUM_OF_GROSS_NATIONAL_INCOME_PER_CAPITA_PPP_INT
+  sql_expression: SUM(INDICATORS."GROSS_NATIONAL_INCOME_PER_CAPITA_PPP_INT_DOL")
+  dax_expression: SUM('Indicators'[Gross national income per capita (PPP int. $)])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_GROSS_NATIONAL_INCOME_PER_CAPITA_PPP_INT
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_NUMBER_OF_COMMUNITY_HEALTH_WORKERS
+  logical_name: SUM_OF_NUMBER_OF_COMMUNITY_HEALTH_WORKERS
+  label: SUM_OF_NUMBER_OF_COMMUNITY_HEALTH_WORKERS
+  sql_expression: SUM(INDICATORS."NUMBER_OF_COMMUNITY_HEALTH_WORKERS")
+  dax_expression: SUM('Indicators'[Number of community health workers])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_NUMBER_OF_COMMUNITY_HEALTH_WORKERS
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_COMMUNITY_HEALTH_WORKERS_DENSITY_PER_10_000_POPULATION
+  logical_name: SUM_OF_COMMUNITY_HEALTH_WORKERS_DENSITY_PER_10_000_POPULATION
+  label: SUM_OF_COMMUNITY_HEALTH_WORKERS_DENSITY_PER_10_000_POPULATION
+  sql_expression: SUM(INDICATORS."COMMUNITY_HEALTH_WORKERS_DENSITY_PER_10_000_POPULATION")
+  dax_expression: SUM('Indicators'[Community health workers density (per 10 000 population)])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_COMMUNITY_HEALTH_WORKERS_DENSITY_PER_10_000_POPULATION
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_CHILDREN_AGED_5_YEARS_WITH_ARI_SYMPTOMS_WHO_TOOK_ANTIBIOTIC_TREATMENT
+  logical_name: SUM_OF_CHILDREN_AGED_5_YEARS_WITH_ARI_SYMPTOMS_WHO_TOOK_ANTIBIOTIC_TREATMENT
+  label: SUM_OF_CHILDREN_AGED_5_YEARS_WITH_ARI_SYMPTOMS_WHO_TOOK_ANTIBIOTIC_TREATMENT
+  sql_expression: SUM(INDICATORS."CHILDREN_AGED_LT5_YEARS_WITH_ARI_SYMPTOMS_WHO_TOOK_ANTIBIOTIC_TREATMENT_PCT")
+  dax_expression: SUM('Indicators'[Children aged <5 years with ARI symptoms who took
+    antibiotic treatment (%)])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_CHILDREN_AGED_5_YEARS_WITH_ARI_SYMPTOMS_WHO_TOOK_ANTIBIOTIC_TREATMENT
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_INCOME_SHARE_HELD_BY_LOWEST_20
+  logical_name: SUM_OF_INCOME_SHARE_HELD_BY_LOWEST_20
+  label: SUM_OF_INCOME_SHARE_HELD_BY_LOWEST_20
+  sql_expression: SUM(INDICATORS."INCOME_SHARE_HELD_BY_LOWEST_20PCT")
+  dax_expression: SUM('Indicators'[Income share held by lowest 20%])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_INCOME_SHARE_HELD_BY_LOWEST_20
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_GDP_PER_CAPITA_CURRENT_US
+  logical_name: SUM_OF_GDP_PER_CAPITA_CURRENT_US
+  label: SUM_OF_GDP_PER_CAPITA_CURRENT_US
+  sql_expression: SUM(INDICATORS."GDP_PER_CAPITA_CURRENT_USDOL")
+  dax_expression: SUM('Indicators'[GDP per capita (current US$)])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_GDP_PER_CAPITA_CURRENT_US
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_LIFE_EXPECTANCY_YRS
+  logical_name: SUM_OF_LIFE_EXPECTANCY_YRS
+  label: SUM_OF_LIFE_EXPECTANCY_YRS
+  sql_expression: SUM(INDICATORS."LIFE_EXPECTANCY_YRS")
+  dax_expression: SUM('Indicators'[Life expectancy (yrs)])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_LIFE_EXPECTANCY_YRS
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_PEOPLE_USING_AT_LEAST_BASIC_DRINKING_WATER_SERVICES_OF_POPULATION
+  logical_name: SUM_OF_PEOPLE_USING_AT_LEAST_BASIC_DRINKING_WATER_SERVICES_OF_POPULATION
+  label: SUM_OF_PEOPLE_USING_AT_LEAST_BASIC_DRINKING_WATER_SERVICES_OF_POPULATION
+  sql_expression: SUM(INDICATORS."PEOPLE_USING_AT_LEAST_BASIC_DRINKING_WATER_SERVICES_PCT_OF_POPULATION")
+  dax_expression: SUM('Indicators'[People using at least basic drinking water services
+    (% of population)])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_PEOPLE_USING_AT_LEAST_BASIC_DRINKING_WATER_SERVICES_OF_POPULATION
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_MEASLES_NUMBER_OF_REPORTED_CASES
+  logical_name: SUM_OF_MEASLES_NUMBER_OF_REPORTED_CASES
+  label: SUM_OF_MEASLES_NUMBER_OF_REPORTED_CASES
+  sql_expression: SUM(INDICATORS."MEASLES_NUMBER_OF_REPORTED_CASES")
+  dax_expression: SUM('Indicators'[Measles - number of reported cases])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_MEASLES_NUMBER_OF_REPORTED_CASES
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_DIPHTHERIA_TETANUS_TOXOID_AND_PERTUSSIS_DTP3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS
+  logical_name: SUM_OF_DIPHTHERIA_TETANUS_TOXOID_AND_PERTUSSIS_DTP3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS
+  label: SUM_OF_DIPHTHERIA_TETANUS_TOXOID_AND_PERTUSSIS_DTP3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS
+  sql_expression: SUM(INDICATORS."DIPHTHERIA_TETANUS_TOXOID_AND_PERTUSSIS_DTP3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT")
+  dax_expression: SUM('Indicators'[Diphtheria tetanus toxoid and pertussis (DTP3)
+    immunization coverage among 1-year-olds (%)])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_DIPHTHERIA_TETANUS_TOXOID_AND_PERTUSSIS_DTP3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_BUBBLE01
+  logical_name: SUM_OF_BUBBLE01
+  label: SUM_OF_BUBBLE01
+  sql_expression: SUM(LEGEND."BUBBLE01")
+  dax_expression: SUM('Legend'[Bubble01])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_BUBBLE01
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Legend
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_BUBBLE02
+  logical_name: SUM_OF_BUBBLE02
+  label: SUM_OF_BUBBLE02
+  sql_expression: SUM(LEGEND."BUBBLE02")
+  dax_expression: SUM('Legend'[Bubble02])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_BUBBLE02
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Legend
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_BUBBLE03
+  logical_name: SUM_OF_BUBBLE03
+  label: SUM_OF_BUBBLE03
+  sql_expression: SUM(LEGEND."BUBBLE03")
+  dax_expression: SUM('Legend'[Bubble03])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_BUBBLE03
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Legend
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_BUBBLE04
+  logical_name: SUM_OF_BUBBLE04
+  label: SUM_OF_BUBBLE04
+  sql_expression: SUM(LEGEND."BUBBLE04")
+  dax_expression: SUM('Legend'[Bubble04])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_BUBBLE04
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Legend
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_BUBBLE05
+  logical_name: SUM_OF_BUBBLE05
+  label: SUM_OF_BUBBLE05
+  sql_expression: SUM(LEGEND."BUBBLE05")
+  dax_expression: SUM('Legend'[Bubble05])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_BUBBLE05
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Legend
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_POPULATION
+  logical_name: SUM_OF_POPULATION
+  label: SUM_OF_POPULATION
+  sql_expression: SUM(POPULATION."POPULATION")
+  dax_expression: SUM('Population'[Population])
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_POPULATION
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Population
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_MATERNAL_MORTALITY_CHANGE
+  logical_name: SUM_OF_MATERNAL_MORTALITY_CHANGE
+  label: SUM_OF_MATERNAL_MORTALITY_CHANGE
+  sql_expression: SUM(VARIANCE_ANALYSIS."MATERNAL_MORTALITY_CHANGE")
+  dax_expression: SUM('Variance Analysis'[Maternal Mortality Change])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_MATERNAL_MORTALITY_CHANGE
+  business_rules: []
+  derives_from:
+  - MATERNAL_MORTALITY_CHANGE
+  domain: life-expectancy · Life expectancy v202009
+  concept: Variance Analysis
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_MALARIA_CASES_CHANGE
+  logical_name: SUM_OF_MALARIA_CASES_CHANGE
+  label: SUM_OF_MALARIA_CASES_CHANGE
+  sql_expression: SUM(VARIANCE_ANALYSIS."MALARIA_CASES_CHANGE")
+  dax_expression: SUM('Variance Analysis'[Malaria Cases Change])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_MALARIA_CASES_CHANGE
+  business_rules: []
+  derives_from:
+  - MALARIA_CASES_CHANGE
+  domain: life-expectancy · Life expectancy v202009
+  concept: Variance Analysis
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_NEONATAL_MORTALITY_CHANGE
+  logical_name: SUM_OF_NEONATAL_MORTALITY_CHANGE
+  label: SUM_OF_NEONATAL_MORTALITY_CHANGE
+  sql_expression: SUM(VARIANCE_ANALYSIS."NEONATAL_MORTALITY_CHANGE")
+  dax_expression: SUM('Variance Analysis'[Neonatal Mortality Change])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_NEONATAL_MORTALITY_CHANGE
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Variance Analysis
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_GDP_CHANGE
+  logical_name: SUM_OF_GDP_CHANGE
+  label: SUM_OF_GDP_CHANGE
+  sql_expression: SUM(VARIANCE_ANALYSIS."GDP_CHANGE")
+  dax_expression: SUM('Variance Analysis'[GDP Change])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_GDP_CHANGE
+  business_rules: []
+  derives_from:
+  - GDP_CHANGE
+  domain: life-expectancy · Life expectancy v202009
+  concept: Variance Analysis
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_PUPIL_TEACHER_RATIO_CHANGE
+  logical_name: SUM_OF_PUPIL_TEACHER_RATIO_CHANGE
+  label: SUM_OF_PUPIL_TEACHER_RATIO_CHANGE
+  sql_expression: SUM(VARIANCE_ANALYSIS."PUPIL_TEACHER_RATIO_CHANGE")
+  dax_expression: SUM('Variance Analysis'[Pupil Teacher Ratio Change])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_PUPIL_TEACHER_RATIO_CHANGE
+  business_rules: []
+  derives_from:
+  - PUPIL_TEACHER_RATIO_CHANGE
+  domain: life-expectancy · Life expectancy v202009
+  concept: Variance Analysis
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_TUBERCULOSIS_INCIDENTS_CHANGE
+  logical_name: SUM_OF_TUBERCULOSIS_INCIDENTS_CHANGE
+  label: SUM_OF_TUBERCULOSIS_INCIDENTS_CHANGE
+  sql_expression: SUM(VARIANCE_ANALYSIS."TUBERCULOSIS_INCIDENTS_CHANGE")
+  dax_expression: SUM('Variance Analysis'[Tuberculosis Incidents Change])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_TUBERCULOSIS_INCIDENTS_CHANGE
+  business_rules: []
+  domain: life-expectancy · Life expectancy v202009
+  concept: Variance Analysis
+  semantic_view_name: SEMABRIDGE.LIFE_EXPECTANCY.LIFE_EXPECTANCY_V202009_SEMANTIC
+  tags: []
+  origin: bi
+relationships:
+- name: REL_INDICATORS_YEAR__YEAR_YEAR
+  from_concept: Indicators
+  to_concept: Year
+  cardinality: N:1
+  join_expression: Indicators.Year = Year.Year
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_INDICATORS_COUNTRY_CODE__COUNTRY_COUNTRY_CODE
+  from_concept: Indicators
+  to_concept: Country
+  cardinality: N:1
+  join_expression: Indicators."Country Code" = Country."Country Code"
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_INDICATORS_SEX__SEX_SEX
+  from_concept: Indicators
+  to_concept: Sex
+  cardinality: N:1
+  join_expression: Indicators.Sex = Sex.Sex
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_VARIANCE_ANALYSIS_COUNTRY__COUNTRY_COUNTRY_CODE
+  from_concept: Variance Analysis
+  to_concept: Country
+  cardinality: '1:1'
+  join_expression: Variance Analysis.Country = Country."Country Code"
+  cross_filter_direction: both
+  is_active: true
+  origin: bi
+- name: REL_FLAGS_COUNTRY_CODE__COUNTRY_COUNTRY_CODE
+  from_concept: Flags
+  to_concept: Country
+  cardinality: N:1
+  join_expression: Flags."Country Code" = Country."Country Code"
+  cross_filter_direction: both
+  is_active: true
+  origin: bi
+- name: REL_INDICATORS_YEAR__YEARS_YEARS
+  from_concept: Indicators
+  to_concept: Years
+  cardinality: N:1
+  join_expression: Indicators.Year = Years.Years
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_POPULATION_CODE__COUNTRY_COUNTRY_CODE
+  from_concept: Population
+  to_concept: Country
+  cardinality: N:1
+  join_expression: Population.Code = Country."Country Code"
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_POPULATION_YEAR__YEARS_YEARS
+  from_concept: Population
+  to_concept: Years
+  cardinality: N:1
+  join_expression: Population.Year = Years.Years
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_INDICATORS_LIFE_EXP_BUCKETS__BUCKETS_CATEGORY
+  from_concept: Indicators
+  to_concept: Buckets
+  cardinality: N:1
+  join_expression: Indicators."Life Exp Buckets" = Buckets.Category
+  cross_filter_direction: both
+  is_active: true
+  origin: bi

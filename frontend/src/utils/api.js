@@ -2632,3 +2632,59 @@ function _triggerDownload(blob, filename) {
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
+
+/**
+ * Format API errors into clean, human-readable sentences.
+ * Guarantees that raw status messages (like "Not Found") or raw payload blobs are never rendered directly.
+ *
+ * @param {Response|{status: number, ok: boolean}} [res] - Fetch Response or status object
+ * @param {any} [data] - Parsed response payload
+ * @param {string} [context] - Short name of the action/service
+ * @returns {string} Readable sentence describing the outcome
+ */
+export function formatApiErrorMessage(res, data, context = 'Operation') {
+    const status = res?.status || (data?.status && typeof data.status === 'number' ? data.status : 0);
+
+    if (status === 404) {
+        return `${context} service endpoint is currently unavailable. Please verify the service is running.`;
+    }
+
+    if (status === 422) {
+        if (Array.isArray(data?.detail)) {
+            const fieldIssues = data.detail.map((err) => {
+                const field = Array.isArray(err.loc)
+                    ? err.loc.filter((x) => x !== 'body').join('.')
+                    : (err.loc || '');
+                const msg = err.msg || 'invalid value';
+                return field ? `'${field}': ${msg}` : msg;
+            });
+            const uniqueIssues = Array.from(new Set(fieldIssues));
+            return `Invalid request parameters for ${context}: ${uniqueIssues.join('; ')}.`;
+        }
+        if (typeof data?.detail === 'string') {
+            return `Invalid request for ${context}: ${data.detail}.`;
+        }
+    }
+
+    if (status === 401 || status === 403) {
+        return `You do not have permission to perform ${context}. Please check your credentials.`;
+    }
+
+    if (typeof data?.detail === 'string' && data.detail.trim() && data.detail.trim() !== 'Not Found') {
+        return data.detail.trim();
+    }
+
+    if (typeof data?.message === 'string' && data.message.trim() && data.message.trim() !== 'Not Found') {
+        return data.message.trim();
+    }
+
+    if (typeof data?.error === 'string' && data.error.trim()) {
+        return data.error.trim();
+    }
+
+    if (data && typeof data === 'object') {
+        console.error(`Unexpected ${context} error response:`, data);
+    }
+    return `${context} could not be completed. Please try again or contact your administrator.`;
+}
+

@@ -1,0 +1,20 @@
+version: "0.1"
+source: cat1.sch1.entity_enriched
+joins:
+  - name: entity_dimone
+    to: cat1.sch1.dim_one
+    on: entity.dim_one_id = dim_one.dim_one_id
+dimensions:
+  - name: label
+    expr: dim_one.label
+    comment: Label of the row
+  - name: category
+    expr: entity.category
+measures:
+  - name: total_amount
+    expr: SUM(entity.amount)
+    comment: Total amount
+  - name: item_count
+    expr: COUNT(entity.item_id)
+  - name: unresolved
+    expr: CAST(NULL AS DOUBLE)

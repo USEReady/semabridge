@@ -315,7 +315,7 @@ def extract_sql_filter_literals(
                                     _add(node.this.name, item.name)
                     break
                 except Exception as exc:
-                    logger.debug("Failed parsing expression with dialect %s: %s", dial, exc)
+                    logger.debug("Failed parsing expression with dialect %s: %s", read_dialect, exc)
                     continue
 
         if not parsed_ok:
@@ -740,7 +740,7 @@ class ProjectLexicon:
             if target_cf and target_cf not in dom_names:
                 continue
             for m in getattr(dom, "metrics", []) or []:
-                mk = m.name.casefold()
+                mk = _norm_ident(m.name)
                 if mk not in seen_m:
                     seen_m.add(mk)
                     metrics_raw.append(m)
@@ -751,7 +751,7 @@ class ProjectLexicon:
                     continue
                 if target_cf and m.domain and m.domain.casefold() != target_cf:
                     continue
-                mk = m.name.casefold()
+                mk = _norm_ident(m.name)
                 if mk not in seen_m:
                     seen_m.add(mk)
                     metrics_raw.append(m)

@@ -316,6 +316,14 @@ def get_config(project_id: str) -> Dict[str, Any]:
     if not isinstance(project_cfg, dict):
         raise ConfigLoadError(f"Invalid project config format: {project_path}")
 
+    try:
+        from semabridge.utils.upload_storage import persist_source_uploads
+        if persist_source_uploads(project_cfg):
+            with open(project_path, "w", encoding="utf-8") as f:
+                yaml.safe_dump(project_cfg, f, sort_keys=False)
+    except Exception as heal_err:
+        logger.debug("Auto-heal of project config %s failed: %s", project_path, heal_err)
+
     # Self-contained project YAMLs are valid without mapping_profile.
     # In that case, return the project config as-is.
     profile_name = project_cfg.get("mapping_profile")

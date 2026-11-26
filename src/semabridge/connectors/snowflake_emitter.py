@@ -215,16 +215,11 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
         sync_mode: str = "copy",
         source_pbix_path: Optional[str] = None,
         load_source_data: bool = False,
+        project_id: Optional[str] = None,
     ) -> bool:
-        """Deploy the SML model to Snowflake.
-
-        source_pbix_path/load_source_data: the opt-in data-backfill step
-        (see _maybe_backfill_source_data below) — off by default, and a
-        no-op unless load_source_data is explicitly set true AND a real
-        pbix path is provided. SML deploy path only; deploy_from_osi()
-        deliberately does not accept these (see class docstring on
-        _maybe_backfill_source_data for why OSI is out of scope for v1).
-        """
+        """Deploy the SML model to Snowflake."""
+        if project_id and not getattr(self, "project_id", None):
+            self.project_id = str(project_id).strip()
         with self._physical_namespace_scope(sml):
             return self._execute_deployment_pipeline(
                 sml, is_osi=False, sync_mode=sync_mode,
@@ -984,7 +979,6 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
                                 if _expr:
                                     _base_metrics[_n.upper()] = _expr
                         if _base_metrics:
-                            from semabridge.governance.drift_service import record_deploy_baseline
                             _src_defs = {}
                             if hasattr(model, "metrics"):
                                 for _m in (getattr(model, "metrics", []) or []):
@@ -997,11 +991,15 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
                                         _mn = getattr(_m, "name", None) or getattr(_m, "unique_name", None)
                                         if _mn and _mn.upper() not in _src_defs:
                                             _src_defs[_mn.upper()] = (getattr(_m, "dax_expression", "") or getattr(_m, "sql_expression", "") or getattr(_m, "expression", "") or "").strip()
+                            scope_pid = self.binding_scope[0] if (getattr(self, "binding_scope", None) and self.binding_scope) else None
+                            builder_pid = getattr(getattr(self, "semantic_view_builder", None), "project_id", None)
                             resolved_pid = (
-                                getattr(model, "project_id", None)
+                                getattr(self, "project_id", None)
+                                or scope_pid
+                                or builder_pid
+                                or getattr(model, "project_id", None)
                                 or getattr(model, "source_project_id", None)
                                 or (getattr(model, "metadata", {}) or {}).get("project_id")
-                                or getattr(self, "project_id", None)
                                 or getattr(getattr(self, "config", None), "project_id", None)
                             )
                             if not resolved_pid and hasattr(self, "output_dir") and self.output_dir:
@@ -1009,21 +1007,26 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
                                     resolved_pid = Path(self.output_dir).name
                                 except Exception:
                                     pass
-                            if not resolved_pid:
-                                try:
-                                    from semabridge.api.services.project_shared import resolve_canonical_project_id
-                                    m_name = getattr(model, "label", None) or getattr(model, "unique_name", None) or getattr(model, "name", None)
-                                    if m_name:
-                                        resolved_pid = resolve_canonical_project_id(m_name)
-                                except Exception:
-                                    pass
-                            record_deploy_baseline(
+                            dropped_obj_names = [
+                                dm.get("metric")
+                                for dm in (getattr(self, "_dropped_metrics", []) or [])
+                                if isinstance(dm, dict) and dm.get("metric")
+                            ]
+                            from semabridge.governance.drift.baseline_store import save_deploy_baseline
+                            save_deploy_baseline(
                                 project_id=resolved_pid,
+                                platform="SNOWFLAKE",
                                 view_name=_last_qualified_view_name,
+                                definition_text=getattr(self, "_last_deployed_ddl_text", None) or _ddl_sql,
+                                not_deployed_objects=dropped_obj_names,
                                 metrics=_base_metrics,
                                 source_definitions=_src_defs,
-                                baseline_source="deploy",
                             )
+                            try:
+                                from semabridge.governance.drift.introspection_cache import invalidate_cached_definition
+                                invalidate_cached_definition("SNOWFLAKE", _last_qualified_view_name)
+                            except Exception:
+                                pass
                     except Exception as _base_exc:
                         logger.warning(
                             "[%s] Could not capture deploy baseline via DESCRIBE for drift monitoring (non-fatal): %s",

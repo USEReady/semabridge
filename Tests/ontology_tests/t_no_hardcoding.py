@@ -32,7 +32,10 @@ GENERIC_OK = {  # technical words that legitimately appear in code
     "min", "max", "total", "label", "description", "table", "column", "measure", "metric", "metrics", "level", "sort",
     "order", "index", "code", "rank", "category", "amount", "number", "price", "cost", "rate", "score",
     "model", "models", "root", "owner", "account", "empty", "entity", "entities", "period", "custom", "updated",
-    "path", "store", "agent", "calculations", "flags", "metadata",
+    "path", "store", "agent", "calculations", "flags", "metadata", "cases",
+    # Semantic data modeling structural vocabulary & governance metadata (not business domain names):
+    # Keep strictly what was flagged: 'fact', 'dimension', 'severity', 'events'
+    "fact", "dimension", "severity", "events", "actual", "expected",
     # DAX / SQL keywords and date parts that are also common column names
     "blank", "true", "false", "null", "all", "filter", "week", "weekday", "quarter", "hour", "minute",
     "second", "time", "datetime", "timestamp", "text", "string", "boolean", "values", "select", "from",

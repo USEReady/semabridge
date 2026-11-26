@@ -23,7 +23,7 @@ def test_demo_seeding_keeps_real_events_and_never_overrides_a_real_metric(tmp_pa
     monkeypatch.setattr(drift_service, "_state_path", lambda: state_file)
     # Drift events live in the database; the old JSON file is imported into
     # an empty table on first use.
-    drift_service.clear_drift_events()
+    drift_service.clear_drift_events(_allow_all_for_testing=True)
     state_file.unlink(missing_ok=True)
     real = [
         {"id": "real-1", "project_id": "proj-regional-sales", "metric_name": "REVENUE", "status": "pending",
