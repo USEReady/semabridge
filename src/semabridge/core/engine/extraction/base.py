@@ -103,20 +103,45 @@ def _extract_pbi_desktop(
     if not model_ref:
         raise ExtractionError("No target engine or model specified for Power BI Desktop extraction.")
 
+    model_name = (
+        getattr(context, "resolved_pbix_display_name", None)
+        or (getattr(getattr(context, "config", None), "model", None) and getattr(context.config.model, "name", None))
+        or getattr(context, "project_id", None)
+        or "model"
+    )
     ident = ModelIdentity(
         source_type="pbi_desktop",
         model_id=str(model_ref),
-        display_name=str(context.project_name or "model"),
+        display_name=str(model_name),
     )
     drop_ledger = getattr(context, "drop_ledger", None)
     tmsl = adapter.extract_model(ident, drop_ledger=drop_ledger)
-    source_format = from_pbix_tmsl(tmsl)
 
+    report_layer = None
+    report_aliases = None
+    unresolved_refs = None
+    ambiguous_aliases = None
     if pbix_path:
         try:
             report_layer = adapter.extract_report_layer(ident, tmsl=tmsl)
-            source_format.report_layer = report_layer
+            if report_layer:
+                report_aliases = getattr(report_layer, "field_aliases", None)
+                unresolved_refs = getattr(report_layer, "unresolved", None)
+                ambiguous_aliases = getattr(report_layer, "ambiguous", None)
         except Exception as exc:
             logger.warning(f"Failed to extract report layer: {exc}")
+
+    source_format = from_pbix_tmsl(
+        project_id=context.project_id,
+        run_id=context.run_id,
+        tmsl=tmsl,
+        pbix_path=str(pbix_path or ""),
+        field_aliases=report_aliases,
+        unresolved_report_field_references=unresolved_refs,
+        ambiguous_report_aliases=ambiguous_aliases,
+    )
+
+    if report_layer:
+        source_format.report_layer = report_layer
 
     return source_format

@@ -52,9 +52,7 @@ export default function PbiDesktopStep({
     if (!key) return;
     setInspectLoading((prev) => ({ ...prev, [key]: true }));
     try {
-      const res = await api.get('/sources/pbi-desktop/inspect', {
-        params: { file_path: filePath || fileName },
-      });
+      const res = await api.inspectPbiDesktopFile(filePath || fileName);
       if (res) {
         setInspectSummaries((prev) => ({
           ...prev,
@@ -82,9 +80,7 @@ export default function PbiDesktopStep({
       let preselectedInst = null;
       if (preselectedServer && preselectedDatabase) {
         try {
-          const checkRes = await api.get('/sources/pbi-desktop/validate-preselection', {
-            params: { server: preselectedServer, database: preselectedDatabase },
-          });
+          const checkRes = await api.validatePbiDesktopPreselection(preselectedServer, preselectedDatabase);
           if (checkRes?.valid && checkRes?.instance) {
             preselectedInst = checkRes.instance;
             setPreselectionNotice('');
@@ -97,7 +93,7 @@ export default function PbiDesktopStep({
       }
 
       // 2. Fetch all currently running Desktop instances
-      const res = await api.get('/sources/pbi-desktop/instances');
+      const res = await api.getPbiDesktopInstances();
       const list = res?.instances || [];
       setInstances(list);
 

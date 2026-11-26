@@ -201,3 +201,85 @@ test('buildDryRunPayload: includes pbi_desktop source configuration', () => {
     ],
   });
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// Tests with REAL live-recorded fixtures from the running backend
+// ════════════════════════════════════════════════════════════════════════════
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const FIXTURES_DIR = path.resolve(__dirname, 'fixtures', 'pbi_desktop');
+
+function loadFixture(filename) {
+  return JSON.parse(fs.readFileSync(path.join(FIXTURES_DIR, filename), 'utf8'));
+}
+
+test('Real fixture: instances_success.json parsing, state, and selection', () => {
+  const data = loadFixture('instances_success.json');
+  assert.equal(data.enabled, true);
+  assert.equal(data.total, 1);
+  assert.equal(data.instances.length, 1);
+
+  const inst = data.instances[0];
+  assert.equal(inst.port, 56888);
+  assert.equal(inst.database_name, '3f81a039-98ba-4ff6-bfe3-82c5c5bb69db');
+  assert.equal(inst.file_name, 'Untitled.pbix');
+  assert.equal(inst.is_live_connected, false);
+
+  const state = getDesktopStepState({ loading: false, error: '', instances: data.instances });
+  assert.equal(state, 'list');
+
+  const selected = toggleDesktopSelection([], inst);
+  assert.equal(selected.length, 1);
+  assert.equal(isDesktopInstanceSelected(inst, selected), true);
+});
+
+test('Real fixture: inspect_success.json formatting and metadata counts', () => {
+  const data = loadFixture('inspect_success.json');
+  assert.equal(data.file_name, 'Untitled.pbix');
+  assert.equal(data.tables_count, 11);
+  assert.equal(data.measures_count, 15);
+  assert.equal(data.relationships_count, 8);
+
+  const formatted = formatInspectSummary(data);
+  assert.equal(formatted.tablesCount, 11);
+  assert.equal(formatted.measuresCount, 15);
+  assert.equal(formatted.relationshipsCount, 8);
+  assert.equal(formatted.tablesText, '11 Tables');
+  assert.equal(formatted.measuresText, '15 Measures');
+  assert.equal(formatted.relationshipsText, '8 Relationships');
+});
+
+test('Real fixture: instances_empty.json handles 0 instances correctly', () => {
+  const data = loadFixture('instances_empty.json');
+  assert.equal(data.total, 0);
+  assert.equal(data.instances.length, 0);
+
+  const state = getDesktopStepState({ loading: false, error: '', instances: data.instances });
+  assert.equal(state, 'empty');
+});
+
+test('Real fixture: error_500.json handles backend failure cleanly without boundary crash', () => {
+  const data = loadFixture('error_500.json');
+  assert.match(data.detail, /Analysis Services engine discovery/);
+
+  const state = getDesktopStepState({ loading: false, error: data.detail, instances: [] });
+  assert.equal(state, 'error');
+});
+
+test('Real fixture: validate_preselection_valid.json matches active engine', () => {
+  const data = loadFixture('validate_preselection_valid.json');
+  assert.equal(data.valid, true);
+  assert.equal(data.instance.port, 56888);
+  assert.equal(data.instance.database_name, '3f81a039-98ba-4ff6-bfe3-82c5c5bb69db');
+});
+
+test('Real fixture: validate_preselection_invalid.json reports closed notice', () => {
+  const data = loadFixture('validate_preselection_invalid.json');
+  assert.equal(data.valid, false);
+  assert.equal(data.reason, "That file isn't open anymore");
+});
+

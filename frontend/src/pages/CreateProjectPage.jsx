@@ -321,7 +321,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   const [pbiDesktopEnabled, setPbiDesktopEnabled] = useState(false);
 
   useEffect(() => {
-    api.get('/sources/pbi-desktop/status')
+    api.getPbiDesktopStatus()
       .then((res) => {
         if (res?.enabled) setPbiDesktopEnabled(true);
       })
@@ -1504,12 +1504,15 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       targetSchema,
       selectedModelNames,
       pbixPath: effectiveSources.isMulti ? '' : effectiveSources.singlePbixPath,
+      pbiDesktopModels: pbiDesktopSelectedFiles,
     });
     const selected = sourceConnector === 'pbix'
       ? (effectiveSources.isMulti ? effectiveSources.sources : [effectiveSources.singlePbixPath]).filter(Boolean)
-      : selectedModelNames;
+      : (sourceConnector === 'pbi_desktop'
+          ? (pbiDesktopSelectedFiles || []).map((f) => f.file_path || f.file_name)
+          : selectedModelNames);
     return { source_config: sourceConfig, selected_sources: selected };
-  }, [sourceConnector, targetConnectors, fabricAccountId, fabricWorkspaceId, snowflakeAccountId, snowflakeDatabase, snowflakeSchema, targetDatabase, targetSchema, selectedModelNames, effectiveSources]);
+  }, [sourceConnector, targetConnectors, fabricAccountId, fabricWorkspaceId, snowflakeAccountId, snowflakeDatabase, snowflakeSchema, targetDatabase, targetSchema, selectedModelNames, effectiveSources, pbiDesktopSelectedFiles]);
 
   /* ─── Step validity ─── */
   const canAdvance = () => {
@@ -1532,6 +1535,11 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       // last deployment drive the UPSERT delta), not an anonymous preview.
       const projectId = createdProject?.id || createdProject?.project_id || (editMode && initialData?.id) || 'preview';
       const effectivePbixPath = pbixSourceMode === 'TAG' ? selectedPbixFilePath : pbixUploadPath;
+      const effectiveDesktopModels = sourceConnector === 'pbi_desktop' ? (pbiDesktopSelectedFiles || []) : [];
+      const effectiveSelectedSources = sourceConnector === 'pbi_desktop'
+        ? (effectiveSources.sources || [])
+        : selectedModelNames;
+
       const { sourceConfig, targetConfig } = buildDryRunPayload({
         sourceConnector,
         targetConnectors,
@@ -1542,14 +1550,15 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         snowflakeSchema,
         targetDatabase,
         targetSchema,
-        selectedModelNames,
+        selectedModelNames: effectiveSelectedSources,
         pbixPath: effectivePbixPath,
+        pbiDesktopModels: effectiveDesktopModels,
       });
 
       const payload = {
         source_config: sourceConfig,
         target_config: targetConfig,
-        selected_sources: selectedModelNames,
+        selected_sources: effectiveSelectedSources,
         reset_manual: resetManual,
         sync_mode: useProjectWizardStore.getState().wizard.write_strategy || undefined,
       };
@@ -1599,7 +1608,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     } finally {
       setMappingLoading(false);
     }
-  }, [addLog, currentMappingSignature, sourceConnector, targetConnectors, selectedModelNames, createdProject, fabricWorkspaceId, snowflakeDatabase, snowflakeSchema, targetDatabase, targetSchema, pbixSourceMode, selectedPbixFilePath, pbixUploadPath]);
+  }, [addLog, currentMappingSignature, sourceConnector, targetConnectors, selectedModelNames, createdProject, fabricWorkspaceId, snowflakeDatabase, snowflakeSchema, targetDatabase, targetSchema, pbixSourceMode, selectedPbixFilePath, pbixUploadPath, pbiDesktopSelectedFiles, effectiveSources]);
 
   // ── handleDryRun — triggers the dry-run API and populates detectedMappings ──
   const handleDryRun = useCallback(async () => {
@@ -1613,6 +1622,11 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     const projectId = createdProject?.id || createdProject?.project_id || (editMode && initialData?.id) || 'preview';
     // Same derived source list the save uses (buildSourceConfig).
     const isMulti = effectiveSources.isMulti;
+    const effectiveDesktopModels = sourceConnector === 'pbi_desktop' ? (pbiDesktopSelectedFiles || []) : [];
+    const effectiveSelectedSources = sourceConnector === 'pbi_desktop'
+      ? (effectiveSources.sources || [])
+      : selectedModelNames;
+
     const { sourceConfig, targetConfig } = buildDryRunPayload({
       sourceConnector,
       targetConnectors,
@@ -1623,11 +1637,12 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       snowflakeSchema,
       targetDatabase,
       targetSchema,
-      selectedModelNames,
+      selectedModelNames: effectiveSelectedSources,
       pbixPath: isMulti ? '' : effectiveSources.singlePbixPath,
+      pbiDesktopModels: effectiveDesktopModels,
     });
 
-    const selectedSources = selectedModelNames;
+    const selectedSources = effectiveSelectedSources;
 
     if (isMulti) {
       // >1 model (PBIX files or Fabric models): background job + polling,
@@ -1698,7 +1713,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   }, [
     createdProject, sourceConnector, fabricWorkspaceId, snowflakeDatabase,
     snowflakeSchema, targetConnectors, targetDatabase, targetSchema,
-    selectedModelNames, currentMappingSignature, fabricAccountId, effectiveSources,
+    selectedModelNames, currentMappingSignature, fabricAccountId, effectiveSources, pbiDesktopSelectedFiles,
   ]);
 
   // ── Multi-model dry run: polling + per-model rows/edits keyed by file_id ──

@@ -61,7 +61,7 @@ export const MAX_MULTI_SOURCES = 10;
 // Source types whose multi-source (>1) dry runs go through the background
 // dry-run-jobs endpoint. Everything else (and every single-source run) keeps
 // using the synchronous /dry-run endpoint exactly as before.
-const MULTI_JOB_SOURCE_TYPES = new Set(['pbix', 'fabric']);
+const MULTI_JOB_SOURCE_TYPES = new Set(['pbix', 'fabric', 'pbi_desktop']);
 
 function cleanList(values) {
   const out = [];
@@ -111,11 +111,12 @@ export function resolveEffectiveSources({
       ? pbiDesktopModels.map(m => (typeof m === 'object' ? (m.file_path || m.display_name) : m))
       : selectedModelNames;
     const list = cleanList(rawList);
+    const isMulti = list.length > 1;
     return {
-      mode: list.length === 0 ? 'none' : list.length > 1 ? 'multi' : 'single',
+      mode: list.length === 0 ? 'none' : isMulti ? 'multi' : 'single',
       sources: list,
       singlePbixPath: '',
-      isMulti: false,
+      isMulti,
       useMultiFileList: false,
     };
   }

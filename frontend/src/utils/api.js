@@ -2636,6 +2636,52 @@ export const api = {
         }
         return res.json();
     },
+
+    // ── Generic HTTP Helpers ──────────────────────────────────────────────
+
+    async get(url, options = {}) {
+        let fullUrl = url.startsWith('http') ? url : `${API_BASE_URL}${url.startsWith('/') ? '' : '/'}${url}`;
+        if (options?.params) {
+            const qs = new URLSearchParams(options.params).toString();
+            if (qs) fullUrl += (fullUrl.includes('?') ? '&' : '?') + qs;
+        }
+        const res = await authFetch(fullUrl, { method: 'GET' });
+        return handleResponse(res);
+    },
+
+    async post(url, body, options = {}) {
+        let fullUrl = url.startsWith('http') ? url : `${API_BASE_URL}${url.startsWith('/') ? '' : '/'}${url}`;
+        const res = await authFetch(fullUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...(options?.headers || {}) },
+            body: body !== undefined ? JSON.stringify(body) : undefined,
+        });
+        return handleResponse(res);
+    },
+
+    // ── Power BI Desktop Source ───────────────────────────────────────────
+
+    async getPbiDesktopStatus() {
+        const res = await authFetch(`${API_BASE_URL}/sources/pbi-desktop/status`);
+        return handleResponse(res);
+    },
+
+    async getPbiDesktopInstances() {
+        const res = await authFetch(`${API_BASE_URL}/sources/pbi-desktop/instances`);
+        return handleResponse(res);
+    },
+
+    async inspectPbiDesktopFile(filePath) {
+        const url = `${API_BASE_URL}/sources/pbi-desktop/inspect?file_path=${encodeURIComponent(filePath || '')}`;
+        const res = await authFetch(url);
+        return handleResponse(res);
+    },
+
+    async validatePbiDesktopPreselection(server, database) {
+        const url = `${API_BASE_URL}/sources/pbi-desktop/validate-preselection?server=${encodeURIComponent(server || '')}&database=${encodeURIComponent(database || '')}`;
+        const res = await authFetch(url);
+        return handleResponse(res);
+    },
 };
 
 // ---------------------------------------------------------------------------

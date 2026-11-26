@@ -1,0 +1,112 @@
+{
+  "walkResults": [
+    {
+      "screen": "01 Create Project Init",
+      "ok": "OK",
+      "details": ""
+    },
+    {
+      "screen": "02 Source Card Selected",
+      "ok": "OK",
+      "details": ""
+    },
+    {
+      "screen": "03 Desktop Step List",
+      "ok": "OK",
+      "details": ""
+    },
+    {
+      "screen": "04 Desktop Step Inspect Summary",
+      "ok": "OK",
+      "details": ""
+    },
+    {
+      "screen": "05 Desktop Step Refresh",
+      "ok": "OK",
+      "details": ""
+    },
+    {
+      "screen": "06 Ontology Review Step",
+      "ok": "OK",
+      "details": ""
+    },
+    {
+      "screen": "07 Mapping Options Step",
+      "ok": "OK",
+      "details": ""
+    },
+    {
+      "screen": "08 Dry Run Completed",
+      "ok": "OK",
+      "details": ""
+    },
+    {
+      "screen": "09 Project Created View",
+      "ok": "OK",
+      "details": ""
+    },
+    {
+      "screen": "10 Run Report View",
+      "ok": "OK",
+      "details": ""
+    },
+    {
+      "screen": "11 Edit Project Page",
+      "ok": "OK",
+      "details": ""
+    },
+    {
+      "screen": "12 Schedule Modal Warning",
+      "ok": "OK",
+      "details": ""
+    },
+    {
+      "screen": "13 Launcher Open Pre-selected",
+      "ok": "OK",
+      "details": ""
+    },
+    {
+      "screen": "14 Launcher Closed File Notice",
+      "ok": "OK",
+      "details": ""
+    },
+    {
+      "screen": "15 Desktop Empty State",
+      "ok": "OK",
+      "details": ""
+    },
+    {
+      "screen": "16 Desktop Error State",
+      "ok": "OK",
+      "details": ""
+    },
+    {
+      "screen": "17 Flag OFF Source Card Hidden",
+      "ok": "OK",
+      "details": ""
+    },
+    {
+      "screen": "18 PBIX Flow Step 1",
+      "ok": "OK",
+      "details": ""
+    },
+    {
+      "screen": "19 PBIX Flow Step 2",
+      "ok": "OK",
+      "details": ""
+    },
+    {
+      "screen": "20 Fabric Flow Step 1",
+      "ok": "OK",
+      "details": ""
+    },
+    {
+      "screen": "21 Fabric Flow Step 2",
+      "ok": "OK",
+      "details": ""
+    }
+  ],
+  "errorsFound": [],
+  "consoleErrors": [],
+  "pageErrors": []
+}

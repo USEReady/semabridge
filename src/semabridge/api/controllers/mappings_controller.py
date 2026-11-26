@@ -109,7 +109,7 @@ async def delete_mappings(request: Request, project_id: Optional[str] = None):
 # (one .pbix file / one Fabric semantic model). A synchronous /dry-run call
 # can only preview ONE of them -- N of them must go through the dry-run jobs
 # endpoint, which runs one isolated pipeline per model in parallel.
-_PER_MODEL_SOURCE_TYPES = ("pbix", "fabric")
+_PER_MODEL_SOURCE_TYPES = ("pbix", "fabric", "pbi_desktop")
 
 
 def _is_preview_project_id(project_id: Optional[str]) -> bool:

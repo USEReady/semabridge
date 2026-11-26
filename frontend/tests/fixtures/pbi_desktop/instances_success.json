@@ -1,0 +1,21 @@
+{
+  "instances": [
+    {
+      "port": 56888,
+      "workspace_folder": "AnalysisServicesWorkspace_38f98004-d3b5-476f-8006-5430ab7b2886",
+      "workspace_dir": "C:\\Users\\charank\\AppData\\Local\\Microsoft\\Power BI Desktop\\AnalysisServicesWorkspaces\\AnalysisServicesWorkspace_38f98004-d3b5-476f-8006-5430ab7b2886",
+      "msmdsrv_pid": 30836,
+      "parent_pbidesktop_pid": 23840,
+      "database_name": "3f81a039-98ba-4ff6-bfe3-82c5c5bb69db",
+      "file_name": "Untitled.pbix",
+      "file_path": null,
+      "file_method": "none",
+      "window_title": null,
+      "pbidesktop_exe": "C:\\Program Files\\Microsoft Power BI Desktop\\bin\\PBIDesktop.exe",
+      "has_unsaved_changes": false,
+      "is_live_connected": false
+    }
+  ],
+  "total": 1,
+  "enabled": true
+}
