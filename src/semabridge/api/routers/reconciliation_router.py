@@ -396,8 +396,26 @@ def _validate_certify_request(req: "CertifyMetricRequest", sql_metric_token: str
     _validate_generate_queries_request(probe, resolved_kind)
 
 
+def _databricks_metric_view_inputs(req: Any, kind: Optional[str], request: Optional[Request]) -> Optional[Dict[str, Any]]:
+    """Measure/dimension names for a Databricks project's deployed metric view, or None
+    when the target is a plain table. A project's deployed view is always a metric
+    view (MEASURE()), whatever kind the page sent."""
+    from semabridge.reconciliation import databricks_metric_view as dmv
+
+    view = req.target_table_or_view
+    if (kind or "") not in ("semantic_view", "metric_view") and not dmv.is_project_metric_view(
+        req.project_id, view, dmv.project_deployed_views(req.project_id)
+    ):
+        return None
+    uid = getattr(getattr(request, "state", None), "user_id", None) if request is not None else None
+    return dmv.metric_view_query_inputs(
+        req.project_id, view, req.view_metric if getattr(req, "view_metric", None) else req.metric_name,
+        list(req.dimensions or []), owner_id=str(uid) if uid else None,
+    )
+
+
 @router.post("/generate-queries", response_model=Dict[str, str])
-def generate_reconciliation_queries(req: GenerateQueriesRequest) -> Dict[str, str]:
+def generate_reconciliation_queries(req: GenerateQueriesRequest, request: Request = None) -> Dict[str, str]:
     """Generate side-by-side DAX and SQL queries for golden metric reconciliation."""
     if not req.metric_name.strip() or not req.target_table_or_view.strip():
         raise HTTPException(status_code=400, detail="metric_name and target_table_or_view must not be blank.")
@@ -410,8 +428,12 @@ def generate_reconciliation_queries(req: GenerateQueriesRequest) -> Dict[str, st
     from semabridge.ai.bi_truth_service import _detect_project_target
 
     warehouse_target = _detect_project_target(req.project_id)
-    if warehouse_target == "DATABRICKS" and (resolved_kind or "") == "semantic_view":
-        resolved_kind = "metric_view"
+    sql_expr, sql_dims = req.metric_sql_expression, req.dimensions
+    if warehouse_target == "DATABRICKS":
+        mv = _databricks_metric_view_inputs(req, resolved_kind, request)
+        if mv:
+            resolved_kind = "metric_view"
+            sql_expr, sql_dims = mv["metric_sql_expression"], mv["dimensions"]
     dax_query = verifier.generate_dax_query(
         metric_name=req.metric_name,
         dimensions=req.dimensions,
@@ -419,9 +441,9 @@ def generate_reconciliation_queries(req: GenerateQueriesRequest) -> Dict[str, st
     )
     sql_query = verifier.generate_sql_query(
         metric_name=req.metric_name,
-        metric_sql_expression=req.metric_sql_expression,
+        metric_sql_expression=sql_expr,
         target_table_or_view=req.target_table_or_view,
-        dimensions=req.dimensions,
+        dimensions=sql_dims,
         filters=req.filters,
         target_kind=resolved_kind,
     )
@@ -572,16 +594,20 @@ def certify_metric_end_to_end(req: CertifyMetricRequest, request: Request) -> Di
 
     warehouse_target = _detect_project_target(req.project_id)
     target_kind = req.target_kind
-    if warehouse_target == "DATABRICKS" and (target_kind or "semantic_view") == "semantic_view":
-        target_kind = "metric_view"
+    sql_expr, sql_dims = req.metric_sql_expression or req.metric_name, req.dimensions
+    if warehouse_target == "DATABRICKS":
+        mv = _databricks_metric_view_inputs(req, target_kind or "semantic_view", request)
+        if mv:
+            target_kind = "metric_view"
+            sql_expr, sql_dims = mv["metric_sql_expression"], mv["dimensions"]
     if req.custom_sql_query and req.custom_sql_query.strip():
         sql_query = req.custom_sql_query.strip()
     else:
         sql_query = verifier.generate_sql_query(
             metric_name=sql_metric_token,
-            metric_sql_expression=req.metric_sql_expression or req.metric_name,
+            metric_sql_expression=sql_expr,
             target_table_or_view=req.target_table_or_view,
-            dimensions=req.dimensions,
+            dimensions=sql_dims,
             filters=req.filters,
             target_kind=target_kind,
         )
