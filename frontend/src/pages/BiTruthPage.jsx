@@ -15,6 +15,7 @@ import BiTruthCasesList from '../components/bitruth/BiTruthCasesList';
 import BiTruthCaseDetail from '../components/bitruth/BiTruthCaseDetail';
 import BiTruthGateStatus from '../components/bitruth/BiTruthGateStatus';
 import BiTruthSchedules from '../components/bitruth/BiTruthSchedules';
+import InjectDialog from '../components/bitruth/InjectDialog';
 import { useBiTruthCases } from '../hooks/useBiTruthCases';
 import { useBiTruthRuns } from '../hooks/useBiTruthRuns';
 
@@ -179,6 +180,7 @@ export default function BiTruthPage() {
   const [openAddModal, setOpenAddModal] = useState(false);
   const [openUploadModal, setOpenUploadModal] = useState(false);
   const [openSchedulesModal, setOpenSchedulesModal] = useState(false);
+  const [openInjectModal, setOpenInjectModal] = useState(false);
 
   // Form states
   const [manualQuestion, setManualQuestion] = useState('');
@@ -497,6 +499,7 @@ export default function BiTruthPage() {
             onOpenAdd={() => setOpenAddModal(true)}
             onOpenImport={() => setOpenUploadModal(true)}
             onOpenSchedules={() => setOpenSchedulesModal(true)}
+            onOpenInject={() => setOpenInjectModal(true)}
           />
 
           {/* Deploy Gate Status Banner (Compact & Collapsible) */}
@@ -690,6 +693,14 @@ export default function BiTruthPage() {
       >
         <BiTruthSchedules projectId={selectedProjectId} />
       </Modal>
+
+      {/* ── Modal: Inject to AI (Write Action) ── */}
+      <InjectDialog
+        open={openInjectModal}
+        onClose={() => setOpenInjectModal(false)}
+        projectId={selectedProjectId}
+        selectedView={selectedView}
+      />
     </div>
   );
 }

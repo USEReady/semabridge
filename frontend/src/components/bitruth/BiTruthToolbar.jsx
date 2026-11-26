@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  Target, CheckCircle2, AlertTriangle, ShieldCheck, Sparkles, Plus, Upload, Clock, HelpCircle
+  Target, CheckCircle2, AlertTriangle, ShieldCheck, Sparkles, Plus, Upload, Clock, HelpCircle, Send
 } from 'lucide-react';
 import DeployedViewSelector from '../common/DeployedViewSelector';
 
@@ -49,6 +49,7 @@ export default function BiTruthToolbar({
   onOpenAdd,
   onOpenImport,
   onOpenSchedules,
+  onOpenInject,
 }) {
   const accuracyPct = latestRun?.accuracy_pct !== undefined ? latestRun.accuracy_pct : null;
   const totalCases = cases.length;
@@ -236,6 +237,34 @@ export default function BiTruthToolbar({
         >
           <Clock size={13} /> Schedules
         </button>
+
+        {/* Visual separator before write action */}
+        <div style={{ width: 1, height: 20, background: 'var(--border-main)', margin: '0 4px' }} />
+
+        {/* Inject to AI (Dedicated Write Action) */}
+        <span
+          title={
+            !projectId
+              ? 'Select a project to inject verified benchmark pairs'
+              : 'Inspect qualifying verified pairs and write them to Cortex Analyst (Snowflake) or Genie Spaces (Databricks) as AI ground-truth'
+          }
+          style={{ display: 'inline-flex', cursor: projectId ? 'pointer' : 'not-allowed' }}
+        >
+          <button
+            type="button"
+            disabled={!projectId}
+            onClick={onOpenInject}
+            style={{
+              ...BTN,
+              background: 'rgba(245, 158, 11, 0.1)',
+              borderColor: 'var(--color-warning, #f59e0b)',
+              color: 'var(--color-warning, #d97706)',
+              cursor: projectId ? 'pointer' : 'not-allowed',
+            }}
+          >
+            <Send size={13} /> Inject to AI (Write)
+          </button>
+        </span>
       </div>
     </div>
   );
