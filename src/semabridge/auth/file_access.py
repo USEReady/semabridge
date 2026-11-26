@@ -172,6 +172,24 @@ SOURCE_FILE_KEYS = frozenset({
 def iter_source_file_paths(node: Any) -> Iterable[str]:
     """Yield every local source path found under :data:`SOURCE_FILE_KEYS`."""
     if isinstance(node, dict):
+        # Power BI Desktop sources connect live to msmdsrv and are not restricted
+        # by the local folder allowlist. Skip traversing pbi_desktop nodes.
+        stype = str(
+            node.get("type")
+            or node.get("source_type")
+            or node.get("source_connector")
+            or node.get("sourceConnector")
+            or ""
+        ).strip().lower()
+        if not stype:
+            src = node.get("source")
+            if isinstance(src, dict):
+                stype = str(src.get("type") or src.get("source_type") or "").strip().lower()
+            elif isinstance(src, str):
+                stype = src.strip().lower()
+        if stype in ("pbi_desktop", "pbidesktop"):
+            return
+
         for key, value in node.items():
             if str(key).lower() in SOURCE_FILE_KEYS:
                 if isinstance(value, str) and value.strip():

@@ -348,3 +348,56 @@ def test_plan_source_tables_ambiguous_binding_returns_blocked():
         assert "SALES_DATE" in entry["table"]
         assert "MARKETING_DATE" in entry["table"]
         assert "Ambiguous table binding" in entry["message"]
+
+
+# ---------------------------------------------------------------------------
+# 6. Folder Allowlist Exemption for Power BI Desktop
+# ---------------------------------------------------------------------------
+
+
+def test_pbi_desktop_source_exempt_from_folder_allowlist(tmp_path, monkeypatch):
+    import semabridge.auth.file_access as fa
+    from semabridge.domain.exceptions import PermissionError as DomainPermissionError
+
+    allowed_root = (tmp_path / "allowed").resolve()
+    allowed_root.mkdir()
+    monkeypatch.setattr(fa, "allowed_source_roots", lambda: [allowed_root])
+
+    outside_path = str(tmp_path / "outside_folder" / "Sales Model.pbix")
+
+    # 1. pbi_desktop payload with path outside allowed roots
+    desktop_payload = {
+        "name": "powerbi-desktop",
+        "source": {
+            "type": "pbi_desktop",
+            "models": [
+                {
+                    "file_path": outside_path,
+                    "display_name": "Sales Model",
+                }
+            ],
+        },
+    }
+
+    # iter_source_file_paths should yield nothing for pbi_desktop
+    paths = list(fa.iter_source_file_paths(desktop_payload))
+    assert paths == []
+
+    # validate_source_paths should NOT raise PermissionError for pbi_desktop
+    fa.validate_source_paths(desktop_payload)
+
+    # 2. Offline pbix payload with outside path MUST still be rejected
+    pbix_payload = {
+        "name": "pbix-project",
+        "source": {
+            "type": "pbix",
+            "pbix_file_path": outside_path,
+        },
+    }
+
+    pbix_paths = list(fa.iter_source_file_paths(pbix_payload))
+    assert outside_path in pbix_paths
+
+    with pytest.raises(DomainPermissionError):
+        fa.validate_source_paths(pbix_payload)
+
