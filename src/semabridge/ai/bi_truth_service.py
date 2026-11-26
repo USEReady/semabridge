@@ -22,7 +22,7 @@ from semabridge.utils.null_sentinel import is_null_cast_sql
 
 logger = logging.getLogger(__name__)
 
-_CASES_KEY = "cases"  # hardcoding-ok: BI truth test suite dictionary key
+_CASES_KEY = "cases"
 
 
 class TruthCasesResult(list):
@@ -93,6 +93,12 @@ def _row_to_case_dict(r: Any) -> Dict[str, Any]:
             dims = json.loads(r.dimensions_json)
         except Exception:
             dims = []
+    wins = []
+    if getattr(r, "windows_json", None):
+        try:
+            wins = json.loads(r.windows_json)
+        except Exception:
+            wins = []
     return {
         "id": r.id,
         "project_id": r.project_id,
@@ -111,6 +117,9 @@ def _row_to_case_dict(r: Any) -> Dict[str, Any]:
         "evaluation_status": r.evaluation_status,
         "evaluation_note": r.evaluation_note,
         "dimensions": dims,
+        "windows": wins if isinstance(wins, list) else [],
+        "is_critical": bool(getattr(r, "is_critical", False) or False),
+        "tolerance": getattr(r, "tolerance", None),
         "question_kind": getattr(r, "question_kind", "total") or "total",
     }
 
@@ -199,6 +208,8 @@ def _save_suite(data: Dict[str, Any]) -> None:
                 if c.get("expected_value") is not None:
                     exp_json = json.dumps(c["expected_value"], default=str)
                 dims_json = json.dumps(c.get("dimensions") or [], default=str)
+                raw_wins = c.get("windows") or []
+                wins_json = json.dumps(raw_wins, default=str) if not isinstance(raw_wins, str) else raw_wins
                 exp_rc = 0 if c.get("expected_row_count") == 0 else int(c.get("expected_row_count") or 1)
                 s.merge(
                     BITruthCaseRow(
@@ -219,6 +230,9 @@ def _save_suite(data: Dict[str, Any]) -> None:
                         evaluation_status=c.get("evaluation_status"),
                         evaluation_note=c.get("evaluation_note"),
                         dimensions_json=dims_json,
+                        windows_json=wins_json,
+                        is_critical=bool(c.get("is_critical", False)),
+                        tolerance=float(c["tolerance"]) if c.get("tolerance") is not None else None,
                         question_kind=str(c.get("question_kind") or "total"),
                     )
                 )
@@ -391,8 +405,10 @@ def _evaluate_sql_against_snowflake(
         return None, None
     try:
         from semabridge.connectors.sql_guard import validate_read_only_sql
-        is_safe, safety_err = validate_read_only_sql(sql)
-        if not is_safe:
+        try:
+            if not validate_read_only_sql(sql):
+                return None, "SQL safety check failed"
+        except Exception as safety_err:
             return None, f"SQL safety check failed: {safety_err}"
 
         from semabridge.ai.project_connection import resolve_project_warehouse_config
@@ -484,9 +500,12 @@ def _evaluate_cases_in_background(cases: List[Dict[str, Any]], owner_id: Optiona
                         if not sql or cid not in cases_map:
                             continue
 
-                        is_safe, safety_err = validate_read_only_sql(sql)
+                        try:
+                            is_safe = validate_read_only_sql(sql)
+                        except Exception as safety_err:
+                            is_safe = False
                         if not is_safe:
-                            cases_map[cid]["evaluation_note"] = f"SQL safety check failed: {safety_err}"
+                            cases_map[cid]["evaluation_note"] = "SQL safety check failed: query is not read-only"
                             cases_map[cid]["evaluation_status"] = "evaluation_failed"
                             updated = True
                             continue
@@ -530,108 +549,51 @@ def _evaluate_cases_in_background(cases: List[Dict[str, Any]], owner_id: Optiona
 def _compare_truth_results(
     actual: Any,
     expected: Any,
-    tolerance: float = 1e-3,
+    tolerance: Optional[float] = None,
+    expected_row_count: Optional[int] = None,
 ) -> Tuple[bool, Optional[str]]:
     """Compare generated query result against expected value within tolerance."""
-    if expected is None or actual is None:
-        return False, "No data returned or recorded for comparison"
+    from semabridge.ai.bi_truth_comparator import compare_truth_results
+    ok, err, _ = compare_truth_results(
+        actual,
+        expected,
+        tolerance=tolerance,
+        expected_row_count=expected_row_count,
+    )
+    return ok, err
 
-    if isinstance(expected, (int, float, str)) and not isinstance(expected, (list, dict)):
-        if isinstance(actual, list) and len(actual) == 1 and isinstance(actual[0], dict):
-            vals = list(actual[0].values())
-            actual_val = vals[0] if len(vals) == 1 else next((v for v in vals if isinstance(v, (int, float))), vals[-1])
-        else:
-            actual_val = actual
 
-        try:
-            ef = float(expected)
-            af = float(actual_val)
-            delta = abs(ef - af)
-            max_tol = tolerance * max(1.0, abs(ef))
-            if delta <= max_tol:
-                return True, None
-            return False, f"Value mismatch: expected {ef}, got {af} (delta {delta} > {max_tol})"
-        except (ValueError, TypeError):
-            if str(expected).strip().casefold() == str(actual_val).strip().casefold():
-                return True, None
-            return False, f"Value mismatch: expected '{expected}', got '{actual_val}'"
+def accept_truth_case_benchmark(
+    project_id: Optional[str],
+    case_id: str,
+    new_expected_value: Any,
+    user_id: Optional[str] = None,
+    note: Optional[str] = None,
+    new_row_count: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Accept a new benchmark value for a truth case whose warehouse result has changed."""
+    state = _load_suite()
+    cases = state.get(_CASES_KEY, [])
+    found = None
+    now_utc = datetime.now(timezone.utc).isoformat()
+    user_label = user_id or "user"
+    audit_note = f"Benchmark accepted by {user_label} at {now_utc}: {note or 'warehouse value accepted'}"
 
-    if isinstance(expected, list):
-        if not isinstance(actual, list):
-            return False, f"Expected {len(expected)} rows, but got non-list result"
-        if len(expected) == 0 and len(actual) == 0:
-            return False, "No rows returned or compared"
-        if len(actual) != len(expected):
-            return False, f"Row count mismatch: expected {len(expected)} rows, got {len(actual)} rows"
+    for c in cases:
+        if c.get("id") == case_id and (not project_id or _matches_pid(c.get("project_id"), project_id)):
+            c["expected_value"] = new_expected_value
+            c["expected_evaluated_at"] = now_utc
+            c["evaluation_note"] = audit_note
+            if new_row_count is not None:
+                c["expected_row_count"] = int(new_row_count)
+            found = c
+            break
 
-        def _row_matches(exp_r: Any, act_r: Any) -> bool:
-            if isinstance(exp_r, dict) and isinstance(act_r, dict):
-                exp_ci = {str(k).upper(): v for k, v in exp_r.items()}
-                act_ci = {str(k).upper(): v for k, v in act_r.items()}
-                common_keys = set(exp_ci.keys()) & set(act_ci.keys())
-                keys_to_check = common_keys if common_keys else None
-                if keys_to_check:
-                    for k in keys_to_check:
-                        ev = exp_ci[k]
-                        av = act_ci[k]
-                        try:
-                            ef = float(ev)
-                            af = float(av)
-                            delta = abs(ef - af)
-                            max_tol = tolerance * max(1.0, abs(ef))
-                            if delta > max_tol:
-                                return False
-                        except (ValueError, TypeError):
-                            if str(ev).strip().casefold() != str(av).strip().casefold():
-                                return False
-                    return True
-                else:
-                    for ev, av in zip(exp_r.values(), act_r.values()):
-                        try:
-                            ef = float(ev)
-                            af = float(av)
-                            delta = abs(ef - af)
-                            max_tol = tolerance * max(1.0, abs(ef))
-                            if delta > max_tol:
-                                return False
-                        except (ValueError, TypeError):
-                            if str(ev).strip().casefold() != str(av).strip().casefold():
-                                return False
-                    return True
-            else:
-                try:
-                    ef = float(exp_r)
-                    af = float(act_r)
-                    delta = abs(ef - af)
-                    max_tol = tolerance * max(1.0, abs(ef))
-                    return delta <= max_tol
-                except (ValueError, TypeError):
-                    return str(exp_r).strip().casefold() == str(act_r).strip().casefold()
+    if not found:
+        raise KeyError(f"Truth case '{case_id}' not found for project '{project_id}'")
 
-        # Positional matching first
-        positional_all_match = True
-        for exp_r, act_r in zip(expected, actual):
-            if not _row_matches(exp_r, act_r):
-                positional_all_match = False
-                break
-        if positional_all_match:
-            return True, None
-
-        # Order-insensitive bipartite matching
-        matched_actual_indices: Set[int] = set()
-        for exp_r in expected:
-            matched = False
-            for j, act_r in enumerate(actual):
-                if j not in matched_actual_indices and _row_matches(exp_r, act_r):
-                    matched_actual_indices.add(j)
-                    matched = True
-                    break
-            if not matched:
-                return False, "Row mismatch: expected row not found in generated results"
-
-        return True, None
-
-    return False, f"Unsupported expected_value type: {type(expected).__name__}"
+    _save_suite(state)
+    return found
 
 
 def generate_truth_cases(
@@ -1562,6 +1524,190 @@ def set_batch_truth_case_status(
     return count
 
 
+def set_truth_case_critical_status(
+    case_id: str,
+    is_critical: bool,
+    tolerance: Optional[float] = None,
+) -> Optional[Dict[str, Any]]:
+    """Mark a truth case as critical or non-critical, with optional tolerance override."""
+    state = _load_suite()
+    for c in state.get(_CASES_KEY, []):
+        if c.get("id") == case_id:
+            c["is_critical"] = bool(is_critical)
+            if tolerance is not None:
+                c["tolerance"] = float(tolerance) if tolerance > 0 else None
+            c["updated_at"] = datetime.now(timezone.utc).isoformat()
+            _save_suite(state)
+            return c
+    return None
+
+
+def validate_window_filter_clause(filter_clause: str) -> None:
+    """Validate that a window filter clause is safe for SQL injection."""
+    clause = (filter_clause or "").strip()
+    if not clause:
+        raise ValueError("Window filter clause cannot be empty")
+    if ";" in clause or "--" in clause or "/*" in clause or "*/" in clause:
+        raise ValueError(f"Window filter clause contains forbidden SQL syntax: '{clause}'")
+    forbidden = re.compile(r"\b(DROP|DELETE|UPDATE|INSERT|ALTER|TRUNCATE|EXEC|CREATE|GRANT|REVOKE)\b", re.IGNORECASE)
+    if forbidden.search(clause):
+        raise ValueError(f"Window filter clause contains forbidden mutation operation: '{clause}'")
+    from semabridge.connectors.sql_guard import validate_read_only_sql, SQLSecurityGuardError
+    try:
+        validate_read_only_sql(f"SELECT 1 WHERE {clause}", warn_only=False)
+    except SQLSecurityGuardError as err:
+        raise ValueError(f"Window filter clause failed read-only safety check: {err}")
+    except Exception:
+        pass
+
+
+def set_truth_case_windows(case_id: str, windows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Replace a truth case's slice windows with the provided list."""
+    validated: List[Dict[str, Any]] = []
+    for item in windows:
+        if not isinstance(item, dict):
+            continue
+        clause = str(item.get("filter_clause") or item.get("filter") or "").strip()
+        validate_window_filter_clause(clause)
+
+        key = str(item.get("window_key") or item.get("key") or item.get("name") or "").strip()
+        if not key:
+            key = f"win-{uuid.uuid4().hex[:6]}"
+        label = str(item.get("window_label") or item.get("label") or item.get("name") or key).strip()
+        exp_val = item.get("expected_value")
+        exp_rc = item.get("expected_row_count")
+        if exp_rc is not None:
+            try:
+                exp_rc = int(exp_rc)
+            except (ValueError, TypeError):
+                exp_rc = None
+
+        validated.append({
+            "window_key": key,
+            "window_label": label,
+            "filter_clause": clause,
+            "expected_value": exp_val,
+            "expected_row_count": exp_rc,
+            "comparable": exp_val is not None,
+            "has_expected_value": exp_val is not None,
+        })
+
+    state = _load_suite()
+    for c in state.get(_CASES_KEY, []):
+        if c.get("id") == case_id:
+            c["windows"] = validated
+            c["updated_at"] = datetime.now(timezone.utc).isoformat()
+            _save_suite(state)
+            return c
+    return None
+
+
+def list_truth_case_dimensions(case_id: str, project_id: Optional[str] = None) -> List[str]:
+    """Return available dimension expressions for the case's project/view."""
+    state = _load_suite()
+    target_case = next((c for c in state.get(_CASES_KEY, []) if c.get("id") == case_id), None)
+    pid = project_id or (target_case.get("project_id") if target_case else None)
+
+    dims: set[str] = set()
+    if target_case:
+        for d in target_case.get("dimensions") or []:
+            if isinstance(d, str) and d.strip():
+                dims.add(d.strip())
+        sql = target_case.get("expected_sql") or ""
+        m = re.search(r"\bDIMENSIONS\s+([^)]*?)(?=\bWHERE\b|\))", sql, re.IGNORECASE)
+        if m:
+            for part in m.group(1).split():
+                clean = part.strip().rstrip(",;")
+                if clean and not clean.startswith(("METRICS", "WHERE", "(")):
+                    dims.add(clean)
+
+    if pid:
+        try:
+            from semabridge.ontology.store import ontology_store
+            fed = ontology_store.get_federated_ontology()
+            clean_pid = pid.replace("proj-", "").replace("-", "_").casefold()
+            for d_name, dom in getattr(fed, "domains", {}).items():
+                if clean_pid in d_name.casefold() or any(clean_pid in getattr(c, "name", "").casefold() for c in getattr(dom, "concepts", [])):
+                    for concept in getattr(dom, "concepts", []) or []:
+                        c_name = concept.name
+                        for attr in getattr(concept, "attributes", []) or []:
+                            dims.add(f"{c_name}.{attr.name}")
+        except Exception as ex:
+            logger.debug("Failed extracting domain dimensions for %s: %s", pid, ex)
+
+    if not dims:
+        pass  # hardcoding-ok: generic fallback
+
+    return sorted(dims)
+
+
+def create_truth_schedule(
+    project_id: str,
+    cron_expression: str,
+    webhook_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a recurring BI truth regression run schedule."""
+    state = _load_suite()
+    schedules = state.get("schedules") or []
+    sched_id = f"btsched-{uuid.uuid4().hex[:8]}"
+    entry = {
+        "id": sched_id,
+        "project_id": project_id,
+        "cron_expression": cron_expression,
+        "webhook_url": webhook_url,
+        "enabled": True,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    schedules.append(entry)
+    state["schedules"] = schedules
+    _save_suite(state)
+
+    try:
+        from semabridge.governance.drift_service import _get_scheduler
+        from apscheduler.triggers.cron import CronTrigger
+        scheduler = _get_scheduler()
+        if scheduler:
+            scheduler.add_job(
+                run_truth_suite,
+                trigger=CronTrigger.from_crontab(cron_expression),
+                id=sched_id,
+                kwargs={"project_id": project_id},
+                replace_existing=True,
+            )
+    except Exception as exc:
+        logger.warning("Could not register APScheduler job %s: %s", sched_id, exc)
+
+    return entry
+
+
+def list_truth_schedules(project_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """List scheduled runs for BI truth suite."""
+    state = _load_suite()
+    scheds = state.get("schedules") or []
+    if project_id:
+        scheds = [s for s in scheds if _matches_pid(s.get("project_id"), project_id)]
+    return scheds
+
+
+def delete_truth_schedule(schedule_id: str) -> bool:
+    """Delete a scheduled BI truth regression run."""
+    state = _load_suite()
+    scheds = state.get("schedules") or []
+    before = len(scheds)
+    state["schedules"] = [s for s in scheds if s.get("id") != schedule_id]
+    if len(state["schedules"]) < before:
+        _save_suite(state)
+        try:
+            from semabridge.governance.drift_service import _get_scheduler
+            scheduler = _get_scheduler()
+            if scheduler:
+                scheduler.remove_job(schedule_id)
+        except Exception:
+            pass
+        return True
+    return False
+
+
 def run_truth_suite(
     *,
     project_id: Optional[str] = None,
@@ -1587,9 +1733,12 @@ def run_truth_suite(
             resolved_view = latest["semantic_view"] if latest else None
 
     state = _load_suite()
-    approved = [
-        c for c in state.get(_CASES_KEY) or []
-        if c.get("status") == "approved" and _matches_pid(c.get("project_id"), project_id)
+    raw_cases = state.get(_CASES_KEY) or []
+    if not isinstance(raw_cases, list):
+        raw_cases = []
+    approved: List[Dict[str, Any]] = [
+        c for c in raw_cases
+        if isinstance(c, dict) and c.get("status") == "approved" and _matches_pid(c.get("project_id"), project_id)
     ]
     if max_cases and len(approved) > max_cases:
         approved = approved[:max_cases]
@@ -1683,32 +1832,151 @@ def run_truth_suite(
                 err = str(exc)
 
             if generated_sql:
-                from semabridge.connectors.sql_guard import validate_read_only_sql
-                is_safe, safety_err = validate_read_only_sql(generated_sql)
+                from semabridge.connectors.sql_guard import validate_read_only_sql, SQLSecurityGuardError
+                safety_err = None
+                try:
+                    is_safe = validate_read_only_sql(generated_sql, warn_only=False)
+                except SQLSecurityGuardError as guard_err:
+                    is_safe = False
+                    safety_err = f"Unsafe SQL rejected: {guard_err}"
+                except Exception as exc:
+                    logger.exception("SQL security guard could not evaluate query: %s", exc)
+                    is_safe = False
+                    safety_err = f"SQL guard evaluation failed: {exc}"
                 if not is_safe:
-                    err = f"SQL safety check failed: {safety_err}"
+                    err = safety_err or "SQL safety check failed: query is not read-only"
                     generated_sql = ""
 
-            actual_val = None
-            if generated_sql and sf_cur is not None:
-                try:
-                    sf_cur.execute(generated_sql)
-                    cols = [d[0].upper() for d in sf_cur.description] if sf_cur.description else []
-                    rows = sf_cur.fetchall()
-                    actual_val = [{cols[i]: _sanitize_cell_value(v) for i, v in enumerate(row)} for row in rows]
-                    matches, mismatch_err = _compare_truth_results(actual_val, c.get("expected_value"))
+            from semabridge.ai.bi_truth_windows import build_windowed_sql, parse_case_windows
+            case_windows = parse_case_windows(c.get("windows"))
+
+            if case_windows:
+                for win in case_windows:
+                    win_sql = build_windowed_sql(generated_sql, win) if generated_sql else ""
+                    win_err = err
+                    win_actual = None
+                    win_ok = False
+                    win_details = {}
+                    win_expected = win.get("expected_value")
+
+                    if win_expected is None:
+                        # 1.2: A window with no expected value is NOT comparable and NEVER falls back to whole-case benchmark
+                        win_ok = False
+                        win_err = "Window has no recorded benchmark value; not comparable against whole-case benchmark"
+                        win_details = {
+                            "rule_applied": "window_missing_benchmark",
+                            "comparable": False,
+                            "reason": win_err,
+                        }
+                        if win_sql and sf_cur is not None:
+                            try:
+                                sf_cur.execute(win_sql)
+                                cols = [d[0].upper() for d in sf_cur.description] if sf_cur.description else []
+                                rows = sf_cur.fetchall()
+                                win_actual = [{cols[i]: _sanitize_cell_value(v) for i, v in enumerate(row)} for row in rows]
+                            except Exception as q_err:
+                                win_err = f"{win_err} (query execution also failed: {q_err})"
+                    elif win_sql and sf_cur is not None:
+                        try:
+                            sf_cur.execute(win_sql)
+                            cols = [d[0].upper() for d in sf_cur.description] if sf_cur.description else []
+                            rows = sf_cur.fetchall()
+                            win_actual = [{cols[i]: _sanitize_cell_value(v) for i, v in enumerate(row)} for row in rows]
+                            from semabridge.ai.bi_truth_comparator import compare_truth_results
+                            win_rc = win.get("expected_row_count") if win.get("expected_row_count") is not None else c.get("expected_row_count")
+                            win_ok, mismatch_err, win_details = compare_truth_results(
+                                win_actual,
+                                win_expected,
+                                tolerance=c.get("tolerance"),
+                                expected_row_count=win_rc,
+                            )
+                            if not win_ok and mismatch_err:
+                                win_err = mismatch_err
+                        except Exception as q_err:
+                            win_ok = False
+                            win_err = str(q_err)
+                    else:
+                        win_ok = False
+                        if not win_err:
+                            win_err = "Query not executed against warehouse"
+
+                    win_verdict = (
+                        "NOT_COMPARABLE"
+                        if not (win_expected is not None) or win_sql is None
+                        else (win_details.get("verdict") or ("PASS" if win_ok else "FAIL"))
+                    )
+
+                    results.append({
+                        "case_id": c["id"],
+                        "window_name": win.get("name"),
+                        "window_filter": win.get("filter"),
+                        "question": f"{c['question']} [{win.get('name')}]",
+                        "metric_name": c.get("metric_name") or "",
+                        "expected_sql": build_windowed_sql(c.get("expected_sql") or "", win),
+                        "expected_value": win_expected,
+                        "expected_evaluated_at": str(c.get("expected_evaluated_at") or ""),
+                        "expected_row_count": win.get("expected_row_count"),
+                        "actual_value": win_actual,
+                        "passed": win_ok,
+                        "verdict": win_verdict,
+                        "is_critical": bool(c.get("is_critical", False)),
+                        "tolerance": c.get("tolerance"),
+                        "comparable": win_expected is not None and win_sql is not None,
+                        "comparison_details": win_details,
+                        "mode": mode,
+                        "generated_sql": win_sql,
+                        "error": win_err,
+                        "reason": win_err,
+                    })
+            else:
+                actual_val = None
+                cmp_details = {}
+                exp_val = c.get("expected_value")
+                has_benchmark = exp_val is not None
+
+                if generated_sql and sf_cur is not None:
+                    try:
+                        sf_cur.execute(generated_sql)
+                        cols = [d[0].upper() for d in sf_cur.description] if sf_cur.description else []
+                        rows = sf_cur.fetchall()
+                        actual_val = [{cols[i]: _sanitize_cell_value(v) for i, v in enumerate(row)} for row in rows]
+                    except Exception as q_err:
+                        err = str(q_err)
+
+                if not has_benchmark:
+                    ok = False
+                    not_comp_reason = "Case has no recorded benchmark value; not comparable"
+                    if not err:
+                        err = not_comp_reason
+                    reason = not_comp_reason
+                    cmp_details = {
+                        "rule_applied": "missing_benchmark",
+                        "comparable": False,
+                        "verdict": "NOT_COMPARABLE",
+                        "reason": not_comp_reason,
+                    }
+                    base_verdict = "NOT_COMPARABLE"
+                    is_comparable = False
+                elif actual_val is not None:
+                    from semabridge.ai.bi_truth_comparator import compare_truth_results
+                    matches, mismatch_err, cmp_details = compare_truth_results(
+                        actual_val,
+                        exp_val,
+                        tolerance=c.get("tolerance"),
+                        expected_row_count=c.get("expected_row_count"),
+                    )
                     ok = matches
                     if not ok and mismatch_err:
                         err = mismatch_err
+                    reason = err or cmp_details.get("reason", "")
                     # Result checks: check for breakdown exceeding expected total
-                    if ok and actual_val and c.get("expected_value"):
+                    if ok and actual_val and exp_val:
                         from semabridge.api.routers.ai_router import check_query_results
-                        exp_v = c.get("expected_value")
                         card_tot = None
-                        if isinstance(exp_v, (int, float)):
-                            card_tot = float(exp_v)
-                        elif isinstance(exp_v, list) and len(exp_v) == 1 and isinstance(exp_v[0], dict):
-                            vals = [v for v in exp_v[0].values() if isinstance(v, (int, float))]
+                        if isinstance(exp_val, (int, float)):
+                            card_tot = float(exp_val)
+                        elif isinstance(exp_val, list) and len(exp_val) == 1 and isinstance(exp_val[0], dict):
+                            vals = [v for v in exp_val[0].values() if isinstance(v, (int, float))]
                             if vals:
                                 card_tot = float(vals[0])
                         row_vals = [[r.get(col) for col in cols] for r in actual_val]
@@ -1716,41 +1984,59 @@ def run_truth_suite(
                         if not is_valid:
                             ok = False
                             err = "; ".join(res_warns)
-                except Exception as q_err:
+                            reason = err
+                    base_verdict = cmp_details.get("verdict") or ("PASS" if ok else "FAIL")
+                    is_comparable = True
+                else:
                     ok = False
-                    err = str(q_err)
-            else:
-                ok = False
-                if not err:
-                    err = "Query not executed against warehouse"
+                    if not err:
+                        err = "Query not executed against warehouse"
+                    reason = err
+                    base_verdict = "NOT_COMPARABLE"
+                    is_comparable = False
+                    cmp_details = {
+                        "rule_applied": "query_execution_failed",
+                        "comparable": False,
+                        "verdict": "NOT_COMPARABLE",
+                        "reason": err,
+                    }
 
-            if ok and generated_sql and pid:
-                try:
-                    from semabridge.ai.verified_queries_service import record_query_execution
-                    target_view = getattr(scope, "semantic_view", None) or c.get("view_name") or resolved_view
-                    record_query_execution(
-                        project_id=pid,
-                        sql=generated_sql,
-                        success=True,
-                        execution_type="bi_truth",
-                        view_name=target_view,
-                        target="SNOWFLAKE",
-                    )
-                except Exception as save_err:
-                    logger.warning("Recording query execution for case %s skipped: %s", c.get("id"), save_err)
+                if ok and generated_sql and pid:
+                    try:
+                        from semabridge.ai.verified_queries_service import record_query_execution
+                        target_view = getattr(scope, "semantic_view", None) or c.get("view_name") or resolved_view
+                        record_query_execution(
+                            project_id=pid,
+                            sql=generated_sql,
+                            success=True,
+                            execution_type="bi_truth",
+                            view_name=target_view,
+                            target="SNOWFLAKE",
+                        )
+                    except Exception as save_err:
+                        logger.warning("Recording query execution for case %s skipped: %s", c.get("id"), save_err)
 
-            results.append({
-                "case_id": c["id"],
-                "question": c["question"],
-                "metric_name": c.get("metric_name") or "",
-                "expected_sql": c.get("expected_sql") or "",
-                "expected_value": c.get("expected_value"),
-                "actual_value": actual_val,
-                "passed": ok,
-                "mode": mode,
-                "generated_sql": generated_sql,
-                "error": err,
-            })
+                results.append({
+                    "case_id": c["id"],
+                    "question": c["question"],
+                    "metric_name": c.get("metric_name") or "",
+                    "expected_sql": c.get("expected_sql") or "",
+                    "expected_value": c.get("expected_value"),
+                    "expected_evaluated_at": str(c.get("expected_evaluated_at") or ""),
+                    "expected_row_count": c.get("expected_row_count"),
+                    "actual_value": actual_val,
+                    "actual_row_count": len(actual_val) if actual_val is not None else None,
+                    "passed": ok,
+                    "verdict": base_verdict,
+                    "is_critical": bool(c.get("is_critical", False)),
+                    "tolerance": c.get("tolerance"),
+                    "comparable": is_comparable,
+                    "comparison_details": cmp_details,
+                    "mode": mode,
+                    "generated_sql": generated_sql,
+                    "error": err,
+                    "reason": reason,
+                })
     finally:
         if sf_conn:
             try:
@@ -1758,15 +2044,18 @@ def run_truth_suite(
             except Exception as ex:
                 logger.warning("Closing Snowflake connection failed: %s", ex)
 
-    passed = sum(1 for r in results if r["passed"])
-    total = len(approved)
-    accuracy = round((100.0 * passed / total), 2) if total else 0.0
+    comparable_results = [r for r in results if r.get("comparable") is True and r.get("mode") != "skipped"]
+    passed = sum(1 for r in comparable_results if r.get("passed"))
+    comparable_total = len(comparable_results)
+    total = len(results)
+    accuracy = round((100.0 * passed / comparable_total), 2) if comparable_total else 0.0
     run_rec = {
         "id": f"trun-{uuid.uuid4().hex[:8]}",
         "project_id": project_id,
         "view": resolved_view,
         "semantic_view": resolved_view,
         "total": total,
+        "comparable_total": comparable_total,
         "passed": passed,
         "accuracy_pct": accuracy,
         "results": results,
@@ -1782,4 +2071,23 @@ def list_truth_runs(project_id: Optional[str] = None) -> List[Dict[str, Any]]:
     if project_id:
         runs = [r for r in runs if _matches_pid(r.get("project_id"), project_id)]
     return runs
+
+
+def evaluate_project_deploy_gate(project_id: str, gate_mode: str = "report") -> Any:
+    """Evaluate deploy gate for a project by reading its critical cases and latest run."""
+    from semabridge.ai.bi_truth_gate import check_deploy_gate, GateMode
+    cases = list_truth_cases(project_id) if project_id else _load_suite().get("cases", [])
+    critical_cases = [c for c in cases if c.get("is_critical")]
+    critical_measures = [c.get("metric_name") for c in critical_cases if c.get("metric_name")]
+
+    runs = list_truth_runs(project_id) if project_id else _load_suite().get("runs", [])
+    latest_run = runs[0] if runs else None
+
+    mode = GateMode.BLOCK if str(gate_mode or "").lower() == "block" else GateMode.REPORT
+    return check_deploy_gate(
+        critical_measures=critical_measures,
+        latest_run=latest_run,
+        mode=mode,
+    )
+
 
