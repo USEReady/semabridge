@@ -54,6 +54,10 @@ def build_manifest(plan: Dict[str, Any], rendered: List[RenderedView], *, plan_r
         "writer_revision": WRITER_REVISION,
         "probe": bool(probe),
         "destination": {"catalog": catalog, "schema": schema},
+        # 3.8: decided at planning time, never switched by the deploy.
+        "stub_form": str((plan.get("meta") or {}).get("stub_form") or "empty_table"),
+        "capabilities": sorted((plan.get("settings") or {}).get("capabilities") or []),
+        "evidence": dict((plan.get("settings") or {}).get("evidence") or {}),
         "run_id": run_id,
         "written_at": datetime.now(timezone.utc).isoformat(),
         "views": [{

@@ -42,6 +42,27 @@ def _split(full_name: str) -> Tuple[str, str, str]:
     return parts[0], parts[1], parts[2]
 
 
+def _bound_columns(bindings: Bindings, ds: str) -> List[Dict[str, str]]:
+    """The real columns the model uses from a bound table, with the types seen at
+    plan time (3.8 re-checks them before deploying)."""
+    b = bindings.binding(ds)
+    table = getattr(b, "table", None)
+    if table is None:
+        return []
+    out: Dict[str, Dict[str, str]] = {}
+    for real in (getattr(b, "column_map", {}) or {}).values():
+        hit = table.columns.get(str(real).upper())
+        if hit:
+            out[hit[0].lower()] = {"name": hit[0], "type": hit[1]}
+    return [out[k] for k in sorted(out)]
+
+
+def _stub_columns(bindings: Bindings, ds: str) -> List[Dict[str, str]]:
+    """The approved columns of a proposed (empty) table: name and Spark type (3.4)."""
+    b = bindings.binding(ds)
+    return [{"name": n, "type": t} for n, t in (getattr(b, "stub_columns", None) or [])]
+
+
 def plan_locations(result: PlannerResult, bindings: Bindings, settings: PlannerSettings
                    ) -> Tuple[List[Dict], List[Blocker]]:
     """(one entry per table the views read, table/model-scoped blockers)."""
@@ -65,14 +86,14 @@ def plan_locations(result: PlannerResult, bindings: Bindings, settings: PlannerS
         if action == BIND and bindings.uc_table(ds):
             c, s, n = _split(bindings.uc_table(ds))
             entries[ds] = {"dataset": ds, "status": BOUND, "catalog": c, "schema": s, "name": n,
-                           "name_checked": True, "views": deps[ds]}
+                           "name_checked": True, "views": deps[ds], "columns": _bound_columns(bindings, ds)}
             continue
         status = PROPOSED if action == STUB else UNCHECKED
         base = NAMING.normalize(ds, "table", ("table", ds))[0]
         sid = SourceId("table", ds, ds)
         items.append(_Item(None, sid, base, ds, "table", (lambda n, b=base: f"{b}_{n + 1}"), (0, ds)))
         entries[ds] = {"dataset": ds, "status": status, "catalog": catalog, "schema": schema, "name": None,
-                       "name_checked": existing is not None, "views": deps[ds]}
+                       "name_checked": existing is not None, "views": deps[ds], "columns": _stub_columns(bindings, ds)}
     alloc.allocate(items, reserved)
     for it in items:
         entries[it.sid.table]["name"] = it.final

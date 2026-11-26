@@ -137,6 +137,7 @@ def meta_for(cache: Dict[str, Any], revision: int, source: str) -> Dict[str, Any
         "status": "valid",
         "source": source,                                   # dry_run | replan
         "cache_ref": cache.get("cache_ref") or {},
+        "stub_form": str((cache.get("output") or {}).get("stub_form") or "empty_table"),
         "basis": {
             "table_check_at": cache.get("table_check_at"),
             "table_check": cache.get("table_check"),
@@ -231,6 +232,14 @@ def _settings(cache: Dict[str, Any], rows: List[Dict[str, Any]], planner_opts: O
     existing = out.get("existing_objects")
     values["existing_objects"] = frozenset(existing) if existing is not None else None
     values["reserved_table_names"] = dict(out.get("reserved_table_names") or {})
+    # 3.8 (A5): names already deployed for this model are kept on re-plan.
+    from semabridge.target_backends.databricks.deploy.names import reserved_for
+
+    ref = cache.get("cache_ref") or {}
+    history = reserved_for(ref.get("project_id"), ref.get("model_subdir"))
+    values["reserved_names"] = history["reserved_names"]
+    values["reserved_view_names"] = history["reserved_view_names"]
+    values["reserved_table_names"].update(history["reserved_table_names"])
     return PlannerSettings(**values)
 
 

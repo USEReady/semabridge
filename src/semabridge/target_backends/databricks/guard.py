@@ -15,6 +15,16 @@ Deny by default:
     - GRANT ... ON [VIEW|TABLE] <planned view> TO ... (re-applying captured
       grants to a view we replaced).
 
+* WRITE mode with a DEPLOY plan (3.8, ``WritePlan.for_deploy``): every
+  mutating statement must be, character for character, one of the statements
+  the deployer generated for this run (their hashes are in the plan). On top of
+  that the per-kind rules still apply, and one narrow table form is allowed:
+    - CREATE TABLE <authorised stub> (<cols>) USING DELTA TBLPROPERTIES (...)
+      -- managed, empty, plain CREATE; never AS/LIKE/CLONE/LOCATION/DEFAULT/
+      GENERATED/OR REPLACE/IF NOT EXISTS.
+  Grants are never part of a deploy plan.
+* SHOW CREATE TABLE is a read (definition read-back).
+
 Always refused, in any mode: DROP/CREATE/ALTER of tables, schemas,
 catalogs; TRUNCATE; INSERT / UPDATE / DELETE / MERGE / COPY INTO; REVOKE /
 DENY; OPTIMIZE / VACUUM / RESTORE; SET / RESET; CALL; EXECUTE IMMEDIATE;
@@ -60,6 +70,33 @@ class WritePlan:
     grant_views: FrozenSet[str] = field(default_factory=frozenset)
     probe_views: FrozenSet[str] = field(default_factory=frozenset)
     probe_plain_views: FrozenSet[str] = field(default_factory=frozenset)
+    # 3.8 deploy plans: exact statement hashes, the empty stub tables, and whether
+    # every mutating statement must be one of the authorised texts.
+    stub_tables: FrozenSet[str] = field(default_factory=frozenset)
+    authorized: FrozenSet[str] = field(default_factory=frozenset)
+    exact: bool = False
+
+    @staticmethod
+    def for_deploy(statements: Iterable[object]) -> "WritePlan":
+        """A deploy run's plan: exactly these generated statements (deploy/statements.py)."""
+        from semabridge.target_backends.databricks.deploy import statements as S
+
+        views, staging, stubs, hashes = set(), set(), set(), set()
+        for st in statements:
+            kind, target = getattr(st, "kind"), normalize_name(getattr(st, "target"))
+            if kind in (S.CREATE_VIEW, S.ALTER_VIEW):
+                views.add(target)
+            elif kind in (S.CREATE_STAGING, S.DROP_STAGING):
+                if S.STAGING_MARKER not in target.split(".")[-1]:
+                    raise ValueError(f"staging view {target} lacks the staging marker")
+                staging.add(target)
+            elif kind == S.STUB_TABLE:
+                stubs.add(target)
+            else:
+                raise ValueError(f"unknown deploy statement kind {kind!r}")
+            hashes.add(getattr(st, "sha256"))
+        return WritePlan(views=frozenset(views), staging_views=frozenset(staging), stub_tables=frozenset(stubs),
+                         authorized=frozenset(hashes), exact=True)
 
     @staticmethod
     def of(views: Iterable[str] = (), staging_views: Iterable[str] = (), grant_views: Iterable[str] = ()) -> "WritePlan":
@@ -287,12 +324,30 @@ def validate_databricks_sql(sql: str, mode: str = READ, plan: Optional[WritePlan
         raise _refuse("no statement", sql)
     head = toks[0]
 
-    # Read statements, in both modes.
+    # Read statements, in both modes. SHOW CREATE TABLE <name> is a read-back.
     if head in _READ_HEADS or head == "WITH" or head == "(":
-        bad = sorted({t for t in toks if t in _WRITE_WORDS})
+        scan = toks
+        if toks[:3] == ["SHOW", "CREATE", "TABLE"]:
+            name, after = _object_name(toks, 3)
+            if name is None or after != len(toks):
+                raise _refuse("SHOW CREATE TABLE <name> expected", sql)
+            scan = toks[3:]
+        bad = sorted({t for t in scan if t in _WRITE_WORDS})
         if bad:
             raise _refuse(f"write keyword(s) {bad} inside a read statement", sql)
         return GuardDecision(kind=head if head != "(" else "SELECT")
+
+    # Deploy plans: only the exact texts this run generated (checked before the
+    # per-kind rules, which still apply below).
+    if mode == WRITE and plan is not None and plan.exact:
+        from semabridge.target_backends.databricks.deploy.statements import statement_hash
+
+        if statement_hash(sql) not in plan.authorized:
+            raise _refuse("not one of the statements approved for this deploy run", sql)
+        if head == "CREATE" and toks[1:2] == ["TABLE"]:
+            return _stub_table(toks, plan, sql)
+        if head == "GRANT":
+            raise _refuse("a deploy run grants nothing", sql)
 
     # Always refused, whatever the plan says.
     if len(toks) >= 2:
@@ -342,6 +397,8 @@ def validate_databricks_sql(sql: str, mode: str = READ, plan: Optional[WritePlan
             raise _refuse(f"view {name} is not in this run's plan", sql)
         if after >= len(toks) or toks[after] != "AS":
             raise _refuse("only ALTER VIEW ... AS <definition> is allowed", sql)
+        if plan.exact and toks[after + 1:] != ["$$BODY$$"]:
+            raise _refuse("a deploy may only ALTER VIEW <view> AS $$<definition>$$", sql)
         return GuardDecision(kind="ALTER_VIEW", object_name=name)
 
     if head == "DROP" and len(toks) > 1 and toks[1] == "VIEW":
@@ -377,6 +434,41 @@ def validate_databricks_sql(sql: str, mode: str = READ, plan: Optional[WritePlan
         return GuardDecision(kind="GRANT", object_name=name)
 
     raise _refuse(f"{head} is not allowed", sql)
+
+
+_STUB_FORBIDDEN = {"AS", "LIKE", "CLONE", "LOCATION", "DEFAULT", "GENERATED", "IF", "OR", "REPLACE", "SELECT",
+                   "PARTITIONED", "CLUSTER", "OPTIONS", "EXTERNAL", "IDENTITY", "MASK", "CONSTRAINT", "COMMENT",
+                   "$$BODY$$"}
+
+
+def _stub_table(toks: List[str], plan: WritePlan, sql: str) -> GuardDecision:
+    """3.8: an authorised empty managed Delta stub table, in the generated form only."""
+    name, after = _object_name(toks, 2)
+    if name is None:
+        raise _refuse("CREATE TABLE without a name", sql)
+    _require_qualified(name, sql)
+    if name not in plan.stub_tables:
+        raise _refuse(f"table {name} is not an authorised stub table of this run", sql)
+    rest = toks[after:]
+    bad = sorted({t for t in rest if t in _STUB_FORBIDDEN or t in _WRITE_WORDS})
+    if bad:
+        raise _refuse(f"stub tables may not use {bad}", sql)
+    if not rest or rest[0] != "(":
+        raise _refuse("stub table needs a column list", sql)
+    depth, i = 0, 0
+    for i, t in enumerate(rest):
+        depth += 1 if t == "(" else -1 if t == ")" else 0
+        if depth == 0:
+            break
+    tail = rest[i + 1:]
+    if tail[:2] != ["USING", "DELTA"] or tail[2:3] != ["TBLPROPERTIES"] or tail[-1:] != [")"]:
+        raise _refuse("stub table must be USING DELTA TBLPROPERTIES (...) and nothing else", sql)
+    import re
+
+    keys = re.findall(r"'([^']*)'\s*=", sql.split("TBLPROPERTIES", 1)[1])
+    if not keys or any(not k.startswith("semabridge.") for k in keys) or "semabridge.stub" not in keys:
+        raise _refuse("stub table properties must be semabridge.* and include semabridge.stub", sql)
+    return GuardDecision(kind="CREATE_STUB_TABLE", object_name=name)
 
 
 def _probe_create(name: str, rest: List[str], replace: bool, metric: bool, sql: str) -> GuardDecision:
