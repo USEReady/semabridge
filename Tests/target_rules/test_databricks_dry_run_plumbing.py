@@ -74,14 +74,24 @@ def _context(on: bool) -> SimpleNamespace:
     )
 
 
-def test_old_publisher_never_runs_on_planner_path_sql() -> None:
+def test_old_publisher_never_runs_on_planner_path_sql(monkeypatch) -> None:
+    """Planner path: Step 8 writes no publisher YAML and Step 9 deploys the
+    plan through the guarded deployer (starting the sync is the approval);
+    the existing publisher is never built."""
+    from semabridge.connectors import databricks_publisher
+    from semabridge.core.engine.deployment import databricks_planner_deploy as pd
     from semabridge.core.execution_engine import ExecutionEngine
 
+    def _no_publisher(*a, **k):
+        raise AssertionError("the existing publisher must not run on the planner path")
+
+    monkeypatch.setattr(databricks_publisher, "DatabricksPublisher", _no_publisher)
+    seen = []
+    monkeypatch.setattr(pd, "deploy_planned_views", lambda ctx: seen.append(ctx) or {"status": "no_op", "results": []})
     engine = ExecutionEngine()
-    with pytest.raises(ConversionError, match="Deploy preview, then Confirm"):
-        engine._convert_to_databricks_target(_context(on=True))
-    with pytest.raises(DeploymentError, match="Deploy preview, then Confirm"):
-        engine._deploy_to_databricks(_context(on=True))
+    engine._convert_to_databricks_target(_context(on=True))
+    engine._deploy_to_databricks(_context(on=True))
+    assert len(seen) == 1
 
 
 # --- Phase 3.4 settings: source_schemas / on_missing_source / table_mapping --------------

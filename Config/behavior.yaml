@@ -54,11 +54,13 @@ semantic_model:
 # Databricks deployment behavior.
 # ---------------------------------------------------------------------------
 databricks:
-  # Databricks metric-view planner (target_backends/databricks). When true, a
-  # sync plans metric views but never deploys them: deploy from the project's
-  # Databricks plan panel (preview, then confirm). Off = the existing publisher
-  # deploys during the sync (scheduled syncs included).
-  use_planner_path: false
+  # Databricks metric-view planner (target_backends/databricks). On: a sync
+  # plans the metric views (Databricks SQL, naming v2) and deploys them through
+  # the guarded deployer -- starting the sync is the approval (staging copy in
+  # the project's restricted staging schema, checks, read-back, journal). A
+  # restricted staging schema is required (project setting or
+  # DATABRICKS_STAGING_SCHEMA). Off: the existing publisher deploys.
+  use_planner_path: true
   create_metadata_table: false # OSI-first deploy: skip Semabridge metadata Delta table
   create_measure_views: true # Generate measure views for deployed measures
   model_artifact_mode: "per_model" # "per_dataset" (legacy) | "per_model" (single metadata + single model metric view)

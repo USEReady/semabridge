@@ -417,16 +417,17 @@ def _deploy_to_databricks(self, context: RunContext) -> None:
     from semabridge.connectors.staged_deploy import persist_deploy_events
     from semabridge.core.engine.conversion.rules_choice import databricks_planner_enabled
 
-    # Never hand Databricks-dialect SQL (planner path) to the existing
-    # publisher. Planner-path deploys run only from a confirmed deployment
-    # intent (api/controllers/databricks_deploy_controller.py).
+    # Planner path: the sync is the approval. The guarded deployer previews and
+    # executes the plan (staging copy, checks, read-back, journal); the existing
+    # publisher never sees Databricks-dialect SQL.
     if databricks_planner_enabled(context):
-        raise DeploymentError(
-            "On the Databricks planner path (behavior.databricks.use_planner_path), metric views are "
-            "deployed from the project's Databricks plan panel (Deploy preview, then Confirm), which shows "
-            "exactly what will run; a sync run never deploys them. To deploy with the existing Databricks "
-            "publisher instead, turn use_planner_path off."
+        from semabridge.core.engine.deployment.databricks_planner_deploy import (
+            apply_deploy_result,
+            deploy_planned_views,
         )
+
+        apply_deploy_result(context, deploy_planned_views(context))
+        return
 
     databricks_cfg = resolve_databricks_config_for_context(context, allow_offline_stub=False)
     if not str(getattr(databricks_cfg, "warehouse_id", "") or "").strip():

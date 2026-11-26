@@ -157,3 +157,62 @@ def start_backfill_thread() -> None:
             logger.info("Ontology backfill: generated %d project ontolog%s", n, "y" if n == 1 else "ies")
 
     threading.Thread(target=_run, name="ontology-backfill", daemon=True).start()
+
+
+def _norm_name(value: Any) -> str:
+    return re.sub(r"[^0-9a-z]+", "", str(value or "").lower())
+
+
+def sync_planned_view_names(project_id: str, plan: Optional[Dict[str, Any]]) -> int:
+    """After a Databricks planner deploy: point the project's ontology at the
+    views the plan created. The planner may make several metric views per
+    model (one per fact table) with naming-v2 names, so each metric gets its own
+    view; the domain keeps the view holding most of its metrics. Returns the
+    number of metrics updated. Never raises."""
+    pid = str(project_id or "").strip()
+    views = list((plan or {}).get("views") or [])
+    if not pid or not views:
+        return 0
+    try:
+        from semabridge.ontology.store import ontology_store
+
+        settings = (plan or {}).get("settings") or {}
+        prefix = ".".join(p for p in (settings.get("output_catalog"), settings.get("output_schema")) if p)
+
+        def fqn(view_name: str) -> str:
+            return f"{prefix}.{view_name}" if prefix else view_name
+
+        view_of: Dict[str, str] = {}
+        for v in views:
+            for m in v.get("measures") or []:
+                for key in (m.get("source_name"), m.get("display_name"), m.get("name")):
+                    if key:
+                        view_of.setdefault(_norm_name(key), fqn(str(v.get("name"))))
+        changed = 0
+        for dom in list(ontology_store.domains_for(pid)):
+            updated = dom.model_copy(deep=True)
+            counts: Dict[str, int] = {}
+            touched = False
+            for m in updated.metrics:
+                target = next((view_of[k] for k in (_norm_name(m.name), _norm_name(getattr(m, "label", None)),
+                                                    _norm_name(getattr(m, "logical_name", None))) if k in view_of), None)
+                if not target:
+                    continue
+                counts[target] = counts.get(target, 0) + 1
+                if m.semantic_view_name != target:
+                    m.semantic_view_name = target
+                    touched = True
+                    changed += 1
+            if counts:
+                main = max(counts, key=counts.get)
+                if updated.semantic_view_name != main:
+                    updated.semantic_view_name = main
+                    touched = True
+            if touched:
+                ontology_store.add_or_update_domain(updated, save_to_disk=True, original=dom.domain)
+        if changed:
+            logger.info("Ontology of %s now points at %d planned Databricks view(s)", pid, len(set(view_of.values())))
+        return changed
+    except Exception as exc:  # noqa: BLE001
+        logger.info("Ontology view names for %s not updated: %s", pid, exc)
+        return 0

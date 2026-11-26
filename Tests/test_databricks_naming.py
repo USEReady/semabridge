@@ -217,3 +217,15 @@ def test_naming_preview_endpoint_supports_databricks():
         "/api/naming/preview",
         params={"name": "x", "kind": "column", "target": "unknown"},
     ).status_code == 422
+
+
+@pytest.fixture(autouse=True)
+def _publisher_naming(monkeypatch):
+    """These tests describe the existing publisher's Databricks naming, used
+    when behavior.databricks.use_planner_path is off."""
+    from semabridge.target_rules import naming
+
+    monkeypatch.setattr(naming, "databricks_planner_on", lambda: False)
+    import semabridge.api.services.project_mapping_engine as pme
+
+    monkeypatch.setattr(pme, "databricks_planner_on", lambda: False)

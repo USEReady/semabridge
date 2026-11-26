@@ -54,16 +54,14 @@ def _convert_to_databricks_target(self, context: RunContext) -> None:
     from semabridge.core.engine.deployment.databricks import resolve_databricks_config_for_context
     from semabridge.core.engine.conversion.rules_choice import databricks_planner_enabled
 
-    # With the planner path on, Step 6 wrote Databricks SQL (Phase 3.2); the
-    # existing publisher expects today's SQL, so it must not run on it. Planner-path
-    # deploys (3.8) run only from a confirmed deployment intent.
+    # With the planner path on, Step 6 wrote Databricks SQL and Step 6b made the
+    # plan and the view definitions; the existing publisher (which expects
+    # today's SQL) must not run on it. Step 9 deploys the plan.
     if databricks_planner_enabled(context):
-        raise ConversionError(
-            "On the Databricks planner path (behavior.databricks.use_planner_path), metric views are "
-            "deployed from the project's Databricks plan panel (Deploy preview, then Confirm), which shows "
-            "exactly what will run; a sync run never deploys them. To deploy with the existing Databricks "
-            "publisher instead, turn use_planner_path off."
-        )
+        plan = getattr(context, "databricks_view_plan", None) or {}
+        logger.info("Databricks planner path: %d metric view(s) planned; Step 9 deploys them",
+                    len(plan.get("views") or []))
+        return
 
     databricks_cfg = resolve_databricks_config_for_context(context, allow_offline_stub=True)
     publisher = DatabricksPublisher(databricks_cfg, behavior=context.behavior)

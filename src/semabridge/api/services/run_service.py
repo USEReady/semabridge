@@ -967,6 +967,14 @@ async def _perform_project_run_impl(run: dict, project_cfg: str, started: float)
 
                 if ensure_project_ontology(project_id):
                     run.setdefault("logs", []).append("Ontology generated from the synced model.")
+                # Databricks planner path: point the ontology at the views
+                # this sync deployed (new names, possibly several per model).
+                from semabridge.ontology.auto_bootstrap import sync_planned_view_names
+
+                for _res in (run.get("results") or [{"summary": run.get("summary")}]):
+                    _plan = ((_res or {}).get("summary") or {}).get("databricks_view_plan")
+                    if _plan:
+                        sync_planned_view_names(project_id, _plan)
             except Exception as _onto_exc:  # noqa: BLE001
                 logger.debug("[%s] Ontology generation skipped: %s", project_id, _onto_exc)
 

@@ -15,11 +15,11 @@ def test_databricks_naming_follows_the_planner_switch(monkeypatch):
     assert naming.naming_for("databricks").target_name("Sales %", entity_kind="metric") == "sales_pct"
 
 
-def test_planner_is_off_by_default_in_the_shipped_config():
+def test_planner_is_on_in_the_shipped_config():
     from semabridge.core.behavior import ConnectorBehavior
 
     cfg = Path(__file__).resolve().parents[1] / "Config" / "behavior.yaml"
-    assert ConnectorBehavior.from_yaml(cfg).databricks.use_planner_path is False
+    assert ConnectorBehavior.from_yaml(cfg).databricks.use_planner_path is True
 
 
 def test_planner_status_endpoint(monkeypatch):

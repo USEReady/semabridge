@@ -9,6 +9,8 @@ and a root table named ``orders`` got 8 hard-coded TPC-H sample dimensions.
 
 from __future__ import annotations
 
+import pytest
+
 from unittest.mock import patch
 
 import yaml
@@ -175,3 +177,15 @@ def test_dry_run_note_states_the_databricks_name():
         r.pop("databricks_deployed_name", None)
     _flag_hidden_collisions(snow, "snowflake")
     assert "databricks_deployed_name" not in snow[0]
+
+
+@pytest.fixture(autouse=True)
+def _publisher_naming(monkeypatch):
+    """These tests describe the existing publisher's Databricks naming, used
+    when behavior.databricks.use_planner_path is off."""
+    from semabridge.target_rules import naming
+
+    monkeypatch.setattr(naming, "databricks_planner_on", lambda: False)
+    import semabridge.api.services.project_mapping_engine as pme
+
+    monkeypatch.setattr(pme, "databricks_planner_on", lambda: False)
