@@ -99,6 +99,7 @@ jobs:
           Tests/test_plan_once_readiness.py Tests/test_multi_process_state.py
           Tests/test_strict_startup.py Tests/test_azure_platform.py
 
+  slow-tests:
     name: Slow (wall-clock timing) test suite
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
