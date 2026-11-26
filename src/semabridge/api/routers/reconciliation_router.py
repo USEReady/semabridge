@@ -434,10 +434,20 @@ def generate_reconciliation_queries(req: GenerateQueriesRequest, request: Reques
         if mv:
             resolved_kind = "metric_view"
             sql_expr, sql_dims = mv["metric_sql_expression"], mv["dimensions"]
+    dax_measure, dax_dims = req.metric_name, list(req.dimensions or [])
+    try:
+        fabric_target = _fabric_project_dax_target(req.project_id, None, None) if req.project_id else None
+    except HTTPException:
+        fabric_target = None  # shown query only; the run reports config problems
+    if fabric_target is not None:
+        from semabridge.reconciliation.pbi_names import resolve_for_project
+
+        dax_measure, dax_dims = resolve_for_project(fabric_target, req.metric_name, dax_dims)
     dax_query = verifier.generate_dax_query(
         metric_name=req.metric_name,
-        dimensions=req.dimensions,
+        dimensions=dax_dims,
         filters=req.filters,
+        measure_name=dax_measure,
     )
     sql_query = verifier.generate_sql_query(
         metric_name=req.metric_name,
@@ -612,21 +622,35 @@ def certify_metric_end_to_end(req: CertifyMetricRequest, request: Request) -> Di
             target_kind=target_kind,
         )
     pbi_dims = req.pbi_dimension_columns or req.dimensions
-    dax_query = verifier.generate_dax_query(
-        metric_name=req.metric_name,
-        dimensions=pbi_dims,
-        filters=req.filters,
-    )
-
-    sql_rows: List[Dict[str, Any]] = []
-    dax_rows: List[Dict[str, Any]] = []
-    dax_backend_used = "manual_rows"
 
     from semabridge.reconciliation.mock_parity import (
         is_mock_parity_enabled,
         generate_mock_comparative_data,
     )
     mock_active = is_mock_parity_enabled()
+
+    # The project's own Power BI model runs the DAX; its measure and column
+    # names can differ from the identifier-safe names SemaBridge stores.
+    fabric_target = (
+        _fabric_project_dax_target(req.project_id, req.dax_backend, req.dax_dataset_id)
+        if req.dax_results is None and not mock_active
+        else None
+    )
+    dax_measure, dax_dims = req.metric_name, list(pbi_dims or [])
+    if fabric_target is not None:
+        from semabridge.reconciliation.pbi_names import resolve_for_project
+
+        dax_measure, dax_dims = resolve_for_project(fabric_target, req.metric_name, dax_dims)
+    dax_query = verifier.generate_dax_query(
+        metric_name=req.metric_name,
+        dimensions=dax_dims,
+        filters=req.filters,
+        measure_name=dax_measure,
+    )
+
+    sql_rows: List[Dict[str, Any]] = []
+    dax_rows: List[Dict[str, Any]] = []
+    dax_backend_used = "manual_rows"
 
     if mock_active:
         # High-fidelity mock comparative check: generates good match values
@@ -664,16 +688,12 @@ def certify_metric_end_to_end(req: CertifyMetricRequest, request: Request) -> Di
         for row in raw_sf_rows:
             up = {str(k).upper(): v for k, v in row.items()}
             mapped: Dict[str, Any] = {req.metric_name: up.get(vm_col)}
-            for vd, pc in zip(req.dimensions, pbi_dims):
+            # Warehouse columns by their (resolved) names, keyed like the DAX columns.
+            for vd, pc in zip(sql_dims or req.dimensions, dax_dims):
                 mapped[pc] = up.get(vd.split(".")[-1].upper())
             sql_rows.append(mapped)
 
         # 2. Obtain DAX rows via supplied export or automated run_dax backend
-        fabric_target = (
-            _fabric_project_dax_target(req.project_id, req.dax_backend, req.dax_dataset_id)
-            if req.dax_results is None
-            else None
-        )
         if req.dax_results is not None:
             dax_rows = req.dax_results
             dax_backend_used = "manual_rows"
@@ -701,7 +721,7 @@ def certify_metric_end_to_end(req: CertifyMetricRequest, request: Request) -> Di
         metric_name=req.metric_name,
         dax_rows=dax_rows,
         sql_rows=sql_rows,
-        dimension_keys=pbi_dims,
+        dimension_keys=dax_dims,
         dax_query=dax_query,
         sql_query=sql_query,
         custom_tolerance=req.tolerance,

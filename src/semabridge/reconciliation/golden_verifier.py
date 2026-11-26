@@ -198,8 +198,12 @@ class GoldenQueryVerifier:
         metric_name: str,
         dimensions: Optional[List[str]] = None,
         filters: Optional[List[str]] = None,
+        measure_name: Optional[str] = None,
     ) -> str:
-        """Construct canonical DAX query using SUMMARIZECOLUMNS for a metric."""
+        """Construct canonical DAX query using SUMMARIZECOLUMNS for a metric.
+
+        ``measure_name`` is the model's own spelling of the measure when it
+        differs from ``metric_name`` (which stays the result column label)."""
         dims = [d for d in (dimensions or []) if d and d.strip()]
         dim_refs = [_format_dax_dim_ref(d) for d in dims]
         dim_str = ", ".join(dim_refs)
@@ -211,7 +215,7 @@ class GoldenQueryVerifier:
                 filter_str = f", {', '.join(dax_filters)}"
 
         escaped_label = _escape_dax_string(metric_name)
-        escaped_measure = _escape_dax_col(metric_name)
+        escaped_measure = _escape_dax_col(measure_name or metric_name)
 
         if dims:
             return f"""EVALUATE
