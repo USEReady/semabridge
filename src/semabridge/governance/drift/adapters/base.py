@@ -86,3 +86,23 @@ class PlatformAdapter(ABC):
         Defaults to an empty list when unconfigured or unsupported.
         """
         return []
+
+    def inject_verified_queries(
+        self,
+        pairs: List[Dict[str, Any]],
+        view_name: str,
+        connection_config: Optional[Dict[str, Any]] = None,
+        dry_run: bool = False,
+    ) -> Dict[str, Any]:
+        """Inject verified question/SQL pairs into downstream consumers (Cortex Analyst or Genie).
+
+        Default implementation refuses with an unsupported platform reason.
+        """
+        return {
+            "supported": False,
+            "injected_count": 0,
+            "reason": f"Platform '{self.platform_name}' does not support automated verified query injection.",
+            "target": None,
+            "details": [],
+            "dry_run": dry_run,
+        }

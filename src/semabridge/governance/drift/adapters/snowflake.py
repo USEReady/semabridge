@@ -889,3 +889,230 @@ class SnowflakeAdapter(PlatformAdapter):
                     expression=expr,
                 )
             )
+
+    def inject_verified_queries(
+        self,
+        pairs: List[Dict[str, Any]],
+        view_name: str,
+        connection_config: Optional[Dict[str, Any]] = None,
+        dry_run: bool = False,
+    ) -> Dict[str, Any]:
+        """Inject verified question/SQL pairs into a staged Cortex Analyst semantic model YAML file.
+
+        Spike Finding (Snowflake Cortex Analyst):
+        Cortex Analyst models reside as YAML files in Snowflake stages. Cortex Analyst reads
+        the stage path (@stage/model.yaml) directly on each REST inference request, so updates
+        written via PUT ... OVERWRITE=TRUE are immediately active without re-registration.
+        In-flight requests hold in-memory models; subsequent requests read the updated file.
+        Stage overwrite is atomic at the stage file boundary.
+        """
+        if not pairs:
+            return {
+                "supported": True,
+                "injected_count": 0,
+                "target": None,
+                "details": [],
+                "reason": "No qualifying verified query pairs provided for injection.",
+                "dry_run": dry_run,
+            }
+
+        if connection_config is None:
+            return {
+                "supported": False,
+                "injected_count": 0,
+                "target": None,
+                "details": [],
+                "reason": "Snowflake connection configuration is required for verified query injection.",
+                "dry_run": dry_run,
+            }
+
+        from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs, SnowflakeConfig
+        if isinstance(connection_config, SnowflakeConfig):
+            cfg_obj = connection_config
+        elif isinstance(connection_config, dict):
+            cfg_dict = dict(connection_config)
+            if "schema" in cfg_dict and "schema_name" not in cfg_dict:
+                cfg_dict["schema_name"] = cfg_dict["schema"]
+            cfg_obj = SnowflakeConfig(**cfg_dict)
+        else:
+            cfg_obj = connection_config
+
+        try:
+            kw = get_snowflake_connect_kwargs(cfg_obj)
+        except Exception as exc:
+            return {
+                "supported": False,
+                "injected_count": 0,
+                "target": None,
+                "details": [],
+                "reason": f"Snowflake credentials resolution failed: {exc}",
+                "dry_run": dry_run,
+            }
+
+        import tempfile
+        import os
+        import yaml
+        import snowflake.connector
+
+        v_upper = view_name.upper().strip().strip('"')
+        v_parts = [p.strip().strip('"') for p in v_upper.split(".")]
+        simple_name = v_parts[-1]
+
+        try:
+            conn = snowflake.connector.connect(**kw)
+            cur = conn.cursor()
+
+            # 1. Discover stages in target schema or database
+            target_schema = (
+                getattr(cfg_obj, "schema_name", None)
+                or getattr(cfg_obj, "schema", None)
+                or (v_parts[1] if len(v_parts) == 3 else (v_parts[0] if len(v_parts) == 2 else None))
+            )
+            stage_rows = []
+            if target_schema:
+                try:
+                    cur.execute(f"SHOW STAGES IN SCHEMA {target_schema}")
+                    stage_rows = cur.fetchall()
+                except Exception:
+                    pass
+            if not stage_rows:
+                try:
+                    cur.execute("SHOW STAGES")
+                    stage_rows = cur.fetchall()
+                except Exception as stg_exc:
+                    return {
+                        "supported": True,
+                        "injected_count": 0,
+                        "target": None,
+                        "details": [],
+                        "reason": f"Failed to list Snowflake stages: {stg_exc}",
+                        "dry_run": dry_run,
+                    }
+
+            # 2. Find staged YAML model that consumes view_name
+            target_stage = None
+            target_file = None
+            staged_yaml_data = None
+
+            for stg in stage_rows:
+                if len(stg) >= 2:
+                    stage_name = str(stg[1])
+                    stg_db = str(stg[2]) if len(stg) > 2 and stg[2] else None
+                    stg_sch = str(stg[3]) if len(stg) > 3 and stg[3] else None
+                    qual_stage = f"{stg_db}.{stg_sch}.{stage_name}" if stg_db and stg_sch else stage_name
+
+                    try:
+                        cur.execute(f"LIST @{qual_stage} PATTERN = '.*\\.ya?ml'")
+                        model_files = cur.fetchall()
+                        for mf in model_files:
+                            file_path = str(mf[0]) if mf else ""
+                            if not file_path:
+                                continue
+                            file_tail = file_path.split("/")[-1]
+                            with tempfile.TemporaryDirectory() as tmp_dir:
+                                clean_tmp = tmp_dir.replace("\\", "/")
+                                cur.execute(f"GET @{qual_stage}/{file_tail} file://{clean_tmp}")
+                                downloaded = [os.path.join(tmp_dir, f) for f in os.listdir(tmp_dir) if f.endswith(('.yaml', '.yml'))]
+                                for df in downloaded:
+                                    with open(df, 'r', encoding='utf-8') as yfp:
+                                        data = yaml.safe_load(yfp)
+                                    if isinstance(data, dict):
+                                        tables_section = data.get("tables") or data.get("semantic_models") or []
+                                        consumes = False
+                                        if isinstance(tables_section, list):
+                                            for tbl in tables_section:
+                                                tbl_name = str(tbl.get("name") or tbl.get("base_table") or tbl.get("table") or "").upper().strip().strip('"') if isinstance(tbl, dict) else str(tbl).upper().strip().strip('"')
+                                                if tbl_name and (tbl_name == v_upper or tbl_name.endswith(f".{simple_name}") or tbl_name == simple_name):
+                                                    consumes = True
+                                                    break
+                                        if consumes:
+                                            target_stage = qual_stage
+                                            target_file = file_tail
+                                            staged_yaml_data = data
+                                            break
+                            if target_stage:
+                                break
+                    except Exception as inspect_exc:
+                        logger.debug("Stage %s inspection failed: %s", qual_stage, inspect_exc)
+                if target_stage:
+                    break
+
+            if not target_stage or not target_file or staged_yaml_data is None:
+                return {
+                    "supported": True,
+                    "injected_count": 0,
+                    "target": None,
+                    "details": [],
+                    "reason": f"No staged Cortex Analyst semantic model YAML found referencing view '{simple_name}'.",
+                    "dry_run": dry_run,
+                }
+
+            # 3. Prepare updated verified_queries section
+            existing_vqs = staged_yaml_data.get("verified_queries")
+            if not isinstance(existing_vqs, list):
+                existing_vqs = []
+                staged_yaml_data["verified_queries"] = existing_vqs
+
+            existing_questions = {str(q.get("question") or "").strip().lower() for q in existing_vqs if isinstance(q, dict)}
+
+            to_inject = []
+            for p in pairs:
+                q_text = str(p.get("question") or "").strip()
+                if not q_text or q_text.lower() in existing_questions:
+                    continue
+                to_inject.append({
+                    "name": p.get("name") or f"query_{len(existing_vqs) + len(to_inject) + 1}",
+                    "question": q_text,
+                    "sql": p.get("sql") or "",
+                    "verified_at": int(p.get("verified_at") or 0),
+                    "verified_by": str(p.get("verified_by") or "steward"),
+                })
+
+            if not to_inject:
+                return {
+                    "supported": True,
+                    "injected_count": 0,
+                    "target": f"@{target_stage}/{target_file}",
+                    "details": [],
+                    "reason": "All qualifying query pairs already exist in target model.",
+                    "dry_run": dry_run,
+                }
+
+            if dry_run:
+                return {
+                    "supported": True,
+                    "injected_count": len(to_inject),
+                    "target": f"@{target_stage}/{target_file}",
+                    "details": to_inject,
+                    "reason": f"Dry run: {len(to_inject)} query pairs prepared for injection into @{target_stage}/{target_file}.",
+                    "dry_run": True,
+                }
+
+            # 4. Perform actual write
+            existing_vqs.extend(to_inject)
+            with tempfile.TemporaryDirectory() as write_dir:
+                local_write_path = os.path.join(write_dir, target_file)
+                with open(local_write_path, "w", encoding="utf-8") as out_fp:
+                    yaml.safe_dump(staged_yaml_data, out_fp, sort_keys=False)
+
+                clean_local_path = local_write_path.replace("\\", "/")
+                cur.execute(f"PUT file://{clean_local_path} @{target_stage} OVERWRITE=TRUE AUTO_COMPRESS=FALSE")
+                put_result = cur.fetchall()
+
+            return {
+                "supported": True,
+                "injected_count": len(to_inject),
+                "target": f"@{target_stage}/{target_file}",
+                "details": to_inject,
+                "reason": f"Successfully injected {len(to_inject)} verified query pairs into @{target_stage}/{target_file}.",
+                "dry_run": False,
+            }
+        except Exception as exc:
+            return {
+                "supported": True,
+                "injected_count": 0,
+                "target": None,
+                "details": [],
+                "reason": f"Snowflake injection failed: {exc}",
+                "dry_run": dry_run,
+            }
