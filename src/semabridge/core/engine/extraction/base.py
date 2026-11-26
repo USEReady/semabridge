@@ -168,7 +168,7 @@ def _extract_pbi_desktop(
         source_format.dataset_name = clean_pbix_model_name(str(model_name))
     context.resolved_pbix_display_name = str(model_name)
 
-    if report_layer:
+    if report_layer and hasattr(source_format, "report_layer"):
         source_format.report_layer = report_layer
 
     return source_format

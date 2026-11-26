@@ -3,8 +3,9 @@ import { X, Check, Layers, Sparkles } from 'lucide-react';
 import { STEPS } from '../../utils/constants';
 import { useProjectWizardStore } from '../../store/projectWizardStore';
 
-export function WizardHeader({ editMode, hasMeaningfulData, clearWizardState, navigate, name, step, canUpsert = false }) {
+export function WizardHeader({ editMode, hasMeaningfulData, clearWizardState, navigate, name, step, canUpsert = false, steps = null }) {
   const setWizardState = useProjectWizardStore(state => state.setWizardState);
+  const wizardSteps = steps || STEPS;
   
   return (
     <header style={{
@@ -157,7 +158,7 @@ export function WizardHeader({ editMode, hasMeaningfulData, clearWizardState, na
 
       {/* Stepper Progress Badges */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        {STEPS.map((s, idx) => {
+        {wizardSteps.map((s, idx) => {
           const targetStep = idx + 1;
           const isCompleted = step > targetStep;
           const isActive = step === targetStep;

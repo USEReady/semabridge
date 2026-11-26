@@ -70,6 +70,61 @@ def test_discovery_file_open_matches_recent_history(tmp_path):
     assert inst.is_unsaved_new_file is False
 
 
+def test_discovery_ambiguous_recent_history_leaves_path_empty(tmp_path):
+    # Setup mock workspace and two fake recent files with the same filename in different folders
+    ws_data = tmp_path / "ws1" / "Data"
+    ws_data.mkdir(parents=True)
+    (ws_data / "msmdsrv.port.txt").write_bytes("51000\r\n".encode("utf-16-le"))
+    (ws_data / "db.1.db.xml").write_text("<Database><Name>db-guid</Name></Database>")
+
+    dir1 = tmp_path / "folder1"
+    dir1.mkdir(parents=True)
+    file1 = dir1 / "Sales.pbix"
+    file1.write_bytes(b"PK\x03\x04")
+
+    dir2 = tmp_path / "folder2"
+    dir2.mkdir(parents=True)
+    file2 = dir2 / "Sales.pbix"
+    file2.write_bytes(b"PK\x03\x04")
+
+    mock_processes = [
+        {
+            "ProcessId": 1000,
+            "ParentProcessId": 100,
+            "Name": "PBIDesktop.exe",
+            "CommandLine": r'"C:\Program Files\Microsoft Power BI Desktop\bin\PBIDesktop.exe"',
+        },
+        {
+            "ProcessId": 2000,
+            "ParentProcessId": 1000,
+            "Name": "msmdsrv.exe",
+            "CommandLine": f'msmdsrv.exe -s "{ws_data}"',
+        },
+    ]
+
+    mock_titles = {
+        1000: ["Sales - Power BI Desktop"],
+    }
+
+    mock_recent = [str(file1), str(file2)]
+
+    instances = discover_running_instances(
+        verify_active=True,
+        process_provider=lambda: mock_processes,
+        window_titles_provider=lambda: mock_titles,
+        recent_paths_provider=lambda: mock_recent,
+        port_checker=lambda p: True,
+    )
+
+    assert len(instances) == 1
+    inst = instances[0]
+    # Two history entries with the same file name in different folders -> no path chosen
+    assert inst.file_name == "Sales.pbix"
+    assert inst.file_path is None
+    assert inst.file_method == "window_title"
+    assert inst.is_unsaved_new_file is False
+
+
 def test_discovery_unsaved_new_file_untitled(tmp_path):
     ws_data = tmp_path / "ws_new" / "Data"
     ws_data.mkdir(parents=True)

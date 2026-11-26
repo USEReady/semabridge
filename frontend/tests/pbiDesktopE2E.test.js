@@ -189,20 +189,37 @@ test('E2E Flow: Desktop create + dry run', async (t) => {
       await assertNoErrors('Desktop Step Refresh');
     }
 
-    // 6. Continue to Ontology Review
+    // 6. Continue to Ontology Review (Step 3)
     await clickContinue();
     await assertNoErrors('Ontology Review Step');
 
-    // 7. Continue to Mapping Options
+    // 7. Continue to Target Config (Step 4)
+    await clickContinue();
+    await assertNoErrors('Target Step');
+
+    // 8. Continue to Mapping Options (Step 5)
     await clickContinue();
     await assertNoErrors('Mapping Options Step');
 
-    // 8. Run Dry Run
+    // 9. Run Dry Run
     const runCheckBtn = await page.$('button:has-text("Run check"), button:has-text("Run Dry Run"), button:has-text("Dry Run")');
     if (runCheckBtn) {
       await runCheckBtn.click();
       await page.waitForTimeout(6000);
       await assertNoErrors('Dry Run Execution');
+
+      // Check if ambiguous table or candidate select appears
+      const candidateSelect = await page.$('select:has-text("Select target table"), select:has-text("Pick a table")');
+      if (candidateSelect) {
+        const options = await page.$$eval('select option', opts => opts.map(o => o.value).filter(Boolean));
+        if (options.length > 0) {
+          await candidateSelect.selectOption(options[0]);
+          await page.waitForTimeout(500);
+          await runCheckBtn.click();
+          await page.waitForTimeout(6000);
+          await assertNoErrors('Re-run check after table pick');
+        }
+      }
     }
   } finally {
     await browser.close();

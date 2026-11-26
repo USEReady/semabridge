@@ -9,7 +9,7 @@ function rows(count) {
  * (backend: SnowflakeSchemaManager.plan_source_tables): tables a sync would
  * create, and ties between equally matching existing tables.
  */
-export default function TableBindingPlan({ plan, style }) {
+export default function TableBindingPlan({ plan, style, onPickTable }) {
   if (!plan || typeof plan !== 'object') return null;
 
   const box = {
@@ -57,8 +57,25 @@ export default function TableBindingPlan({ plan, style }) {
             Blocked due to existing table collision (columns differ):
           </div>
           {blocked.map(t => (
-            <div key={`b-${t.dataset}`} style={{ fontFamily: MONO, fontSize: 11, paddingLeft: 14, color: 'var(--color-danger, #ef4444)' }}>
-              {t.dataset} ✕ {t.table}{t.message ? ` — ${t.message}` : ''}
+            <div key={`b-${t.dataset}`} style={{ fontFamily: MONO, fontSize: 11, paddingLeft: 14, color: 'var(--color-danger, #ef4444)', marginTop: 4 }}>
+              <div>{t.dataset} ✕ {t.table}{t.message ? ` — ${t.message}` : ''}</div>
+              {Array.isArray(t.candidates) && t.candidates.length > 0 && onPickTable && (
+                <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Pick candidate:</span>
+                  <select
+                    style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, border: '1px solid var(--border-main)', background: 'var(--bg-surface)', color: 'var(--text-primary)' }}
+                    defaultValue=""
+                    onChange={(e) => {
+                      if (e.target.value) onPickTable(t.dataset, e.target.value);
+                    }}
+                  >
+                    <option value="" disabled>Select target table...</option>
+                    {t.candidates.map(c => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
           ))}
         </div>

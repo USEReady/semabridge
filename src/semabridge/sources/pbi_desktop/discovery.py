@@ -339,18 +339,21 @@ def discover_running_instances(
             file_method = "command_line"
         elif file_from_title:
             # Try to match recent files history from User.zip
-            matched_recent: Optional[str] = None
+            # Use it only when exactly one history entry matches the window's file name;
+            # otherwise leave file_path empty and rely on the display name. Never pick a path from several matches.
+            matches: List[str] = []
             clean_target = title_stem.casefold()
             for rp in recent_paths:
                 p_obj = Path(rp)
                 if p_obj.stem.casefold() == clean_target or p_obj.name.casefold() == file_from_title.casefold():
                     if p_obj.exists():
-                        matched_recent = str(p_obj)
-                        break
+                        p_str = str(p_obj)
+                        if p_str not in matches:
+                            matches.append(p_str)
 
-            if matched_recent:
-                file_name = Path(matched_recent).name
-                file_path = matched_recent
+            if len(matches) == 1:
+                file_name = Path(matches[0]).name
+                file_path = matches[0]
                 file_method = "desktop_recent_history"
             else:
                 file_name = file_from_title if file_from_title.lower().endswith(".pbix") else f"{file_from_title}.pbix"

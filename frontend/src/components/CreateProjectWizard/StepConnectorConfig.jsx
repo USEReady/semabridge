@@ -31,6 +31,7 @@ function getAccountId(account) {
 }
 
 export function StepConnectorConfig({
+  targetOnly = false,
   sourceConnector,
   preselectedServer = null,
   preselectedDatabase = null,
@@ -327,12 +328,15 @@ export function StepConnectorConfig({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 24, paddingBottom: 40 }}>
       <div>
-        <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Connector Configuration</h2>
+        <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>
+          {targetOnly ? 'Target Configuration' : 'Connector Configuration'}
+        </h2>
         <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>
-          Configure the source and target connectors for your project.
+          {targetOnly ? 'Configure target database and schema for your project.' : 'Configure the source and target connectors for your project.'}
         </p>
       </div>
 
+      {!targetOnly && (
       <div style={SECTION_CARD}>
         <div style={{ marginBottom: 12 }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>1. Source Configuration: {sourceLabel}</div>
@@ -770,10 +774,13 @@ export function StepConnectorConfig({
           </div>
         )}
       </div>
+      )}
 
       <div style={SECTION_CARD}>
         <div style={{ marginBottom: 12 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>2. Target Configuration</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
+            {targetOnly ? 'Target Configuration' : '2. Target Configuration'}
+          </div>
           <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 3 }}>
             Configure each selected target separately. Leave fields empty to use global defaults.
           </div>

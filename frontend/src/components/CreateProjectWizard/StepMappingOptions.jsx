@@ -138,6 +138,8 @@ function OntologyConflictResolver({ projectId, blockers = [], resolution, onAppl
 }
 
 export function StepMappingOptions({
+  onUpdateTableTarget,
+  onUpdateColumnTarget,
   autoRelationships,
   setAutoRelationships,
   generateDescriptions,
@@ -331,6 +333,18 @@ export function StepMappingOptions({
     return (dryRunData?.table_binding_plan?.tables || []).filter((t) => t.action === 'blocked');
   }, [dryRunData]);
 
+  const handlePickTable = useCallback((dataset, pickedTable) => {
+    onUpdateTableTarget?.(dataset, pickedTable);
+    if (dryRunData?.table_binding_plan?.tables) {
+      dryRunData.table_binding_plan.tables = dryRunData.table_binding_plan.tables.map(t => {
+        if (t.dataset === dataset) {
+          return { ...t, action: 'bind', table: pickedTable, matched_by: 'manual' };
+        }
+        return t;
+      });
+    }
+  }, [onUpdateTableTarget, dryRunData]);
+
   // The dry-run check must have completed (at least once) before the user can
   // proceed — regardless of mapping mode.  Without this guard the bar shows
   // green immediately because compatScore is null before any run has run.
@@ -510,9 +524,12 @@ export function StepMappingOptions({
     decisions.push({
       tone: 'error',
       text: (
-        <>
-          <b>{blockedTables.length} ambiguous table binding{blockedTables.length === 1 ? '' : 's'}</b> ({blockedTables.map(t => t.dataset).join(', ')}) — pick a table or save a binding
-        </>
+        <div>
+          <div><b>{blockedTables.length} ambiguous table binding{blockedTables.length === 1 ? '' : 's'}</b> ({blockedTables.map(t => t.dataset).join(', ')}) — pick a table or save a binding</div>
+          <div style={{ marginTop: 6 }}>
+            <TableBindingPlan plan={dryRunData?.table_binding_plan} onPickTable={handlePickTable} />
+          </div>
+        </div>
       ),
       action: ['Pick table', 'grid'],
     });
@@ -715,7 +732,7 @@ export function StepMappingOptions({
       {!multiDryRunJob?.job_id && showAllMappings && dryRunStatus === 'success' && detectedMappings.length > 0 && (
         <div ref={mappingTableRef}>
           <PanelBoundary name="Target tables">
-            <TableBindingPlan plan={dryRunData?.table_binding_plan} style={{ marginTop: 0, marginBottom: 12 }} />
+            <TableBindingPlan plan={dryRunData?.table_binding_plan} onPickTable={handlePickTable} style={{ marginTop: 0, marginBottom: 12 }} />
           </PanelBoundary>
           {(dryRunData?.blocking_conflicts?.length > 0 ||
             dryRunData?.ontology_changes?.conflict_resolution?.resolved?.length > 0 ||
