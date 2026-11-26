@@ -19,6 +19,14 @@ ALLOWED_REASON_PATTERNS = [
     r"SEMABRIDGE_SLOW_TESTS",
     r"wall-clock timing test",
     r"got empty parameter set",
+    # Golden / end-to-end tests on customer Power BI files: the .pbix files are
+    # not in the repository (customer data). They run locally with
+    # SEMABRIDGE_GOLDEN_PBIX_DIR pointing at the files.
+    r"SEMABRIDGE_GOLDEN_PBIX_DIR",
+    r"\.pbix not available",
+    # Databricks writer: the one-to-many join case is only rendered when the
+    # planner places the measure there; placement is covered by the planner tests.
+    r"planner did not compose this measure \(placement rules\)",
 ]
 
 
