@@ -714,7 +714,9 @@ def _execute_databricks(
     state = (data.get("status") or {}).get("state")
     if state and state not in ("SUCCEEDED",):
         err = ((data.get("status") or {}).get("error") or {}).get("message") or f"statement state {state}"
-        return _failed("DATABRICKS", exec_sql, RuntimeError(err), elapsed_ms)
+        from semabridge.ai.missing_view import explain
+
+        return _failed("DATABRICKS", exec_sql, RuntimeError(explain(err, req.project_id)), elapsed_ms)
     cols = [c.get("name") for c in (data.get("manifest") or {}).get("schema", {}).get("columns", [])]
     rows = (data.get("result") or {}).get("data_array", []) or []
     _record(req, "DATABRICKS", clean_sql, len(rows), elapsed_ms, user_id)

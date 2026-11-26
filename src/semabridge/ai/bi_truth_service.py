@@ -739,7 +739,9 @@ def run_truth_suite(
                         mode = "databricks_local"
                     else:
                         mode = "databricks_sql"
-                        err = exec_res.get("error") or "Databricks SQL execution failed"
+                        from semabridge.ai.missing_view import explain
+
+                        err = explain(exec_res.get("error"), pid) or "Databricks SQL execution failed"
                 else:
                     mode = "databricks_local"
             else:
