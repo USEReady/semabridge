@@ -311,3 +311,66 @@ def test_sources_isolation_pbix_and_fabric_unaffected(monkeypatch):
     jobs, stype, _, _, _ = _build_sync_jobs(snowflake_config)
     assert stype == "snowflake"
     assert len(jobs) == 1
+
+
+# ---------------------------------------------------------------------------
+# 7. Engine Extraction Display Name Resolution
+# ---------------------------------------------------------------------------
+
+
+def test_extract_pbi_desktop_display_name_resolution():
+    from semabridge.core.engine.extraction.base import _extract_pbi_desktop
+    from semabridge.core.engine.exceptions import ExtractionError
+
+    # Case 1: Uses saved model display_name
+    mock_adapter = MagicMock()
+    mock_adapter.extract_model.return_value = {"model": {"tables": []}}
+    mock_adapter.extract_report_layer.return_value = None
+    with patch("semabridge.sources.base.get_source_adapter", return_value=mock_adapter), \
+         patch("semabridge.core.source_format.from_pbix_tmsl", return_value="dummy_format"):
+        ctx = MagicMock()
+        ctx.project_id = "proj-1"
+        ctx.run_id = "run-1"
+        ctx.source_type = "pbi_desktop"
+        ctx.resolved_pbix_display_name = None
+        ctx.config = MagicMock()
+        ctx.config.source = MagicMock()
+        ctx.config.source.models = [{"file_path": "C:/Models/Sales.pbix", "display_name": "Sales Model"}]
+        ctx.config.model = None
+        res = _extract_pbi_desktop(None, ctx, dataset_id=None, pbix_path="C:/Models/Sales.pbix")
+        assert res == "dummy_format"
+        ident = mock_adapter.extract_model.call_args[0][0]
+        assert ident.display_name == "Sales Model"
+
+    # Case 2: Uses file name from path when display_name not in config
+    with patch("semabridge.sources.base.get_source_adapter", return_value=mock_adapter), \
+         patch("semabridge.core.source_format.from_pbix_tmsl", return_value="dummy_format"):
+        ctx = MagicMock()
+        ctx.project_id = "proj-1"
+        ctx.run_id = "run-1"
+        ctx.source_type = "pbi_desktop"
+        ctx.resolved_pbix_display_name = None
+        ctx.config = MagicMock()
+        ctx.config.source = MagicMock()
+        ctx.config.source.models = []
+        ctx.config.model = None
+        res = _extract_pbi_desktop(None, ctx, dataset_id=None, pbix_path="C:/data/models/Financial_Analysis.pbix")
+        assert res == "dummy_format"
+        ident = mock_adapter.extract_model.call_args[0][0]
+        assert ident.display_name == "Financial_Analysis"
+
+    # Case 3: Raises ExtractionError with reason when neither display_name nor file path exists
+    with patch("semabridge.sources.base.get_source_adapter", return_value=mock_adapter):
+        ctx = MagicMock()
+        ctx.project_id = "proj-1"
+        ctx.run_id = "run-1"
+        ctx.source_type = "pbi_desktop"
+        ctx.resolved_pbix_display_name = None
+        ctx.config = MagicMock()
+        ctx.config.source = MagicMock()
+        ctx.config.source.models = []
+        ctx.config.model = None
+        with pytest.raises(ExtractionError) as exc_info:
+            _extract_pbi_desktop(None, ctx, dataset_id="local_engine_uuid_without_path", pbix_path=None)
+        assert "requires a display_name in the saved model configuration or a valid file path" in str(exc_info.value)
+

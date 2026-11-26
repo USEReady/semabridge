@@ -103,12 +103,35 @@ def _extract_pbi_desktop(
     if not model_ref:
         raise ExtractionError("No target engine or model specified for Power BI Desktop extraction.")
 
-    model_name = (
-        getattr(context, "resolved_pbix_display_name", None)
-        or (getattr(getattr(context, "config", None), "model", None) and getattr(context.config.model, "name", None))
-        or getattr(context, "project_id", None)
-        or "model"
-    )
+    saved_display_name = getattr(context, "resolved_pbix_display_name", None)
+    if not saved_display_name and hasattr(context, "config"):
+        cfg_source = getattr(context.config, "source", None)
+        models = getattr(cfg_source, "models", None) if cfg_source else None
+        if isinstance(models, list):
+            for m in models:
+                m_path = getattr(m, "file_path", None) if not isinstance(m, dict) else m.get("file_path")
+                m_name = getattr(m, "display_name", None) if not isinstance(m, dict) else m.get("display_name")
+                if m_path and (m_path == pbix_path or m_path == model_ref or not pbix_path):
+                    if m_name:
+                        saved_display_name = m_name
+                        break
+        if not saved_display_name:
+            cfg_model = getattr(context.config, "model", None)
+            if cfg_model and getattr(cfg_model, "name", None):
+                saved_display_name = cfg_model.name
+
+    file_name = None
+    path_candidate = pbix_path or (model_ref if isinstance(model_ref, str) and (model_ref.lower().endswith(".pbix") or "\\" in model_ref or "/" in model_ref) else None)
+    if path_candidate:
+        from pathlib import Path
+        file_name = Path(path_candidate).stem
+
+    model_name = saved_display_name or file_name
+    if not model_name:
+        raise ExtractionError(
+            f"Power BI Desktop extraction requires a display_name in the saved model configuration "
+            f"or a valid file path to derive the model name from (got pbix_path={pbix_path!r}, model_ref={model_ref!r})."
+        )
     ident = ModelIdentity(
         source_type="pbi_desktop",
         model_id=str(model_ref),

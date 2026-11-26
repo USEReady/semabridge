@@ -251,3 +251,7 @@ venv/
 
 # Test artifacts
 feature_test_results/
+
+# Screenshots & E2E walk reports
+screenshots/
+walk_report.json
