@@ -2091,3 +2091,83 @@ def evaluate_project_deploy_gate(project_id: str, gate_mode: str = "report") -> 
     )
 
 
+def inject_verified_queries_for_project(
+    project_id: str,
+    case_ids: Optional[List[str]] = None,
+    dry_run: bool = False,
+    user: Optional[str] = None,
+    view_name: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Inject qualifying verified query pairs into downstream AI consumer (Cortex Analyst or Genie)."""
+    from semabridge.ai.bi_truth_injection import perform_injection
+    from semabridge.governance.drift.adapters.registry import get_adapter, resolve_project_platform
+    from semabridge.ai.project_connection import resolve_project_warehouse_config
+
+    pid = str(project_id or "").strip()
+    if not pid:
+        raise ValueError("project_id is required for verified query injection")
+
+    cases = list_truth_cases(pid)
+    runs = list_truth_runs(pid)
+    latest_run = runs[0] if runs else None
+
+    # Resolve platform and connection config
+    conn_cfg = None
+    try:
+        conn_cfg = resolve_project_warehouse_config(pid)
+    except Exception:
+        pass
+
+    platform = "SNOWFLAKE"
+    if conn_cfg:
+        raw_plat = getattr(conn_cfg, "platform", None) or (conn_cfg.get("platform") if isinstance(conn_cfg, dict) else "")
+        if not raw_plat:
+            raw_plat = getattr(conn_cfg, "target_type", None) or (conn_cfg.get("target_type") if isinstance(conn_cfg, dict) else "")
+        if raw_plat:
+            platform = str(raw_plat).upper().strip()
+
+    try:
+        adapter = get_adapter(platform, mode="live")
+    except Exception as exc:
+        return {
+            "status": "refused",
+            "project_id": pid,
+            "dry_run": dry_run,
+            "injected_count": 0,
+            "injected": [],
+            "skipped": [],
+            "failed": [],
+            "message": f"Platform '{platform}' adapter resolution failed: {exc}",
+        }
+
+    resolved_view = view_name or ""
+    if not resolved_view and latest_run:
+        resolved_view = latest_run.get("view") or latest_run.get("semantic_view") or ""
+    if not resolved_view and cases:
+        resolved_view = cases[0].get("view") or cases[0].get("semantic_view") or ""
+    if not resolved_view:
+        resolved_view = pid.replace("proj-", "")
+
+    result = perform_injection(
+        adapter=adapter,
+        project_id=pid,
+        view_name=resolved_view,
+        connection_config=conn_cfg.model_dump() if hasattr(conn_cfg, "model_dump") else conn_cfg,
+        cases=cases,
+        latest_run=latest_run,
+        case_ids=case_ids,
+        dry_run=dry_run,
+        user=user,
+    )
+
+    if not dry_run and result.get("injected_count", 0) > 0:
+        state = _load_suite()
+        injections = state.get("injections", [])
+        if "audit_record" in result:
+            injections.insert(0, result["audit_record"])
+            state["injections"] = injections[:50]
+            _save_suite(state)
+
+    return result
+
+

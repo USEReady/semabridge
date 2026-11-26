@@ -49,6 +49,13 @@ class BatchUpdateTruthCasesRequest(BaseModel):
     case_ids: Optional[list[str]] = None
 
 
+class InjectTruthCasesRequest(BaseModel):
+    project_id: str
+    case_ids: Optional[List[str]] = None
+    dry_run: bool = False
+    view: Optional[str] = None
+
+
 class CreateManualTruthCaseRequest(BaseModel):
     question: str
     project_id: Optional[str] = None
@@ -340,4 +347,24 @@ def execute_truth_suite(req: RunTruthSuiteRequest, request: Request) -> Dict[str
 def get_runs(project_id: Optional[str] = None) -> Dict[str, Any]:
     runs = list_truth_runs(project_id=project_id)
     return _sanitize_cell_value({"count": len(runs), "runs": runs})
+
+
+@router.post("/inject", response_model=Dict[str, Any])
+def inject_truth_cases(req: InjectTruthCasesRequest, request: Request) -> Dict[str, Any]:
+    """Inject qualifying verified query pairs into downstream Cortex Analyst or Genie model."""
+    uid = getattr(request.state, "user_id", None)
+    from semabridge.ai.bi_truth_service import inject_verified_queries_for_project
+    try:
+        res = inject_verified_queries_for_project(
+            project_id=req.project_id,
+            case_ids=req.case_ids,
+            dry_run=req.dry_run,
+            user=str(uid) if uid else "user",
+            view_name=req.view,
+        )
+        return res
+    except ValueError as val_err:
+        raise HTTPException(status_code=400, detail=str(val_err))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Injection failed: {str(exc)}")
 
