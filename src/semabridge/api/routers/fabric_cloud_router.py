@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException
 
 from semabridge.connectors.fabric_cloud_deployer import (
@@ -11,8 +11,7 @@ from semabridge.connectors.fabric_cloud_deployer import (
     FabricDeploymentConfig,
     FabricDeploymentReceipt,
 )
-from semabridge.ontology.federated_loader import FederatedOntologyLoader
-from semabridge.ontology.store import ontology_store
+from semabridge.ontology.osi_export import ontology_osi_model
 
 logger = logging.getLogger("semabridge.api.fabric_cloud_router")
 
@@ -20,13 +19,12 @@ router = APIRouter(prefix="/api/fabric", tags=["fabric_cloud"])
 
 
 @router.post("/deploy", response_model=FabricDeploymentReceipt)
-def deploy_to_fabric_cloud(config: FabricDeploymentConfig) -> FabricDeploymentReceipt:
-    """Deploy the current enterprise semantic model directly to a Microsoft Fabric workspace."""
+def deploy_to_fabric_cloud(config: FabricDeploymentConfig, project_id: Optional[str] = None) -> FabricDeploymentReceipt:
+    """Deploy the ontology (one project's with ``?project_id=``) to a Microsoft Fabric workspace."""
     if not config.workspace_id:
         raise HTTPException(status_code=400, detail="workspace_id is required.")
 
-    fed = ontology_store.get_federated_ontology()
-    osi_model = FederatedOntologyLoader.to_osi_model(fed, model_name=config.dataset_name)
+    osi_model = ontology_osi_model(config.dataset_name, project_id)
 
     deployer = FabricCloudDeployer(config)
     receipt = deployer.deploy_model(osi_model)

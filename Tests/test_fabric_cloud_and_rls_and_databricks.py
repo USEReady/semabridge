@@ -17,6 +17,24 @@ from semabridge.security.rls_sync import (
 client = TestClient(app)
 
 
+@pytest.fixture
+def small_ontology(tmp_path, monkeypatch):
+    """A store with one small domain, independent of the ontology files on disk."""
+    from semabridge.ontology import store as store_mod
+    from semabridge.ontology.models import DomainOntology
+
+    store = store_mod.DomainOntologyStore(storage_dir=tmp_path)
+    store.add_or_update_domain(DomainOntology.model_validate({
+        "domain": "Sales", "source_project_id": "proj-a",
+        "concepts": [{"name": "Orders", "physical_table": "ORDERS",
+                      "attributes": [{"name": "Region", "data_type": "VARCHAR"},
+                                     {"name": "Amount", "data_type": "NUMBER"}]}],
+        "metrics": [{"name": "Revenue", "concept": "Orders", "sql_expression": "SUM(Amount)"}],
+    }))
+    monkeypatch.setattr(store_mod, "ontology_store", store)
+    return store
+
+
 def _sample_model():
     return OSIModel(
         unique_name="SALES_MODEL",
@@ -59,7 +77,7 @@ def test_fabric_cloud_publisher_deployment():
     assert len(receipt.tmdl_files_deployed) > 0
 
 
-def test_api_fabric_cloud_deploy():
+def test_api_fabric_cloud_deploy(small_ontology):
     resp = client.post(
         "/api/fabric/deploy",
         json={"workspace_id": "ws-test-123", "dataset_name": "TestDataset"},
@@ -154,7 +172,7 @@ def test_databricks_genie_space_spec():
     assert spec["measures"][0]["metric_name"] == "TotalRevenue"
 
 
-def test_api_databricks_metrics_endpoints():
+def test_api_databricks_metrics_endpoints(small_ontology):
     resp = client.post(
         "/api/databricks/metrics/emit-ddl",
         json={"model_name": "CorpSales", "catalog": "corp_lakehouse"},
@@ -168,3 +186,24 @@ def test_api_databricks_metrics_endpoints():
     )
     assert genie_resp.status_code == 200
     assert "measures" in genie_resp.json()
+
+
+def test_emit_ddl_scoped_to_one_project(small_ontology):
+    resp = client.post("/api/databricks/metrics/emit-ddl", json={"model_name": "M", "project_id": "proj-a"})
+    assert resp.status_code == 200
+    resp = client.post("/api/databricks/metrics/emit-ddl", json={"model_name": "M", "project_id": "proj-none"})
+    assert resp.status_code == 404
+
+
+def test_too_many_tables_is_a_clear_400(small_ontology, monkeypatch):
+    from semabridge.ontology.federated_loader import FederatedOntologyLoader
+
+    def _too_big(fed, model_name="X"):
+        return OSIModel(unique_name="X", label="X", datasets=[
+            OSIDataset(unique_name=f"T{i}", source_table=f"T{i}", columns=[]) for i in range(200)
+        ])
+
+    monkeypatch.setattr(FederatedOntologyLoader, "to_osi_model", staticmethod(_too_big))
+    resp = client.post("/api/databricks/metrics/emit-ddl", json={"model_name": "M"})
+    assert resp.status_code == 400
+    assert "project_id" in resp.json()["detail"]
