@@ -101,7 +101,10 @@ def test_view_text_follows_the_plan_exactly():
     assert rv.yaml.startswith("version: 1.1\n")
     d = doc_of(rv)
     assert d["version"] == 1.1 and d["source"] == "workspace.semabridge_dev.sales"
-    assert d["comment"] == "Created by SemaBridge from model Chain Model"
+    # every table of this plan is a stub: the approved definition carries the INCOMPLETE warning (3.8)
+    from semabridge.target_backends.databricks.writer import INCOMPLETE_WARNING
+
+    assert d["comment"] == f"{INCOMPLETE_WARNING} Created by SemaBridge from model Chain Model"
     assert [f["name"] for f in d[FIELDS_KEY]] == [f["name"] for f in v["fields"]]
     assert [f["expr"] for f in d[FIELDS_KEY]] == [f["expr"] for f in v["fields"]]
     assert [m["name"] for m in d["measures"]] == [m["name"] for m in v["measures"]]

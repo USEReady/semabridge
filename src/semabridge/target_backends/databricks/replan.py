@@ -138,6 +138,7 @@ def meta_for(cache: Dict[str, Any], revision: int, source: str) -> Dict[str, Any
         "source": source,                                   # dry_run | replan
         "cache_ref": cache.get("cache_ref") or {},
         "stub_form": str((cache.get("output") or {}).get("stub_form") or "empty_table"),
+        "names_history": str(cache.get("names_history") or (cache.get("output") or {}).get("names_history") or "none"),
         "basis": {
             "table_check_at": cache.get("table_check_at"),
             "table_check": cache.get("table_check"),
@@ -236,7 +237,8 @@ def _settings(cache: Dict[str, Any], rows: List[Dict[str, Any]], planner_opts: O
     from semabridge.target_backends.databricks.deploy.names import reserved_for
 
     ref = cache.get("cache_ref") or {}
-    history = reserved_for(ref.get("project_id"), ref.get("model_subdir"))
+    history, status = reserved_for(ref.get("project_id"), ref.get("model_subdir"))
+    cache["names_history"] = status                   # meta_for (called after) records it
     values["reserved_names"] = history["reserved_names"]
     values["reserved_view_names"] = history["reserved_view_names"]
     values["reserved_table_names"].update(history["reserved_table_names"])

@@ -74,6 +74,7 @@ class UcTable:
     name: str                                   # as stored
     table_type: str = ""
     columns: Dict[str, Tuple[str, str]] = field(default_factory=dict)   # UPPER -> (real name, data_type)
+    table_id: Optional[str] = None              # Unity Catalog object id, read at plan time (3.8 compares it)
 
     @property
     def full_name(self) -> str:
@@ -150,6 +151,22 @@ def read_unity_catalog(client: Any, schemas: Sequence[Tuple[str, str]]) -> Dict[
     return out
 
 
+def read_table_ids(client: Any, full_names: Sequence[str]) -> Dict[str, Optional[str]]:
+    """{catalog.schema.table: Unity Catalog table id or None} (read-only UC API).
+    Deploy (3.8) compares these plan-time ids with the live ones, so a table that
+    was dropped and recreated under the same name is never taken for the same one."""
+    from urllib.parse import quote
+
+    out: Dict[str, Optional[str]] = {}
+    for name in dict.fromkeys(full_names):
+        try:
+            data = client.get(f"/api/2.1/unity-catalog/tables/{quote(name, safe='')}")
+            out[name] = (data or {}).get("table_id") if isinstance(data, dict) else None
+        except Exception:
+            out[name] = None
+    return out
+
+
 def read_existing_objects(client: Any, catalog: str, schema: str) -> frozenset:
     """Names (lowercase) of every object already in ``catalog.schema`` -- tables,
     views and metric views alike (one relation namespace). Read-only."""
@@ -193,6 +210,7 @@ class TableBinding:
             "catalog": self.table.catalog if self.table else None,
             "schema": self.table.schema if self.table else None,
             "matched_by": self.matched_by,
+            **({"table_id": self.table.table_id} if self.table is not None and self.table.table_id else {}),
             "tie": [],
             "message": self.note or None,
         }

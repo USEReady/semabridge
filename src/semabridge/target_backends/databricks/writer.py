@@ -38,6 +38,8 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 import yaml
 
 WRITER_REVISION = "1"
+INCOMPLETE_WARNING = ("INCOMPLETE – one or more source tables are empty placeholders. "
+                      "Results are not verified for business use.")
 YAML_VERSION = "1.1"
 FIELDS_KEY = "fields"             # documented canonical key ("dimensions" is accepted as a synonym)
 MAX_NAME = 255
@@ -289,7 +291,12 @@ class _ViewWriter:
         tables = [str(self.v.get("source_dataset"))] + [str(j.get("dataset")) for j in self.v.get("joins") or []]
         joins, paths, aliases = self.joins()
         doc: Dict[str, Any] = {}
-        doc["comment"] = f"Created by SemaBridge from model {model_label}"
+        provenance = f"Created by SemaBridge from model {model_label}"
+        incomplete = str(self.v.get("readiness") or "real") != "real" or any(
+            str(j.get("readiness") or "real") != "real" for j in self.v.get("joins") or [])
+        # 3.8: a view over empty placeholder tables says so in its approved definition
+        # (part of the bundle, so it is previewed and hashed -- never added at deploy).
+        doc["comment"] = f"{INCOMPLETE_WARNING} {provenance}" if incomplete else provenance
         doc["source"] = self.source_of(str(self.v.get("source_dataset")))
         if joins:
             doc["joins"] = joins

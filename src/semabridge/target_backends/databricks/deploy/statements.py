@@ -9,7 +9,8 @@ Forms (and only these):
                   TBLPROPERTIES ('semabridge.stub' = 'true', ...)
                   managed Delta, plain CREATE (the name is verified absent first);
 * new view     -- CREATE VIEW <fqn> WITH METRICS LANGUAGE YAML AS $$<body>$$
-* staging view -- the same, under <view>__sbstg_<token>
+* staging view -- the same, under <view>__sbstg_<token>, in the project's
+                  restricted staging schema (never the destination)
 * update view  -- ALTER VIEW <fqn> AS $$<body>$$   (documented to keep grants)
 * drop staging -- DROP VIEW <staging fqn>
 """
@@ -118,12 +119,19 @@ def stub_table(catalog: str, schema: str, name: str, columns: Sequence[Tuple[str
     return Statement(STUB_TABLE, norm, sql)
 
 
-def create_view(catalog: str, schema: str, view: str, yaml_text: str, body_sha256: str, *,
-                staging_token: Optional[str] = None) -> Statement:
-    name = staging_name(view, staging_token) if staging_token else view
-    quoted, norm = _fqn(catalog, schema, name)
+def create_view(catalog: str, schema: str, view: str, yaml_text: str, body_sha256: str) -> Statement:
+    """The real view, in the destination schema."""
+    quoted, norm = _fqn(catalog, schema, view)
     sql = f"CREATE VIEW {quoted} WITH METRICS LANGUAGE YAML AS $$\n{_body(yaml_text)}$$"
-    return Statement(CREATE_STAGING if staging_token else CREATE_VIEW, norm, sql, view=view, body_sha256=body_sha256)
+    return Statement(CREATE_VIEW, norm, sql, view=view, body_sha256=body_sha256)
+
+
+def create_staging(staging_catalog: str, staging_schema: str, view: str, yaml_text: str, body_sha256: str,
+                   token: str) -> Statement:
+    """The staging copy, in the project's restricted staging schema (never the destination)."""
+    quoted, norm = _fqn(staging_catalog, staging_schema, staging_name(view, token))
+    sql = f"CREATE VIEW {quoted} WITH METRICS LANGUAGE YAML AS $$\n{_body(yaml_text)}$$"
+    return Statement(CREATE_STAGING, norm, sql, view=view, body_sha256=body_sha256)
 
 
 def alter_view(catalog: str, schema: str, view: str, yaml_text: str, body_sha256: str) -> Statement:
@@ -132,8 +140,8 @@ def alter_view(catalog: str, schema: str, view: str, yaml_text: str, body_sha256
                      body_sha256=body_sha256)
 
 
-def drop_staging(catalog: str, schema: str, view: str, staging_token: str) -> Statement:
-    quoted, norm = _fqn(catalog, schema, staging_name(view, staging_token))
+def drop_staging(staging_catalog: str, staging_schema: str, view: str, staging_token: str) -> Statement:
+    quoted, norm = _fqn(staging_catalog, staging_schema, staging_name(view, staging_token))
     return Statement(DROP_STAGING, norm, f"DROP VIEW {quoted}", view=view)
 
 

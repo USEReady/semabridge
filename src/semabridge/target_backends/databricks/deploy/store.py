@@ -18,6 +18,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
 OPEN_STATES = ("intended", "submitted", "uncertain")
+# Object outcomes that are verified deployment states (read back after the write,
+# or confirmed by reconciliation with statement evidence).
+VERIFIED_OUTCOMES = ("created", "updated", "verified", "reconciled")
 LEASE_TTL = timedelta(minutes=5)
 
 _tables_ready: set = set()
@@ -127,7 +130,11 @@ def record_object(*, run_id: str, project_id: str, model_key: str, kind: str, fq
 
 
 def owned_objects(project_id: str, model_key: str) -> Dict[str, Dict[str, Any]]:
-    """{normalized fqn: newest record} over this model's successful runs."""
+    """{normalized fqn: the object's LATEST state} -- per object, whatever the run's
+    overall status (a partial run's successful objects count; unchanged objects are
+    re-recorded as ``verified``). ``verified`` is False when the latest state is not
+    a verified one (e.g. ``applied_unverified``): such an object is never mutated
+    automatically. Raises when the store cannot be read."""
     from sqlalchemy import select
 
     m = _models()
@@ -135,17 +142,15 @@ def owned_objects(project_id: str, model_key: str) -> Dict[str, Dict[str, Any]]:
     _ensure_tables()
     out: Dict[str, Dict[str, Any]] = {}
     with _db().get_session() as s:
-        runs = _successful_runs(s, project_id, model_key)
-        if not runs:
-            return out
-        rows = s.execute(select(O).where(O.project_id == str(project_id), O.model_key == str(model_key or ""),
-                                         O.run_id.in_(runs)).order_by(O.recorded_at.desc(), O.id.desc())).scalars()
+        rows = s.execute(select(O).where(O.project_id == str(project_id), O.model_key == str(model_key or ""))
+                         .order_by(O.recorded_at.desc(), O.id.desc())).scalars()
         for r in rows:
             if r.fqn in out:
                 continue
             out[r.fqn] = {"kind": r.kind, "fqn": r.fqn, "source": r.source, "uc_object_id": r.uc_object_id,
                           "body_sha256": r.body_sha256, "definition_hash": r.definition_hash,
                           "readiness": r.readiness, "run_id": r.run_id, "outcome": r.outcome,
+                          "verified": r.outcome in VERIFIED_OUTCOMES,
                           "details": json.loads(r.details_json or "{}")}
     return out
 
@@ -166,21 +171,20 @@ def record_names(*, run_id: str, project_id: str, model_key: str, names: Iterabl
 
 
 def deployed_names(project_id: str, model_key: str) -> List[Dict[str, Any]]:
-    """The names of the newest successful run that recorded any (one run's set,
-    so a view that is no longer deployed does not keep reserving names)."""
+    """EVERY name ever deployed for this model, oldest first (rows are written only
+    for verified deployments). Cumulative: names of views or measures that were
+    later removed stay in the history and stay reserved. Raises when unreadable."""
     from sqlalchemy import select
 
     m = _models()
     N = m.DatabricksDeployedName
     _ensure_tables()
     with _db().get_session() as s:
-        for run in _successful_runs(s, project_id, model_key):
-            rows = s.execute(select(N).where(N.run_id == run).order_by(N.id)).scalars().all()
-            if rows:
-                return [{"view_name": r.view_name, "view_source": r.view_source, "kind": r.kind,
-                         "source_key": json.loads(r.source_key_json or "{}"), "target_name": r.target_name}
-                        for r in rows]
-    return []
+        rows = s.execute(select(N).where(N.project_id == str(project_id), N.model_key == str(model_key or ""))
+                         .order_by(N.recorded_at, N.id)).scalars().all()
+        return [{"view_name": r.view_name, "view_source": r.view_source, "kind": r.kind, "run_id": r.run_id,
+                 "source_key": json.loads(r.source_key_json or "{}"), "target_name": r.target_name}
+                for r in rows]
 
 
 # --- journal ------------------------------------------------------------------------------------
@@ -242,7 +246,9 @@ def run_info(run_id: str) -> Optional[Dict[str, Any]]:
         if r is None:
             return None
         return {"run_id": r.run_id, "project_id": r.project_id, "model_key": r.model_key, "status": r.status,
-                "catalog": r.catalog, "schema": r.schema_name, "plan_revision": r.plan_revision}
+                "catalog": r.catalog, "schema": r.schema_name, "plan_revision": r.plan_revision,
+                "identity": r.identity, "warehouse_id": r.warehouse_id,
+                "started_at": _aware(r.started_at)}
 
 
 def journal(run_id: str) -> List[Dict[str, Any]]:
