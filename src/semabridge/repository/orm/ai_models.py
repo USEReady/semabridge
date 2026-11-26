@@ -129,6 +129,9 @@ class BITruthCaseRow(Base):
     evaluation_status: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     evaluation_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     dimensions_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    windows_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    is_critical: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    tolerance: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     question_kind: Mapped[str] = mapped_column(String(32), nullable=False, default="total")
 
     def __repr__(self) -> str:
