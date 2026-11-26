@@ -2755,9 +2755,6 @@ export const api = {
         const res = await authFetch(`${API_BASE_URL}/folders/${encodeURIComponent(tag)}/files`);
         return handleResponse(res);
     },
-    async getDatabricksSources(connectionId = '') {
-        return _getDatabricksSources(connectionId);
-    },
 
     async generateDatabricksGenieSpace(projectId, { spaceTitle = null, description = null, deploy = false } = {}) {
         const pid = String(projectId || '').trim();

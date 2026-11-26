@@ -1382,8 +1382,8 @@ export default function DryRunMappingTable({
   onResetRow = null,            // Databricks: (rowId) => void -- reset a renamed field to automatic naming
   unresolvedReportFieldReferences = [], // [{field, field_type, table, occurrences}] — report queries a name absent from the current schema (see LocalPBIXConnector._detect_unresolved_field_references); table-scoped only, never auto-attached to a specific column
 }) {
-  const isDatabricks = String(targetPlatform || 'snowflake').toLowerCase() === 'databricks';
-  const targetLabel = isDatabricks ? 'Databricks' : 'Snowflake';
+  const databricksTarget = String(targetPlatform || 'snowflake').toLowerCase() === 'databricks';
+  const targetLabel = databricksTarget ? 'Databricks' : 'Snowflake';
   // ── Dev-only guardrail: catch un-normalized rows reaching this component ────
   // A raw /dry-run API row has `source_name`/`target_name` keys; a normalized
   // row (utils/normalizeRows.js) renames them to source_field/target_field.
@@ -1401,7 +1401,7 @@ export default function DryRunMappingTable({
   }
 
   // The missing-column fix (ALTER TABLE on a Snowflake table) is Snowflake-only.
-  const schemaConflicts = isDatabricks(targetPlatform) ? [] : schemaConflictsIn;
+  const schemaConflicts = databricksTarget ? [] : schemaConflictsIn;
 
   // ── Tier 1 (field type, single-select) / Tier 2 (status, multi-select) ──────
   const [activeFieldType, setActiveFieldType] = useState('all');
@@ -1906,7 +1906,7 @@ export default function DryRunMappingTable({
       {Array.isArray(droppedEntities) && droppedEntities.length > 0 && (
         <DroppedFieldsPanel
           entries={
-            isDatabricks
+            databricksTarget
               ? droppedEntities.map((e) => ({
                   ...e,
                   reason: adaptTargetMessage(e.reason, targetPlatform),
