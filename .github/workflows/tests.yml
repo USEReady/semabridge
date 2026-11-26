@@ -110,3 +110,96 @@ jobs:
 
       - name: Run node tests
         run: node --test src/utils/*.test.js
+
+  pbi-desktop-e2e:
+    name: Power BI Desktop E2E tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SEMABRIDGE_DATABASE_URL: "sqlite:///file::memory:?cache=shared&uri=true"
+      SEMABRIDGE_DB_BACKEND: orm
+      pbi_desktop_source: "true"
+      PYTHONPATH: ${{ github.workspace }}/src
+      AUTH_ENABLED: "false"
+      FRONTEND_URL: "http://127.0.0.1:5180"
+      BACKEND_URL: "http://127.0.0.1:8002"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install -r requirements.txt uvicorn
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Node dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Start backend server
+        run: |
+          python -m uvicorn semabridge.api.main:app --host 127.0.0.1 --port 8002 > backend.log 2>&1 &
+          echo $! > backend.pid
+
+      - name: Start frontend dev server
+        run: |
+          cd frontend
+          npm run dev -- --host 127.0.0.1 --port 5180 > ../frontend.log 2>&1 &
+          echo $! > ../frontend.pid
+
+      - name: Wait for backend and frontend servers
+        run: |
+          echo "Waiting for backend on http://127.0.0.1:8002..."
+          READY=0
+          for i in $(seq 1 45); do
+            if curl -s -f http://127.0.0.1:8002/api/health > /dev/null; then
+              echo "Backend is ready"
+              READY=1
+              break
+            fi
+            sleep 1
+          done
+          if [ $READY -eq 0 ]; then
+            echo "Backend failed to start. Logs:"
+            cat backend.log || true
+            exit 1
+          fi
+
+          echo "Waiting for frontend on http://127.0.0.1:5180..."
+          READY_FE=0
+          for i in $(seq 1 45); do
+            if curl -s -f http://127.0.0.1:5180/projects/new > /dev/null; then
+              echo "Frontend is ready"
+              READY_FE=1
+              break
+            fi
+            sleep 1
+          done
+          if [ $READY_FE -eq 0 ]; then
+            echo "Frontend failed to start. Logs:"
+            cat frontend.log || true
+            exit 1
+          fi
+
+      - name: Run Power BI Desktop E2E tests
+        working-directory: frontend
+        run: node --test tests/pbiDesktopE2E.test.js
+

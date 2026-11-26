@@ -2,12 +2,35 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 
-const BASE_URL = process.env.FRONTEND_URL || 'http://localhost:5180';
 const BACKEND_URL = process.env.BACKEND_URL || 'http://127.0.0.1:8002';
+let cachedBaseUrl = null;
+
+async function getBaseUrl() {
+  if (cachedBaseUrl) return cachedBaseUrl;
+  const candidates = [
+    process.env.FRONTEND_URL,
+    'http://localhost:5180',
+    'http://127.0.0.1:5180',
+  ].filter(Boolean);
+
+  for (const url of candidates) {
+    try {
+      const res = await fetch(`${url}/projects/new`, { signal: AbortSignal.timeout(2000) });
+      if (res.ok) {
+        cachedBaseUrl = url;
+        return url;
+      }
+    } catch {}
+  }
+  cachedBaseUrl = candidates[0];
+  return cachedBaseUrl;
+}
 
 async function canLaunchBrowser() {
   try {
-    const b = await chromium.launch({ channel: 'chrome', headless: true }).catch(() => chromium.launch({ headless: true }));
+    const b = await chromium
+      .launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] })
+      .catch(() => chromium.launch({ channel: 'chrome', headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] }));
     await b.close();
     return true;
   } catch {
@@ -17,15 +40,16 @@ async function canLaunchBrowser() {
 
 async function getBrowser() {
   try {
-    return await chromium.launch({ channel: 'chrome', headless: true });
+    return await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
   } catch {
-    return await chromium.launch({ headless: true });
+    return await chromium.launch({ channel: 'chrome', headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
   }
 }
 
 async function isFrontendRunning() {
+  const url = await getBaseUrl();
   try {
-    const res = await fetch(`${BASE_URL}/projects/new`, { signal: AbortSignal.timeout(2000) });
+    const res = await fetch(`${url}/projects/new`, { signal: AbortSignal.timeout(2000) });
     return res.ok;
   } catch {
     return false;
@@ -96,6 +120,7 @@ function setupErrorTracking(page) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 test('E2E Flow: Desktop create + dry run', async (t) => {
+  const BASE_URL = await getBaseUrl();
   const [browserOk, frontendOk] = await Promise.all([canLaunchBrowser(), isFrontendRunning()]);
   if (!browserOk) {
     t.skip('Skipped: Chrome / Chromium browser binary not available');
@@ -185,6 +210,7 @@ test('E2E Flow: Desktop create + dry run', async (t) => {
 });
 
 test('E2E Flow: Desktop edit project', async (t) => {
+  const BASE_URL = await getBaseUrl();
   const [browserOk, frontendOk] = await Promise.all([canLaunchBrowser(), isFrontendRunning()]);
   if (!browserOk) {
     t.skip('Skipped: Chrome / Chromium browser binary not available');
@@ -216,6 +242,7 @@ test('E2E Flow: Desktop edit project', async (t) => {
 });
 
 test('E2E Flow: Launcher URL pre-selection (open and closed file)', async (t) => {
+  const BASE_URL = await getBaseUrl();
   const [browserOk, frontendOk] = await Promise.all([canLaunchBrowser(), isFrontendRunning()]);
   if (!browserOk) {
     t.skip('Skipped: Chrome / Chromium browser binary not available');
@@ -255,6 +282,7 @@ test('E2E Flow: Launcher URL pre-selection (open and closed file)', async (t) =>
 });
 
 test('E2E Flow: Desktop empty state (no Desktop running)', async (t) => {
+  const BASE_URL = await getBaseUrl();
   const [browserOk, frontendOk] = await Promise.all([canLaunchBrowser(), isFrontendRunning()]);
   if (!browserOk) {
     t.skip('Skipped: Chrome / Chromium browser binary not available');
@@ -292,6 +320,7 @@ test('E2E Flow: Desktop empty state (no Desktop running)', async (t) => {
 });
 
 test('E2E Flow: Desktop error state (discovery failed)', async (t) => {
+  const BASE_URL = await getBaseUrl();
   const [browserOk, frontendOk] = await Promise.all([canLaunchBrowser(), isFrontendRunning()]);
   if (!browserOk) {
     t.skip('Skipped: Chrome / Chromium browser binary not available');
@@ -329,6 +358,7 @@ test('E2E Flow: Desktop error state (discovery failed)', async (t) => {
 });
 
 test('E2E Flow: Feature flag off (Power BI Desktop source hidden)', async (t) => {
+  const BASE_URL = await getBaseUrl();
   const [browserOk, frontendOk] = await Promise.all([canLaunchBrowser(), isFrontendRunning()]);
   if (!browserOk) {
     t.skip('Skipped: Chrome / Chromium browser binary not available');
@@ -366,6 +396,7 @@ test('E2E Flow: Feature flag off (Power BI Desktop source hidden)', async (t) =>
 });
 
 test('E2E Flow: PBIX source flow unchanged', async (t) => {
+  const BASE_URL = await getBaseUrl();
   const [browserOk, frontendOk] = await Promise.all([canLaunchBrowser(), isFrontendRunning()]);
   if (!browserOk) {
     t.skip('Skipped: Chrome / Chromium browser binary not available');
@@ -407,6 +438,7 @@ test('E2E Flow: PBIX source flow unchanged', async (t) => {
 });
 
 test('E2E Flow: Fabric source flow unchanged', async (t) => {
+  const BASE_URL = await getBaseUrl();
   const [browserOk, frontendOk] = await Promise.all([canLaunchBrowser(), isFrontendRunning()]);
   if (!browserOk) {
     t.skip('Skipped: Chrome / Chromium browser binary not available');
