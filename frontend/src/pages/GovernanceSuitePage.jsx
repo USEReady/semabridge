@@ -931,6 +931,13 @@ export function ReverseSyncView({ projectId = '', targetType = 'snowflake' }) {
   );
 }
 
+// The platform the run actually used (each result records it), not the page's selection.
+function runTargetLabel(run, fallbackMeta) {
+  const targets = [...new Set((run?.results || []).map((r) => String(r.target || '').toUpperCase()).filter(Boolean))];
+  if (targets.length === 0) return fallbackMeta.isDatabricks ? 'Databricks' : 'Snowflake';
+  return targets.map((t) => (t === 'DATABRICKS' ? 'Databricks' : 'Snowflake')).join(' and ');
+}
+
 function BiTruthView({ projectId, targetType = 'snowflake' }) {
   const targetMeta = getTargetLabels(targetType);
   const [cases, setCases] = useState([]);
@@ -1323,7 +1330,7 @@ function BiTruthView({ projectId, targetType = 'snowflake' }) {
                 </div>
                 <div style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>
                   {latest.verdicts
-                    ? `${latest.verdicts.matched} matched, ${latest.verdicts.mismatch} different, ${latest.verdicts.unverified} not compared, ${latest.verdicts.failed} unanswered (of ${latest.total}) on ${targetMeta.isDatabricks ? 'Databricks' : 'Snowflake'}.`
+                    ? `${latest.verdicts.matched} matched, ${latest.verdicts.mismatch} different, ${latest.verdicts.unverified} not compared, ${latest.verdicts.failed} unanswered (of ${latest.total}) on ${runTargetLabel(latest, targetMeta)}.`
                     : `${latest.passed} of ${latest.total} questions passed.`}
                 </div>
               </div>

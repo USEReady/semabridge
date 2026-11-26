@@ -2,9 +2,17 @@ import React from 'react';
 import { ArrowRight, Sparkles, Upload } from 'lucide-react';
 import { BTN, BTN_PRIMARY, CARD, plural } from './styles';
 
-function Kpi({ label, value, sub, tone }) {
+function Kpi({ label, value, sub, tone, onClick }) {
+  const clickable = typeof onClick === 'function';
   return (
-    <div style={{ ...CARD, padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+    <div
+      role={clickable ? 'button' : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={clickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } } : undefined}
+      title={clickable ? `See all ${label.toLowerCase()}` : undefined}
+      style={{ ...CARD, padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0, cursor: clickable ? 'pointer' : 'default' }}
+    >
       <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontWeight: 600 }}>{label}</span>
       <span
         style={{
@@ -138,12 +146,13 @@ function SetupSteps({ onGenerate, onImport, onGo }) {
   );
 }
 
-export default function OverviewView({ domains, stats, attention, healthIssues, onGo, onAsk, onGenerate, onImport }) {
+export default function OverviewView({ domains, stats, attention, healthIssues, onGo, onAsk, onGenerate, onImport, onOpenList }) {
   const names = domains.map((d) => d.domain);
   const attentionParts = [];
-  if (attention.collisions) attentionParts.push(plural(attention.collisions, 'collision'));
+  if (attention.collisions) attentionParts.push(plural(attention.collisions, 'conflict'));
   if (attention.unresolved) attentionParts.push(`${attention.unresolved} unresolved`);
   if (attention.parityDrift) attentionParts.push(`${attention.parityDrift} parity drift`);
+  if (attention.shared) attentionParts.push(`${attention.shared} shared names`);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -155,11 +164,13 @@ export default function OverviewView({ domains, stats, attention, healthIssues, 
         />
         <Kpi
           label="Governed metrics"
+          onClick={onOpenList ? () => onOpenList('metrics') : undefined}
           value={stats.metrics}
           sub={stats.detailsLoaded ? `${stats.boundMetrics} bound to BI measures` : ' '}
         />
         <Kpi
           label="Business concepts"
+          onClick={onOpenList ? () => onOpenList('concepts') : undefined}
           value={stats.concepts}
           sub={
             stats.detailsLoaded && stats.tables
@@ -169,6 +180,7 @@ export default function OverviewView({ domains, stats, attention, healthIssues, 
         />
         <Kpi
           label="Needs attention"
+          onClick={onOpenList ? () => onOpenList('attention') : undefined}
           value={attention.total}
           tone={attention.total ? 'var(--color-warning)' : 'var(--color-success)'}
           sub={attentionParts.length ? attentionParts.join(' · ') : 'Nothing right now'}

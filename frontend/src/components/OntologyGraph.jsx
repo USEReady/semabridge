@@ -38,6 +38,8 @@ const EDGE_STYLE = {
 
 const NODE_W = 230;
 const NODE_H = 74;
+// Above this many nodes the map opens collapsed to projects and domains.
+const LARGE_MAP_NODES = 80;
 
 function issuesOf(n) {
   const out = [];
@@ -133,6 +135,10 @@ export default function OntologyGraph({ projects = [] }) {
   // Track full-screen state for the Connection Map viewer and exit cleanly on Escape
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [selected, setSelected] = useState(null);
+  // Large maps open at the overview level (projects + domains); a domain
+  // unfolds its concepts, metrics and BI bindings when clicked.
+  const [expanded, setExpanded] = useState(() => new Set());
+  const [showAll, setShowAll] = useState(false);
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
 
@@ -172,9 +178,29 @@ export default function OntologyGraph({ projects = [] }) {
     return () => { cancelled = true; };
   }, [projectFilter, reloadKey]);
 
+  const isLarge = Boolean(graph && graph.nodes.length > LARGE_MAP_NODES);
+  const collapsed = isLarge && !showAll;
+  // node id -> the domain node(s) it belongs to (defines, then BI bindings)
+  const ownerDomains = useMemo(() => {
+    const owners = new Map();
+    if (!graph) return owners;
+    const add = (id, dom) => { if (!owners.has(id)) owners.set(id, new Set()); owners.get(id).add(dom); };
+    const domainIds = new Set(graph.nodes.filter((n) => n.type === 'domain').map((n) => n.id));
+    graph.edges.forEach((e) => { if (domainIds.has(e.source) && e.target !== e.source) add(e.target, e.source); });
+    graph.edges.forEach((e) => {
+      if (e.kind === 'binds' && owners.has(e.source)) owners.get(e.source).forEach((d) => add(e.target, d));
+    });
+    return owners;
+  }, [graph]);
+
   useEffect(() => {
     if (!graph) return;
-    const visible = graph.nodes.filter((n) => showBindings || n.type !== 'bi');
+    const inView = (n) => {
+      if (!collapsed || n.type === 'project' || n.type === 'domain') return true;
+      const doms = ownerDomains.get(n.id);
+      return Boolean(doms && [...doms].some((d) => expanded.has(d)));
+    };
+    const visible = graph.nodes.filter((n) => (showBindings || n.type !== 'bi') && inView(n));
     const ids = new Set(visible.map((n) => n.id));
     const visEdges = graph.edges.filter((e) => ids.has(e.source) && ids.has(e.target));
     let flagged = null;
@@ -205,7 +231,7 @@ export default function OntologyGraph({ projects = [] }) {
     }));
     setNodes(layout(rfNodes, rfEdges));
     setEdges(rfEdges);
-  }, [graph, showBindings, onlyIssues, projectNames, setNodes, setEdges]);
+  }, [graph, showBindings, onlyIssues, projectNames, setNodes, setEdges, collapsed, expanded, ownerDomains]);
 
   const s = graph?.summary;
   const issueCount = s ? s.collisions + s.stale + s.unbound + s.unresolved : 0;
@@ -236,6 +262,16 @@ export default function OntologyGraph({ projects = [] }) {
               <option key={p.id || p.project_id} value={p.id || p.project_id}>{projectLabel(p, projects)}</option>
             ))}
           </select>
+          {isLarge && (
+            <button
+              type="button"
+              onClick={() => { setShowAll((v) => !v); setExpanded(new Set()); }}
+              className="px-2 py-1.5 rounded-lg bg-surface-raised border border-main text-primary"
+              title={collapsed ? 'Show every concept, metric and binding' : 'Back to projects and domains'}
+            >
+              {collapsed ? 'Expand all' : 'Overview only'}
+            </button>
+          )}
           <label className="flex items-center gap-1.5 text-secondary cursor-pointer">
             <input id="onto-graph-bindings" type="checkbox" checked={showBindings} onChange={(e) => setShowBindings(e.target.checked)} />
             BI bindings
@@ -305,10 +341,20 @@ export default function OntologyGraph({ projects = [] }) {
               nodeTypes={nodeTypes}
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
-              onNodeClick={(_, n) => setSelected(graph.nodes.find((x) => x.id === n.id) || null)}
+              onNodeClick={(_, n) => {
+                const node = graph.nodes.find((x) => x.id === n.id) || null;
+                setSelected(node);
+                if (collapsed && node?.type === 'domain') {
+                  setExpanded((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(node.id)) next.delete(node.id); else next.add(node.id);
+                    return next;
+                  });
+                }
+              }}
               onPaneClick={() => setSelected(null)}
               fitView
-              fitViewOptions={{ padding: 0.15 }}
+              fitViewOptions={{ padding: 0.15, minZoom: 0.45 }}
               minZoom={0.2}
               proOptions={{ hideAttribution: true }}
             >
@@ -318,6 +364,11 @@ export default function OntologyGraph({ projects = [] }) {
                 <MiniMap position="top-right" style={{ width: 130, height: 80 }} pannable zoomable nodeColor={(n) => (KIND[n.data?.type] || KIND.bi).color} />
               )}
             </ReactFlow>
+          )}
+          {collapsed && (
+            <div className="absolute left-1/2 -translate-x-1/2 bottom-3 px-3 py-1.5 rounded-lg bg-surface/95 border border-main text-[11px] text-secondary pointer-events-none">
+              Large map: showing projects and domains. Click a domain to open its concepts and metrics.
+            </div>
           )}
           <div className="absolute left-3 top-3 p-2 rounded-lg bg-surface/90 border border-main text-[10px] text-secondary space-y-1 pointer-events-none">
             {Object.entries(KIND).map(([k, v]) => (
