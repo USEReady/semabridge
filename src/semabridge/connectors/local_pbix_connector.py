@@ -258,6 +258,9 @@ class LocalPBIXConnector(BaseConnector):
             )
             result["presentation_metadata"] = presentation_metadata
             result["unresolved_report_field_references"] = unresolved_field_references
+            result["report_usage"] = report_parsing.report_field_usage(
+                layout, report=Path(str(self.config.get("pbix_path") or "")).stem
+            )
 
             field_aliases, ambiguous_report_aliases = report_parsing.summarize_report_aliases(
                 presentation_metadata

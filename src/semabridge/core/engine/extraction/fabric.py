@@ -185,6 +185,12 @@ def _extract_fabric(
         source_format.unresolved_report_field_references = layer.unresolved
         source_format.ambiguous_report_aliases = layer.ambiguous
         context.source_warnings.extend(layer.warnings)
+        try:
+            from semabridge.governance import report_usage
+
+            report_usage.save(context.project_id, source_format.dataset_name or "", getattr(layer, "usage", []) or [])
+        except Exception:  # noqa: BLE001 -- Blast Radius input only
+            pass
 
     self._record_step(4, StepStatus.SUCCESS, f"Extracted TMSL definition for '{source_format.dataset_name}'")
 

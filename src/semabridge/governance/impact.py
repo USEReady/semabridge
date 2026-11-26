@@ -31,18 +31,40 @@ def _simulator(project_id: str):
         certified = get_certified_metric_names(project_id)
     except Exception:  # noqa: BLE001
         certified = set()
+    report_visuals, truth_cases = consumers_of(project_id)
     sim = BlastRadiusSimulator(
         ontology=ontology_store.get_federated_ontology(),
         verified_queries=verified,
         certified_metrics=certified,
         mock_mode=False,
+        report_usage=report_visuals,
+        truth_cases=truth_cases,
     )
     return sim, {str(c).casefold() for c in certified}
 
 
+def consumers_of(project_id: str):
+    """(report visuals, approved BI-Truth questions) of a project; empty when unavailable."""
+    try:
+        from semabridge.governance import report_usage
+
+        visuals = report_usage.load(project_id) or report_usage.backfill_from_pbix(project_id)
+    except Exception:  # noqa: BLE001
+        visuals = []
+    try:
+        from semabridge.ai.bi_truth_service import list_truth_cases
+
+        cases = [c for c in list_truth_cases(project_id) if str(c.get("status") or "").lower() == "approved"]
+    except Exception:  # noqa: BLE001
+        cases = []
+    return visuals, cases
+
+
 def field_impact(sim: Any, certified: set, name: str, kind: str) -> Dict[str, Any]:
     target_type = "METRIC" if str(kind or "").lower() in ("metric", "measure") else "COLUMN"
-    impact: Dict[str, Any] = {"certified": name.casefold() in certified, "dependent_metrics": [], "ai_queries": []}
+    impact: Dict[str, Any] = {
+        "certified": name.casefold() in certified, "dependent_metrics": [], "ai_queries": [], "reports": [],
+    }
     try:
         report = sim.simulate_impact(target_name=name, target_type=target_type, change_type="DROP", mock_mode=False)
     except Exception as exc:  # noqa: BLE001 -- unknown field: no known dependents
@@ -51,6 +73,7 @@ def field_impact(sim: Any, certified: set, name: str, kind: str) -> Dict[str, An
     impact["severity"] = report.severity
     impact["dependent_metrics"] = [i.name for i in report.affected_metrics if i.name.casefold() != name.casefold()][:10]
     impact["ai_queries"] = [i.name for i in report.affected_ai_tools][:10]
+    impact["reports"] = [i.name for i in report.affected_bi_reports if i.source == "report_layout"][:10]
     return impact
 
 
@@ -73,7 +96,7 @@ def annotate_removed_fields(project_id: str, findings: Optional[List[Dict[str, A
             budget -= 1
             field["impact"] = field_impact(sim, certified, str(field.get("name") or ""), str(field.get("kind") or ""))
             imp = field["impact"]
-            if imp["certified"] or imp["dependent_metrics"] or imp["ai_queries"]:
+            if imp["certified"] or imp["dependent_metrics"] or imp["ai_queries"] or imp["reports"]:
                 affected += 1
         model["impact_summary"] = {"fields_with_dependents": affected}
     return findings

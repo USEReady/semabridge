@@ -62,6 +62,8 @@ def simulate_blast_radius(req: BlastRadiusRequest) -> BlastRadiusReport:
     allowed_domains = _resolve_project_allowed_domains(req.project_id)
     verified_queries: List[Dict[str, Any]] = []
     certified_names: set[str] = set()
+    report_visuals: List[Dict[str, Any]] = []
+    truth_cases: List[Dict[str, Any]] = []
 
     if req.project_id and req.project_id.strip():
         pid = req.project_id.strip()
@@ -75,12 +77,17 @@ def simulate_blast_radius(req: BlastRadiusRequest) -> BlastRadiusReport:
             certified_names = get_certified_metric_names(pid)
         except Exception:
             certified_names = set()
+        from semabridge.governance.impact import consumers_of
+
+        report_visuals, truth_cases = consumers_of(pid)
 
     simulator = BlastRadiusSimulator(
         ontology=fed,
         verified_queries=verified_queries,
         certified_metrics=certified_names,
         mock_mode=bool(req.mock_mode),
+        report_usage=report_visuals,
+        truth_cases=truth_cases,
     )
     try:
         report = simulator.simulate_impact(

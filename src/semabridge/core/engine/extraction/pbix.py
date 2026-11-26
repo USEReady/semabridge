@@ -148,6 +148,12 @@ def _extract_pbix(
         logger.debug("PBIX extraction debug summary skipped: %s", exc)
 
     report_layer = adapter.extract_report_layer(ident)
+    try:
+        from semabridge.governance import report_usage
+
+        report_usage.save(context.project_id, p.stem, getattr(report_layer, "usage", []) or [])
+    except Exception as exc:  # noqa: BLE001 -- Blast Radius input only
+        logger.debug("Report usage not saved: %s", exc)
     source_format = from_pbix_tmsl(
         project_id=context.project_id,
         run_id=context.run_id,

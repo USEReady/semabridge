@@ -78,12 +78,13 @@ function RemovedFieldsBody({ detail, message }) {
               {(m.removed || []).slice(0, MAX_REMOVED_SHOWN).map((f) => (
                 <li key={`${f.kind}-${f.name}`}>
                   <code>{f.name}</code> <span style={{ color: 'var(--text-tertiary)' }}>{f.kind}</span>
-                  {f.impact && (f.impact.certified || f.impact.dependent_metrics?.length > 0 || f.impact.ai_queries?.length > 0) && (
+                  {f.impact && (f.impact.certified || f.impact.dependent_metrics?.length > 0 || f.impact.ai_queries?.length > 0 || f.impact.reports?.length > 0) && (
                     <div style={{ fontSize: 11.5, color: 'var(--color-warning)', margin: '2px 0 4px' }}>
                       {[
                         f.impact.certified && 'certified measure',
                         f.impact.dependent_metrics?.length > 0 && `used by ${f.impact.dependent_metrics.join(', ')}`,
-                        f.impact.ai_queries?.length > 0 && `${f.impact.ai_queries.length} saved AI question(s)`,
+                        f.impact.ai_queries?.length > 0 && `${f.impact.ai_queries.length} AI question(s) and tests`,
+                        f.impact.reports?.length > 0 && `shown in ${f.impact.reports.length} report visual(s): ${f.impact.reports.slice(0, 3).join('; ')}${f.impact.reports.length > 3 ? '…' : ''}`,
                       ].filter(Boolean).join(' · ')}
                     </div>
                   )}

@@ -170,6 +170,7 @@ class PbixAdapter(SemanticSourceAdapter):
             ambiguous=discovered.get("ambiguous_report_aliases", []) or [],
             reports=[Path(identity.model_id).name],
             warnings=[],
+            usage=discovered.get("report_usage", []) or [],
         )
 
     def extract_stats(

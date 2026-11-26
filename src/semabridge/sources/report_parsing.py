@@ -556,6 +556,68 @@ def parse_presentation_metadata(
         })
     return presentation_metadata, unresolved_field_references
 
+def _visual_title(single_visual: Dict[str, Any]) -> str:
+    for title_key in ("vcObjects", "objects"):
+        section = single_visual.get(title_key)
+        if not isinstance(section, dict):
+            continue
+        title_list = section.get("title")
+        if not (isinstance(title_list, list) and title_list and isinstance(title_list[0], dict)):
+            continue
+        text_prop = (title_list[0].get("properties") or {}).get("text")
+        if isinstance(text_prop, dict):
+            expr = text_prop.get("expr")
+            value = None
+            if isinstance(expr, dict) and isinstance(expr.get("Literal"), dict):
+                value = expr["Literal"].get("Value")
+            value = value or text_prop.get("value")
+            if isinstance(value, str) and value.strip("'").strip():
+                return value.strip("'").strip()
+    return ""
+
+
+def report_field_usage(layout: Dict[str, Any], report: str = "") -> List[Dict[str, Any]]:
+    """Every visual of a report layout with the fields it uses.
+
+    ``[{"report", "page", "visual_type", "title", "fields": [{"field", "kind", "table"}]}]``
+    -- what Blast Radius needs to name the report visuals a change affects.
+    Visuals without fields (text boxes, shapes) are left out.
+    """
+    out: List[Dict[str, Any]] = []
+    for section in layout.get("sections", []) if isinstance(layout, dict) else []:
+        if not isinstance(section, dict):
+            continue
+        page = section.get("displayName") if isinstance(section.get("displayName"), str) else "Unknown"
+        for visual in section.get("visualContainers", []) or []:
+            if not isinstance(visual, dict):
+                continue
+            config_val = visual.get("config")
+            config: Dict[str, Any] = {}
+            if isinstance(config_val, dict):
+                config = config_val
+            elif isinstance(config_val, str) and config_val.strip():
+                try:
+                    config = json.loads(config_val)
+                except Exception:  # noqa: BLE001 -- a malformed visual is skipped
+                    continue
+            single = config.get("singleVisual") if isinstance(config.get("singleVisual"), dict) else {}
+            refs = extract_field_references(visual)
+            if not refs:
+                continue
+            vtype = str(single.get("visualType") or "visual").strip()
+            out.append({
+                "report": report,
+                "page": page or "Unknown",
+                "visual_type": vtype[:1].upper() + vtype[1:],
+                "title": _visual_title(single),
+                "fields": sorted(
+                    ({"field": f, "kind": k, "table": t} for f, k, t in refs),
+                    key=lambda r: (str(r["table"] or ""), r["field"]),
+                ),
+            })
+    return out
+
+
 def best_matching_field(stale_name: str, candidates: List[str]) -> Optional[str]:
     """Find the one current field name a stale report reference most
     plausibly used to be, by name similarity alone.

@@ -167,10 +167,16 @@ class BlastRadiusSimulator:
         verified_queries: Optional[List[Dict[str, Any]]] = None,
         certified_metrics: Optional[Set[str]] = None,
         mock_mode: bool = False,
+        report_usage: Optional[List[Dict[str, Any]]] = None,
+        truth_cases: Optional[List[Dict[str, Any]]] = None,
     ):
         self.osi_model = osi_model
         self.ontology = ontology
         self.verified_queries = list(verified_queries or [])
+        # Power BI report visuals and the fields they use (governance.report_usage).
+        self.report_usage = [v for v in (report_usage or []) if isinstance(v, dict)]
+        # Approved BI-Truth questions: tests an AI agent must keep passing.
+        self.truth_cases = [c for c in (truth_cases or []) if isinstance(c, dict)]
         self.certified_metrics = {str(m).strip().casefold() for m in (certified_metrics or set()) if str(m).strip()}
         self.mock_mode = mock_mode
 
@@ -615,6 +621,74 @@ class BlastRadiusSimulator:
                         )
                         edges.append({"from": m_name, "to": vq_q, "relationship": "verified_query_uses"})
                     break
+
+        # 4b. BI-Truth questions that test an impacted metric (AI agents' benchmark).
+        seen_tc: Set[str] = set()
+        impacted_norm = {_norm_ident(tok): m_name for m_name, tok in impacted_search_tokens if tok}
+        for tc in self.truth_cases:
+            if str(tc.get("status") or "approved").lower() == "rejected":
+                continue
+            q = str(tc.get("question") or "").strip()
+            if not q or q.casefold() in seen_tc or q.casefold() in seen_vq:
+                continue
+            hit = impacted_norm.get(_norm_ident(tc.get("metric_name")))
+            if not hit:
+                expected = str(tc.get("expected_sql") or "")
+                hit = next((m for m, tok in impacted_search_tokens if expected and _ident_in_expr(expected, tok)), None)
+            if hit:
+                seen_tc.add(q.casefold())
+                affected_ai.append(
+                    ImpactedItem(
+                        name=q,
+                        item_type="AI_TOOL",
+                        impact_level="TRANSITIVE",
+                        details=f"BI-Truth question tests '{hit}'; AI answers to it will change.",
+                        source="bi_truth",
+                    )
+                )
+                edges.append({"from": hit, "to": q, "relationship": "tested_by"})
+
+        # 4c. Power BI report visuals that show the changed field or an impacted metric.
+        if self.report_usage:
+            tbl_norm = _norm_ident(tbl_clean) if tbl_clean else ""
+            target_norm = _norm_ident(target_clean)
+            seen_visuals: Set[str] = set()
+            for v in self.report_usage:
+                uses: List[Tuple[str, str]] = []  # (field shown, what it depends on)
+                for f in v.get("fields") or []:
+                    f_name, f_kind, f_tbl = str(f.get("field") or ""), str(f.get("kind") or ""), f.get("table")
+                    f_norm, ft_norm = _norm_ident(f_name), _norm_ident(f_tbl) if f_tbl else ""
+                    if ttype_upper == "TABLE" and ft_norm and ft_norm == target_norm:
+                        uses.append((f_name, target_clean))
+                    elif ttype_upper == "COLUMN" and f_kind == "column" and f_norm == target_norm and (
+                        not tbl_norm or not ft_norm or ft_norm == tbl_norm
+                    ):
+                        uses.append((f_name, target_clean))
+                    elif f_kind in ("measure", "unknown") and f_norm in impacted_norm:
+                        uses.append((f_name, impacted_norm[f_norm]))
+                    elif ttype_upper == "METRIC" and f_norm == target_norm:
+                        uses.append((f_name, target_clean))
+                if not uses:
+                    continue
+                label = " · ".join(p for p in (
+                    str(v.get("report") or "").strip(), str(v.get("page") or "").strip(),
+                    str(v.get("title") or v.get("visual_type") or "visual").strip(),
+                ) if p)
+                if label.casefold() in seen_visuals:
+                    continue
+                seen_visuals.add(label.casefold())
+                shown = ", ".join(sorted({u[0] for u in uses}))
+                affected_bi.append(
+                    ImpactedItem(
+                        name=label,
+                        item_type="BI_REPORT",
+                        impact_level="DIRECT" if any(u[1] == target_clean for u in uses) else "TRANSITIVE",
+                        details=f"{v.get('visual_type') or 'Visual'} shows {shown}.",
+                        source="report_layout",
+                    )
+                )
+                for field_shown, dep in uses:
+                    edges.append({"from": dep, "to": label, "relationship": "visualized_in"})
 
         # 5. Downstream BI Reports & Mock Downstream Items (Demo mode only)
         from semabridge.core.demo_mode import demo_mode_globally_armed

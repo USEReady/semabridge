@@ -38,6 +38,8 @@ class ReportLayer:
     ambiguous: List[Dict[str, Any]] = field(default_factory=list)
     reports: List[str] = field(default_factory=list)  # names of the reports that were read
     warnings: List[str] = field(default_factory=list)  # e.g. a report the identity cannot read
+    # Every visual of every report read, with the fields it uses (Blast Radius).
+    usage: List[Dict[str, Any]] = field(default_factory=list)
 
 
 def _powerbi_base() -> str:
@@ -171,6 +173,7 @@ def fetch_report_layer(
             logger.warning(layer.warnings[-1])
             continue
         presentation, unresolved = report_parsing.parse_presentation_metadata(layout, tables, measures)
+        layer.usage.extend(report_parsing.report_field_usage(layout, report=name))
         metadata += presentation
         layer.unresolved += [{**u, "report": name} for u in unresolved]
         layer.reports.append(name)
