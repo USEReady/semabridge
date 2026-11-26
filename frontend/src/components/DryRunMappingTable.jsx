@@ -1229,6 +1229,7 @@ const CHANGE_TONE = {
   renamed_by_you: 'var(--accent-blue)',
   clash_resolved: '#fbbf24',
   renamed_in_snowflake: '#f87171',
+  planner: '#fbbf24',
 };
 
 /**
@@ -1239,8 +1240,12 @@ const CHANGE_TONE = {
 function NameChangesPanel({ rows, onEdit, deployedNamesKnown = false }) {
   const targetLabel = useTargetLabel();
   const targetPlatform = useTargetPlatform();
+  const plannedNames = useContext(PlannedNamesContext);
   const [open, setOpen] = useState(false);
-  const changes = useMemo(() => collectNameChanges(rows, targetPlatform), [rows, targetPlatform]);
+  const changes = useMemo(
+    () => collectNameChanges(rows, targetPlatform, isDatabricks(targetPlatform) ? plannedNames : null),
+    [rows, targetPlatform, plannedNames],
+  );
   // Columns renamed in Snowflake vs the last deploy (COL_DATE -> DATE): when
   // the last deployed names are unknown, one project-level note instead.
   const legacyNote = useMemo(() => legacyNamingNote(rows, deployedNamesKnown, targetPlatform), [rows, deployedNamesKnown, targetPlatform]);
@@ -1291,7 +1296,7 @@ function NameChangesPanel({ rows, onEdit, deployedNamesKnown = false }) {
               <span style={{ overflowWrap: 'anywhere', color: 'var(--text-secondary)' }}>
                 {row.source_table_name ? `${row.source_table_name}.` : ''}{row.renamed_from || row.source_field}
               </span>
-              <code style={{ overflowWrap: 'anywhere', color: 'var(--text-primary)' }}>{row.target_field}</code>
+              <code style={{ overflowWrap: 'anywhere', color: 'var(--text-primary)' }}>{reason.deployedAs || row.target_field}</code>
               <span style={{ overflowWrap: 'anywhere', color: 'var(--text-tertiary)' }} title={reason.detail}>
                 <span style={{ fontWeight: 600, color: CHANGE_TONE[reason.kind] }}>{reason.label}</span>
                 {' — '}{reason.detail}

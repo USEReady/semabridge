@@ -4,6 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { changeReason, collectNameChanges, legacyNamingNote, renameImpactNote } from './nameChanges.js';
+import { setDatabricksPlannerOn } from './targetNaming.js';
 
 const row = (over) => ({ id: 'r', source_field: 'Order Date', target_field: 'ORDER_DATE', status: 'auto', ...over });
 
@@ -67,4 +68,23 @@ test('project-level note when the last deployed names are unknown', () => {
   assert.match(note, /must be updated/);
   assert.equal(legacyNamingNote(rows, true), '');
   assert.equal(legacyNamingNote([row()], false), '');
+});
+
+test('Databricks: the planner\'s table-prefixed names are listed', () => {
+  const r = { id: 'm', source_field: 'Manufacturer', target_field: 'manufacturer', source_path: 'datasets.Product.columns.Manufacturer', status: 'auto' };
+  const planned = new Map([[r.source_path, [
+    { view: 'product_metrics', name: 'product_manufacturer' },
+    { view: 'sales_fact_metrics', name: 'product_manufacturer' },
+  ]]]);
+  const [entry] = collectNameChanges([r], 'databricks', planned);
+  assert.equal(entry.reason.kind, 'planner');
+  assert.equal(entry.reason.deployedAs, 'product_manufacturer');
+  assert.match(entry.reason.detail, /product_metrics/);
+  // Same name as the row: nothing to list (planner naming, as in the app).
+  setDatabricksPlannerOn(true);
+  try {
+    assert.equal(collectNameChanges([r], 'databricks', new Map([[r.source_path, [{ view: 'v', name: 'manufacturer' }]]])).length, 0);
+  } finally {
+    setDatabricksPlannerOn(false);
+  }
 });

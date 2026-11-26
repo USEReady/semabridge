@@ -70,10 +70,41 @@ export function legacyNamingNote(rows, deployedNamesKnown = false, targetType = 
   return namingFor(targetType || 'snowflake').legacyNote(rows, deployedNamesKnown);
 }
 
-/** Rows whose deployed name differs from the source, with their reason. */
-export function collectNameChanges(rows, targetType = 'snowflake') {
+/**
+ * Databricks planner: the name(s) a row deploys under when the planner chose
+ * something other than the row's own name (usually a table prefix because the
+ * name is already used in that metric view). entries: [{view, name}] from
+ * utils/databricksPlan.plannedNamesBySourcePath. null when nothing differs.
+ */
+export function plannerReason(row, entries) {
+  const list = Array.isArray(entries) ? entries : [];
+  const target = String(row?.target_field || row?.target_name || '').trim();
+  const differing = list.filter((e) => e && e.name && String(e.name).toLowerCase() !== target.toLowerCase());
+  if (differing.length === 0) return null;
+  const names = [...new Set(differing.map((e) => e.name))];
+  const where = differing.map((e) => `${e.name} in ${e.view}`).join(', ');
+  return {
+    kind: 'planner',
+    label: 'Named by the planner',
+    deployedAs: names.join(', '),
+    detail: `Deploys as ${where}: "${target}" is already used by another field in that metric view, `
+      + 'so the planner adds the table name. Edit to choose the name yourself.',
+  };
+}
+
+/**
+ * Rows whose deployed name differs from the source, with their reason.
+ * plannedNames (Databricks planner, Map source_path -> [{view, name}]): the
+ * planner's final names win over the row's own name.
+ */
+export function collectNameChanges(rows, targetType = 'snowflake', plannedNames = null) {
   return (Array.isArray(rows) ? rows : [])
-    .map((row) => ({ row, reason: changeReason(row, targetType) }))
+    .map((row) => {
+      const planned = plannedNames && typeof plannedNames.get === 'function'
+        ? plannerReason(row, plannedNames.get(String(row?.source_path || '')))
+        : null;
+      return { row, reason: planned || changeReason(row, targetType) };
+    })
     .filter((entry) => entry.reason);
 }
 
