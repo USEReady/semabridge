@@ -224,6 +224,15 @@ def _step6b_databricks_tables(self, context: RunContext) -> None:
     except TableMatchingError as exc:
         raise ConversionError(str(exc)) from None
 
+    # 3.8: the Unity Catalog id of every bound table, recorded with the plan.
+    bound = [b.table for b in plan.bindings if b.action == "bind" and b.table is not None]
+    if bound:
+        from semabridge.target_backends.databricks.tables import read_table_ids
+
+        ids = read_table_ids(client, [t.full_name for t in bound])
+        for t in bound:
+            t.table_id = ids.get(t.full_name)
+
     rewrite = plan.rewrite_map()
     if rewrite:
         for metric in getattr(context.sml_model, "metrics", []) or []:
@@ -272,8 +281,10 @@ def databricks_planner_settings(context: RunContext):
     # 3.8 (A5): names already deployed for this model are kept on re-plan.
     from semabridge.target_backends.databricks.deploy.names import reserved_for
 
-    values.update(reserved_for(str(getattr(context, "project_id", "") or ""),
-                               getattr(context, "physical_namespace", None)))
+    reserved, status = reserved_for(str(getattr(context, "project_id", "") or ""),
+                                    getattr(context, "physical_namespace", None))
+    values.update(reserved)
+    context.databricks_names_history = status
     return PlannerSettings(**values)
 
 
@@ -399,12 +410,14 @@ def _run_databricks_planner(self, context: RunContext, table_plan) -> None:
             output={"catalog": settings.output_catalog, "schema": settings.output_schema,
                     "existing_objects": sorted(settings.existing_objects) if settings.existing_objects is not None else None,
                     "reserved_table_names": dict(settings.reserved_table_names or {}),
-                    "stub_form": stub_form_for_run(context)},
+                    "stub_form": stub_form_for_run(context),
+                    "names_history": getattr(context, "databricks_names_history", "none")},
         )
     except Exception as exc:  # the plan is still valid; it just cannot be re-planned without a dry run
         logger.warning("Could not store the Databricks planner input for re-planning: %s", exc)
         plan["meta"] = {"revision": revision, "status": "valid", "source": "dry_run", "cache_ref": None,
                         "stub_form": stub_form_for_run(context),
+                        "names_history": getattr(context, "databricks_names_history", "none"),
                         "basis": {"table_check_at": None, "uc_recheck_required_before_deploy": True}}
     # 3.7: the view definitions (offline text; nothing is sent to Databricks).
     from semabridge.target_backends.databricks import bundle

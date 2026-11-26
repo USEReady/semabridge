@@ -4,7 +4,10 @@
 A definition is compared as data, not text: the YAML is parsed and re-serialised
 canonically (sorted keys, no comments, no formatting), so Databricks reformatting
 the stored text does not look like a change, while any change to a field,
-measure, join, filter or comment does.
+measure, join, filter or comment does. Strict on purpose:
+* duplicate keys are an error (never silently merged: last-one-wins would hide a change);
+* scalars keep their type (1, 1.0, "1" and true are all different);
+* unknown keys are kept and compared like any other.
 
 Live definitions are read back read-only, from the Unity Catalog table API
 (``view_definition``) or, failing that, from ``SHOW CREATE TABLE``. The exact
@@ -26,11 +29,30 @@ class DefinitionError(ValueError):
     pass
 
 
+def _strict_loader():
+    import yaml
+
+    class StrictLoader(yaml.SafeLoader):
+        pass
+
+    def mapping(loader, node, deep=False):
+        seen = set()
+        for key_node, _ in node.value:
+            key = loader.construct_object(key_node, deep=deep)
+            if key in seen:
+                raise DefinitionError(f"duplicate key {key!r} in the definition")
+            seen.add(key)
+        return yaml.SafeLoader.construct_mapping(loader, node, deep=deep)
+
+    StrictLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, mapping)
+    return StrictLoader
+
+
 def canonical(yaml_text: str) -> Dict[str, Any]:
     import yaml
 
     try:
-        doc = yaml.safe_load(yaml_text)
+        doc = yaml.load(yaml_text, Loader=_strict_loader())  # noqa: S506 -- SafeLoader subclass
     except yaml.YAMLError as exc:
         raise DefinitionError(f"definition is not valid YAML: {exc}") from None
     if not isinstance(doc, dict):
@@ -39,13 +61,15 @@ def canonical(yaml_text: str) -> Dict[str, Any]:
 
 
 def _norm(value: Any) -> Any:
+    """Keys as strings; scalar values tagged with their type so 1, 1.0, "1" and
+    true never compare equal."""
     if isinstance(value, dict):
         return {str(k): _norm(v) for k, v in value.items()}
     if isinstance(value, list):
         return [_norm(v) for v in value]
-    if isinstance(value, float) and value.is_integer():
-        return int(value)
-    return value
+    if value is None or isinstance(value, str):
+        return value
+    return {"__type__": type(value).__name__, "value": str(value)}
 
 
 def definition_hash(yaml_text: str) -> str:
@@ -69,7 +93,9 @@ def extract_yaml(text: Optional[str]) -> Optional[str]:
 
 def names(yaml_text: str) -> Dict[str, List[str]]:
     """{"fields": [...], "measures": [...]} declared in a definition."""
-    doc = canonical(yaml_text)
+    import yaml
+
+    doc = yaml.load(yaml_text, Loader=_strict_loader())  # noqa: S506
     fields = [str(f.get("name")) for f in doc.get("fields") or doc.get("dimensions") or [] if isinstance(f, dict)]
     measures = [str(m.get("name")) for m in doc.get("measures") or [] if isinstance(m, dict)]
     return {"fields": fields, "measures": measures}

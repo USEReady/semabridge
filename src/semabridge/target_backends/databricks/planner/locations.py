@@ -86,7 +86,8 @@ def plan_locations(result: PlannerResult, bindings: Bindings, settings: PlannerS
         if action == BIND and bindings.uc_table(ds):
             c, s, n = _split(bindings.uc_table(ds))
             entries[ds] = {"dataset": ds, "status": BOUND, "catalog": c, "schema": s, "name": n,
-                           "name_checked": True, "views": deps[ds], "columns": _bound_columns(bindings, ds)}
+                           "name_checked": True, "views": deps[ds], "columns": _bound_columns(bindings, ds),
+                           "uc_object_id": getattr(getattr(bindings.binding(ds), "table", None), "table_id", None)}
             continue
         status = PROPOSED if action == STUB else UNCHECKED
         base = NAMING.normalize(ds, "table", ("table", ds))[0]

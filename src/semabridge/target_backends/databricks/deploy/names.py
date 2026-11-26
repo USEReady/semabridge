@@ -58,7 +58,7 @@ def reserved_from_rows(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     names: Dict[str, Dict[Any, str]] = {}
     views: Dict[str, str] = {}
     tables: Dict[str, str] = {}
-    for r in rows:
+    for r in rows:                          # oldest first: the latest name per source identity wins
         kind, src, key = r.get("kind"), str(r.get("view_source") or ""), r.get("source_key") or {}
         if kind == "view" and src:
             views[src] = str(r["target_name"])
@@ -71,16 +71,19 @@ def reserved_from_rows(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     return {"reserved_names": names, "reserved_view_names": views, "reserved_table_names": tables}
 
 
-def reserved_for(project_id: Optional[str], model_key: Optional[str]) -> Dict[str, Any]:
-    """Reserved names from the newest successful deploy; empty when there is none
-    or the store cannot be read (planning never fails because of history)."""
+def reserved_for(project_id: Optional[str], model_key: Optional[str]) -> Tuple[Dict[str, Any], str]:
+    """(reserved names from EVERY verified deployment of this model, history status).
+
+    Status ``read`` / ``none`` (no project) / ``unreadable``. Planning continues
+    when the history is unreadable (exploratory preview), but the plan records it
+    and deploy refuses such a plan (names might not be preserved)."""
     empty = {"reserved_names": {}, "reserved_view_names": {}, "reserved_table_names": {}}
     if not project_id:
-        return empty
+        return empty, "none"
     try:
         from semabridge.target_backends.databricks.deploy import store
 
-        return reserved_from_rows(store.deployed_names(str(project_id), str(model_key or "")))
-    except Exception as exc:  # pragma: no cover - store unavailable
+        return reserved_from_rows(store.deployed_names(str(project_id), str(model_key or ""))), "read"
+    except Exception as exc:
         logger.warning("Deployed Databricks names could not be read (planning without them): %s", exc)
-        return empty
+        return empty, "unreadable"

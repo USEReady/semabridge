@@ -67,6 +67,7 @@ class Allocator:
     def __init__(self, reserved_words: Sequence[str] = ()) -> None:
         self.words: Set[str] = {w.lower() for w in reserved_words}
         self.taken: Set[str] = set(self.words)
+        self.retired: Set[str] = set()
 
     def free(self, name: str) -> bool:
         return name.lower() not in self.taken
@@ -78,6 +79,8 @@ class Allocator:
         for o in items:
             if o is not me and o.final is not None and o.final.lower() == name.lower():
                 return f"{o.kind} {o.label}"
+        if name.lower() in self.retired:
+            return "a name deployed earlier (kept reserved)"
         return "a join alias or the reserved word `source`" if name.lower() in self.words else "another object"
 
     def allocate(self, items: List[_Item], reserved: Mapping[SourceId, str],
@@ -91,6 +94,11 @@ class Allocator:
             if name and NAMING.is_legal_identifier(name) and self.free(name):
                 it.final, it.generated, it.why = name, NAMING.is_generated_name(name), "kept the name already deployed"
                 self.take(name)
+        present = {it.sid for it in items}                 # 1'. retired deployed names
+        for sid, name in (reserved or {}).items():
+            if sid not in present and name and self.free(name):
+                self.take(name)                            # never reused by another source object
+                self.retired.add(name.lower())
         for it in items:                                   # 1a. firm requests
             req = requests.get(it.sid)
             if req is None or not req.firm:

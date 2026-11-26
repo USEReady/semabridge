@@ -1,11 +1,11 @@
 -- writer revision 1
 
--- date_metrics  sha256=f174e8d8e5c569f489813960a7919d64b215c2b2cbaf8a2b0439d1caf74bedaf
+-- date_metrics  sha256=d24f2225e7a600e71f6056eda77814162295410f68b9a30f2cf4ddde47e26bb3
 -- note: field date: format 'General Date' omitted: pattern not expressible exactly
 
 CREATE VIEW `workspace`.`semabridge_dev`.`date_metrics` WITH METRICS LANGUAGE YAML AS $$
 version: 1.1
-comment: Created by SemaBridge from model golden
+comment: INCOMPLETE – one or more source tables are empty placeholders. Results are not verified for business use. Created by SemaBridge from model golden
 source: workspace.semabridge_dev.date
 fields:
 - name: date
@@ -51,11 +51,11 @@ measures:
   - SUM_OF_YEAR
 $$;
 
--- indicators_metrics  sha256=33b87e180626177d5023f239fb1e3e21efc4a32d30b4e7dcddc353484dd4db1a
+-- indicators_metrics  sha256=5cf5193a57eba35322256b1a05e16ebbf0b5408ab5a8275881121a82ab8228a3
 
 CREATE VIEW `workspace`.`semabridge_dev`.`indicators_metrics` WITH METRICS LANGUAGE YAML AS $$
 version: 1.1
-comment: Created by SemaBridge from model golden
+comment: INCOMPLETE – one or more source tables are empty placeholders. Results are not verified for business use. Created by SemaBridge from model golden
 source: workspace.semabridge_dev.indicators
 fields:
 - name: sort
@@ -93,11 +93,11 @@ measures:
     hide_group_separator: true
 $$;
 
--- product_metrics  sha256=86094ccec9b0bb28c1264f17fc639484ac5824a6b14ea89284d813b2b85c7187
+-- product_metrics  sha256=1c427fc7c2e98a27327668eb04ecfc585e5af5c223ab74cbdedb30e1d8464d16
 
 CREATE VIEW `workspace`.`semabridge_dev`.`product_metrics` WITH METRICS LANGUAGE YAML AS $$
 version: 1.1
-comment: Created by SemaBridge from model golden
+comment: INCOMPLETE – one or more source tables are empty placeholders. Results are not verified for business use. Created by SemaBridge from model golden
 source: workspace.semabridge_dev.product
 joins:
 - name: category
@@ -156,7 +156,7 @@ measures:
   - Count of Product
 $$;
 
--- sales_fact_metrics  sha256=646540dd4aea33e00f68f6ead8b4eb62d476f758cbf6bdc50f5466e71da1e14e
+-- sales_fact_metrics  sha256=6544671e2196bc6aa8ca8adb5066458f25537271f7eeb47a77e96bccb2ce76d7
 -- note: field date_date: format 'General Date' omitted: pattern not expressible exactly
 -- note: measure sales_dollars: format '\\$#,0;(\\$#,0);\\$#,0' omitted: currency symbol '$' is ambiguous (no locale tag)
 -- note: measure total_category_volume: format '\\$#,0;(\\$#,0);\\$#,0' omitted: currency symbol '$' is ambiguous (no locale tag)
@@ -164,7 +164,7 @@ $$;
 
 CREATE VIEW `workspace`.`semabridge_dev`.`sales_fact_metrics` WITH METRICS LANGUAGE YAML AS $$
 version: 1.1
-comment: Created by SemaBridge from model golden
+comment: INCOMPLETE – one or more source tables are empty placeholders. Results are not verified for business use. Created by SemaBridge from model golden
 source: workspace.semabridge_dev.sales_fact
 joins:
 - name: date
@@ -386,12 +386,12 @@ measures:
   comment: 'approximate: time intelligence is anchored to the current date; approximate: built on an approximate measure'
 $$;
 
--- sentiment_metrics  sha256=7baff858b73e982160df48245f91cd1d11b3f74dc321af9cd04bbbcfa3942cfe
+-- sentiment_metrics  sha256=9c23d1a04b61b07b5dccc8afb914e2b02ea9e49ee27561ad9c5ca3b67a1b1f03
 -- note: field date_date: format 'General Date' omitted: pattern not expressible exactly
 
 CREATE VIEW `workspace`.`semabridge_dev`.`sentiment_metrics` WITH METRICS LANGUAGE YAML AS $$
 version: 1.1
-comment: Created by SemaBridge from model golden
+comment: INCOMPLETE – one or more source tables are empty placeholders. Results are not verified for business use. Created by SemaBridge from model golden
 source: workspace.semabridge_dev.sentiment
 joins:
 - name: date

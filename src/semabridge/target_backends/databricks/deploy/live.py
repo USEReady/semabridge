@@ -9,7 +9,7 @@ offline with a fake. 3.8b's live run confirms the exact response shapes
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, FrozenSet, Iterable, Optional, Set, Tuple
+from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Set, Tuple
 from urllib.parse import quote
 
 
@@ -29,6 +29,12 @@ class Live:
     def can_select(self, fqn: str) -> Tuple[bool, Optional[str]]: ...
     def schema_privileges(self, catalog: str, schema: str, principal: str) -> Optional[FrozenSet[str]]: ...
     def show_create(self, fqn: str) -> Optional[str]: ...
+    def has_rows(self, fqn: str) -> Optional[bool]: ...                            # None: could not check
+    def grants(self, securable: str, full_name: str) -> Optional[List[Dict[str, Any]]]: ...   # direct grants
+    def owner(self, securable: str, full_name: str) -> Optional[str]: ...
+    def statement_status(self, statement_id: str) -> Optional[str]: ...           # PENDING/RUNNING/SUCCEEDED/...
+    def history_status(self, statement_sha256: str, *, since: Any, warehouse_id: Optional[str],
+                       user: Optional[str]) -> Optional[str]: ...                 # positive evidence only
 
 
 def _unquoted(fqn: str) -> str:
@@ -137,6 +143,63 @@ class DatabricksLive(Live):
         except Exception:
             return None
         return None if not res.rows else str(next(iter(res.rows[0].values())) or "") or None
+
+    def has_rows(self, fqn: str) -> Optional[bool]:
+        try:
+            return bool(self.client.execute(f"SELECT 1 FROM {_quoted(fqn)} LIMIT 1").rows)
+        except Exception:
+            return None
+
+    def grants(self, securable: str, full_name: str) -> Optional[List[Dict[str, Any]]]:
+        """Direct grants on a catalog / schema: [{principal, privileges}] (UC permissions API)."""
+        try:
+            data = self.client.get(f"/api/2.1/unity-catalog/permissions/{securable}/{quote(full_name, safe='')}")
+        except Exception:
+            return None
+        out = []
+        for pa in (data or {}).get("privilege_assignments") or []:
+            privs = [str(p.get("privilege") if isinstance(p, dict) else p).upper() for p in pa.get("privileges") or []]
+            out.append({"principal": str(pa.get("principal") or ""), "privileges": privs})
+        return out
+
+    def owner(self, securable: str, full_name: str) -> Optional[str]:
+        kind = {"catalog": "catalogs", "schema": "schemas"}[securable]
+        try:
+            data = self.client.get(f"/api/2.1/unity-catalog/{kind}/{quote(full_name, safe='')}")
+        except Exception:
+            return None
+        return str(data.get("owner")) if isinstance(data, dict) and data.get("owner") else None
+
+    def statement_status(self, statement_id: str) -> Optional[str]:
+        try:
+            data = self.client.get(f"/api/2.0/sql/statements/{quote(statement_id, safe='')}")
+        except Exception:
+            return None
+        state = ((data or {}).get("status") or {}).get("state") if isinstance(data, dict) else None
+        return str(state).upper() if state else None
+
+    def history_status(self, statement_sha256: str, *, since: Any, warehouse_id: Optional[str],
+                       user: Optional[str]) -> Optional[str]:
+        """Positive evidence only: the status of a query-history entry whose exact text
+        hashes to ``statement_sha256`` (run by ``user`` on ``warehouse_id`` after
+        ``since``). None when not found or unreadable -- which proves nothing."""
+        from semabridge.target_backends.databricks.deploy.statements import statement_hash
+
+        try:
+            start_ms = int(since.timestamp() * 1000)
+            flt: Dict[str, Any] = {"query_start_time_range": {"start_time_ms": start_ms}}
+            if warehouse_id:
+                flt["warehouse_ids"] = [warehouse_id]
+            data = self.client.get("/api/2.0/sql/history/queries",
+                                   params={"filter_by": json.dumps(flt), "max_results": 1000})
+        except Exception:
+            return None
+        for q in (data or {}).get("res") or []:
+            if user and str(q.get("user_name") or "").lower() != str(user).lower():
+                continue
+            if statement_hash(str(q.get("query_text") or "")) == statement_sha256:
+                return str(q.get("status") or "").upper() or None
+        return None
 
 
 def jsonable(value: Any) -> Any:

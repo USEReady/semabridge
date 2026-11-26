@@ -2,30 +2,99 @@
 
 After a crash, timeout or lost connection, journal entries can be left
 ``intended`` / ``submitted`` / ``uncertain``. Nothing is retried or cleaned up
-blindly: each entry is checked against what Databricks actually has, read-only,
-and the journal is corrected. Only then may another deploy touch the schema.
+blindly. For each entry, read-only:
 
-Outcomes per operation:
-* succeeded    -- the object is there in exactly the state the statement sets
-                  (created objects are then recorded as SemaBridge's own);
-* not_executed -- the object is in the state from before the statement;
-* uncertain    -- anything else (left for a person: never overwritten).
-Staging views found to exist are listed for cleanup; 3.8b drops them, and only
-those (their ownership is established by this journal + their identity).
+1. **Statement evidence first.** With a Databricks statement id, its status is
+   read. Without one, query history is searched for the exact statement text (by
+   hash) run by the deploying identity on the warehouse since the run started --
+   positive evidence only: not finding it proves nothing.
+2. Still PENDING / RUNNING / QUEUED -> left open (never "not executed" while the
+   statement may still run).
+3. SUCCEEDED -> the object must show the expected result AND the deploying
+   identity as owner; then the operation is done and the object is recorded as
+   ours with its Unity Catalog id. Otherwise uncertain.
+4. FAILED / CANCELED -> not executed if the object is in its previous state;
+   otherwise uncertain.
+5. No evidence -> uncertain (a person decides). A matching definition, owner or
+   run-marker property on its own never establishes ownership after an
+   ambiguous creation. The one exception is a staging DROP whose object is gone:
+   nothing remains to own.
+
+Staging views confirmed as created by this run (statement evidence + identity)
+are listed for 3.8b to drop.
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from semabridge.target_backends.databricks.deploy import definitions as D
 from semabridge.target_backends.databricks.deploy import statements as S
 from semabridge.target_backends.databricks.deploy.live import Live
 
+RUNNING_STATES = {"PENDING", "RUNNING", "QUEUED", "STARTED"}
+SUCCESS_STATES = {"SUCCEEDED", "FINISHED"}
+FAILURE_STATES = {"FAILED", "CANCELED", "CANCELLED", "CLOSED"}
+
 
 def _live_hash(live: Live, info: Optional[Dict[str, Any]], fqn: str) -> Optional[str]:
     body = D.extract_yaml((info or {}).get("view_definition")) or D.extract_yaml(live.show_create(fqn))
-    return D.definition_hash(body) if body else None
+    try:
+        return D.definition_hash(body) if body else None
+    except D.DefinitionError:
+        return None
+
+
+def _evidence(live: Live, op: Dict[str, Any], run: Dict[str, Any]) -> Tuple[Optional[str], str]:
+    if op.get("statement_id"):
+        status = live.statement_status(op["statement_id"])
+        if status:
+            return status, "statement status"
+    if run.get("started_at") is not None:
+        status = live.history_status(op["statement_sha256"], since=run["started_at"],
+                                     warehouse_id=run.get("warehouse_id"), user=run.get("identity"))
+        if status:
+            return status, "query history"
+    return None, "no statement evidence"
+
+
+def _owner_ok(info: Optional[Dict[str, Any]], run: Dict[str, Any]) -> bool:
+    return bool(info and run.get("identity") and str(info.get("owner") or "").lower() == str(run["identity"]).lower())
+
+
+def _decide(live: Live, op: Dict[str, Any], run: Dict[str, Any]) -> Tuple[str, str, Optional[Dict[str, Any]]]:
+    kind, fqn = op["kind"], op["target_fqn"]
+    info = live.table_info(fqn)
+    status, source = _evidence(live, op, run)
+    if status in RUNNING_STATES:
+        return "open", f"the statement is still {status.lower()} ({source})", info
+    if kind == S.DROP_STAGING:
+        if info is None:
+            return "succeeded", "the staging view is gone", info
+        return ("not_executed", f"the staging view is still there ({source})", info) if status != "SUCCEEDED" else (
+            "uncertain", "the drop reported success but the view is still there", info)
+    if status is None:
+        return "uncertain", "no statement evidence: a person must decide (object state alone proves nothing)", info
+    if status in FAILURE_STATES:
+        if kind in (S.CREATE_VIEW, S.CREATE_STAGING, S.STUB_TABLE) and info is None:
+            return "not_executed", f"the statement {status.lower()} and the object does not exist", info
+        if kind == S.ALTER_VIEW and info is not None and _live_hash(live, info, fqn) == op.get("previous_hash"):
+            return "not_executed", f"the statement {status.lower()} and the view is unchanged", info
+        return "uncertain", f"the statement {status.lower()} but the object is not in its previous state", info
+    if status in SUCCESS_STATES:
+        if info is None or not info.get("id"):
+            return "uncertain", "the statement succeeded but the object or its id cannot be read", info
+        if not _owner_ok(info, run):
+            return "uncertain", f"the statement succeeded but the object is owned by {info.get('owner')}", info
+        if kind in (S.CREATE_VIEW, S.CREATE_STAGING, S.ALTER_VIEW):
+            if _live_hash(live, info, fqn) != op.get("definition_hash"):
+                return "uncertain", "the statement succeeded but the definition differs from the approved one", info
+            return "succeeded", f"confirmed by {source}, owner and definition", info
+        if kind == S.STUB_TABLE:
+            if str((info.get("properties") or {}).get("semabridge.run")) != str(op["run_id"]):
+                return "uncertain", "the statement succeeded but the table lacks this run's marker", info
+            return "succeeded", f"confirmed by {source}, owner and run marker", info
+    return "uncertain", f"unrecognised statement status {status!r}", info
 
 
 def reconcile(destination: str, live: Live, *, lease_run_id: str, store: Any = None) -> Dict[str, Any]:
@@ -37,64 +106,38 @@ def reconcile(destination: str, live: Live, *, lease_run_id: str, store: Any = N
         return {"status": "lease_not_held", "operations": [], "staging_to_drop": []}
     results: List[Dict[str, Any]] = []
     staging: List[str] = []
+    runs: Dict[str, Dict[str, Any]] = {}
     for op in store.open_operations(destination):
-        kind, fqn = op["kind"], op["target_fqn"]
+        run = runs.setdefault(op["run_id"], store.run_info(op["run_id"]) or {})
         try:
-            info = live.table_info(fqn)
+            outcome, why, info = _decide(live, op, run)
         except Exception as exc:
-            results.append({**op, "outcome": "uncertain", "why": f"could not read {fqn}: {exc}"})
+            results.append({**op, "outcome": "uncertain", "why": f"could not read {op['target_fqn']}: {exc}"})
             continue
-        outcome, why = "uncertain", ""
-        if kind in (S.CREATE_VIEW, S.CREATE_STAGING):
-            if info is None:
-                outcome = "not_executed"
-            elif _live_hash(live, info, fqn) == op.get("definition_hash"):
-                outcome = "succeeded"
-                if kind == S.CREATE_STAGING:
-                    staging.append(fqn)
-            else:
-                why = "an object with this name exists with a different definition"
-        elif kind == S.ALTER_VIEW:
-            h = _live_hash(live, info, fqn) if info is not None else None
-            if h is not None and h == op.get("definition_hash"):
-                outcome = "succeeded"
-            elif h is not None and h == op.get("previous_hash"):
-                outcome = "not_executed"
-            else:
-                why = "the live definition is neither the old nor the new one"
-        elif kind == S.STUB_TABLE:
-            if info is None:
-                outcome = "not_executed"
-            elif str((info.get("properties") or {}).get("semabridge.stub")).lower() == "true" and \
-                    str((info.get("properties") or {}).get("semabridge.run")) == str(op["run_id"]):
-                outcome = "succeeded"
-            else:
-                why = "a table with this name exists but was not created by this run"
-        elif kind == S.DROP_STAGING:
-            outcome = "succeeded" if info is None else "not_executed"
-            if info is not None:
-                staging.append(fqn)
-        state = outcome if outcome != "uncertain" else "uncertain"
-        store.journal_update(op["run_id"], op["seq"], state, error=why or None)
-        if outcome == "succeeded" and kind in (S.CREATE_VIEW, S.ALTER_VIEW, S.STUB_TABLE):
-            run = store.run_info(op["run_id"]) or {}
-            if run:
-                store.record_object(run_id=op["run_id"], project_id=run["project_id"], model_key=run["model_key"],
-                                    kind="stub_table" if kind == S.STUB_TABLE else "view", fqn=fqn,
-                                    outcome="reconciled", uc_object_id=(info or {}).get("id"),
-                                    definition_hash=op.get("definition_hash"))
+        if outcome != "open":
+            store.journal_update(op["run_id"], op["seq"], outcome, error=why if outcome == "uncertain" else None)
+        if outcome == "succeeded" and op["kind"] == S.CREATE_STAGING:
+            staging.append(op["target_fqn"])
+        if outcome == "succeeded" and op["kind"] in (S.CREATE_VIEW, S.ALTER_VIEW, S.STUB_TABLE) and run:
+            store.record_object(run_id=op["run_id"], project_id=run["project_id"], model_key=run["model_key"],
+                                kind="stub_table" if op["kind"] == S.STUB_TABLE else "view", fqn=op["target_fqn"],
+                                outcome="reconciled", uc_object_id=(info or {}).get("id"),
+                                definition_hash=op.get("definition_hash"),
+                                details={"comment": (info or {}).get("comment")})
         results.append({**op, "outcome": outcome, "why": why})
-    # A run interrupted while "running": after reconciliation it is partial (something
-    # landed), failed (nothing landed) or uncertain (a person must look).
+    # A run interrupted while "running": partial (something landed), failed (nothing
+    # landed) or uncertain (a person must look / statements still running).
     for run_id in sorted({r["run_id"] for r in results}):
-        run = store.run_info(run_id) or {}
+        run = runs.get(run_id) or {}
         if run.get("status") != "running":
             continue
         mine = [r for r in results if r["run_id"] == run_id]
-        status = ("uncertain" if any(r["outcome"] == "uncertain" for r in mine) else
-                  "partial" if any(r["outcome"] == "succeeded" for r in mine) else "failed")
+        if any(r["outcome"] in ("open", "uncertain") for r in mine):
+            status = "uncertain"
+        else:
+            status = "partial" if any(r["outcome"] == "succeeded" for r in mine) else "failed"
         store.finish_run(run_id, status, {"reconciled": [{k: r[k] for k in ("seq", "kind", "target_fqn", "outcome")}
                                                          for r in mine]})
-    left = [r for r in results if r["outcome"] == "uncertain"]
+    left = [r for r in results if r["outcome"] in ("uncertain", "open")]
     return {"status": "needs_attention" if left else "reconciled", "operations": results,
             "staging_to_drop": sorted(set(staging))}
