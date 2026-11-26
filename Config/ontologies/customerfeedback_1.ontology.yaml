@@ -1,0 +1,451 @@
+domain: customerfeedback 1
+id: customerfeedback_1
+version: 1.0.0
+source_project_id: proj-dbt1
+semantic_view_name: workspace.default.customerfeedback_1_metric_view
+concepts:
+- name: Company
+  logical_name: COMPANY
+  label: Company
+  concept_type: DIMENSION
+  domain: customerfeedback 1
+  synonyms: []
+  business_rules: []
+  physical_table: Company
+  attributes:
+  - name: Company ID
+    logical_name: COMPANY_ID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Company Size
+    logical_name: COMPANY_SIZE
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Customer Table
+  logical_name: CUSTOMER_TABLE
+  label: Customer Table
+  concept_type: DIMENSION
+  domain: customerfeedback 1
+  synonyms: []
+  business_rules: []
+  physical_table: Customer Table
+  attributes:
+  - name: Customer ID
+    logical_name: CUSTOMER_ID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Tenure
+    logical_name: TENURE
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Geography ID
+    logical_name: GEOGRAPHY_ID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Completed tutorial
+    logical_name: COMPLETED_TUTORIAL
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Subscription ID
+    logical_name: SUBSCRIPTION_ID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Role
+    logical_name: ROLE
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Company ID
+    logical_name: COMPANY_ID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Rating
+    logical_name: RATING
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Theme
+    logical_name: THEME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Original Score
+    logical_name: ORIGINAL_SCORE
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Device
+  logical_name: DEVICE
+  label: Device
+  concept_type: ENTITY
+  domain: customerfeedback 1
+  synonyms: []
+  business_rules: []
+  physical_table: Device
+  attributes:
+  - name: ID
+    logical_name: ID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Customer ID
+    logical_name: CUSTOMER_ID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: device
+    logical_name: DEVICE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Geography
+  logical_name: GEOGRAPHY
+  label: Geography
+  concept_type: DIMENSION
+  domain: customerfeedback 1
+  synonyms: []
+  business_rules: []
+  physical_table: Geography
+  attributes:
+  - name: Geography ID
+    logical_name: GEOGRAPHY_ID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Continent
+    logical_name: CONTINENT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Country-Region
+    logical_name: COUNTRY_REGION
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Role
+  logical_name: COL_ROLE
+  label: Role
+  concept_type: DIMENSION
+  domain: customerfeedback 1
+  synonyms: []
+  business_rules: []
+  physical_table: Role
+  attributes:
+  - name: Role ID
+    logical_name: ROLE_ID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Role in Org
+    logical_name: ROLE_IN_ORG
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Subscription
+  logical_name: SUBSCRIPTION
+  label: Subscription
+  concept_type: DIMENSION
+  domain: customerfeedback 1
+  synonyms: []
+  business_rules: []
+  physical_table: Subscription
+  attributes:
+  - name: Subscription ID
+    logical_name: SUBSCRIPTION_ID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Subscription Type
+    logical_name: SUBSCRIPTION_TYPE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Support Tickets
+  logical_name: SUPPORT_TICKETS
+  label: Support Tickets
+  concept_type: ENTITY
+  domain: customerfeedback 1
+  synonyms: []
+  business_rules: []
+  physical_table: Support Tickets
+  attributes:
+  - name: Support Ticket ID
+    logical_name: SUPPORT_TICKET_ID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Customer ID
+    logical_name: CUSTOMER_ID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Date Created
+    logical_name: DATE_CREATED
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: dddd\, mmmm d\, yyyy
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Date Completed
+    logical_name: DATE_COMPLETED
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: dddd\, mmmm d\, yyyy
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Escalated
+    logical_name: ESCALATED
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Duration
+    logical_name: DURATION
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+metrics:
+- name: SUM_OF_TENURE
+  logical_name: SUM_OF_TENURE
+  label: SUM_OF_TENURE
+  sql_expression: SUM(CUSTOMER_TABLE."TENURE")
+  dax_expression: SUM('Customer Table'[Tenure])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_TENURE
+  business_rules: []
+  domain: customerfeedback 1
+  concept: Customer Table
+  semantic_view_name: workspace.default.customerfeedback_1_metric_view
+  tags: []
+  origin: bi
+- name: SUM_OF_ORIGINAL_SCORE
+  logical_name: SUM_OF_ORIGINAL_SCORE
+  label: SUM_OF_ORIGINAL_SCORE
+  sql_expression: SUM(CUSTOMER_TABLE."ORIGINAL_SCORE")
+  dax_expression: SUM('Customer Table'[Original Score])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_ORIGINAL_SCORE
+  business_rules: []
+  domain: customerfeedback 1
+  concept: Customer Table
+  semantic_view_name: workspace.default.customerfeedback_1_metric_view
+  tags: []
+  origin: bi
+- name: SUM_OF_ESCALATED
+  logical_name: SUM_OF_ESCALATED
+  label: SUM_OF_ESCALATED
+  sql_expression: SUM(SUPPORT_TICKETS."ESCALATED")
+  dax_expression: SUM('Support Tickets'[Escalated])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_ESCALATED
+  business_rules: []
+  domain: customerfeedback 1
+  concept: Support Tickets
+  semantic_view_name: workspace.default.customerfeedback_1_metric_view
+  tags: []
+  origin: bi
+- name: SUM_OF_DURATION
+  logical_name: SUM_OF_DURATION
+  label: SUM_OF_DURATION
+  sql_expression: SUM(SUPPORT_TICKETS."DURATION")
+  dax_expression: SUM('Support Tickets'[Duration])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_DURATION
+  business_rules: []
+  domain: customerfeedback 1
+  concept: Support Tickets
+  semantic_view_name: workspace.default.customerfeedback_1_metric_view
+  tags: []
+  origin: bi
+relationships:
+- name: REL_CUSTOMER_TABLE_COMPANY_ID__COMPANY_COMPANY_ID
+  from_concept: Customer Table
+  to_concept: Company
+  cardinality: N:1
+  join_expression: Customer Table."Company ID" = Company."Company ID"
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_DEVICE_CUSTOMER_ID__CUSTOMER_TABLE_CUSTOMER_ID
+  from_concept: Device
+  to_concept: Customer Table
+  cardinality: N:1
+  join_expression: Device."Customer ID" = Customer Table."Customer ID"
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SUPPORT_TICKETS_CUSTOMER_ID__CUSTOMER_TABLE_CUSTOMER_ID
+  from_concept: Support Tickets
+  to_concept: Customer Table
+  cardinality: N:1
+  join_expression: Support Tickets."Customer ID" = Customer Table."Customer ID"
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_CUSTOMER_TABLE_GEOGRAPHY_ID__GEOGRAPHY_GEOGRAPHY_ID
+  from_concept: Customer Table
+  to_concept: Geography
+  cardinality: N:1
+  join_expression: Customer Table."Geography ID" = Geography."Geography ID"
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_CUSTOMER_TABLE_SUBSCRIPTION_ID__SUBSCRIPTION_SUBSCRIPTION_ID
+  from_concept: Customer Table
+  to_concept: Subscription
+  cardinality: N:1
+  join_expression: Customer Table."Subscription ID" = Subscription."Subscription ID"
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_CUSTOMER_TABLE_ROLE__ROLE_ROLE_ID
+  from_concept: Customer Table
+  to_concept: Role
+  cardinality: N:1
+  join_expression: Customer Table.Role = Role."Role ID"
+  cross_filter_direction: single
+  is_active: true
+  origin: bi

@@ -1,4 +1,33 @@
 {
+  "proj-dbt5": {
+    "models": {
+      "adventure_works_dw_2020_1": [
+        "dbt5__adventure_works_dw_2020_1"
+      ],
+      "artificial_intelligence_sample_1_1": [
+        "dbt5__artificial_intelligence_sample_1_1"
+      ],
+      "covid_19_us_tracking_sample_1": [
+        "dbt5__covid_19_us_tracking_sample_1"
+      ],
+      "customerfeedback_1": [
+        "dbt5__customerfeedback_1"
+      ],
+      "main_default_adventure_works_dw_2020_1_metric_view": [
+        "dbt5__main_default_adventure_works_dw_2020_1_metric_view"
+      ],
+      "main_default_artificial_intelligence_sample_1_1_metric_view": [
+        "dbt5__main_default_artificial_intell_d2e385"
+      ],
+      "main_default_covid_19_us_tracking_sample_1_metric_view": [
+        "dbt5__main_default_covid_19_us_tracking_sample_1_metric_view"
+      ],
+      "main_default_customerfeedback_1_metric_view": [
+        "dbt5__main_default_customerfeedback_1_metric_view"
+      ]
+    },
+    "shared": []
+  },
   "proj-multi_sync": {
     "models": {
       "competitive_marketing_analysis": [
@@ -9,6 +38,31 @@
       ],
       "core_finance_v1": [
         "multi_sync__core_finance_v1"
+      ]
+    },
+    "shared": []
+  },
+  "proj-nat1": {
+    "models": {
+      "competitive_marketing_analysis_more_synonyms_updated": [
+        "nat1__workspace_default_competitive__37085e"
+      ],
+      "workspace_default_competitive_marketing_analysis_more_synonyms_u": [
+        "nat1__workspace_default_competitive__37085e"
+      ]
+    },
+    "shared": []
+  },
+  "proj-reg_test": {
+    "models": {
+      "client_data": [
+        "reg_test__client_data"
+      ],
+      "competitive_marketing_analysis": [
+        "reg_test__competitive_marketing_analysis"
+      ],
+      "continent": [
+        "reg_test__continent"
       ]
     },
     "shared": []

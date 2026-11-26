@@ -1,0 +1,1111 @@
+domain: dbt5 · ADVENTURE_WORKS_DW_2020_1
+id: dbt5__main_default_adventure_works_dw_2020_1_metric_view
+version: 1.0.0
+source_project_id: proj-dbt5
+source_model_id: main_default_adventure_works_dw_2020_1_metric_view
+source_model_name: ADVENTURE_WORKS_DW_2020_1
+semantic_view_name: main.default.ADVENTURE_WORKS_DW_2020_1_metric_view
+concepts:
+- name: Currency
+  logical_name: CURRENCY
+  label: Currency
+  concept_type: DIMENSION
+  domain: dbt5 · ADVENTURE_WORKS_DW_2020_1
+  synonyms: []
+  business_rules: []
+  physical_table: Currency
+  attributes:
+  - name: CurrencyKey
+    logical_name: CURRENCYKEY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Code
+    logical_name: CODE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Currency
+    logical_name: CURRENCY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Format String
+    logical_name: FORMAT_STRING
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Currency Rate
+  logical_name: CURRENCY_RATE
+  label: Currency Rate
+  concept_type: ENTITY
+  domain: dbt5 · ADVENTURE_WORKS_DW_2020_1
+  synonyms: []
+  business_rules: []
+  physical_table: Currency Rate
+  attributes:
+  - name: CurrencyKey
+    logical_name: CURRENCYKEY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: DateKey
+    logical_name: DATEKEY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Average Rate
+    logical_name: AVERAGE_RATE
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: End Of Day Rate
+    logical_name: END_OF_DAY_RATE
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Customer
+  logical_name: CUSTOMER
+  label: Customer
+  concept_type: DIMENSION
+  domain: dbt5 · ADVENTURE_WORKS_DW_2020_1
+  synonyms: []
+  business_rules: []
+  physical_table: Customer
+  attributes:
+  - name: CustomerKey
+    logical_name: CUSTOMERKEY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Customer ID
+    logical_name: CUSTOMER_ID
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Customer
+    logical_name: CUSTOMER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: City
+    logical_name: CITY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: State-Province
+    logical_name: STATE_PROVINCE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Country-Region
+    logical_name: COUNTRY_REGION
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Postal Code
+    logical_name: POSTAL_CODE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies:
+  - name: Geography
+    label: Geography
+    is_hidden: false
+    levels:
+    - name: Country-Region
+      label: Country-Region
+      attribute: Country-Region
+    - name: State-Province
+      label: State-Province
+      attribute: State-Province
+    - name: City
+      label: City
+      attribute: City
+    - name: Postal Code
+      label: Postal Code
+      attribute: Postal Code
+    - name: Customer
+      label: Customer
+      attribute: Customer
+    origin: bi
+  tags: []
+  origin: bi
+- name: Date
+  logical_name: COL_DATE
+  label: Date
+  concept_type: DIMENSION
+  domain: dbt5 · ADVENTURE_WORKS_DW_2020_1
+  description: Filters the Sales table using sales order date
+  synonyms: []
+  business_rules: []
+  physical_table: Date
+  attributes:
+  - name: DateKey
+    logical_name: DATEKEY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Date
+    logical_name: DATE
+    data_type: DATE
+    is_primary_key: true
+    is_hidden: false
+    format_string: Short Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Fiscal Year
+    logical_name: FISCAL_YEAR
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Fiscal Quarter
+    logical_name: FISCAL_QUARTER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Month
+    logical_name: MONTH
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: MonthKey
+    logical_name: MONTHKEY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Full Date
+    logical_name: FULL_DATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Month Number Of Year
+    logical_name: MONTH_NUMBER_OF_YEAR
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies:
+  - name: Fiscal
+    label: Fiscal
+    is_hidden: false
+    levels:
+    - name: Year
+      label: Year
+      attribute: Fiscal Year
+    - name: Quarter
+      label: Quarter
+      attribute: Fiscal Quarter
+    - name: Month
+      label: Month
+      attribute: Month
+    - name: Date
+      label: Date
+      attribute: Full Date
+    origin: bi
+  tags: []
+  origin: bi
+  bi_description: Filters the Sales table using sales order date
+- name: Product
+  logical_name: PRODUCT
+  label: Product
+  concept_type: DIMENSION
+  domain: dbt5 · ADVENTURE_WORKS_DW_2020_1
+  synonyms: []
+  business_rules: []
+  physical_table: Product
+  attributes:
+  - name: ProductKey
+    logical_name: PRODUCTKEY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Product
+    logical_name: PRODUCT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Standard Cost
+    logical_name: STANDARD_COST
+    data_type: DECIMAL(18,2)
+    is_primary_key: false
+    is_hidden: false
+    format_string: \$#,0.00;(\$#,0.00);\$#,0.00
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Color
+    logical_name: COLOR
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: List Price
+    logical_name: LIST_PRICE
+    data_type: DECIMAL(18,2)
+    is_primary_key: false
+    is_hidden: false
+    format_string: \$#,0.00;(\$#,0.00);\$#,0.00
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Model
+    logical_name: MODEL
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Subcategory
+    logical_name: SUBCATEGORY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Category
+    logical_name: CATEGORY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: SKU
+    logical_name: SKU
+    data_type: VARCHAR
+    description: Stock-keeping unit
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+    bi_description: Stock-keeping unit
+  - name: Safety Stock Level
+    logical_name: SAFETY_STOCK_LEVEL
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Reorder Point
+    logical_name: REORDER_POINT
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Class
+    logical_name: CLASS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies:
+  - name: Products
+    label: Products
+    is_hidden: false
+    levels:
+    - name: Category
+      label: Category
+      attribute: Category
+    - name: Subcategory
+      label: Subcategory
+      attribute: Subcategory
+    - name: Model
+      label: Model
+      attribute: Model
+    - name: Product
+      label: Product
+      attribute: Product
+    origin: bi
+  tags: []
+  origin: bi
+- name: Reseller
+  logical_name: RESELLER
+  label: Reseller
+  concept_type: DIMENSION
+  domain: dbt5 · ADVENTURE_WORKS_DW_2020_1
+  synonyms: []
+  business_rules: []
+  physical_table: Reseller
+  attributes:
+  - name: ResellerKey
+    logical_name: RESELLERKEY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Business Type
+    logical_name: BUSINESS_TYPE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Reseller
+    logical_name: RESELLER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: City
+    logical_name: CITY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: State-Province
+    logical_name: STATE_PROVINCE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Country-Region
+    logical_name: COUNTRY_REGION
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Postal Code
+    logical_name: POSTAL_CODE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Reseller ID
+    logical_name: RESELLER_ID
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies:
+  - name: Geography
+    label: Geography
+    is_hidden: false
+    levels:
+    - name: Country-Region
+      label: Country-Region
+      attribute: Country-Region
+    - name: State-Province
+      label: State-Province
+      attribute: State-Province
+    - name: City
+      label: City
+      attribute: City
+    - name: Postal Code
+      label: Postal Code
+      attribute: Postal Code
+    - name: Reseller
+      label: Reseller
+      attribute: Reseller
+    origin: bi
+  tags: []
+  origin: bi
+- name: Sales
+  logical_name: SALES
+  label: Sales
+  concept_type: ENTITY
+  domain: dbt5 · ADVENTURE_WORKS_DW_2020_1
+  synonyms: []
+  business_rules: []
+  physical_table: Sales
+  attributes:
+  - name: SalesOrderLineKey
+    logical_name: SALESORDERLINEKEY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: ResellerKey
+    logical_name: RESELLERKEY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: CustomerKey
+    logical_name: CUSTOMERKEY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: ProductKey
+    logical_name: PRODUCTKEY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: OrderDateKey
+    logical_name: ORDERDATEKEY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: DueDateKey
+    logical_name: DUEDATEKEY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: ShipDateKey
+    logical_name: SHIPDATEKEY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: SalesTerritoryKey
+    logical_name: SALESTERRITORYKEY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Order Quantity
+    logical_name: ORDER_QUANTITY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '#,0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Unit Price
+    logical_name: UNIT_PRICE
+    data_type: DECIMAL(18,2)
+    is_primary_key: false
+    is_hidden: false
+    format_string: \$#,0.00;(\$#,0.00);\$#,0.00
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Extended Amount
+    logical_name: EXTENDED_AMOUNT
+    data_type: DECIMAL(18,2)
+    is_primary_key: false
+    is_hidden: false
+    format_string: \$#,0.00;(\$#,0.00);\$#,0.00
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Product Standard Cost
+    logical_name: PRODUCT_STANDARD_COST
+    data_type: DECIMAL(18,2)
+    is_primary_key: false
+    is_hidden: false
+    format_string: \$#,0.00;(\$#,0.00);\$#,0.00
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Total Product Cost
+    logical_name: TOTAL_PRODUCT_COST
+    data_type: DECIMAL(18,2)
+    is_primary_key: false
+    is_hidden: false
+    format_string: \$#,0.00;(\$#,0.00);\$#,0.00
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Sales Amount
+    logical_name: SALES_AMOUNT
+    data_type: DECIMAL(18,2)
+    is_primary_key: false
+    is_hidden: false
+    format_string: \$#,0.00;(\$#,0.00);\$#,0.00
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Unit Price Discount Pct
+    logical_name: UNIT_PRICE_DISCOUNT_PCT
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    format_string: 0.00%;-0.00%;0.00%
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: CurrencyKey
+    logical_name: CURRENCYKEY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Sales Order
+  logical_name: SALES_ORDER
+  label: Sales Order
+  concept_type: DIMENSION
+  domain: dbt5 · ADVENTURE_WORKS_DW_2020_1
+  synonyms: []
+  business_rules: []
+  physical_table: Sales Order
+  attributes:
+  - name: SalesOrderLineKey
+    logical_name: SALESORDERLINEKEY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Sales Order
+    logical_name: SALES_ORDER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Sales Order Line
+    logical_name: SALES_ORDER_LINE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Channel
+    logical_name: CHANNEL
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies:
+  - name: Sales Orders
+    label: Sales Orders
+    is_hidden: false
+    levels:
+    - name: Sales Order
+      label: Sales Order
+      attribute: Sales Order
+    - name: Sales Order Line
+      label: Sales Order Line
+      attribute: Sales Order Line
+    origin: bi
+  tags: []
+  origin: bi
+- name: Sales Reason
+  logical_name: SALES_REASON
+  label: Sales Reason
+  concept_type: DIMENSION
+  domain: dbt5 · ADVENTURE_WORKS_DW_2020_1
+  synonyms: []
+  business_rules: []
+  physical_table: Sales Reason
+  attributes:
+  - name: SalesReasonKey
+    logical_name: SALESREASONKEY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Sales Reason
+    logical_name: SALES_REASON
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Reason Type
+    logical_name: REASON_TYPE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Sales Reason Bridge
+  logical_name: SALES_REASON_BRIDGE
+  label: Sales Reason Bridge
+  concept_type: ENTITY
+  domain: dbt5 · ADVENTURE_WORKS_DW_2020_1
+  synonyms: []
+  business_rules: []
+  physical_table: Sales Reason Bridge
+  attributes:
+  - name: SalesOrderLineKey
+    logical_name: SALESORDERLINEKEY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: SalesReasonKey
+    logical_name: SALESREASONKEY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Sales Territory
+  logical_name: SALES_TERRITORY
+  label: Sales Territory
+  concept_type: DIMENSION
+  domain: dbt5 · ADVENTURE_WORKS_DW_2020_1
+  synonyms: []
+  business_rules: []
+  physical_table: Sales Territory
+  attributes:
+  - name: SalesTerritoryKey
+    logical_name: SALESTERRITORYKEY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Region
+    logical_name: REGION
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Country
+    logical_name: COUNTRY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Group
+    logical_name: COL_GROUP
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies:
+  - name: Sales Territories
+    label: Sales Territories
+    is_hidden: false
+    levels:
+    - name: Group
+      label: Group
+      attribute: Group
+    - name: Country
+      label: Country
+      attribute: Country
+    - name: Region
+      label: Region
+      attribute: Region
+    origin: bi
+  tags: []
+  origin: bi
+metrics:
+- name: SUM_OF_AVERAGE_RATE
+  logical_name: SUM_OF_AVERAGE_RATE
+  label: SUM_OF_AVERAGE_RATE
+  sql_expression: SUM(CURRENCY_RATE."AVERAGE_RATE")
+  dax_expression: SUM('Currency Rate'[Average Rate])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_AVERAGE_RATE
+  business_rules: []
+  domain: dbt5 · ADVENTURE_WORKS_DW_2020_1
+  concept: Currency Rate
+  semantic_view_name: main.default.ADVENTURE_WORKS_DW_2020_1_metric_view
+  tags: []
+  origin: bi
+- name: SUM_OF_END_OF_DAY_RATE
+  logical_name: SUM_OF_END_OF_DAY_RATE
+  label: SUM_OF_END_OF_DAY_RATE
+  sql_expression: SUM(CURRENCY_RATE."END_OF_DAY_RATE")
+  dax_expression: SUM('Currency Rate'[End Of Day Rate])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_END_OF_DAY_RATE
+  business_rules: []
+  domain: dbt5 · ADVENTURE_WORKS_DW_2020_1
+  concept: Currency Rate
+  semantic_view_name: main.default.ADVENTURE_WORKS_DW_2020_1_metric_view
+  tags: []
+  origin: bi
+- name: SUM_OF_MONTH_NUMBER_OF_YEAR
+  logical_name: SUM_OF_MONTH_NUMBER_OF_YEAR
+  label: SUM_OF_MONTH_NUMBER_OF_YEAR
+  sql_expression: SUM(COL_DATE."MONTH_NUMBER_OF_YEAR")
+  dax_expression: SUM('Date'[Month Number Of Year])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_MONTH_NUMBER_OF_YEAR
+  business_rules: []
+  domain: dbt5 · ADVENTURE_WORKS_DW_2020_1
+  concept: Date
+  semantic_view_name: main.default.ADVENTURE_WORKS_DW_2020_1_metric_view
+  tags: []
+  origin: bi
+- name: SUM_OF_ORDER_QUANTITY
+  logical_name: SUM_OF_ORDER_QUANTITY
+  label: SUM_OF_ORDER_QUANTITY
+  sql_expression: SUM(SALES."ORDER_QUANTITY")
+  dax_expression: SUM('Sales'[Order Quantity])
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_ORDER_QUANTITY
+  business_rules: []
+  domain: dbt5 · ADVENTURE_WORKS_DW_2020_1
+  concept: Sales
+  semantic_view_name: main.default.ADVENTURE_WORKS_DW_2020_1_metric_view
+  tags: []
+  origin: bi
+- name: AVG_OF_UNIT_PRICE
+  logical_name: AVG_OF_UNIT_PRICE
+  label: AVG_OF_UNIT_PRICE
+  sql_expression: AVG(SALES."UNIT_PRICE")
+  dax_expression: AVERAGE('Sales'[Unit Price])
+  format_string: \$#,0.00;(\$#,0.00);\$#,0.00
+  is_hidden: false
+  aggregation_type: AVG
+  grain: []
+  synonyms:
+  - AVG_OF_UNIT_PRICE
+  business_rules: []
+  domain: dbt5 · ADVENTURE_WORKS_DW_2020_1
+  concept: Sales
+  semantic_view_name: main.default.ADVENTURE_WORKS_DW_2020_1_metric_view
+  tags: []
+  origin: bi
+- name: SUM_OF_EXTENDED_AMOUNT
+  logical_name: SUM_OF_EXTENDED_AMOUNT
+  label: SUM_OF_EXTENDED_AMOUNT
+  sql_expression: SUM(SALES."EXTENDED_AMOUNT")
+  dax_expression: SUM('Sales'[Extended Amount])
+  format_string: \$#,0.00;(\$#,0.00);\$#,0.00
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_EXTENDED_AMOUNT
+  business_rules: []
+  domain: dbt5 · ADVENTURE_WORKS_DW_2020_1
+  concept: Sales
+  semantic_view_name: main.default.ADVENTURE_WORKS_DW_2020_1_metric_view
+  tags: []
+  origin: bi
+- name: SUM_OF_PRODUCT_STANDARD_COST
+  logical_name: SUM_OF_PRODUCT_STANDARD_COST
+  label: SUM_OF_PRODUCT_STANDARD_COST
+  sql_expression: SUM(SALES."PRODUCT_STANDARD_COST")
+  dax_expression: SUM('Sales'[Product Standard Cost])
+  format_string: \$#,0.00;(\$#,0.00);\$#,0.00
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_PRODUCT_STANDARD_COST
+  business_rules: []
+  domain: dbt5 · ADVENTURE_WORKS_DW_2020_1
+  concept: Sales
+  semantic_view_name: main.default.ADVENTURE_WORKS_DW_2020_1_metric_view
+  tags: []
+  origin: bi
+- name: SUM_OF_TOTAL_PRODUCT_COST
+  logical_name: SUM_OF_TOTAL_PRODUCT_COST
+  label: SUM_OF_TOTAL_PRODUCT_COST
+  sql_expression: SUM(SALES."TOTAL_PRODUCT_COST")
+  dax_expression: SUM('Sales'[Total Product Cost])
+  format_string: \$#,0.00;(\$#,0.00);\$#,0.00
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_TOTAL_PRODUCT_COST
+  business_rules: []
+  domain: dbt5 · ADVENTURE_WORKS_DW_2020_1
+  concept: Sales
+  semantic_view_name: main.default.ADVENTURE_WORKS_DW_2020_1_metric_view
+  tags: []
+  origin: bi
+- name: SUM_OF_SALES_AMOUNT
+  logical_name: SUM_OF_SALES_AMOUNT
+  label: SUM_OF_SALES_AMOUNT
+  sql_expression: SUM(SALES."SALES_AMOUNT")
+  dax_expression: SUM('Sales'[Sales Amount])
+  format_string: \$#,0.00;(\$#,0.00);\$#,0.00
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_SALES_AMOUNT
+  business_rules: []
+  domain: dbt5 · ADVENTURE_WORKS_DW_2020_1
+  concept: Sales
+  semantic_view_name: main.default.ADVENTURE_WORKS_DW_2020_1_metric_view
+  tags: []
+  origin: bi
+relationships:
+- name: REL_SALES_SALESTERRITORYKEY__SALES_TERRITORY_SALESTERRITORYKEY
+  from_concept: Sales
+  to_concept: Sales Territory
+  cardinality: N:1
+  join_expression: Sales.SalesTerritoryKey = Sales Territory.SalesTerritoryKey
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SALES_PRODUCTKEY__PRODUCT_PRODUCTKEY
+  from_concept: Sales
+  to_concept: Product
+  cardinality: N:1
+  join_expression: Sales.ProductKey = Product.ProductKey
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SALES_SALESORDERLINEKEY__SALES_ORDER_SALESORDERLINEKEY
+  from_concept: Sales
+  to_concept: Sales Order
+  cardinality: '1:1'
+  join_expression: Sales.SalesOrderLineKey = Sales Order.SalesOrderLineKey
+  cross_filter_direction: both
+  is_active: true
+  origin: bi
+- name: REL_SALES_CUSTOMERKEY__CUSTOMER_CUSTOMERKEY
+  from_concept: Sales
+  to_concept: Customer
+  cardinality: N:1
+  join_expression: Sales.CustomerKey = Customer.CustomerKey
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SALES_ORDERDATEKEY__DATE_DATEKEY
+  from_concept: Sales
+  to_concept: Date
+  cardinality: N:1
+  join_expression: Sales.OrderDateKey = Date.DateKey
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SALES_RESELLERKEY__RESELLER_RESELLERKEY
+  from_concept: Sales
+  to_concept: Reseller
+  cardinality: N:1
+  join_expression: Sales.ResellerKey = Reseller.ResellerKey
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_CURRENCY_RATE_CURRENCYKEY__CURRENCY_CURRENCYKEY
+  from_concept: Currency Rate
+  to_concept: Currency
+  cardinality: N:1
+  join_expression: Currency Rate.CurrencyKey = Currency.CurrencyKey
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_CURRENCY_RATE_DATEKEY__DATE_DATEKEY
+  from_concept: Currency Rate
+  to_concept: Date
+  cardinality: N:1
+  join_expression: Currency Rate.DateKey = Date.DateKey
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SALES_CURRENCYKEY__CURRENCY_CURRENCYKEY
+  from_concept: Sales
+  to_concept: Currency
+  cardinality: N:1
+  join_expression: Sales.CurrencyKey = Currency.CurrencyKey
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SALES_REASON_BRIDGE_SALESREASONKEY__SALES_REASON_SALESREASONKEY
+  from_concept: Sales Reason Bridge
+  to_concept: Sales Reason
+  cardinality: N:1
+  join_expression: Sales Reason Bridge.SalesReasonKey = Sales Reason.SalesReasonKey
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SALES_REASON_BRIDGE_SALESORDERLINEKEY__SALES_ORDER_SALESORDERLINEKEY
+  from_concept: Sales Reason Bridge
+  to_concept: Sales Order
+  cardinality: N:1
+  join_expression: Sales Reason Bridge.SalesOrderLineKey = Sales Order.SalesOrderLineKey
+  cross_filter_direction: both
+  is_active: true
+  origin: bi
+- name: REL_SALES_DUEDATEKEY__DATE_DATEKEY
+  from_concept: Sales
+  to_concept: Date
+  cardinality: N:1
+  join_expression: Sales.DueDateKey = Date.DateKey
+  cross_filter_direction: single
+  is_active: false
+  origin: bi
+- name: REL_SALES_SHIPDATEKEY__DATE_DATEKEY
+  from_concept: Sales
+  to_concept: Date
+  cardinality: N:1
+  join_expression: Sales.ShipDateKey = Date.DateKey
+  cross_filter_direction: single
+  is_active: false
+  origin: bi

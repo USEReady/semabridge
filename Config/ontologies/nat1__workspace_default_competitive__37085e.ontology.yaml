@@ -1,0 +1,1827 @@
+domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+id: nat1__workspace_default_competitive__37085e
+version: 1.0.0
+source_project_id: proj-nat1
+source_model_id: workspace_default_competitive_marketing_analysis_more_synonyms_u
+source_model_name: Competitive Marketing Analysis (More Synonyms)_updated
+semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+concepts:
+- name: Product
+  logical_name: PRODUCT
+  label: Product
+  concept_type: DIMENSION
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  synonyms: []
+  business_rules: []
+  physical_table: Product
+  attributes:
+  - name: Manufacturer
+    logical_name: MANUFACTURER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Category
+    logical_name: CATEGORY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Segment
+    logical_name: SEGMENT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Product
+    logical_name: PRODUCT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: ProductID
+    logical_name: PRODUCTID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: isVanArsdel
+    logical_name: ISVANARSDEL
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: IsCompeteHide
+    logical_name: ISCOMPETEHIDE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: ManufacturerID
+    logical_name: MANUFACTURERID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: IsCompete
+    logical_name: ISCOMPETE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies:
+  - name: ProductRollup
+    label: ProductRollup
+    is_hidden: false
+    levels:
+    - name: Category
+      label: Category
+      attribute: Category
+    - name: Segment
+      label: Segment
+      attribute: Segment
+    - name: Product
+      label: Product
+      attribute: Product
+    origin: bi
+  tags: []
+  origin: bi
+- name: SalesFact
+  logical_name: SALESFACT
+  label: SalesFact
+  concept_type: ENTITY
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  synonyms: []
+  business_rules: []
+  physical_table: SalesFact
+  attributes:
+  - name: ProductID
+    logical_name: PRODUCTID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Date
+    logical_name: DATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: true
+    format_string: General Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Zip
+    logical_name: ZIP
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Units
+    logical_name: UNITS
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Revenue
+    logical_name: REVENUE
+    data_type: DECIMAL(18,2)
+    is_primary_key: false
+    is_hidden: true
+    format_string: \$#,0.00;(\$#,0.00);\$#,0.00
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Date
+  logical_name: COL_DATE
+  label: Date
+  concept_type: DIMENSION
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  synonyms: []
+  business_rules: []
+  physical_table: Date
+  attributes:
+  - name: Date
+    logical_name: DATE
+    data_type: DATE
+    is_primary_key: true
+    is_hidden: false
+    format_string: General Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: MonthNo
+    logical_name: MONTHNO
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: MonthName
+    logical_name: MONTHNAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: MonthID
+    logical_name: MONTHID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Month
+    logical_name: MONTH
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Quarter
+    logical_name: QUARTER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Year
+    logical_name: YEAR
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: RunningMonths
+    logical_name: RUNNINGMONTHS
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Running Year
+    logical_name: RUNNING_YEAR
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Running Months
+    logical_name: RUNNING_MONTHS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Rolling Period
+    logical_name: ROLLING_PERIOD
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Rolling Period Sort
+    logical_name: ROLLING_PERIOD_SORT
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: MonthIndex
+    logical_name: MONTHINDEX
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Months
+    logical_name: MONTHS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies:
+  - name: YQMD
+    label: YQMD
+    is_hidden: false
+    levels:
+    - name: Year
+      label: Year
+      attribute: Year
+    - name: Quarter
+      label: Quarter
+      attribute: Quarter
+    - name: Month
+      label: Month
+      attribute: Month
+    - name: Date
+      label: Date
+      attribute: Date
+    origin: bi
+  - name: Year Hierarchy
+    label: Year Hierarchy
+    is_hidden: false
+    levels:
+    - name: Year
+      label: Year
+      attribute: Year
+    - name: Months
+      label: Months
+      attribute: Months
+    - name: Date
+      label: Date
+      attribute: Date
+    origin: bi
+  tags: []
+  origin: bi
+- name: Geo
+  logical_name: GEO
+  label: Geo
+  concept_type: DIMENSION
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  synonyms: []
+  business_rules: []
+  physical_table: Geo
+  attributes:
+  - name: Zip
+    logical_name: ZIP
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: City
+    logical_name: CITY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: State
+    logical_name: STATE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Region
+    logical_name: REGION
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: District
+    logical_name: DISTRICT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies:
+  - name: GeoRollup
+    label: GeoRollup
+    is_hidden: false
+    levels:
+    - name: State
+      label: State
+      attribute: State
+    - name: City
+      label: City
+      attribute: City
+    - name: Zip
+      label: Zip
+      attribute: Zip
+    origin: bi
+  tags: []
+  origin: bi
+- name: Sentiment
+  logical_name: SENTIMENT
+  label: Sentiment
+  concept_type: ENTITY
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  synonyms: []
+  business_rules: []
+  physical_table: Sentiment
+  attributes:
+  - name: DateID
+    logical_name: DATEID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: StateID
+    logical_name: STATEID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: ManufacturerID
+    logical_name: MANUFACTURERID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Score
+    logical_name: SCORE
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Manufacturer
+    logical_name: MANUFACTURER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Date
+    logical_name: DATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: true
+    format_string: m/d/yyyy
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: State
+    logical_name: STATE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: zip
+    logical_name: ZIP
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: ProductID
+    logical_name: PRODUCTID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Manufacturer
+  logical_name: MANUFACTURER
+  label: Manufacturer
+  concept_type: DIMENSION
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  synonyms: []
+  business_rules: []
+  physical_table: Manufacturer
+  attributes:
+  - name: ManufacturerID
+    logical_name: MANUFACTURERID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Manufacturer
+    logical_name: MANUFACTURER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: MfgisVanArsdel
+    logical_name: MFGISVANARSDEL
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Indicators
+  logical_name: INDICATORS
+  label: Indicators
+  concept_type: DIMENSION
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  synonyms: []
+  business_rules: []
+  physical_table: Indicators
+  attributes:
+  - name: Sort
+    logical_name: SORT
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Status
+    logical_name: STATUS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Image
+    logical_name: IMAGE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: KPI
+  logical_name: KPI
+  label: KPI
+  concept_type: DIMENSION
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  synonyms: []
+  business_rules: []
+  physical_table: KPI
+  attributes:
+  - name: KPI
+    logical_name: KPI
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Category
+    logical_name: CATEGORY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Category
+  logical_name: CATEGORY
+  label: Category
+  concept_type: DIMENSION
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  synonyms: []
+  business_rules: []
+  physical_table: Category
+  attributes:
+  - name: Category
+    logical_name: CATEGORY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Channel
+    logical_name: CHANNEL
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Sort
+    logical_name: SORT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+metrics:
+- name: Count_of_Product
+  logical_name: COUNT_OF_PRODUCT
+  label: Count of Product
+  sql_expression: COUNT(PRODUCT."PRODUCT")
+  dax_expression: COUNTA('Product'[Product])
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Count of Product
+  - Count_of_Product
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: Product
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: NewCount_of_Product
+  logical_name: NEWCOUNT_OF_PRODUCT
+  label: NewCount of Product
+  sql_expression: COUNT(CASE WHEN PRODUCT.PRODUCT IS NULL THEN 1 ELSE NULL END)
+  dax_expression: COUNTBLANK('Product'[Product])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - NewCount of Product
+  - NewCount_of_Product
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: Product
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: NewNewCount_of_Product
+  logical_name: NEWNEWCOUNT_OF_PRODUCT
+  label: NewNewCount of Product
+  sql_expression: COUNT(CASE WHEN PRODUCT.PRODUCT IS NULL THEN 1 ELSE NULL END)
+  dax_expression: COUNTBLANK('Product'[Product])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - NewNewCount of Product
+  - NewNewCount_of_Product
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: Product
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Total_Units
+  logical_name: TOTAL_UNITS
+  label: Total Units
+  sql_expression: SUM(SALESFACT."UNITS")
+  dax_expression: SUM([Units])
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total Units
+  - Total_Units
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Sales
+  logical_name: SALES
+  label: Sales $
+  sql_expression: SUM(SALESFACT."REVENUE")
+  dax_expression: SUM([Revenue])
+  format_string: \$#,0;(\$#,0);\$#,0
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Sales $
+  - Sales
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Sentiment
+  logical_name: SENTIMENT
+  label: Sentiment
+  sql_expression: AVG(SENTIMENT."SCORE")
+  dax_expression: AVERAGE(Sentiment[Score])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Sentiment
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Total_Units_YTD
+  logical_name: TOTAL_UNITS_YTD
+  label: Total Units YTD
+  sql_expression: SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC('YEAR', CURRENT_DATE())
+    AND COL_DATE."COL_DATE" <= CURRENT_DATE() THEN SALESFACT."UNITS" ELSE NULL END)
+  dax_expression: TOTALYTD([Total_Units], 'Date'[Date])
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total Units YTD
+  - Total_Units_YTD
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Total_VanArsdel_Units_YTD
+  logical_name: TOTAL_VANARSDEL_UNITS_YTD
+  label: Total VanArsdel Units YTD
+  sql_expression: SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN CASE WHEN COL_DATE."COL_DATE"
+    >= DATE_TRUNC('YEAR', CURRENT_DATE()) AND COL_DATE."COL_DATE" <= CURRENT_DATE()
+    THEN SALESFACT."UNITS" ELSE NULL END ELSE NULL END)
+  dax_expression: CALCULATE([Total_Units_YTD], FILTER(ALL(Product[isVanArsdel]), Product[isVanArsdel]="Yes"))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total VanArsdel Units YTD
+  - Total_VanArsdel_Units_YTD
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Total_OTHER_Units_YTD
+  logical_name: TOTAL_OTHER_UNITS_YTD
+  label: Total OTHER Units YTD
+  sql_expression: SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'No' THEN CASE WHEN COL_DATE."COL_DATE"
+    >= DATE_TRUNC('YEAR', CURRENT_DATE()) AND COL_DATE."COL_DATE" <= CURRENT_DATE()
+    THEN SALESFACT."UNITS" ELSE NULL END ELSE NULL END)
+  dax_expression: CALCULATE([Total_Units_YTD], FILTER(ALL(Product[isVanArsdel]), Product[isVanArsdel]="No"))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total OTHER Units YTD
+  - Total_OTHER_Units_YTD
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Total_VanArsdel_Units
+  logical_name: TOTAL_VANARSDEL_UNITS
+  label: Total VanArsdel Units
+  sql_expression: SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS"
+    ELSE NULL END)
+  dax_expression: CALCULATE([Total_Units], FILTER(ALL(Product[isVanArsdel]), Product[isVanArsdel]="Yes"))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total VanArsdel Units
+  - Total_VanArsdel_Units
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Total_OTHER_Units
+  logical_name: TOTAL_OTHER_UNITS
+  label: Total OTHER Units
+  sql_expression: SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'No' THEN SALESFACT."UNITS"
+    ELSE NULL END)
+  dax_expression: CALCULATE([Total_Units], FILTER(ALL(Product[isVanArsdel]), Product[isVanArsdel]="No"))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total OTHER Units
+  - Total_OTHER_Units
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Pct_Units_Market_Share
+  logical_name: PCT_UNITS_MARKET_SHARE
+  label: '% Units Market Share'
+  sql_expression: CASE WHEN COALESCE((SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes'
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0) = 0 THEN 0 ELSE IFF(COALESCE((SUM(SALESFACT."UNITS")),
+    0) = 0, 0, (SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS"
+    ELSE NULL END)) / (SUM(SALESFACT."UNITS"))) END
+  dax_expression: IF([Total_VanArsdel_Units]=0, 0, DIVIDE([Total_VanArsdel_Units],
+    [Total_Units], 0))
+  format_string: 0.0%;-0.0%;0.0%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '% Units Market Share'
+  - Pct_Units_Market_Share
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Total_Category_Volume
+  logical_name: TOTAL_CATEGORY_VOLUME
+  label: Total Category Volume
+  sql_expression: (SUM(SALESFACT."UNITS"))
+  dax_expression: CALCULATE([Total_Units])
+  format_string: \$#,0;(\$#,0);\$#,0
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total Category Volume
+  - Total_Category_Volume
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Total_Compete_Volume
+  logical_name: TOTAL_COMPETE_VOLUME
+  label: Total Compete Volume
+  sql_expression: SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'No' THEN SALESFACT."UNITS"
+    END)
+  dax_expression: CALCULATE([Total_Units], FILTER('Product', Product[isVanArsdel]="No"))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total Compete Volume
+  - Total_Compete_Volume
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Pct_Category_Compete_Share
+  logical_name: PCT_CATEGORY_COMPETE_SHARE
+  label: '% Category Compete Share'
+  sql_expression: FLOOR((SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'No' THEN SALESFACT."UNITS"
+    END)) / NULLIF((SUM(SALESFACT."UNITS")), 0) * 100)
+  dax_expression: INT(DIVIDE([Total_Compete_Volume], [Total_Category_Volume])*100)
+  format_string: 0%;-0%;0%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '% Category Compete Share'
+  - Pct_Category_Compete_Share
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: TOTAL_UNITS_SPLY
+  logical_name: TOTAL_UNITS_SPLY
+  label: TOTAL UNITS SPLY
+  sql_expression: SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR, -1,
+    CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR',
+    CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALESFACT."UNITS"
+    ELSE NULL END)
+  dax_expression: CALCULATE([Total_Units],SAMEPERIODLASTYEAR('Date'[Date]))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - TOTAL UNITS SPLY
+  - TOTAL_UNITS_SPLY
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Total_Units_YTD_SPLY
+  logical_name: TOTAL_UNITS_YTD_SPLY
+  label: Total Units YTD SPLY
+  sql_expression: (SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC('YEAR', DATEADD(YEAR,
+    -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" <= DATEADD(YEAR, -1, CURRENT_DATE())
+    THEN SALESFACT."UNITS" ELSE NULL END))
+  dax_expression: CALCULATE([Total_Units_YTD], SAMEPERIODLASTYEAR('Date'[Date]))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total Units YTD SPLY
+  - Total_Units_YTD_SPLY
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Total_VanArsdel_Units_YTD_SPLY
+  logical_name: TOTAL_VANARSDEL_UNITS_YTD_SPLY
+  label: Total VanArsdel Units YTD SPLY
+  sql_expression: (SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN CASE WHEN COL_DATE."COL_DATE"
+    >= DATE_TRUNC('YEAR', DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE"
+    <= DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALESFACT."UNITS" ELSE NULL END ELSE
+    NULL END))
+  dax_expression: CALCULATE([Total_VanArsdel_Units_YTD], SAMEPERIODLASTYEAR('Date'[Date]))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total VanArsdel Units YTD SPLY
+  - Total_VanArsdel_Units_YTD_SPLY
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Total_OTHER_Units_YTD_SPLY
+  logical_name: TOTAL_OTHER_UNITS_YTD_SPLY
+  label: Total OTHER Units YTD SPLY
+  sql_expression: (SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'No' THEN CASE WHEN COL_DATE."COL_DATE"
+    >= DATE_TRUNC('YEAR', DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE"
+    <= DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALESFACT."UNITS" ELSE NULL END ELSE
+    NULL END))
+  dax_expression: CALCULATE([Total_OTHER_Units_YTD], SAMEPERIODLASTYEAR('Date'[Date]))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total OTHER Units YTD SPLY
+  - Total_OTHER_Units_YTD_SPLY
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Pct_Units_Market_Share_YTD
+  logical_name: PCT_UNITS_MARKET_SHARE_YTD
+  label: '% Units Market Share YTD'
+  sql_expression: (SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN CASE WHEN COL_DATE."COL_DATE"
+    >= DATE_TRUNC('YEAR', CURRENT_DATE()) AND COL_DATE."COL_DATE" <= CURRENT_DATE()
+    THEN SALESFACT."UNITS" ELSE NULL END ELSE NULL END)) / NULLIF((SUM(CASE WHEN COL_DATE."COL_DATE"
+    >= DATE_TRUNC('YEAR', CURRENT_DATE()) AND COL_DATE."COL_DATE" <= CURRENT_DATE()
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0)
+  dax_expression: DIVIDE([Total_VanArsdel_Units_YTD], [Total_Units_YTD])
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '% Units Market Share YTD'
+  - Pct_Units_Market_Share_YTD
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Pct_Market_Share_SPLY_YTD
+  logical_name: PCT_MARKET_SHARE_SPLY_YTD
+  label: '% Market Share SPLY YTD'
+  sql_expression: ((SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN CASE WHEN COL_DATE."COL_DATE"
+    >= DATE_TRUNC('YEAR', DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE"
+    <= DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALESFACT."UNITS" ELSE NULL END ELSE
+    NULL END)) / NULLIF((SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC('YEAR', DATEADD(YEAR,
+    -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" <= DATEADD(YEAR, -1, CURRENT_DATE())
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0))
+  dax_expression: CALCULATE([Pct_Units_Market_Share_YTD], SAMEPERIODLASTYEAR('Date'[Date]))
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '% Market Share SPLY YTD'
+  - Pct_Market_Share_SPLY_YTD
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Pct_Unit_Market_Share_YOY_Change
+  logical_name: PCT_UNIT_MARKET_SHARE_YOY_CHANGE
+  label: '% Unit Market Share YOY Change'
+  sql_expression: CASE WHEN (CASE WHEN COALESCE((SUM(CASE WHEN PRODUCT."ISVANARSDEL"
+    = 'Yes' THEN SALESFACT."UNITS" ELSE NULL END)), 0) = 0 THEN 0 ELSE IFF(COALESCE((SUM(SALESFACT."UNITS")),
+    0) = 0, 0, (SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS"
+    ELSE NULL END)) / (SUM(SALESFACT."UNITS"))) END) IS NULL AND (CASE WHEN COALESCE((SUM(CASE
+    WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE"
+    BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR,
+    -1, CURRENT_DATE()) THEN CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS"
+    ELSE NULL END ELSE NULL END)), 0) = 0 THEN 0 ELSE IFF(COALESCE((SUM(CASE WHEN
+    YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE"
+    BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR,
+    -1, CURRENT_DATE()) THEN SALESFACT."UNITS" ELSE NULL END)), 0) = 0, 0, (SUM(CASE
+    WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE"
+    BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR,
+    -1, CURRENT_DATE()) THEN CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS"
+    ELSE NULL END ELSE NULL END)) / (SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR,
+    -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR',
+    CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALESFACT."UNITS"
+    ELSE NULL END))) END) IS NULL THEN NULL ELSE COALESCE((CASE WHEN COALESCE((SUM(CASE
+    WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS" ELSE NULL END)), 0)
+    = 0 THEN 0 ELSE IFF(COALESCE((SUM(SALESFACT."UNITS")), 0) = 0, 0, (SUM(CASE WHEN
+    PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS" ELSE NULL END)) / (SUM(SALESFACT."UNITS")))
+    END), 0) - COALESCE((CASE WHEN COALESCE((SUM(CASE WHEN YEAR(COL_DATE."COL_DATE")
+    = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR,
+    -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE())
+    THEN CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS" ELSE NULL
+    END ELSE NULL END)), 0) = 0 THEN 0 ELSE IFF(COALESCE((SUM(CASE WHEN YEAR(COL_DATE."COL_DATE")
+    = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR,
+    -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE())
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0) = 0, 0, (SUM(CASE WHEN YEAR(COL_DATE."COL_DATE")
+    = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR,
+    -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE())
+    THEN CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS" ELSE NULL
+    END ELSE NULL END)) / (SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR,
+    -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR',
+    CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALESFACT."UNITS"
+    ELSE NULL END))) END), 0) END
+  dax_expression: '[Pct_Units_Market_Share]-[Pct_Units_Market_Share_SPLY]'
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '% Unit Market Share YOY Change'
+  - Pct_Unit_Market_Share_YOY_Change
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Pct_Units_Market_Share_SPLY
+  logical_name: PCT_UNITS_MARKET_SHARE_SPLY
+  label: '% Units Market Share SPLY'
+  sql_expression: CASE WHEN COALESCE((SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR,
+    -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR',
+    CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE()) THEN CASE WHEN PRODUCT."ISVANARSDEL"
+    = 'Yes' THEN SALESFACT."UNITS" ELSE NULL END ELSE NULL END)), 0) = 0 THEN 0 ELSE
+    IFF(COALESCE((SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR, -1,
+    CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR',
+    CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALESFACT."UNITS"
+    ELSE NULL END)), 0) = 0, 0, (SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR,
+    -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR',
+    CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE()) THEN CASE WHEN PRODUCT."ISVANARSDEL"
+    = 'Yes' THEN SALESFACT."UNITS" ELSE NULL END ELSE NULL END)) / (SUM(CASE WHEN
+    YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE"
+    BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR,
+    -1, CURRENT_DATE()) THEN SALESFACT."UNITS" ELSE NULL END))) END
+  dax_expression: CALCULATE([Pct_Units_Market_Share], SAMEPERIODLASTYEAR('Date'[Date]))
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '% Units Market Share SPLY'
+  - Pct_Units_Market_Share_SPLY
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Total_Units_R12Ms
+  logical_name: TOTAL_UNITS_R12MS
+  label: Total Units R12Ms
+  sql_expression: SUM(CASE WHEN SALESFACT."_CURRENT_FISCAL_PERIOD" IS NOT NULL AND
+    Date.MONTHINDEX <= SALESFACT."_CURRENT_FISCAL_PERIOD" AND Date.MONTHINDEX > SALESFACT."_CURRENT_FISCAL_PERIOD"
+    - 12 THEN SALESFACT."CAST(UNITS" AS DOUBLE) END)
+  dax_expression: CALCULATE(SUM([Units]), FILTER(ALL('Date'), 'Date'[MonthIndex]<=MAX('Date'[MonthIndex])&&
+    'Date'[MonthIndex]> MAX('Date'[MonthIndex])-12))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total Units R12Ms
+  - Total_Units_R12Ms
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Total_VanArsdel_Units_R12M
+  logical_name: TOTAL_VANARSDEL_UNITS_R12M
+  label: Total VanArsdel Units R12M
+  sql_expression: SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN CASE WHEN SALESFACT."_CURRENT_FISCAL_PERIOD"
+    IS NOT NULL AND Date.MONTHINDEX <= SALESFACT."_CURRENT_FISCAL_PERIOD" AND Date.MONTHINDEX
+    > SALESFACT."_CURRENT_FISCAL_PERIOD" - 12 THEN SALESFACT."CAST(UNITS" AS DOUBLE)
+    END ELSE NULL END)
+  dax_expression: CALCULATE([Total_Units_R12Ms], FILTER(ALL(Product[isVanArsdel]),
+    Product[isVanArsdel]="Yes"))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total VanArsdel Units R12M
+  - Total_VanArsdel_Units_R12M
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Total_OTHER_Units_R12M
+  logical_name: TOTAL_OTHER_UNITS_R12M
+  label: Total OTHER Units R12M
+  sql_expression: SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'No' THEN CASE WHEN SALESFACT."_CURRENT_FISCAL_PERIOD"
+    IS NOT NULL AND Date.MONTHINDEX <= SALESFACT."_CURRENT_FISCAL_PERIOD" AND Date.MONTHINDEX
+    > SALESFACT."_CURRENT_FISCAL_PERIOD" - 12 THEN SALESFACT."CAST(UNITS" AS DOUBLE)
+    END ELSE NULL END)
+  dax_expression: CALCULATE([Total_Units_R12Ms], FILTER(ALL(Product[isVanArsdel]),
+    Product[isVanArsdel]="No"))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total OTHER Units R12M
+  - Total_OTHER_Units_R12M
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Pct_Units_Market_Share_R12M
+  logical_name: PCT_UNITS_MARKET_SHARE_R12M
+  label: '% Units Market Share R12M'
+  sql_expression: CASE WHEN COALESCE((SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes'
+    THEN CASE WHEN SALESFACT."_CURRENT_FISCAL_PERIOD" IS NOT NULL AND Date.MONTHINDEX
+    <= SALESFACT."_CURRENT_FISCAL_PERIOD" AND Date.MONTHINDEX > SALESFACT."_CURRENT_FISCAL_PERIOD"
+    - 12 THEN SALESFACT."CAST(UNITS" AS DOUBLE) END ELSE NULL END)), 0) = 0 THEN 0
+    ELSE IFF(COALESCE((SUM(CASE WHEN SALESFACT."_CURRENT_FISCAL_PERIOD" IS NOT NULL
+    AND Date.MONTHINDEX <= SALESFACT."_CURRENT_FISCAL_PERIOD" AND Date.MONTHINDEX
+    > SALESFACT."_CURRENT_FISCAL_PERIOD" - 12 THEN SALESFACT."CAST(UNITS" AS DOUBLE)
+    END)), 0) = 0, 0, (SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN CASE WHEN
+    SALESFACT."_CURRENT_FISCAL_PERIOD" IS NOT NULL AND Date.MONTHINDEX <= SALESFACT."_CURRENT_FISCAL_PERIOD"
+    AND Date.MONTHINDEX > SALESFACT."_CURRENT_FISCAL_PERIOD" - 12 THEN SALESFACT."CAST(UNITS"
+    AS DOUBLE) END ELSE NULL END)) / (SUM(CASE WHEN SALESFACT."_CURRENT_FISCAL_PERIOD"
+    IS NOT NULL AND Date.MONTHINDEX <= SALESFACT."_CURRENT_FISCAL_PERIOD" AND Date.MONTHINDEX
+    > SALESFACT."_CURRENT_FISCAL_PERIOD" - 12 THEN SALESFACT."CAST(UNITS" AS DOUBLE)
+    END))) END
+  dax_expression: IF([Total_VanArsdel_Units_R12M]=0, 0, DIVIDE([Total_VanArsdel_Units_R12M],
+    [Total_Units_R12Ms], 0))
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '% Units Market Share R12M'
+  - Pct_Units_Market_Share_R12M
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Sentiment_Gap
+  logical_name: SENTIMENT_GAP
+  label: Sentiment Gap
+  sql_expression: CASE WHEN NOT COALESCE((((AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL"
+    = 'No' THEN SENTIMENT."SCORE" ELSE NULL END) IS NULL)) OR ((AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL"
+    = 'Yes' THEN SENTIMENT."SCORE" ELSE NULL END) IS NULL))), FALSE) THEN CASE WHEN
+    (AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL" = 'No' THEN SENTIMENT."SCORE" ELSE
+    NULL END)) IS NULL AND (AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL" = 'Yes' THEN
+    SENTIMENT."SCORE" ELSE NULL END)) IS NULL THEN NULL ELSE COALESCE(AVG(CASE WHEN
+    MANUFACTURER."MFGISVANARSDEL" = 'No' THEN SENTIMENT."SCORE" ELSE NULL END), 0)
+    - COALESCE(AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL" = 'Yes' THEN SENTIMENT."SCORE"
+    ELSE NULL END), 0) END END
+  dax_expression: IF(ISBLANK(CALCULATE([Sentiment], Manufacturer[MfgisVanArsdel]="No"))||ISBLANK(CALCULATE([Sentiment],
+    Manufacturer[MfgisVanArsdel]="Yes")), BLANK(), CALCULATE([Sentiment], Manufacturer[MfgisVanArsdel]="No")
+    - CALCULATE([Sentiment], Manufacturer[MfgisVanArsdel]="Yes"))
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Sentiment Gap
+  - Sentiment_Gap
+  business_rules: []
+  derives_from:
+  - Sentiment
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Total_Units_YTD_Var
+  logical_name: TOTAL_UNITS_YTD_VAR
+  label: Total Units YTD Var
+  sql_expression: CASE WHEN (SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC('YEAR',
+    CURRENT_DATE()) AND COL_DATE."COL_DATE" <= CURRENT_DATE() THEN SALESFACT."UNITS"
+    ELSE NULL END)) IS NULL AND (SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC('YEAR',
+    DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" <= DATEADD(YEAR, -1,
+    CURRENT_DATE()) THEN SALESFACT."UNITS" ELSE NULL END)) IS NULL THEN NULL ELSE
+    COALESCE((SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC('YEAR', CURRENT_DATE())
+    AND COL_DATE."COL_DATE" <= CURRENT_DATE() THEN SALESFACT."UNITS" ELSE NULL END)),
+    0) - COALESCE((SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC('YEAR', DATEADD(YEAR,
+    -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" <= DATEADD(YEAR, -1, CURRENT_DATE())
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0) END
+  dax_expression: '[Total_Units_YTD]-[Total_Units_YTD_SPLY]'
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total Units YTD Var
+  - Total_Units_YTD_Var
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Total_Units_YTD_Var_Pct
+  logical_name: TOTAL_UNITS_YTD_VAR_PCT
+  label: Total Units YTD Var %
+  sql_expression: (CASE WHEN (SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC('YEAR',
+    CURRENT_DATE()) AND COL_DATE."COL_DATE" <= CURRENT_DATE() THEN SALESFACT."UNITS"
+    ELSE NULL END)) IS NULL AND (SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC('YEAR',
+    DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" <= DATEADD(YEAR, -1,
+    CURRENT_DATE()) THEN SALESFACT."UNITS" ELSE NULL END)) IS NULL THEN NULL ELSE
+    COALESCE((SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC('YEAR', CURRENT_DATE())
+    AND COL_DATE."COL_DATE" <= CURRENT_DATE() THEN SALESFACT."UNITS" ELSE NULL END)),
+    0) - COALESCE((SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC('YEAR', DATEADD(YEAR,
+    -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" <= DATEADD(YEAR, -1, CURRENT_DATE())
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0) END) / NULLIF((SUM(CASE WHEN YEAR(COL_DATE."COL_DATE")
+    = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR,
+    -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE())
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0)
+  dax_expression: DIVIDE([Total_Units_YTD_Var],[TOTAL_UNITS_SPLY])
+  format_string: 0%;-0%;0%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total Units YTD Var %
+  - Total_Units_YTD_Var_Pct
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Sum_of_Units
+  logical_name: SUM_OF_UNITS
+  label: Sum of Units
+  sql_expression: SUM(SALESFACT."UNITS")
+  dax_expression: SUM('SalesFact'[Units])
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Sum of Units
+  - Sum_of_Units
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Indicator01
+  logical_name: INDICATOR01
+  label: '@Indicator01'
+  sql_expression: CASE WHEN COALESCE((FLOOR((SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'No'
+    THEN SALESFACT."UNITS" END)) / NULLIF((SUM(SALESFACT."UNITS")), 0) * 100)), 0)
+    < 0.55 THEN 1 ELSE CASE WHEN (FLOOR((SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'No'
+    THEN SALESFACT."UNITS" END)) / NULLIF((SUM(SALESFACT."UNITS")), 0) * 100)) > 0.6
+    THEN 3 ELSE 2 END END
+  dax_expression: IF('SalesFact'[Pct_Category_Compete_Share]<0.55,1,IF('SalesFact'[Pct_Category_Compete_Share]>0.6,3,2))
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '@Indicator01'
+  - Indicator01
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Indicator02
+  logical_name: INDICATOR02
+  label: '@Indicator02'
+  sql_expression: CASE WHEN (CASE WHEN (CASE WHEN COALESCE((SUM(CASE WHEN PRODUCT."ISVANARSDEL"
+    = 'Yes' THEN SALESFACT."UNITS" ELSE NULL END)), 0) = 0 THEN 0 ELSE IFF(COALESCE((SUM(SALESFACT."UNITS")),
+    0) = 0, 0, (SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS"
+    ELSE NULL END)) / (SUM(SALESFACT."UNITS"))) END) IS NULL AND (CASE WHEN COALESCE((SUM(CASE
+    WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE"
+    BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR,
+    -1, CURRENT_DATE()) THEN CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS"
+    ELSE NULL END ELSE NULL END)), 0) = 0 THEN 0 ELSE IFF(COALESCE((SUM(CASE WHEN
+    YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE"
+    BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR,
+    -1, CURRENT_DATE()) THEN SALESFACT."UNITS" ELSE NULL END)), 0) = 0, 0, (SUM(CASE
+    WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE"
+    BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR,
+    -1, CURRENT_DATE()) THEN CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS"
+    ELSE NULL END ELSE NULL END)) / (SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR,
+    -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR',
+    CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALESFACT."UNITS"
+    ELSE NULL END))) END) IS NULL THEN NULL ELSE COALESCE((CASE WHEN COALESCE((SUM(CASE
+    WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS" ELSE NULL END)), 0)
+    = 0 THEN 0 ELSE IFF(COALESCE((SUM(SALESFACT."UNITS")), 0) = 0, 0, (SUM(CASE WHEN
+    PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS" ELSE NULL END)) / (SUM(SALESFACT."UNITS")))
+    END), 0) - COALESCE((CASE WHEN COALESCE((SUM(CASE WHEN YEAR(COL_DATE."COL_DATE")
+    = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR,
+    -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE())
+    THEN CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS" ELSE NULL
+    END ELSE NULL END)), 0) = 0 THEN 0 ELSE IFF(COALESCE((SUM(CASE WHEN YEAR(COL_DATE."COL_DATE")
+    = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR,
+    -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE())
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0) = 0, 0, (SUM(CASE WHEN YEAR(COL_DATE."COL_DATE")
+    = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR,
+    -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE())
+    THEN CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS" ELSE NULL
+    END ELSE NULL END)) / (SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR,
+    -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR',
+    CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALESFACT."UNITS"
+    ELSE NULL END))) END), 0) END) < 0 THEN 1 ELSE CASE WHEN (CASE WHEN (CASE WHEN
+    COALESCE((SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS" ELSE
+    NULL END)), 0) = 0 THEN 0 ELSE IFF(COALESCE((SUM(SALESFACT."UNITS")), 0) = 0,
+    0, (SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS" ELSE NULL
+    END)) / (SUM(SALESFACT."UNITS"))) END) IS NULL AND (CASE WHEN COALESCE((SUM(CASE
+    WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE"
+    BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR,
+    -1, CURRENT_DATE()) THEN CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS"
+    ELSE NULL END ELSE NULL END)), 0) = 0 THEN 0 ELSE IFF(COALESCE((SUM(CASE WHEN
+    YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE"
+    BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR,
+    -1, CURRENT_DATE()) THEN SALESFACT."UNITS" ELSE NULL END)), 0) = 0, 0, (SUM(CASE
+    WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE"
+    BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR,
+    -1, CURRENT_DATE()) THEN CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS"
+    ELSE NULL END ELSE NULL END)) / (SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR,
+    -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR',
+    CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALESFACT."UNITS"
+    ELSE NULL END))) END) IS NULL THEN NULL ELSE COALESCE((CASE WHEN COALESCE((SUM(CASE
+    WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS" ELSE NULL END)), 0)
+    = 0 THEN 0 ELSE IFF(COALESCE((SUM(SALESFACT."UNITS")), 0) = 0, 0, (SUM(CASE WHEN
+    PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS" ELSE NULL END)) / (SUM(SALESFACT."UNITS")))
+    END), 0) - COALESCE((CASE WHEN COALESCE((SUM(CASE WHEN YEAR(COL_DATE."COL_DATE")
+    = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR,
+    -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE())
+    THEN CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS" ELSE NULL
+    END ELSE NULL END)), 0) = 0 THEN 0 ELSE IFF(COALESCE((SUM(CASE WHEN YEAR(COL_DATE."COL_DATE")
+    = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR,
+    -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE())
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0) = 0, 0, (SUM(CASE WHEN YEAR(COL_DATE."COL_DATE")
+    = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR,
+    -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE())
+    THEN CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS" ELSE NULL
+    END ELSE NULL END)) / (SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR,
+    -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR',
+    CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALESFACT."UNITS"
+    ELSE NULL END))) END), 0) END) > 0.2 THEN 3 ELSE 2 END END
+  dax_expression: IF('SalesFact'[Pct_Unit_Market_Share_YOY_Change]<0,1,IF('SalesFact'[Pct_Unit_Market_Share_YOY_Change]>.2,3,2))
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '@Indicator02'
+  - Indicator02
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Num_Space01
+  logical_name: NUM_SPACE01
+  label: '#Space01'
+  sql_expression: ''''''
+  dax_expression: '"" '
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '#Space01'
+  - Num_Space01
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Num_Space02
+  logical_name: NUM_SPACE02
+  label: '#Space02'
+  sql_expression: ''''''
+  dax_expression: '"" '
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '#Space02'
+  - Num_Space02
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Indicator03
+  logical_name: INDICATOR03
+  label: '@Indicator03'
+  sql_expression: CASE WHEN ((CASE WHEN (SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC('YEAR',
+    CURRENT_DATE()) AND COL_DATE."COL_DATE" <= CURRENT_DATE() THEN SALESFACT."UNITS"
+    ELSE NULL END)) IS NULL AND (SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC('YEAR',
+    DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" <= DATEADD(YEAR, -1,
+    CURRENT_DATE()) THEN SALESFACT."UNITS" ELSE NULL END)) IS NULL THEN NULL ELSE
+    COALESCE((SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC('YEAR', CURRENT_DATE())
+    AND COL_DATE."COL_DATE" <= CURRENT_DATE() THEN SALESFACT."UNITS" ELSE NULL END)),
+    0) - COALESCE((SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC('YEAR', DATEADD(YEAR,
+    -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" <= DATEADD(YEAR, -1, CURRENT_DATE())
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0) END) / NULLIF((SUM(CASE WHEN YEAR(COL_DATE."COL_DATE")
+    = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR,
+    -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE())
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0)) < 0 THEN 1 ELSE CASE WHEN ((CASE WHEN
+    (SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC('YEAR', CURRENT_DATE()) AND COL_DATE."COL_DATE"
+    <= CURRENT_DATE() THEN SALESFACT."UNITS" ELSE NULL END)) IS NULL AND (SUM(CASE
+    WHEN COL_DATE."COL_DATE" >= DATE_TRUNC('YEAR', DATEADD(YEAR, -1, CURRENT_DATE()))
+    AND COL_DATE."COL_DATE" <= DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALESFACT."UNITS"
+    ELSE NULL END)) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN COL_DATE."COL_DATE"
+    >= DATE_TRUNC('YEAR', CURRENT_DATE()) AND COL_DATE."COL_DATE" <= CURRENT_DATE()
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0) - COALESCE((SUM(CASE WHEN COL_DATE."COL_DATE"
+    >= DATE_TRUNC('YEAR', DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE"
+    <= DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALESFACT."UNITS" ELSE NULL END)), 0)
+    END) / NULLIF((SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR, -1,
+    CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR',
+    CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALESFACT."UNITS"
+    ELSE NULL END)), 0)) > 0.1 THEN 3 ELSE 2 END END
+  dax_expression: IF('SalesFact'[Total_Units_YTD_Var_Pct]<0,1,IF('SalesFact'[Total_Units_YTD_Var_Pct]>0.1,3,2))
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '@Indicator03'
+  - Indicator03
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Indicator04
+  logical_name: INDICATOR04
+  label: '@Indicator04'
+  sql_expression: CASE WHEN COALESCE((AVG(SENTIMENT."SCORE")), 0) < 65 THEN 1 ELSE
+    CASE WHEN (AVG(SENTIMENT."SCORE")) > 67 THEN 3 ELSE 2 END END
+  dax_expression: IF('SalesFact'[Sentiment]<65,1,IF('SalesFact'[Sentiment]>67,3,2))
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '@Indicator04'
+  - Indicator04
+  business_rules: []
+  derives_from:
+  - Sentiment
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Indicator05
+  logical_name: INDICATOR05
+  label: '@Indicator05'
+  sql_expression: CASE WHEN COALESCE((CASE WHEN NOT COALESCE((((AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL"
+    = 'No' THEN SENTIMENT."SCORE" ELSE NULL END) IS NULL)) OR ((AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL"
+    = 'Yes' THEN SENTIMENT."SCORE" ELSE NULL END) IS NULL))), FALSE) THEN CASE WHEN
+    (AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL" = 'No' THEN SENTIMENT."SCORE" ELSE
+    NULL END)) IS NULL AND (AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL" = 'Yes' THEN
+    SENTIMENT."SCORE" ELSE NULL END)) IS NULL THEN NULL ELSE COALESCE(AVG(CASE WHEN
+    MANUFACTURER."MFGISVANARSDEL" = 'No' THEN SENTIMENT."SCORE" ELSE NULL END), 0)
+    - COALESCE(AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL" = 'Yes' THEN SENTIMENT."SCORE"
+    ELSE NULL END), 0) END END), 0) < 15 THEN 1 ELSE CASE WHEN (CASE WHEN NOT COALESCE((((AVG(CASE
+    WHEN MANUFACTURER."MFGISVANARSDEL" = 'No' THEN SENTIMENT."SCORE" ELSE NULL END)
+    IS NULL)) OR ((AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL" = 'Yes' THEN SENTIMENT."SCORE"
+    ELSE NULL END) IS NULL))), FALSE) THEN CASE WHEN (AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL"
+    = 'No' THEN SENTIMENT."SCORE" ELSE NULL END)) IS NULL AND (AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL"
+    = 'Yes' THEN SENTIMENT."SCORE" ELSE NULL END)) IS NULL THEN NULL ELSE COALESCE(AVG(CASE
+    WHEN MANUFACTURER."MFGISVANARSDEL" = 'No' THEN SENTIMENT."SCORE" ELSE NULL END),
+    0) - COALESCE(AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL" = 'Yes' THEN SENTIMENT."SCORE"
+    ELSE NULL END), 0) END END) > 25 THEN 3 ELSE 2 END END
+  dax_expression: IF('SalesFact'[Sentiment_Gap]<15,1,IF('SalesFact'[Sentiment_Gap]>25,3,2))
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '@Indicator05'
+  - Indicator05
+  business_rules: []
+  derives_from:
+  - Sentiment
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Indicator04A
+  logical_name: INDICATOR04A
+  label: '@Indicator04A'
+  sql_expression: CASE WHEN SalesFact."INDICATOR04" = 1 THEN 'Low Sentiment Rate'
+    ELSE CASE WHEN SalesFact."INDICATOR04" = 3 THEN 'High Sentiment Rate' ELSE 'Medium
+    Sentiment Rate' END END
+  dax_expression: IF('SalesFact'[Indicator04]=1,"Low Sentiment Rate",IF('SalesFact'[Indicator04]=3,"High
+    Sentiment Rate","Medium Sentiment Rate"))
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '@Indicator04A'
+  - Indicator04A
+  business_rules: []
+  derives_from:
+  - Indicator04
+  - Sentiment
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Indicator05A
+  logical_name: INDICATOR05A
+  label: '@Indicator05A'
+  sql_expression: CASE WHEN SalesFact."INDICATOR05" = 1 THEN 'Low Sentiment Gap' ELSE
+    CASE WHEN SalesFact."INDICATOR05" = 3 THEN 'High Sentiment Gap' ELSE 'Medium Sentiment
+    Gap' END END
+  dax_expression: IF('SalesFact'[Indicator05]=1,"Low Sentiment Gap",IF('SalesFact'[Indicator05]=3,"High
+    Sentiment Gap","Medium Sentiment Gap"))
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '@Indicator05A'
+  - Indicator05A
+  business_rules: []
+  derives_from:
+  - Indicator05
+  - Sentiment
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Total_Units_YTD_Var_Pct2
+  logical_name: TOTAL_UNITS_YTD_VAR_PCT2
+  label: Total Units YTD Var %2
+  sql_expression: FLOOR((CASE WHEN (SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC('YEAR',
+    CURRENT_DATE()) AND COL_DATE."COL_DATE" <= CURRENT_DATE() THEN SALESFACT."UNITS"
+    ELSE NULL END)) IS NULL AND (SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC('YEAR',
+    DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" <= DATEADD(YEAR, -1,
+    CURRENT_DATE()) THEN SALESFACT."UNITS" ELSE NULL END)) IS NULL THEN NULL ELSE
+    COALESCE((SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC('YEAR', CURRENT_DATE())
+    AND COL_DATE."COL_DATE" <= CURRENT_DATE() THEN SALESFACT."UNITS" ELSE NULL END)),
+    0) - COALESCE((SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC('YEAR', DATEADD(YEAR,
+    -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" <= DATEADD(YEAR, -1, CURRENT_DATE())
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0) END) / NULLIF((SUM(CASE WHEN YEAR(COL_DATE."COL_DATE")
+    = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR,
+    -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE())
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0) * 100)
+  dax_expression: INT(DIVIDE([Total_Units_YTD_Var],[TOTAL_UNITS_SPLY])*100)
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total Units YTD Var %2
+  - Total_Units_YTD_Var_Pct2
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: SalesFact
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Sum_of_Score
+  logical_name: SUM_OF_SCORE
+  label: Sum of Score
+  sql_expression: SUM(SENTIMENT."SCORE")
+  dax_expression: SUM('Sentiment'[Score])
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Sum of Score
+  - Sum_of_Score
+  business_rules: []
+  derives_from:
+  - Sentiment
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: Sentiment
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Average_of_Score
+  logical_name: AVERAGE_OF_SCORE
+  label: Average of Score
+  sql_expression: AVG(SENTIMENT."SCORE")
+  dax_expression: AVERAGE('Sentiment'[Score])
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Average of Score
+  - Average_of_Score
+  business_rules: []
+  derives_from:
+  - Sentiment
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: Sentiment
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: Revenue_per_Unit
+  logical_name: REVENUE_PER_UNIT
+  label: Revenue per Unit
+  sql_expression: SUM(SALESFACT."CAST(REVENUE" AS DOUBLE)) / NULLIF(SUM(SALESFACT."CAST(UNITS"
+    AS DOUBLE)), 0)
+  dax_expression: DIVIDE(SUM(SalesFact[Revenue]), SUM(SalesFact[Units]))
+  format_string: '"₹"\ #,0.###############;#,0.###############\ -"₹";"₹"\ #,0.###############'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Revenue per Unit
+  - Revenue_per_Unit
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: Sentiment
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: KPI01
+  logical_name: KPI01
+  label: KPI01
+  dax_expression: IF(SUM('KPI'[KPI])=1,CONCATENATE(LEFT([Total_Units_YTD_Var_Pct2],3),("
+    % ROI (Return on Investment)")),IF(SUM('KPI'[KPI])=2," ",IF(SUM('KPI'[KPI])=3,CALCULATE([Total_Category_Volume],'Date'[Running
+    Year]=1))))
+  format_string: \$#,0;(\$#,0);\$#,0
+  is_hidden: true
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - KPI01
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: KPI
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: KPI02
+  logical_name: KPI02
+  label: KPI02
+  dax_expression: IF(SUM('KPI'[KPI])=1,(CALCULATE([Total_Category_Volume],'Date'[Running
+    Year]=1)),IF(SUM('KPI'[KPI])=2," ",IF(SUM('KPI'[KPI])=3,CONCATENATE(LEFT([Total_Units_YTD_Var_Pct2],3),"%"))))
+  format_string: \$#,0.###############;(\$#,0.###############);\$#,0.###############
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - KPI02
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: KPI
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: SUM_OF_MONTHNO
+  logical_name: SUM_OF_MONTHNO
+  label: SUM_OF_MONTHNO
+  sql_expression: SUM(COL_DATE."MONTHNO")
+  dax_expression: SUM('Date'[MonthNo])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_MONTHNO
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: Date
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: SUM_OF_YEAR
+  logical_name: SUM_OF_YEAR
+  label: SUM_OF_YEAR
+  sql_expression: SUM(COL_DATE."YEAR")
+  dax_expression: SUM('Date'[Year])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_YEAR
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: Date
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+- name: SUM_OF_SORT
+  logical_name: SUM_OF_SORT
+  label: SUM_OF_SORT
+  sql_expression: SUM(INDICATORS."SORT")
+  dax_expression: SUM('Indicators'[Sort])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_SORT
+  business_rules: []
+  domain: nat1 · Competitive Marketing Analysis (More Synonyms)_updated
+  concept: Indicators
+  semantic_view_name: workspace.default.Competitive_Marketing_Analysis_More_Synonyms_updated_metric_view
+  tags: []
+  origin: bi
+relationships:
+- name: REL_PRODUCT_MANUFACTURERID__MANUFACTURER_MANUFACTURERID
+  from_concept: Product
+  to_concept: Manufacturer
+  cardinality: N:1
+  join_expression: Product.ManufacturerID = Manufacturer.ManufacturerID
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SALESFACT_PRODUCTID__PRODUCT_PRODUCTID
+  from_concept: SalesFact
+  to_concept: Product
+  cardinality: N:1
+  join_expression: SalesFact.ProductID = Product.ProductID
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SALESFACT_DATE__DATE_DATE
+  from_concept: SalesFact
+  to_concept: Date
+  cardinality: N:1
+  join_expression: SalesFact.Date = Date.Date
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SALESFACT_ZIP__GEO_ZIP
+  from_concept: SalesFact
+  to_concept: Geo
+  cardinality: N:1
+  join_expression: SalesFact.Zip = Geo.Zip
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SENTIMENT_ZIP__GEO_ZIP
+  from_concept: Sentiment
+  to_concept: Geo
+  cardinality: N:1
+  join_expression: Sentiment.zip = Geo.Zip
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SENTIMENT_DATE__DATE_DATE
+  from_concept: Sentiment
+  to_concept: Date
+  cardinality: N:1
+  join_expression: Sentiment.Date = Date.Date
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SENTIMENT_MANUFACTURERID__MANUFACTURER_MANUFACTURERID
+  from_concept: Sentiment
+  to_concept: Manufacturer
+  cardinality: N:1
+  join_expression: Sentiment.ManufacturerID = Manufacturer.ManufacturerID
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_PRODUCT_SEGMENT__CATEGORY_CATEGORY
+  from_concept: Product
+  to_concept: Category
+  cardinality: N:1
+  join_expression: Product.Segment = Category.Category
+  cross_filter_direction: single
+  is_active: true
+  origin: bi

@@ -1,0 +1,75 @@
+domain: reg_test · continent
+id: reg_test__continent
+version: 1.0.0
+source_project_id: proj-reg_test
+source_model_id: continent
+source_model_name: continent
+semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.CONTINENT_SEMANTIC
+concepts:
+- name: continent 1
+  logical_name: CONTINENT_1
+  label: continent 1
+  concept_type: DIMENSION
+  domain: reg_test · continent
+  synonyms: []
+  business_rules: []
+  physical_table: continent 1
+  attributes:
+  - name: Column1
+    logical_name: COLUMN1
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Column
+    logical_name: COL_COLUMN
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+metrics:
+- name: MEASURE
+  logical_name: MEASURE
+  label: Measure
+  sql_expression: COUNT(*)
+  dax_expression: 'COUNTROWS(''continent 1'')
+
+    '
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Measure
+  business_rules: []
+  domain: reg_test · continent
+  concept: continent 1
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.CONTINENT_SEMANTIC
+  tags: []
+  origin: bi
+- name: MEASURE_2
+  logical_name: MEASURE_2
+  label: Measure 2
+  sql_expression: COUNT(CASE WHEN CONTINENT_1.COLUMN1 IS NULL THEN 1 ELSE NULL END)
+  dax_expression: COUNTBLANK('continent 1'[Column1])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Measure 2
+  - MEASURE_2
+  business_rules: []
+  domain: reg_test · continent
+  concept: continent 1
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.CONTINENT_SEMANTIC
+  tags: []
+  origin: bi
+relationships: []

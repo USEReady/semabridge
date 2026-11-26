@@ -1,0 +1,1809 @@
+domain: reg_test · Competitive Marketing Analysis
+id: reg_test__competitive_marketing_analysis
+version: 1.0.0
+source_project_id: proj-reg_test
+source_model_id: competitive_marketing_analysis
+source_model_name: Competitive Marketing Analysis
+semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+concepts:
+- name: Category
+  logical_name: CATEGORY
+  label: Category
+  concept_type: DIMENSION
+  domain: reg_test · Competitive Marketing Analysis
+  synonyms: []
+  business_rules: []
+  physical_table: Category
+  attributes:
+  - name: Category
+    logical_name: CATEGORY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Channel
+    logical_name: CHANNEL
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Sort
+    logical_name: SORT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Date
+  logical_name: COL_DATE
+  label: Date
+  concept_type: DIMENSION
+  domain: reg_test · Competitive Marketing Analysis
+  synonyms: []
+  business_rules: []
+  physical_table: Date
+  attributes:
+  - name: Date
+    logical_name: DATE
+    data_type: DATE
+    is_primary_key: true
+    is_hidden: false
+    format_string: General Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: MonthNo
+    logical_name: MONTHNO
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: MonthName
+    logical_name: MONTHNAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: MonthID
+    logical_name: MONTHID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Month
+    logical_name: MONTH
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Quarter
+    logical_name: QUARTER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Year
+    logical_name: YEAR
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: RunningMonths
+    logical_name: RUNNINGMONTHS
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Running Year
+    logical_name: RUNNING_YEAR
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Running Months
+    logical_name: RUNNING_MONTHS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Rolling Period
+    logical_name: ROLLING_PERIOD
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Rolling Period Sort
+    logical_name: ROLLING_PERIOD_SORT
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: MonthIndex
+    logical_name: MONTHINDEX
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Months
+    logical_name: MONTHS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies:
+  - name: YQMD
+    label: YQMD
+    is_hidden: false
+    levels:
+    - name: Year
+      label: Year
+      attribute: Year
+    - name: Quarter
+      label: Quarter
+      attribute: Quarter
+    - name: Month
+      label: Month
+      attribute: Month
+    - name: Date
+      label: Date
+      attribute: Date
+    origin: bi
+  - name: Year Hierarchy
+    label: Year Hierarchy
+    is_hidden: false
+    levels:
+    - name: Year
+      label: Year
+      attribute: Year
+    - name: Months
+      label: Months
+      attribute: Months
+    - name: Date
+      label: Date
+      attribute: Date
+    origin: bi
+  tags: []
+  origin: bi
+- name: Geo
+  logical_name: GEO
+  label: Geo
+  concept_type: DIMENSION
+  domain: reg_test · Competitive Marketing Analysis
+  synonyms: []
+  business_rules: []
+  physical_table: Geo
+  attributes:
+  - name: Zip
+    logical_name: ZIP
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: City
+    logical_name: CITY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: State
+    logical_name: STATE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Region
+    logical_name: REGION
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: District
+    logical_name: DISTRICT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies:
+  - name: GeoRollup
+    label: GeoRollup
+    is_hidden: false
+    levels:
+    - name: State
+      label: State
+      attribute: State
+    - name: City
+      label: City
+      attribute: City
+    - name: Zip
+      label: Zip
+      attribute: Zip
+    origin: bi
+  tags: []
+  origin: bi
+- name: Indicators
+  logical_name: INDICATORS
+  label: Indicators
+  concept_type: DIMENSION
+  domain: reg_test · Competitive Marketing Analysis
+  synonyms: []
+  business_rules: []
+  physical_table: Indicators
+  attributes:
+  - name: Sort
+    logical_name: SORT
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Status
+    logical_name: STATUS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Image
+    logical_name: IMAGE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: KPI
+  logical_name: KPI
+  label: KPI
+  concept_type: DIMENSION
+  domain: reg_test · Competitive Marketing Analysis
+  synonyms: []
+  business_rules: []
+  physical_table: KPI
+  attributes:
+  - name: KPI
+    logical_name: KPI
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Category
+    logical_name: CATEGORY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Manufacturer
+  logical_name: MANUFACTURER
+  label: Manufacturer
+  concept_type: DIMENSION
+  domain: reg_test · Competitive Marketing Analysis
+  synonyms: []
+  business_rules: []
+  physical_table: Manufacturer
+  attributes:
+  - name: ManufacturerID
+    logical_name: MANUFACTURERID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Manufacturer
+    logical_name: MANUFACTURER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: MfgisVanArsdel
+    logical_name: MFGISVANARSDEL
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Product
+  logical_name: PRODUCT
+  label: Product
+  concept_type: DIMENSION
+  domain: reg_test · Competitive Marketing Analysis
+  synonyms: []
+  business_rules: []
+  physical_table: Product
+  attributes:
+  - name: Manufacturer
+    logical_name: MANUFACTURER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Category
+    logical_name: CATEGORY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Segment
+    logical_name: SEGMENT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Product
+    logical_name: PRODUCT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: ProductID
+    logical_name: PRODUCTID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: isVanArsdel
+    logical_name: ISVANARSDEL
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: IsCompeteHide
+    logical_name: ISCOMPETEHIDE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: ManufacturerID
+    logical_name: MANUFACTURERID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: IsCompete
+    logical_name: ISCOMPETE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies:
+  - name: ProductRollup
+    label: ProductRollup
+    is_hidden: false
+    levels:
+    - name: Category
+      label: Category
+      attribute: Category
+    - name: Segment
+      label: Segment
+      attribute: Segment
+    - name: Product
+      label: Product
+      attribute: Product
+    origin: bi
+  tags: []
+  origin: bi
+- name: SalesFact
+  logical_name: SALESFACT
+  label: SalesFact
+  concept_type: ENTITY
+  domain: reg_test · Competitive Marketing Analysis
+  synonyms: []
+  business_rules: []
+  physical_table: SalesFact
+  attributes:
+  - name: ProductID
+    logical_name: PRODUCTID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Date
+    logical_name: DATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: true
+    format_string: General Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Zip
+    logical_name: ZIP
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Units
+    logical_name: UNITS
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Revenue
+    logical_name: REVENUE
+    data_type: DECIMAL(18,2)
+    is_primary_key: false
+    is_hidden: true
+    format_string: \$#,0.00;(\$#,0.00);\$#,0.00
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Sentiment
+  logical_name: SENTIMENT
+  label: Sentiment
+  concept_type: ENTITY
+  domain: reg_test · Competitive Marketing Analysis
+  synonyms: []
+  business_rules: []
+  physical_table: Sentiment
+  attributes:
+  - name: DateID
+    logical_name: DATEID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: StateID
+    logical_name: STATEID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: ManufacturerID
+    logical_name: MANUFACTURERID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Score
+    logical_name: SCORE
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Manufacturer
+    logical_name: MANUFACTURER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Date
+    logical_name: DATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: true
+    format_string: m/d/yyyy
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: State
+    logical_name: STATE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: zip
+    logical_name: ZIP
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: ProductID
+    logical_name: PRODUCTID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+metrics:
+- name: KPI01
+  logical_name: KPI01
+  label: KPI01
+  dax_expression: IF(SUM('KPI'[KPI])=1,CONCATENATE(LEFT([TOTAL_UNITS_YTD_VAR_PCT2],3),("
+    % ROI (Return on Investment)")),IF(SUM('KPI'[KPI])=2," ",IF(SUM('KPI'[KPI])=3,CALCULATE([TOTAL_CATEGORY_VOLUME],'Date'[Running
+    Year]=1))))
+  format_string: \$#,0;(\$#,0);\$#,0
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - KPI01
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: KPI
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: KPI02
+  logical_name: KPI02
+  label: KPI02
+  dax_expression: IF(SUM('KPI'[KPI])=1,(CALCULATE([TOTAL_CATEGORY_VOLUME],'Date'[Running
+    Year]=1)),IF(SUM('KPI'[KPI])=2," ",IF(SUM('KPI'[KPI])=3,CONCATENATE(LEFT([TOTAL_UNITS_YTD_VAR_PCT2],3),"%"))))
+  format_string: \$#,0.###############;(\$#,0.###############);\$#,0.###############
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - KPI02
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: KPI
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: COUNT_OF_PRODUCT
+  logical_name: COUNT_OF_PRODUCT
+  label: Count of Product
+  sql_expression: COUNT(PRODUCT."PRODUCT")
+  dax_expression: COUNTA('Product'[Product])
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Count of Product
+  - COUNT_OF_PRODUCT
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: Product
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: NEWCOUNT_OF_PRODUCT
+  logical_name: NEWCOUNT_OF_PRODUCT
+  label: NewCount of Product
+  sql_expression: COUNT(CASE WHEN PRODUCT.PRODUCT IS NULL THEN 1 ELSE NULL END)
+  dax_expression: COUNTBLANK('Product'[Product])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - NewCount of Product
+  - NEWCOUNT_OF_PRODUCT
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: Product
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: NEWNEWCOUNT_OF_PRODUCT
+  logical_name: NEWNEWCOUNT_OF_PRODUCT
+  label: NewNewCount of Product
+  sql_expression: COUNT(CASE WHEN PRODUCT.PRODUCT IS NULL THEN 1 ELSE NULL END)
+  dax_expression: COUNTBLANK('Product'[Product])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - NewNewCount of Product
+  - NEWNEWCOUNT_OF_PRODUCT
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: Product
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: TOTAL_UNITS
+  logical_name: TOTAL_UNITS
+  label: Total Units
+  sql_expression: SUM(SALESFACT."UNITS")
+  dax_expression: SUM([Units])
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total Units
+  - TOTAL_UNITS
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: SALES_DOL
+  logical_name: SALES_DOL
+  label: Sales $
+  sql_expression: SUM(SALESFACT."REVENUE")
+  dax_expression: SUM([Revenue])
+  format_string: \$#,0;(\$#,0);\$#,0
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Sales $
+  - SALES_DOL
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: SENTIMENT
+  logical_name: SENTIMENT
+  label: Sentiment
+  sql_expression: AVG(SENTIMENT."SCORE")
+  dax_expression: AVERAGE(Sentiment[Score])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Sentiment
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: TOTAL_UNITS_YTD
+  logical_name: TOTAL_UNITS_YTD
+  label: Total Units YTD
+  sql_expression: SUM(CASE WHEN SALESFACT."IS_YTD" THEN SALESFACT."UNITS" ELSE NULL
+    END)
+  dax_expression: TOTALYTD([TOTAL_UNITS], 'Date'[Date])
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total Units YTD
+  - TOTAL_UNITS_YTD
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: TOTAL_VANARSDEL_UNITS_YTD
+  logical_name: TOTAL_VANARSDEL_UNITS_YTD
+  label: Total VanArsdel Units YTD
+  sql_expression: SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN CASE WHEN SALESFACT."IS_YTD"
+    THEN SALESFACT."UNITS" ELSE NULL END ELSE NULL END)
+  dax_expression: CALCULATE([TOTAL_UNITS_YTD], FILTER(ALL(Product[isVanArsdel]), Product[isVanArsdel]="Yes"))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total VanArsdel Units YTD
+  - TOTAL_VANARSDEL_UNITS_YTD
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: TOTAL_OTHER_UNITS_YTD
+  logical_name: TOTAL_OTHER_UNITS_YTD
+  label: Total OTHER Units YTD
+  sql_expression: SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'No' THEN CASE WHEN SALESFACT."IS_YTD"
+    THEN SALESFACT."UNITS" ELSE NULL END ELSE NULL END)
+  dax_expression: CALCULATE([TOTAL_UNITS_YTD], FILTER(ALL(Product[isVanArsdel]), Product[isVanArsdel]="No"))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total OTHER Units YTD
+  - TOTAL_OTHER_UNITS_YTD
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: TOTAL_VANARSDEL_UNITS
+  logical_name: TOTAL_VANARSDEL_UNITS
+  label: Total VanArsdel Units
+  sql_expression: SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS"
+    ELSE NULL END)
+  dax_expression: CALCULATE([TOTAL_UNITS], FILTER(ALL(Product[isVanArsdel]), Product[isVanArsdel]="Yes"))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total VanArsdel Units
+  - TOTAL_VANARSDEL_UNITS
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: TOTAL_OTHER_UNITS
+  logical_name: TOTAL_OTHER_UNITS
+  label: Total OTHER Units
+  sql_expression: SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'No' THEN SALESFACT."UNITS"
+    ELSE NULL END)
+  dax_expression: CALCULATE([TOTAL_UNITS], FILTER(ALL(Product[isVanArsdel]), Product[isVanArsdel]="No"))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total OTHER Units
+  - TOTAL_OTHER_UNITS
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: PCT_UNITS_MARKET_SHARE
+  logical_name: PCT_UNITS_MARKET_SHARE
+  label: '% Units Market Share'
+  sql_expression: CASE WHEN COALESCE((SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes'
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0) = 0 THEN 0 ELSE IFF(COALESCE((SUM(SALESFACT."UNITS")),
+    0) = 0, 0, (SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS"
+    ELSE NULL END)) / (SUM(SALESFACT."UNITS"))) END
+  dax_expression: IF([TOTAL_VANARSDEL_UNITS]=0, 0, DIVIDE([TOTAL_VANARSDEL_UNITS],
+    [TOTAL_UNITS], 0))
+  format_string: 0.0%;-0.0%;0.0%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '% Units Market Share'
+  - PCT_UNITS_MARKET_SHARE
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: TOTAL_CATEGORY_VOLUME
+  logical_name: TOTAL_CATEGORY_VOLUME
+  label: Total Category Volume
+  sql_expression: (SUM(SALESFACT."UNITS"))
+  dax_expression: CALCULATE([TOTAL_UNITS])
+  format_string: \$#,0;(\$#,0);\$#,0
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total Category Volume
+  - TOTAL_CATEGORY_VOLUME
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: TOTAL_COMPETE_VOLUME
+  logical_name: TOTAL_COMPETE_VOLUME
+  label: Total Compete Volume
+  sql_expression: SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'No' THEN SALESFACT."UNITS"
+    END)
+  dax_expression: CALCULATE([TOTAL_UNITS], FILTER('Product', Product[isVanArsdel]="No"))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total Compete Volume
+  - TOTAL_COMPETE_VOLUME
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: PCT_CATEGORY_COMPETE_SHARE
+  logical_name: PCT_CATEGORY_COMPETE_SHARE
+  label: '% Category Compete Share'
+  sql_expression: FLOOR((SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'No' THEN SALESFACT."UNITS"
+    END)) / NULLIF((SUM(SALESFACT."UNITS")), 0) * 100)
+  dax_expression: INT(DIVIDE([TOTAL_COMPETE_VOLUME], [TOTAL_CATEGORY_VOLUME])*100)
+  format_string: 0%;-0%;0%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '% Category Compete Share'
+  - PCT_CATEGORY_COMPETE_SHARE
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: TOTAL_UNITS_SPLY
+  logical_name: TOTAL_UNITS_SPLY
+  label: TOTAL UNITS SPLY
+  sql_expression: SUM(CASE WHEN SALESFACT."IS_SPLY_YEAR" THEN SALESFACT."UNITS" ELSE
+    NULL END)
+  dax_expression: CALCULATE([TOTAL_UNITS],SAMEPERIODLASTYEAR('Date'[Date]))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - TOTAL UNITS SPLY
+  - TOTAL_UNITS_SPLY
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: TOTAL_UNITS_YTD_SPLY
+  logical_name: TOTAL_UNITS_YTD_SPLY
+  label: Total Units YTD SPLY
+  sql_expression: (SUM(CASE WHEN SALESFACT."IS_YTD_SPLY_YEAR" THEN SALESFACT."UNITS"
+    ELSE NULL END))
+  dax_expression: CALCULATE([TOTAL_UNITS_YTD], SAMEPERIODLASTYEAR('Date'[Date]))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total Units YTD SPLY
+  - TOTAL_UNITS_YTD_SPLY
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: TOTAL_VANARSDEL_UNITS_YTD_SPLY
+  logical_name: TOTAL_VANARSDEL_UNITS_YTD_SPLY
+  label: Total VanArsdel Units YTD SPLY
+  sql_expression: (SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN CASE WHEN SALESFACT."IS_YTD_SPLY_YEAR"
+    THEN SALESFACT."UNITS" ELSE NULL END ELSE NULL END))
+  dax_expression: CALCULATE([TOTAL_VANARSDEL_UNITS_YTD], SAMEPERIODLASTYEAR('Date'[Date]))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total VanArsdel Units YTD SPLY
+  - TOTAL_VANARSDEL_UNITS_YTD_SPLY
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: TOTAL_OTHER_UNITS_YTD_SPLY
+  logical_name: TOTAL_OTHER_UNITS_YTD_SPLY
+  label: Total OTHER Units YTD SPLY
+  sql_expression: (SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'No' THEN CASE WHEN SALESFACT."IS_YTD_SPLY_YEAR"
+    THEN SALESFACT."UNITS" ELSE NULL END ELSE NULL END))
+  dax_expression: CALCULATE([TOTAL_OTHER_UNITS_YTD], SAMEPERIODLASTYEAR('Date'[Date]))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total OTHER Units YTD SPLY
+  - TOTAL_OTHER_UNITS_YTD_SPLY
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: PCT_UNITS_MARKET_SHARE_YTD
+  logical_name: PCT_UNITS_MARKET_SHARE_YTD
+  label: '% Units Market Share YTD'
+  sql_expression: (SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN CASE WHEN SALESFACT."IS_YTD"
+    THEN SALESFACT."UNITS" ELSE NULL END ELSE NULL END)) / NULLIF((SUM(CASE WHEN SALESFACT."IS_YTD"
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0)
+  dax_expression: DIVIDE([TOTAL_VANARSDEL_UNITS_YTD], [TOTAL_UNITS_YTD])
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '% Units Market Share YTD'
+  - PCT_UNITS_MARKET_SHARE_YTD
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: PCT_MARKET_SHARE_SPLY_YTD
+  logical_name: PCT_MARKET_SHARE_SPLY_YTD
+  label: '% Market Share SPLY YTD'
+  sql_expression: ((SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN CASE WHEN SALESFACT."IS_YTD_SPLY_YEAR"
+    THEN SALESFACT."UNITS" ELSE NULL END ELSE NULL END)) / NULLIF((SUM(CASE WHEN SALESFACT."IS_YTD_SPLY_YEAR"
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0))
+  dax_expression: CALCULATE([PCT_UNITS_MARKET_SHARE_YTD], SAMEPERIODLASTYEAR('Date'[Date]))
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '% Market Share SPLY YTD'
+  - PCT_MARKET_SHARE_SPLY_YTD
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: PCT_UNIT_MARKET_SHARE_YOY_CHANGE
+  logical_name: PCT_UNIT_MARKET_SHARE_YOY_CHANGE
+  label: '% Unit Market Share YOY Change'
+  sql_expression: CASE WHEN (CASE WHEN COALESCE((SUM(CASE WHEN PRODUCT."ISVANARSDEL"
+    = 'Yes' THEN SALESFACT."UNITS" ELSE NULL END)), 0) = 0 THEN 0 ELSE IFF(COALESCE((SUM(SALESFACT."UNITS")),
+    0) = 0, 0, (SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS"
+    ELSE NULL END)) / (SUM(SALESFACT."UNITS"))) END) IS NULL AND (CASE WHEN COALESCE((SUM(CASE
+    WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE"
+    BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR,
+    -1, CURRENT_DATE()) THEN CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS"
+    ELSE NULL END ELSE NULL END)), 0) = 0 THEN 0 ELSE IFF(COALESCE((SUM(CASE WHEN
+    YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE"
+    BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR,
+    -1, CURRENT_DATE()) THEN SALESFACT."UNITS" ELSE NULL END)), 0) = 0, 0, (SUM(CASE
+    WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE"
+    BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR,
+    -1, CURRENT_DATE()) THEN CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS"
+    ELSE NULL END ELSE NULL END)) / (SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR,
+    -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR',
+    CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALESFACT."UNITS"
+    ELSE NULL END))) END) IS NULL THEN NULL ELSE COALESCE((CASE WHEN COALESCE((SUM(CASE
+    WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS" ELSE NULL END)), 0)
+    = 0 THEN 0 ELSE IFF(COALESCE((SUM(SALESFACT."UNITS")), 0) = 0, 0, (SUM(CASE WHEN
+    PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS" ELSE NULL END)) / (SUM(SALESFACT."UNITS")))
+    END), 0) - COALESCE((CASE WHEN COALESCE((SUM(CASE WHEN YEAR(COL_DATE."COL_DATE")
+    = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR,
+    -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE())
+    THEN CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS" ELSE NULL
+    END ELSE NULL END)), 0) = 0 THEN 0 ELSE IFF(COALESCE((SUM(CASE WHEN YEAR(COL_DATE."COL_DATE")
+    = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR,
+    -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE())
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0) = 0, 0, (SUM(CASE WHEN YEAR(COL_DATE."COL_DATE")
+    = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR,
+    -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE())
+    THEN CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS" ELSE NULL
+    END ELSE NULL END)) / (SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR,
+    -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR',
+    CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALESFACT."UNITS"
+    ELSE NULL END))) END), 0) END
+  dax_expression: '[PCT_UNITS_MARKET_SHARE]-[PCT_UNITS_MARKET_SHARE_SPLY]'
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '% Unit Market Share YOY Change'
+  - PCT_UNIT_MARKET_SHARE_YOY_CHANGE
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: PCT_UNITS_MARKET_SHARE_SPLY
+  logical_name: PCT_UNITS_MARKET_SHARE_SPLY
+  label: '% Units Market Share SPLY'
+  sql_expression: CASE WHEN COALESCE((SUM(CASE WHEN SALESFACT."IS_SPLY_YEAR" THEN
+    CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS" ELSE NULL END ELSE
+    NULL END)), 0) = 0 THEN 0 ELSE IFF(COALESCE((SUM(CASE WHEN SALESFACT."IS_SPLY_YEAR"
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0) = 0, 0, (SUM(CASE WHEN SALESFACT."IS_SPLY_YEAR"
+    THEN CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS" ELSE NULL
+    END ELSE NULL END)) / (SUM(CASE WHEN SALESFACT."IS_SPLY_YEAR" THEN SALESFACT."UNITS"
+    ELSE NULL END))) END
+  dax_expression: CALCULATE([PCT_UNITS_MARKET_SHARE], SAMEPERIODLASTYEAR('Date'[Date]))
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '% Units Market Share SPLY'
+  - PCT_UNITS_MARKET_SHARE_SPLY
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: TOTAL_UNITS_R12MS
+  logical_name: TOTAL_UNITS_R12MS
+  label: Total Units R12Ms
+  sql_expression: SUM(CASE WHEN SALESFACT."IS_R12M" THEN SALESFACT."UNITS"::FLOAT
+    END)
+  dax_expression: CALCULATE(SUM([Units]), FILTER(ALL('Date'), 'Date'[MonthIndex]<=MAX('Date'[MonthIndex])&&
+    'Date'[MonthIndex]> MAX('Date'[MonthIndex])-12))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total Units R12Ms
+  - TOTAL_UNITS_R12MS
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: TOTAL_VANARSDEL_UNITS_R12M
+  logical_name: TOTAL_VANARSDEL_UNITS_R12M
+  label: Total VanArsdel Units R12M
+  sql_expression: SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN CASE WHEN SALESFACT."IS_R12M"
+    THEN SALESFACT."UNITS"::FLOAT END ELSE NULL END)
+  dax_expression: CALCULATE([TOTAL_UNITS_R12MS], FILTER(ALL(Product[isVanArsdel]),
+    Product[isVanArsdel]="Yes"))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total VanArsdel Units R12M
+  - TOTAL_VANARSDEL_UNITS_R12M
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: TOTAL_OTHER_UNITS_R12M
+  logical_name: TOTAL_OTHER_UNITS_R12M
+  label: Total OTHER Units R12M
+  sql_expression: SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'No' THEN CASE WHEN SALESFACT."IS_R12M"
+    THEN SALESFACT."UNITS"::FLOAT END ELSE NULL END)
+  dax_expression: CALCULATE([TOTAL_UNITS_R12MS], FILTER(ALL(Product[isVanArsdel]),
+    Product[isVanArsdel]="No"))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total OTHER Units R12M
+  - TOTAL_OTHER_UNITS_R12M
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: PCT_UNITS_MARKET_SHARE_R12M
+  logical_name: PCT_UNITS_MARKET_SHARE_R12M
+  label: '% Units Market Share R12M'
+  sql_expression: CASE WHEN COALESCE((SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes'
+    THEN CASE WHEN SALESFACT."IS_R12M" THEN SALESFACT."UNITS"::FLOAT END ELSE NULL
+    END)), 0) = 0 THEN 0 ELSE IFF(COALESCE((SUM(CASE WHEN SALESFACT."IS_R12M" THEN
+    SALESFACT."UNITS"::FLOAT END)), 0) = 0, 0, (SUM(CASE WHEN PRODUCT."ISVANARSDEL"
+    = 'Yes' THEN CASE WHEN SALESFACT."IS_R12M" THEN SALESFACT."UNITS"::FLOAT END ELSE
+    NULL END)) / (SUM(CASE WHEN SALESFACT."IS_R12M" THEN SALESFACT."UNITS"::FLOAT
+    END))) END
+  dax_expression: IF([TOTAL_VANARSDEL_UNITS_R12M]=0, 0, DIVIDE([TOTAL_VANARSDEL_UNITS_R12M],
+    [TOTAL_UNITS_R12MS], 0))
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '% Units Market Share R12M'
+  - PCT_UNITS_MARKET_SHARE_R12M
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: SENTIMENT_GAP
+  logical_name: SENTIMENT_GAP
+  label: Sentiment Gap
+  sql_expression: CASE WHEN NOT COALESCE((((AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL"
+    = 'No' THEN SENTIMENT."SCORE" ELSE NULL END) IS NULL)) OR ((AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL"
+    = 'Yes' THEN SENTIMENT."SCORE" ELSE NULL END) IS NULL))), FALSE) THEN CASE WHEN
+    (AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL" = 'No' THEN SENTIMENT."SCORE" ELSE
+    NULL END)) IS NULL AND (AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL" = 'Yes' THEN
+    SENTIMENT."SCORE" ELSE NULL END)) IS NULL THEN NULL ELSE COALESCE(AVG(CASE WHEN
+    MANUFACTURER."MFGISVANARSDEL" = 'No' THEN SENTIMENT."SCORE" ELSE NULL END), 0)
+    - COALESCE(AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL" = 'Yes' THEN SENTIMENT."SCORE"
+    ELSE NULL END), 0) END END
+  dax_expression: IF(ISBLANK(CALCULATE([SENTIMENT], Manufacturer[MfgisVanArsdel]="No"))||ISBLANK(CALCULATE([SENTIMENT],
+    Manufacturer[MfgisVanArsdel]="Yes")), BLANK(), CALCULATE([SENTIMENT], Manufacturer[MfgisVanArsdel]="No")
+    - CALCULATE([SENTIMENT], Manufacturer[MfgisVanArsdel]="Yes"))
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Sentiment Gap
+  - SENTIMENT_GAP
+  business_rules: []
+  derives_from:
+  - SENTIMENT
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: TOTAL_UNITS_YTD_VAR
+  logical_name: TOTAL_UNITS_YTD_VAR
+  label: Total Units YTD Var
+  sql_expression: CASE WHEN (SUM(CASE WHEN SALESFACT."IS_YTD" THEN SALESFACT."UNITS"
+    ELSE NULL END)) IS NULL AND (SUM(CASE WHEN SALESFACT."IS_YTD_SPLY_YEAR" THEN SALESFACT."UNITS"
+    ELSE NULL END)) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALESFACT."IS_YTD"
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0) - COALESCE((SUM(CASE WHEN SALESFACT."IS_YTD_SPLY_YEAR"
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0) END
+  dax_expression: '[TOTAL_UNITS_YTD]-[TOTAL_UNITS_YTD_SPLY]'
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total Units YTD Var
+  - TOTAL_UNITS_YTD_VAR
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: TOTAL_UNITS_YTD_VAR_PCT
+  logical_name: TOTAL_UNITS_YTD_VAR_PCT
+  label: Total Units YTD Var %
+  sql_expression: (CASE WHEN (SUM(CASE WHEN SALESFACT."IS_YTD" THEN SALESFACT."UNITS"
+    ELSE NULL END)) IS NULL AND (SUM(CASE WHEN SALESFACT."IS_YTD_SPLY_YEAR" THEN SALESFACT."UNITS"
+    ELSE NULL END)) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALESFACT."IS_YTD"
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0) - COALESCE((SUM(CASE WHEN SALESFACT."IS_YTD_SPLY_YEAR"
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0) END) / NULLIF((SUM(CASE WHEN SALESFACT."IS_SPLY_YEAR"
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0)
+  dax_expression: DIVIDE([TOTAL_UNITS_YTD_VAR],[TOTAL_UNITS_SPLY])
+  format_string: 0%;-0%;0%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total Units YTD Var %
+  - TOTAL_UNITS_YTD_VAR_PCT
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_UNITS
+  logical_name: SUM_OF_UNITS
+  label: Sum of Units
+  sql_expression: SUM(SALESFACT."UNITS")
+  dax_expression: SUM('SalesFact'[Units])
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Sum of Units
+  - SUM_OF_UNITS
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_REVENUE
+  logical_name: SUM_OF_REVENUE
+  label: Sum of Revenue
+  sql_expression: SUM(SALESFACT."REVENUE")
+  dax_expression: SUM('SalesFact'[Revenue])
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Sum of Revenue
+  - SUM_OF_REVENUE
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: ATINDICATOR01
+  logical_name: ATINDICATOR01
+  label: '@Indicator01'
+  sql_expression: CASE WHEN COALESCE((FLOOR((SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'No'
+    THEN SALESFACT."UNITS" END)) / NULLIF((SUM(SALESFACT."UNITS")), 0) * 100)), 0)
+    < 0.55 THEN 1 ELSE CASE WHEN (FLOOR((SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'No'
+    THEN SALESFACT."UNITS" END)) / NULLIF((SUM(SALESFACT."UNITS")), 0) * 100)) > 0.6
+    THEN 3 ELSE 2 END END
+  dax_expression: IF('SalesFact'[PCT_CATEGORY_COMPETE_SHARE]<0.55,1,IF('SalesFact'[PCT_CATEGORY_COMPETE_SHARE]>0.6,3,2))
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '@Indicator01'
+  - ATINDICATOR01
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: ATINDICATOR02
+  logical_name: ATINDICATOR02
+  label: '@Indicator02'
+  sql_expression: CASE WHEN (CASE WHEN (CASE WHEN COALESCE((SUM(CASE WHEN PRODUCT."ISVANARSDEL"
+    = 'Yes' THEN SALESFACT."UNITS" ELSE NULL END)), 0) = 0 THEN 0 ELSE IFF(COALESCE((SUM(SALESFACT."UNITS")),
+    0) = 0, 0, (SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS"
+    ELSE NULL END)) / (SUM(SALESFACT."UNITS"))) END) IS NULL AND (CASE WHEN COALESCE((SUM(CASE
+    WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE"
+    BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR,
+    -1, CURRENT_DATE()) THEN CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS"
+    ELSE NULL END ELSE NULL END)), 0) = 0 THEN 0 ELSE IFF(COALESCE((SUM(CASE WHEN
+    YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE"
+    BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR,
+    -1, CURRENT_DATE()) THEN SALESFACT."UNITS" ELSE NULL END)), 0) = 0, 0, (SUM(CASE
+    WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE"
+    BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR,
+    -1, CURRENT_DATE()) THEN CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS"
+    ELSE NULL END ELSE NULL END)) / (SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR,
+    -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR',
+    CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALESFACT."UNITS"
+    ELSE NULL END))) END) IS NULL THEN NULL ELSE COALESCE((CASE WHEN COALESCE((SUM(CASE
+    WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS" ELSE NULL END)), 0)
+    = 0 THEN 0 ELSE IFF(COALESCE((SUM(SALESFACT."UNITS")), 0) = 0, 0, (SUM(CASE WHEN
+    PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS" ELSE NULL END)) / (SUM(SALESFACT."UNITS")))
+    END), 0) - COALESCE((CASE WHEN COALESCE((SUM(CASE WHEN YEAR(COL_DATE."COL_DATE")
+    = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR,
+    -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE())
+    THEN CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS" ELSE NULL
+    END ELSE NULL END)), 0) = 0 THEN 0 ELSE IFF(COALESCE((SUM(CASE WHEN YEAR(COL_DATE."COL_DATE")
+    = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR,
+    -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE())
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0) = 0, 0, (SUM(CASE WHEN YEAR(COL_DATE."COL_DATE")
+    = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR,
+    -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE())
+    THEN CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS" ELSE NULL
+    END ELSE NULL END)) / (SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR,
+    -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR',
+    CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALESFACT."UNITS"
+    ELSE NULL END))) END), 0) END) < 0 THEN 1 ELSE CASE WHEN (CASE WHEN (CASE WHEN
+    COALESCE((SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS" ELSE
+    NULL END)), 0) = 0 THEN 0 ELSE IFF(COALESCE((SUM(SALESFACT."UNITS")), 0) = 0,
+    0, (SUM(CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS" ELSE NULL
+    END)) / (SUM(SALESFACT."UNITS"))) END) IS NULL AND (CASE WHEN COALESCE((SUM(CASE
+    WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE"
+    BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR,
+    -1, CURRENT_DATE()) THEN CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS"
+    ELSE NULL END ELSE NULL END)), 0) = 0 THEN 0 ELSE IFF(COALESCE((SUM(CASE WHEN
+    YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE"
+    BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR,
+    -1, CURRENT_DATE()) THEN SALESFACT."UNITS" ELSE NULL END)), 0) = 0, 0, (SUM(CASE
+    WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE"
+    BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR,
+    -1, CURRENT_DATE()) THEN CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS"
+    ELSE NULL END ELSE NULL END)) / (SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR,
+    -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR',
+    CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALESFACT."UNITS"
+    ELSE NULL END))) END) IS NULL THEN NULL ELSE COALESCE((CASE WHEN COALESCE((SUM(CASE
+    WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS" ELSE NULL END)), 0)
+    = 0 THEN 0 ELSE IFF(COALESCE((SUM(SALESFACT."UNITS")), 0) = 0, 0, (SUM(CASE WHEN
+    PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS" ELSE NULL END)) / (SUM(SALESFACT."UNITS")))
+    END), 0) - COALESCE((CASE WHEN COALESCE((SUM(CASE WHEN YEAR(COL_DATE."COL_DATE")
+    = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR,
+    -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE())
+    THEN CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS" ELSE NULL
+    END ELSE NULL END)), 0) = 0 THEN 0 ELSE IFF(COALESCE((SUM(CASE WHEN YEAR(COL_DATE."COL_DATE")
+    = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR,
+    -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE())
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0) = 0, 0, (SUM(CASE WHEN YEAR(COL_DATE."COL_DATE")
+    = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR,
+    -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE())
+    THEN CASE WHEN PRODUCT."ISVANARSDEL" = 'Yes' THEN SALESFACT."UNITS" ELSE NULL
+    END ELSE NULL END)) / (SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR,
+    -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR',
+    CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALESFACT."UNITS"
+    ELSE NULL END))) END), 0) END) > 0.2 THEN 3 ELSE 2 END END
+  dax_expression: IF('SalesFact'[PCT_UNIT_MARKET_SHARE_YOY_CHANGE]<0,1,IF('SalesFact'[PCT_UNIT_MARKET_SHARE_YOY_CHANGE]>.2,3,2))
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '@Indicator02'
+  - ATINDICATOR02
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: NUMSPACE01
+  logical_name: NUMSPACE01
+  label: '#Space01'
+  sql_expression: ''''''
+  dax_expression: '"" '
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '#Space01'
+  - NUMSPACE01
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: NUMSPACE02
+  logical_name: NUMSPACE02
+  label: '#Space02'
+  sql_expression: ''''''
+  dax_expression: '"" '
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '#Space02'
+  - NUMSPACE02
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: ATINDICATOR03
+  logical_name: ATINDICATOR03
+  label: '@Indicator03'
+  sql_expression: CASE WHEN ((CASE WHEN (SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC('YEAR',
+    CURRENT_DATE()) AND COL_DATE."COL_DATE" <= CURRENT_DATE() THEN SALESFACT."UNITS"
+    ELSE NULL END)) IS NULL AND (SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC('YEAR',
+    DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" <= DATEADD(YEAR, -1,
+    CURRENT_DATE()) THEN SALESFACT."UNITS" ELSE NULL END)) IS NULL THEN NULL ELSE
+    COALESCE((SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC('YEAR', CURRENT_DATE())
+    AND COL_DATE."COL_DATE" <= CURRENT_DATE() THEN SALESFACT."UNITS" ELSE NULL END)),
+    0) - COALESCE((SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC('YEAR', DATEADD(YEAR,
+    -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" <= DATEADD(YEAR, -1, CURRENT_DATE())
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0) END) / NULLIF((SUM(CASE WHEN YEAR(COL_DATE."COL_DATE")
+    = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR,
+    -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE())
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0)) < 0 THEN 1 ELSE CASE WHEN ((CASE WHEN
+    (SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC('YEAR', CURRENT_DATE()) AND COL_DATE."COL_DATE"
+    <= CURRENT_DATE() THEN SALESFACT."UNITS" ELSE NULL END)) IS NULL AND (SUM(CASE
+    WHEN COL_DATE."COL_DATE" >= DATE_TRUNC('YEAR', DATEADD(YEAR, -1, CURRENT_DATE()))
+    AND COL_DATE."COL_DATE" <= DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALESFACT."UNITS"
+    ELSE NULL END)) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN COL_DATE."COL_DATE"
+    >= DATE_TRUNC('YEAR', CURRENT_DATE()) AND COL_DATE."COL_DATE" <= CURRENT_DATE()
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0) - COALESCE((SUM(CASE WHEN COL_DATE."COL_DATE"
+    >= DATE_TRUNC('YEAR', DATEADD(YEAR, -1, CURRENT_DATE())) AND COL_DATE."COL_DATE"
+    <= DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALESFACT."UNITS" ELSE NULL END)), 0)
+    END) / NULLIF((SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR, -1,
+    CURRENT_DATE())) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR',
+    CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALESFACT."UNITS"
+    ELSE NULL END)), 0)) > 0.1 THEN 3 ELSE 2 END END
+  dax_expression: IF('SalesFact'[TOTAL_UNITS_YTD_VAR_PCT]<0,1,IF('SalesFact'[TOTAL_UNITS_YTD_VAR_PCT]>0.1,3,2))
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '@Indicator03'
+  - ATINDICATOR03
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: ATINDICATOR04
+  logical_name: ATINDICATOR04
+  label: '@Indicator04'
+  sql_expression: CASE WHEN COALESCE((AVG(SENTIMENT."SCORE")), 0) < 65 THEN 1 ELSE
+    CASE WHEN (AVG(SENTIMENT."SCORE")) > 67 THEN 3 ELSE 2 END END
+  dax_expression: IF('SalesFact'[SENTIMENT]<65,1,IF('SalesFact'[SENTIMENT]>67,3,2))
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '@Indicator04'
+  - ATINDICATOR04
+  business_rules: []
+  derives_from:
+  - SENTIMENT
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: ATINDICATOR05
+  logical_name: ATINDICATOR05
+  label: '@Indicator05'
+  sql_expression: CASE WHEN COALESCE((CASE WHEN NOT COALESCE((((AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL"
+    = 'No' THEN SENTIMENT."SCORE" ELSE NULL END) IS NULL)) OR ((AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL"
+    = 'Yes' THEN SENTIMENT."SCORE" ELSE NULL END) IS NULL))), FALSE) THEN CASE WHEN
+    (AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL" = 'No' THEN SENTIMENT."SCORE" ELSE
+    NULL END)) IS NULL AND (AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL" = 'Yes' THEN
+    SENTIMENT."SCORE" ELSE NULL END)) IS NULL THEN NULL ELSE COALESCE(AVG(CASE WHEN
+    MANUFACTURER."MFGISVANARSDEL" = 'No' THEN SENTIMENT."SCORE" ELSE NULL END), 0)
+    - COALESCE(AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL" = 'Yes' THEN SENTIMENT."SCORE"
+    ELSE NULL END), 0) END END), 0) < 15 THEN 1 ELSE CASE WHEN (CASE WHEN NOT COALESCE((((AVG(CASE
+    WHEN MANUFACTURER."MFGISVANARSDEL" = 'No' THEN SENTIMENT."SCORE" ELSE NULL END)
+    IS NULL)) OR ((AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL" = 'Yes' THEN SENTIMENT."SCORE"
+    ELSE NULL END) IS NULL))), FALSE) THEN CASE WHEN (AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL"
+    = 'No' THEN SENTIMENT."SCORE" ELSE NULL END)) IS NULL AND (AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL"
+    = 'Yes' THEN SENTIMENT."SCORE" ELSE NULL END)) IS NULL THEN NULL ELSE COALESCE(AVG(CASE
+    WHEN MANUFACTURER."MFGISVANARSDEL" = 'No' THEN SENTIMENT."SCORE" ELSE NULL END),
+    0) - COALESCE(AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL" = 'Yes' THEN SENTIMENT."SCORE"
+    ELSE NULL END), 0) END END) > 25 THEN 3 ELSE 2 END END
+  dax_expression: IF('SalesFact'[SENTIMENT_GAP]<15,1,IF('SalesFact'[SENTIMENT_GAP]>25,3,2))
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '@Indicator05'
+  - ATINDICATOR05
+  business_rules: []
+  derives_from:
+  - SENTIMENT
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: ATINDICATOR04A
+  logical_name: ATINDICATOR04A
+  label: '@Indicator04A'
+  sql_expression: CASE WHEN SalesFact."ATINDICATOR04" = 1 THEN 'Low Sentiment Rate'
+    ELSE CASE WHEN SalesFact."ATINDICATOR04" = 3 THEN 'High Sentiment Rate' ELSE 'Medium
+    Sentiment Rate' END END
+  dax_expression: IF('SalesFact'[ATINDICATOR04]=1,"Low Sentiment Rate",IF('SalesFact'[ATINDICATOR04]=3,"High
+    Sentiment Rate","Medium Sentiment Rate"))
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '@Indicator04A'
+  - ATINDICATOR04A
+  business_rules: []
+  derives_from:
+  - ATINDICATOR04
+  - SENTIMENT
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: ATINDICATOR05A
+  logical_name: ATINDICATOR05A
+  label: '@Indicator05A'
+  sql_expression: CASE WHEN SalesFact."ATINDICATOR05" = 1 THEN 'Low Sentiment Gap'
+    ELSE CASE WHEN SalesFact."ATINDICATOR05" = 3 THEN 'High Sentiment Gap' ELSE 'Medium
+    Sentiment Gap' END END
+  dax_expression: IF('SalesFact'[ATINDICATOR05]=1,"Low Sentiment Gap",IF('SalesFact'[ATINDICATOR05]=3,"High
+    Sentiment Gap","Medium Sentiment Gap"))
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '@Indicator05A'
+  - ATINDICATOR05A
+  business_rules: []
+  derives_from:
+  - ATINDICATOR05
+  - SENTIMENT
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: TOTAL_UNITS_YTD_VAR_PCT2
+  logical_name: TOTAL_UNITS_YTD_VAR_PCT2
+  label: Total Units YTD Var %2
+  sql_expression: FLOOR((CASE WHEN (SUM(CASE WHEN SALESFACT."IS_YTD" THEN SALESFACT."UNITS"
+    ELSE NULL END)) IS NULL AND (SUM(CASE WHEN SALESFACT."IS_YTD_SPLY_YEAR" THEN SALESFACT."UNITS"
+    ELSE NULL END)) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALESFACT."IS_YTD"
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0) - COALESCE((SUM(CASE WHEN SALESFACT."IS_YTD_SPLY_YEAR"
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0) END) / NULLIF((SUM(CASE WHEN SALESFACT."IS_SPLY_YEAR"
+    THEN SALESFACT."UNITS" ELSE NULL END)), 0) * 100)
+  dax_expression: INT(DIVIDE([TOTAL_UNITS_YTD_VAR],[TOTAL_UNITS_SPLY])*100)
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total Units YTD Var %2
+  - TOTAL_UNITS_YTD_VAR_PCT2
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: SalesFact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_SCORE
+  logical_name: SUM_OF_SCORE
+  label: Sum of Score
+  sql_expression: SUM(SENTIMENT."SCORE")
+  dax_expression: SUM('Sentiment'[Score])
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Sum of Score
+  - SUM_OF_SCORE
+  business_rules: []
+  derives_from:
+  - SENTIMENT
+  domain: reg_test · Competitive Marketing Analysis
+  concept: Sentiment
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: AVERAGE_OF_SCORE
+  logical_name: AVERAGE_OF_SCORE
+  label: Average of Score
+  sql_expression: AVG(SENTIMENT."SCORE")
+  dax_expression: AVERAGE('Sentiment'[Score])
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Average of Score
+  - AVERAGE_OF_SCORE
+  business_rules: []
+  derives_from:
+  - SENTIMENT
+  domain: reg_test · Competitive Marketing Analysis
+  concept: Sentiment
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: NEW_DEMO_MEASURE
+  logical_name: NEW_DEMO_MEASURE
+  label: New Demo Measure
+  sql_expression: AVG(SENTIMENT."SCORE")
+  dax_expression: AVERAGE('Sentiment'[Score])
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - New Demo Measure
+  - NEW_DEMO_MEASURE
+  business_rules: []
+  derives_from:
+  - SENTIMENT
+  domain: reg_test · Competitive Marketing Analysis
+  concept: Sentiment
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_MONTHNO
+  logical_name: SUM_OF_MONTHNO
+  label: SUM_OF_MONTHNO
+  sql_expression: SUM(COL_DATE."MONTHNO")
+  dax_expression: SUM('Date'[MonthNo])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_MONTHNO
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: Date
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_YEAR
+  logical_name: SUM_OF_YEAR
+  label: SUM_OF_YEAR
+  sql_expression: SUM(COL_DATE."YEAR")
+  dax_expression: SUM('Date'[Year])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_YEAR
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: Date
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_SORT
+  logical_name: SUM_OF_SORT
+  label: SUM_OF_SORT
+  sql_expression: SUM(INDICATORS."SORT")
+  dax_expression: SUM('Indicators'[Sort])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_SORT
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: Indicators
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_KPI
+  logical_name: SUM_OF_KPI
+  label: SUM_OF_KPI
+  sql_expression: SUM(KPI."KPI")
+  dax_expression: SUM('KPI'[KPI])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_KPI
+  business_rules: []
+  domain: reg_test · Competitive Marketing Analysis
+  concept: KPI
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC
+  tags: []
+  origin: bi
+relationships:
+- name: REL_PRODUCT_MANUFACTURERID__MANUFACTURER_MANUFACTURERID
+  from_concept: Product
+  to_concept: Manufacturer
+  cardinality: N:1
+  join_expression: Product.ManufacturerID = Manufacturer.ManufacturerID
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SALESFACT_PRODUCTID__PRODUCT_PRODUCTID
+  from_concept: SalesFact
+  to_concept: Product
+  cardinality: N:1
+  join_expression: SalesFact.ProductID = Product.ProductID
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SALESFACT_DATE__DATE_DATE
+  from_concept: SalesFact
+  to_concept: Date
+  cardinality: N:1
+  join_expression: SalesFact.Date = Date.Date
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SALESFACT_ZIP__GEO_ZIP
+  from_concept: SalesFact
+  to_concept: Geo
+  cardinality: N:1
+  join_expression: SalesFact.Zip = Geo.Zip
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SENTIMENT_ZIP__GEO_ZIP
+  from_concept: Sentiment
+  to_concept: Geo
+  cardinality: N:1
+  join_expression: Sentiment.zip = Geo.Zip
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SENTIMENT_DATE__DATE_DATE
+  from_concept: Sentiment
+  to_concept: Date
+  cardinality: N:1
+  join_expression: Sentiment.Date = Date.Date
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SENTIMENT_MANUFACTURERID__MANUFACTURER_MANUFACTURERID
+  from_concept: Sentiment
+  to_concept: Manufacturer
+  cardinality: N:1
+  join_expression: Sentiment.ManufacturerID = Manufacturer.ManufacturerID
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_PRODUCT_SEGMENT__CATEGORY_CATEGORY
+  from_concept: Product
+  to_concept: Category
+  cardinality: N:1
+  join_expression: Product.Segment = Category.Category
+  cross_filter_direction: single
+  is_active: true
+  origin: bi

@@ -1,0 +1,5671 @@
+domain: P2P_Spend_Semantic_Model_DA
+id: p2p_spend_semantic_model_da
+version: 1.0.0
+source_project_id: proj-zxx
+semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+concepts:
+- name: _Measures
+  logical_name: MEASURES
+  label: _Measures
+  concept_type: DIMENSION
+  domain: P2P_Spend_Semantic_Model_DA
+  description: Dedicated table for all Semabridge migration stress-test measures.
+  synonyms: []
+  business_rules: []
+  physical_table: _Measures
+  attributes:
+  - name: _
+    logical_name: COLUMN_UNKNOWN
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+  bi_description: Dedicated table for all Semabridge migration stress-test measures.
+- name: account_hierarchy
+  logical_name: ACCOUNT_HIERARCHY
+  label: account_hierarchy
+  concept_type: DIMENSION
+  domain: P2P_Spend_Semantic_Model_DA
+  synonyms: []
+  business_rules: []
+  physical_table: account_hierarchy
+  attributes:
+  - name: Level
+    logical_name: LEVEL
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Account_Level_0_Name
+    logical_name: ACCOUNT_LEVEL_0_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Account_Level_1_Name
+    logical_name: ACCOUNT_LEVEL_1_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Account_Level_2_Name
+    logical_name: ACCOUNT_LEVEL_2_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Account_Level_3_Name
+    logical_name: ACCOUNT_LEVEL_3_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Account_Level_4_Name
+    logical_name: ACCOUNT_LEVEL_4_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Account_Level_5_Name
+    logical_name: ACCOUNT_LEVEL_5_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Account_Level_6_Name
+    logical_name: ACCOUNT_LEVEL_6_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Account_Level_7_Name
+    logical_name: ACCOUNT_LEVEL_7_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Account_Level_8_Name
+    logical_name: ACCOUNT_LEVEL_8_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Account_Level_9_Name
+    logical_name: ACCOUNT_LEVEL_9_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Account_Level_10_Name
+    logical_name: ACCOUNT_LEVEL_10_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Account_Level_11_Name
+    logical_name: ACCOUNT_LEVEL_11_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Account_Level_12_Name
+    logical_name: ACCOUNT_LEVEL_12_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Account_Level_13_Name
+    logical_name: ACCOUNT_LEVEL_13_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Account_Level_14_Name
+    logical_name: ACCOUNT_LEVEL_14_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Account_Name
+    logical_name: ACCOUNT_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Account_Current_Surrogate_Key
+    logical_name: ACCOUNT_CURRENT_SURROGATE_KEY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Account_Description
+    logical_name: ACCOUNT_DESCRIPTION
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Children
+    logical_name: CHILDREN
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Descendants
+    logical_name: DESCENDANTS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Bottom_Node
+    logical_name: BOTTOM_NODE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Parent_Account
+    logical_name: PARENT_ACCOUNT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Parent_Node_Type
+    logical_name: PARENT_NODE_TYPE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Account_Rollup_vs_Base
+    logical_name: ACCOUNT_ROLLUP_VS_BASE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Account_Type
+    logical_name: ACCOUNT_TYPE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Aggregation_Operator
+    logical_name: AGGREGATION_OPERATOR
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Allocation_Account
+    logical_name: ALLOCATION_ACCOUNT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Ancestor_List
+    logical_name: ANCESTOR_LIST
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Blackline_Account_Line
+    logical_name: BLACKLINE_ACCOUNT_LINE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Expense_Type
+    logical_name: EXPENSE_TYPE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Financial_System
+    logical_name: FINANCIAL_SYSTEM
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Account_Level_0
+    logical_name: ACCOUNT_LEVEL_0
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Account_Level_1
+    logical_name: ACCOUNT_LEVEL_1
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Account_Level_2
+    logical_name: ACCOUNT_LEVEL_2
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Account_Level_3
+    logical_name: ACCOUNT_LEVEL_3
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Account_Level_4
+    logical_name: ACCOUNT_LEVEL_4
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Account_Level_5
+    logical_name: ACCOUNT_LEVEL_5
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Account_Level_6
+    logical_name: ACCOUNT_LEVEL_6
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Account_Level_7
+    logical_name: ACCOUNT_LEVEL_7
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Account_Level_8
+    logical_name: ACCOUNT_LEVEL_8
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Account_Level_9
+    logical_name: ACCOUNT_LEVEL_9
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Account_Path_RLS
+    logical_name: ACCOUNT_PATH_RLS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Hierarchy
+    logical_name: HIERARCHY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Legacy_HFM_Account
+    logical_name: LEGACY_HFM_ACCOUNT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Legacy_HFM_Account_Description
+    logical_name: LEGACY_HFM_ACCOUNT_DESCRIPTION
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: MCKCON_Subscription
+    logical_name: MCKCON_SUBSCRIPTION
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: MCKPL_Subscription
+    logical_name: MCKPL_SUBSCRIPTION
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Member_Name
+    logical_name: MEMBER_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Parent_Description
+    logical_name: PARENT_DESCRIPTION
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: RollUpType
+    logical_name: ROLLUPTYPE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Attribute_Expense_Type
+    logical_name: ATTRIBUTE_EXPENSE_TYPE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Attribute_GAAP
+    logical_name: ATTRIBUTE_GAAP
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Effective_Date
+    logical_name: EFFECTIVE_DATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: General Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Expiration_Date
+    logical_name: EXPIRATION_DATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: General Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Current_Flag
+    logical_name: CURRENT_FLAG
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: GL_Account_CK
+    logical_name: GL_ACCOUNT_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: cost_center_hierarchy
+  logical_name: COST_CENTER_HIERARCHY
+  label: cost_center_hierarchy
+  concept_type: DIMENSION
+  domain: P2P_Spend_Semantic_Model_DA
+  synonyms: []
+  business_rules: []
+  physical_table: cost_center_hierarchy
+  attributes:
+  - name: Cost_Center_Name
+    logical_name: COST_CENTER_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Cost_Center_History_Surrogate_Key
+    logical_name: COST_CENTER_HISTORY_SURROGATE_KEY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Cost_Center_Current_Surrogate_Key
+    logical_name: COST_CENTER_CURRENT_SURROGATE_KEY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: GL_Cost_Center_CK
+    logical_name: GL_COST_CENTER_CK
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Cost_Center_ID
+    logical_name: COST_CENTER_ID
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Cost_Center_Description
+    logical_name: COST_CENTER_DESCRIPTION
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Bottom_Node
+    logical_name: BOTTOM_NODE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Level
+    logical_name: LEVEL
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Parent
+    logical_name: PARENT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Ancestor_List
+    logical_name: ANCESTOR_LIST
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Function
+    logical_name: FUNCTION
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Sub_Function
+    logical_name: SUB_FUNCTION
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Cost_Center_Level_0
+    logical_name: COST_CENTER_LEVEL_0
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Cost_Center_Level_1
+    logical_name: COST_CENTER_LEVEL_1
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Cost_Center_Level_2
+    logical_name: COST_CENTER_LEVEL_2
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Cost_Center_Level_3
+    logical_name: COST_CENTER_LEVEL_3
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Cost_Center_Level_4
+    logical_name: COST_CENTER_LEVEL_4
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Cost_Center_Level_5
+    logical_name: COST_CENTER_LEVEL_5
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Cost_Center_Level_6
+    logical_name: COST_CENTER_LEVEL_6
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Cost_Center_Level_7
+    logical_name: COST_CENTER_LEVEL_7
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Cost_Center_Level_8
+    logical_name: COST_CENTER_LEVEL_8
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Cost_Center_Level_9
+    logical_name: COST_CENTER_LEVEL_9
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Cost_Center_Level_10
+    logical_name: COST_CENTER_LEVEL_10
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Cost_Center_Level_11
+    logical_name: COST_CENTER_LEVEL_11
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Cost_Center_Level_12
+    logical_name: COST_CENTER_LEVEL_12
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Cost_Center_Level_13
+    logical_name: COST_CENTER_LEVEL_13
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Cost_Center_Level_14
+    logical_name: COST_CENTER_LEVEL_14
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Cost_Center_Level_15
+    logical_name: COST_CENTER_LEVEL_15
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Cost_Center_Path_RLS
+    logical_name: COST_CENTER_PATH_RLS
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Owner_First_Name
+    logical_name: OWNER_FIRST_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Owner_Last_Name
+    logical_name: OWNER_LAST_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Owner_Name
+    logical_name: OWNER_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Current_Flag
+    logical_name: CURRENT_FLAG
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: date
+  logical_name: DATE_POSTING_DATE_LY_CAL_DT
+  label: date
+  concept_type: DIMENSION
+  domain: P2P_Spend_Semantic_Model_DA
+  synonyms: []
+  business_rules: []
+  physical_table: date
+  attributes:
+  - name: CAL_MNTH
+    logical_name: CAL_MNTH
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: CAL_DAY_NUM
+    logical_name: CAL_DAY_NUM
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: CAL_YR
+    logical_name: CAL_YR
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: CAL_YR_PERIOD
+    logical_name: CAL_YR_PERIOD
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: CAL_PERIOD_NM
+    logical_name: CAL_PERIOD_NM
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: CAL_QTR_NUM
+    logical_name: CAL_QTR_NUM
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: MNTH_START
+    logical_name: MNTH_START
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: Long Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: QTR_START
+    logical_name: QTR_START
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: Long Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: QTR_END
+    logical_name: QTR_END
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: QTR_YR
+    logical_name: QTR_YR
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: QTR_NAME
+    logical_name: QTR_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: FISCAL_YR
+    logical_name: FISCAL_YR
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: FISCAL_MNTH
+    logical_name: FISCAL_MNTH
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: FISCAL_QTR_NUM
+    logical_name: FISCAL_QTR_NUM
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: FISCAL_YR_PERIOD
+    logical_name: FISCAL_YR_PERIOD
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: FISCAL_YR_MNTH_NOZERO
+    logical_name: FISCAL_YR_MNTH_NOZERO
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: FISCAL_START
+    logical_name: FISCAL_START
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: Long Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: LY_CAL_DT
+    logical_name: LY_CAL_DT
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: Long Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: LY_YR_MNTH
+    logical_name: LY_YR_MNTH
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: LY_CAL_YR_NUM
+    logical_name: LY_CAL_YR_NUM
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: LY_CAL_MNTH_NUM
+    logical_name: LY_CAL_MNTH_NUM
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: LY_CAL_DAY_NUM
+    logical_name: LY_CAL_DAY_NUM
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: MNTH_NAME
+    logical_name: MNTH_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: MNTH_ABRV
+    logical_name: MNTH_ABRV
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: MNTH_QTR_YR
+    logical_name: MNTH_QTR_YR
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: PERIOD_DIM_CK
+    logical_name: PERIOD_DIM_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Week_Day
+    logical_name: WEEK_DAY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Week_Starting
+    logical_name: WEEK_STARTING
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: Long Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Week_Day_Flag
+    logical_name: WEEK_DAY_FLAG
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Quarter
+    logical_name: QUARTER
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Month
+    logical_name: MONTH
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Period_Dim_Date_CK
+    logical_name: PERIOD_DIM_DATE_CK
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: Long Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: FY_Month
+    logical_name: FY_MONTH
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Cal_DT
+    logical_name: CAL_DT
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: Long Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: FY_QTR
+    logical_name: FY_QTR
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Date_Dim_CK
+    logical_name: DATE_DIM_CK
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: diversity_bridge
+  logical_name: DIVERSITY_BRIDGE
+  label: diversity_bridge
+  concept_type: DIMENSION
+  domain: P2P_Spend_Semantic_Model_DA
+  synonyms: []
+  business_rules: []
+  physical_table: diversity_bridge
+  attributes:
+  - name: Normalized_Supplier_Diversity_Dim_CK
+    logical_name: NORMALIZED_SUPPLIER_DIVERSITY_DIM_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Diversity_Date_CK
+    logical_name: DIVERSITY_DATE_CK
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Termination_Date_CK
+    logical_name: TERMINATION_DATE_CK
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Diversity_Date
+    logical_name: DIVERSITY_DATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: General Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Termination_Date
+    logical_name: TERMINATION_DATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: General Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Diversity_Type
+    logical_name: DIVERSITY_TYPE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Diversity_Flag
+    logical_name: DIVERSITY_FLAG
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Diversity_Key
+    logical_name: DIVERSITY_KEY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: diversity_dim
+  logical_name: DIVERSITY_DIM
+  label: diversity_dim
+  concept_type: DIMENSION
+  domain: P2P_Spend_Semantic_Model_DA
+  synonyms: []
+  business_rules: []
+  physical_table: diversity_dim
+  attributes:
+  - name: Diversity_Type
+    logical_name: DIVERSITY_TYPE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Diversity_Key
+    logical_name: DIVERSITY_KEY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: entity_hierarchy
+  logical_name: ENTITY_HIERARCHY
+  label: entity_hierarchy
+  concept_type: DIMENSION
+  domain: P2P_Spend_Semantic_Model_DA
+  synonyms: []
+  business_rules: []
+  physical_table: entity_hierarchy
+  attributes:
+  - name: Source_System_Name
+    logical_name: SOURCE_SYSTEM_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Level
+    logical_name: LEVEL
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: BU
+    logical_name: BU
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Country
+    logical_name: COUNTRY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Currency
+    logical_name: CURRENCY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Status
+    logical_name: STATUS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: BU_Calulated
+    logical_name: BU_CALULATED
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Segment_Name
+    logical_name: SEGMENT_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Member_Name
+    logical_name: MEMBER_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Entity_History_Surrogate_Key
+    logical_name: ENTITY_HISTORY_SURROGATE_KEY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Entity_Current_Surrogate_Key
+    logical_name: ENTITY_CURRENT_SURROGATE_KEY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Entity_Definition
+    logical_name: ENTITY_DEFINITION
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Bottom_Node
+    logical_name: BOTTOM_NODE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Parent
+    logical_name: PARENT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Parent_Node_Type
+    logical_name: PARENT_NODE_TYPE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Ancestor_List
+    logical_name: ANCESTOR_LIST
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Ariba_Set_Up
+    logical_name: ARIBA_SET_UP
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Currency_ORG_Parent
+    logical_name: CURRENCY_ORG_PARENT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: CY_BS_Activity
+    logical_name: CY_BS_ACTIVITY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: CY_IS_Activity
+    logical_name: CY_IS_ACTIVITY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Date_Added_to_COA
+    logical_name: DATE_ADDED_TO_COA
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Entity_Description
+    logical_name: ENTITY_DESCRIPTION
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: ERP_Source_GL
+    logical_name: ERP_SOURCE_GL
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: External_ORG_Parent
+    logical_name: EXTERNAL_ORG_PARENT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: FCCS_RepEnt
+    logical_name: FCCS_REPENT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Financial_System
+    logical_name: FINANCIAL_SYSTEM
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Entity_Level_0
+    logical_name: ENTITY_LEVEL_0
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Entity_Level_1
+    logical_name: ENTITY_LEVEL_1
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Entity_Level_2
+    logical_name: ENTITY_LEVEL_2
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Entity_Level_3
+    logical_name: ENTITY_LEVEL_3
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Entity_Level_4
+    logical_name: ENTITY_LEVEL_4
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Entity_Level_5
+    logical_name: ENTITY_LEVEL_5
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Entity_Level_6
+    logical_name: ENTITY_LEVEL_6
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Entity_Level_7
+    logical_name: ENTITY_LEVEL_7
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Entity_Level_8
+    logical_name: ENTITY_LEVEL_8
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Entity_Level_9
+    logical_name: ENTITY_LEVEL_9
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Entity_Level_10
+    logical_name: ENTITY_LEVEL_10
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Entity_Path_RLS
+    logical_name: ENTITY_PATH_RLS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Member_Generation
+    logical_name: MEMBER_GENERATION
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Geographic_ORG_Parent
+    logical_name: GEOGRAPHIC_ORG_PARENT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: In_FCC
+    logical_name: IN_FCC
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: In_SAP_PRD
+    logical_name: IN_SAP_PRD
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Latest_Year_Active
+    logical_name: LATEST_YEAR_ACTIVE
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Legal_ORG_Parent
+    logical_name: LEGAL_ORG_PARENT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: MCKCON_Subscription
+    logical_name: MCKCON_SUBSCRIPTION
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: MCKPL_Subscription
+    logical_name: MCKPL_SUBSCRIPTION
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Entity_Name
+    logical_name: ENTITY_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: RollUP_Type
+    logical_name: ROLLUP_TYPE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: SAP_Variant
+    logical_name: SAP_VARIANT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: SAP_Vendor_Code
+    logical_name: SAP_VENDOR_CODE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Source_System_Code
+    logical_name: SOURCE_SYSTEM_CODE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: TAX_Jurisdiction_Code
+    logical_name: TAX_JURISDICTION_CODE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Type_of_Entity
+    logical_name: TYPE_OF_ENTITY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Effective_Date
+    logical_name: EFFECTIVE_DATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: General Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Expiration_Date
+    logical_name: EXPIRATION_DATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: General Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Current_Flag
+    logical_name: CURRENT_FLAG
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: GL_Company_Code_CK
+    logical_name: GL_COMPANY_CODE_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: normalized_supplier
+  logical_name: NORMALIZED_SUPPLIER
+  label: normalized_supplier
+  concept_type: DIMENSION
+  domain: P2P_Spend_Semantic_Model_DA
+  synonyms: []
+  business_rules: []
+  physical_table: normalized_supplier
+  attributes:
+  - name: Source_System_Name
+    logical_name: SOURCE_SYSTEM_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Normalized_Supplier_Identifier
+    logical_name: NORMALIZED_SUPPLIER_IDENTIFIER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Normalized_Supplier_Name
+    logical_name: NORMALIZED_SUPPLIER_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Normalized_Supplier_Dim_CK
+    logical_name: NORMALIZED_SUPPLIER_DIM_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: NORMALIZED_SUPPLIER_HIERARCHY_LEVEL_1_IDENTIFIER
+    logical_name: NORMALIZED_SUPPLIER_HIERARCHY_LEVEL_1_IDENTIFIER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: NORMALIZED_SUPPLIER_HIERARCHY_LEVEL_1_NAME
+    logical_name: NORMALIZED_SUPPLIER_HIERARCHY_LEVEL_1_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: NORMALIZED_SUPPLIER_HIERARCHY_LEVEL_2_IDENTIFIER
+    logical_name: NORMALIZED_SUPPLIER_HIERARCHY_LEVEL_2_IDENTIFIER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: NORMALIZED_SUPPLIER_HIERARCHY_LEVEL_2_NAME
+    logical_name: NORMALIZED_SUPPLIER_HIERARCHY_LEVEL_2_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: NORMALIZED_SUPPLIER_HIERARCHY_LEVEL_3_IDENTIFIER
+    logical_name: NORMALIZED_SUPPLIER_HIERARCHY_LEVEL_3_IDENTIFIER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: NORMALIZED_SUPPLIER_HIERARCHY_LEVEL_3_NAME
+    logical_name: NORMALIZED_SUPPLIER_HIERARCHY_LEVEL_3_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: NORMALIZED_SUPPLIER_HIERARCHY_LEVEL_4_IDENTIFIER
+    logical_name: NORMALIZED_SUPPLIER_HIERARCHY_LEVEL_4_IDENTIFIER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: NORMALIZED_SUPPLIER_HIERARCHY_LEVEL_4_NAME
+    logical_name: NORMALIZED_SUPPLIER_HIERARCHY_LEVEL_4_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: NORMALIZED_SUPPLIER_NAME_SHORT
+    logical_name: NORMALIZED_SUPPLIER_NAME_SHORT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: NORMALIZED_SUPPLIER_NAME_MEDIUM
+    logical_name: NORMALIZED_SUPPLIER_NAME_MEDIUM
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: NORMALIZED_SUPPLIER_NAME_LONG
+    logical_name: NORMALIZED_SUPPLIER_NAME_LONG
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: SOURCING_MANAGER
+    logical_name: SOURCING_MANAGER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: SUPPLIER_DIVERSITY_CODE
+    logical_name: SUPPLIER_DIVERSITY_CODE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: LANGUAGE_CODE
+    logical_name: LANGUAGE_CODE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: RECORD_UPDATE_YEAR_MONTH
+    logical_name: RECORD_UPDATE_YEAR_MONTH
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: PRIOR_BATCH_FLAG
+    logical_name: PRIOR_BATCH_FLAG
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Preferred_Supplier_Flag
+    logical_name: PREFERRED_SUPPLIER_FLAG
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: CREDIT_REFERENCE_NUMBER
+    logical_name: CREDIT_REFERENCE_NUMBER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: product
+  logical_name: PRODUCT
+  label: product
+  concept_type: DIMENSION
+  domain: P2P_Spend_Semantic_Model_DA
+  synonyms: []
+  business_rules: []
+  physical_table: product
+  attributes:
+  - name: Source_System_Name
+    logical_name: SOURCE_SYSTEM_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Product_Name
+    logical_name: PRODUCT_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Product_Dim_CK
+    logical_name: PRODUCT_DIM_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Product_Identifier
+    logical_name: PRODUCT_IDENTIFIER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Product_Hier_CK
+    logical_name: PRODUCT_HIER_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Product_Category_Level_1
+    logical_name: PRODUCT_CATEGORY_LEVEL_1
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Product_Category_Level_2
+    logical_name: PRODUCT_CATEGORY_LEVEL_2
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Product_Category_Level_3
+    logical_name: PRODUCT_CATEGORY_LEVEL_3
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: product_hier
+  logical_name: PRODUCT_HIER
+  label: product_hier
+  concept_type: DIMENSION
+  domain: P2P_Spend_Semantic_Model_DA
+  synonyms: []
+  business_rules: []
+  physical_table: product_hier
+  attributes:
+  - name: Source_System_Name
+    logical_name: SOURCE_SYSTEM_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Mck_Unspsc
+    logical_name: MCK_UNSPSC
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Category_Manager_Employee_Identifier_CK
+    logical_name: CATEGORY_MANAGER_EMPLOYEE_IDENTIFIER_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Category_Specialist_Employee_Identifier_CK
+    logical_name: CATEGORY_SPECIALIST_EMPLOYEE_IDENTIFIER_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Category_Manager_Employee_Identifier
+    logical_name: CATEGORY_MANAGER_EMPLOYEE_IDENTIFIER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Contract_Specialist_Employee_Identifier
+    logical_name: CONTRACT_SPECIALIST_EMPLOYEE_IDENTIFIER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Level_1_Name
+    logical_name: LEVEL_1_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Level_2_Name
+    logical_name: LEVEL_2_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Level_3_Name
+    logical_name: LEVEL_3_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Level_4_Name
+    logical_name: LEVEL_4_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Product_Hier_CK
+    logical_name: PRODUCT_HIER_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: resource_details
+  logical_name: RESOURCE_DETAILS
+  label: resource_details
+  concept_type: DIMENSION
+  domain: P2P_Spend_Semantic_Model_DA
+  synonyms: []
+  business_rules: []
+  physical_table: resource_details
+  attributes:
+  - name: Source_System_Name
+    logical_name: SOURCE_SYSTEM_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Resource_Dim_CK
+    logical_name: RESOURCE_DIM_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Employee_ID
+    logical_name: EMPLOYEE_ID
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: SERVICE_OPERATING_MODEL_FINANCIAL_HIER_CK
+    logical_name: SERVICE_OPERATING_MODEL_FINANCIAL_HIER_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Name
+    logical_name: NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: EID
+    logical_name: EID
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Employment_Type
+    logical_name: EMPLOYMENT_TYPE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Source_Extraction_Date
+    logical_name: SOURCE_EXTRACTION_DATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: General Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Business_Title
+    logical_name: BUSINESS_TITLE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Source_Business_Unit
+    logical_name: SOURCE_BUSINESS_UNIT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Business_Unit_ID
+    logical_name: BUSINESS_UNIT_ID
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Segment_1
+    logical_name: SEGMENT_1
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Original_Hire_Date
+    logical_name: ORIGINAL_HIRE_DATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: General Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Contingent_Indicator
+    logical_name: CONTINGENT_INDICATOR
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Status
+    logical_name: STATUS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Location_ID
+    logical_name: LOCATION_ID
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Job_Title
+    logical_name: JOB_TITLE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Job_Family
+    logical_name: JOB_FAMILY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Job_Family_Group
+    logical_name: JOB_FAMILY_GROUP
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisor_ID
+    logical_name: SUPERVISOR_ID
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Dept_ID
+    logical_name: DEPT_ID
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Contingent_Worker_Supplier
+    logical_name: CONTINGENT_WORKER_SUPPLIER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Cost_Center
+    logical_name: COST_CENTER
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Cost_Center_ID
+    logical_name: COST_CENTER_ID
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: FTE_Factor
+    logical_name: FTE_FACTOR
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Company
+    logical_name: COMPANY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Country
+    logical_name: COUNTRY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Location_Type
+    logical_name: LOCATION_TYPE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: State
+    logical_name: STATE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Organization_Level_1
+    logical_name: ORGANIZATION_LEVEL_1
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisorid_Level_1
+    logical_name: SUPERVISORID_LEVEL_1
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Organization_Level_2
+    logical_name: ORGANIZATION_LEVEL_2
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisorid_Level_2
+    logical_name: SUPERVISORID_LEVEL_2
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Organization_Level_3
+    logical_name: ORGANIZATION_LEVEL_3
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisorid_Level_3
+    logical_name: SUPERVISORID_LEVEL_3
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Organization_Level_4
+    logical_name: ORGANIZATION_LEVEL_4
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisorid_Level_4
+    logical_name: SUPERVISORID_LEVEL_4
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Organization_Level_5
+    logical_name: ORGANIZATION_LEVEL_5
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisorid_Level_5
+    logical_name: SUPERVISORID_LEVEL_5
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Organization_Level_6
+    logical_name: ORGANIZATION_LEVEL_6
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisorid_Level_6
+    logical_name: SUPERVISORID_LEVEL_6
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Organization_Level_7
+    logical_name: ORGANIZATION_LEVEL_7
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisorid_Level_7
+    logical_name: SUPERVISORID_LEVEL_7
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Organization_Level_8
+    logical_name: ORGANIZATION_LEVEL_8
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisorid_Level_8
+    logical_name: SUPERVISORID_LEVEL_8
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Organization_Level_9
+    logical_name: ORGANIZATION_LEVEL_9
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisorid_Level_9
+    logical_name: SUPERVISORID_LEVEL_9
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Organization_Level_10
+    logical_name: ORGANIZATION_LEVEL_10
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisorid_Level_10
+    logical_name: SUPERVISORID_LEVEL_10
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Organization_Level_11
+    logical_name: ORGANIZATION_LEVEL_11
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisorid_Level_11
+    logical_name: SUPERVISORID_LEVEL_11
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Organization_Level_12
+    logical_name: ORGANIZATION_LEVEL_12
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisorid_Level_12
+    logical_name: SUPERVISORID_LEVEL_12
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Organization_Level_13
+    logical_name: ORGANIZATION_LEVEL_13
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisorid_Level_13
+    logical_name: SUPERVISORID_LEVEL_13
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Organization_Level_14
+    logical_name: ORGANIZATION_LEVEL_14
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisorid_Level_14
+    logical_name: SUPERVISORID_LEVEL_14
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Work_Email
+    logical_name: WORK_EMAIL
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Segment_2
+    logical_name: SEGMENT_2
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Service_Date_Month
+    logical_name: SERVICE_DATE_MONTH
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisor_Eid
+    logical_name: SUPERVISOR_EID
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Location_Description
+    logical_name: LOCATION_DESCRIPTION
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisoreid_Level_1
+    logical_name: SUPERVISOREID_LEVEL_1
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisor_Level_1
+    logical_name: SUPERVISOR_LEVEL_1
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisoreid_Level_2
+    logical_name: SUPERVISOREID_LEVEL_2
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisor_Level_2
+    logical_name: SUPERVISOR_LEVEL_2
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisoreid_Level_3
+    logical_name: SUPERVISOREID_LEVEL_3
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisor_Level_3
+    logical_name: SUPERVISOR_LEVEL_3
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisoreid_Level_4
+    logical_name: SUPERVISOREID_LEVEL_4
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisor_Level_4
+    logical_name: SUPERVISOR_LEVEL_4
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisoreid_Level_5
+    logical_name: SUPERVISOREID_LEVEL_5
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisor_Level_5
+    logical_name: SUPERVISOR_LEVEL_5
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisoreid_Level_6
+    logical_name: SUPERVISOREID_LEVEL_6
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisor_Level_6
+    logical_name: SUPERVISOR_LEVEL_6
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisoreid_Level_7
+    logical_name: SUPERVISOREID_LEVEL_7
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisor_Level_7
+    logical_name: SUPERVISOR_LEVEL_7
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisoreid_Level_8
+    logical_name: SUPERVISOREID_LEVEL_8
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisor_Level_8
+    logical_name: SUPERVISOR_LEVEL_8
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisoreid_Level_9
+    logical_name: SUPERVISOREID_LEVEL_9
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisor_Level_9
+    logical_name: SUPERVISOR_LEVEL_9
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisoreid_Level_10
+    logical_name: SUPERVISOREID_LEVEL_10
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisor_Level_10
+    logical_name: SUPERVISOR_LEVEL_10
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisoreid_Level_11
+    logical_name: SUPERVISOREID_LEVEL_11
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisor_Level_11
+    logical_name: SUPERVISOR_LEVEL_11
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisoreid_Level_12
+    logical_name: SUPERVISOREID_LEVEL_12
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisor_Level_12
+    logical_name: SUPERVISOR_LEVEL_12
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisoreid_Level_13
+    logical_name: SUPERVISOREID_LEVEL_13
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supervisor_Level_13
+    logical_name: SUPERVISOR_LEVEL_13
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Hire_Date
+    logical_name: HIRE_DATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: General Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Manager
+    logical_name: MANAGER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Job_Entry_Date
+    logical_name: JOB_ENTRY_DATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: General Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Worker_Email
+    logical_name: WORKER_EMAIL
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Security_Identifier
+    logical_name: SECURITY_IDENTIFIER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Project_Role
+    logical_name: PROJECT_ROLE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Contingent_Worker_Role
+    logical_name: CONTINGENT_WORKER_ROLE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Service_Manager
+    logical_name: SERVICE_MANAGER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Service_Category_Manager
+    logical_name: SERVICE_CATEGORY_MANAGER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: First_Assignment_Start_Date
+    logical_name: FIRST_ASSIGNMENT_START_DATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: General Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Shore_location
+    logical_name: SHORE_LOCATION
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: RowNum
+    logical_name: ROWNUM
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Vendor_Hier_CK
+    logical_name: VENDOR_HIER_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Project_Resource_Type
+    logical_name: PROJECT_RESOURCE_TYPE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Project_Job_Code
+    logical_name: PROJECT_JOB_CODE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Last_Assignment_End_Date
+    logical_name: LAST_ASSIGNMENT_END_DATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: General Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: spend_details_fact
+  logical_name: SPEND_DETAILS_FACT
+  label: spend_details_fact
+  concept_type: DIMENSION
+  domain: P2P_Spend_Semantic_Model_DA
+  synonyms: []
+  business_rules: []
+  physical_table: spend_details_fact
+  attributes:
+  - name: Source_System_Name
+    logical_name: SOURCE_SYSTEM_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Time_Entry_Date
+    logical_name: TIME_ENTRY_DATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: Long Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Cost_Center
+    logical_name: COST_CENTER
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Approver
+    logical_name: APPROVER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Invoice_Identifier
+    logical_name: INVOICE_IDENTIFIER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Sow_Header_Dim_CK
+    logical_name: SOW_HEADER_DIM_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Company_Code_CK
+    logical_name: COMPANY_CODE_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Cost_Center_CK
+    logical_name: COST_CENTER_CK
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Invoice_Submit_Date_CK
+    logical_name: INVOICE_SUBMIT_DATE_CK
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Resource_Dim_CK
+    logical_name: RESOURCE_DIM_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Username
+    logical_name: USERNAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Consultant
+    logical_name: CONSULTANT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Worker_Supervisor
+    logical_name: WORKER_SUPERVISOR
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Delegate_Approver
+    logical_name: DELEGATE_APPROVER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supplier_Identifier
+    logical_name: SUPPLIER_IDENTIFIER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supplier_Name
+    logical_name: SUPPLIER_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Buyer_Code
+    logical_name: BUYER_CODE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Buyer_Name
+    logical_name: BUYER_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Purchasing_Organization_Code
+    logical_name: PURCHASING_ORGANIZATION_CODE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Purchasing_Organization_Name
+    logical_name: PURCHASING_ORGANIZATION_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: GL_Account_Code
+    logical_name: GL_ACCOUNT_CODE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Timesheet_Status
+    logical_name: TIMESHEET_STATUS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Task_Code
+    logical_name: TASK_CODE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Task_Name
+    logical_name: TASK_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Pay_Rate
+    logical_name: PAY_RATE
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supplier_Bill_Rate_ST_HR
+    logical_name: SUPPLIER_BILL_RATE_ST_HR
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supplier_Bill_Rate_OT_HR
+    logical_name: SUPPLIER_BILL_RATE_OT_HR
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supplier_Bill_Rate_DT_HR
+    logical_name: SUPPLIER_BILL_RATE_DT_HR
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Buyer_Bill_Rate
+    logical_name: BUYER_BILL_RATE
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Billable_Per_Diem
+    logical_name: BILLABLE_PER_DIEM
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Bill_Rate_ST_HR
+    logical_name: BILL_RATE_ST_HR
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Bill_Rate_OT_HR
+    logical_name: BILL_RATE_OT_HR
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Bill_Rate_DT_HR
+    logical_name: BILL_RATE_DT_HR
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Billable_Hours
+    logical_name: BILLABLE_HOURS
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Non_Billable_Hours
+    logical_name: NON_BILLABLE_HOURS
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Hours_Units
+    logical_name: HOURS_UNITS
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Currency
+    logical_name: CURRENCY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Invoiced_Gross_ST_HR
+    logical_name: INVOICED_GROSS_ST_HR
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Invoiced_Gross_OT_HR
+    logical_name: INVOICED_GROSS_OT_HR
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Invoiced_Gross_DT_HR
+    logical_name: INVOICED_GROSS_DT_HR
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Invoiced_Net
+    logical_name: INVOICED_NET
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Invoice_Submit_Date
+    logical_name: INVOICE_SUBMIT_DATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: Long Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Spend_Details_Fact_CK
+    logical_name: SPEND_DETAILS_FACT_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: SOW_Timesheet_Identifier
+    logical_name: SOW_TIMESHEET_IDENTIFIER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Spend_Fact_CK
+    logical_name: SPEND_FACT_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Worker_Dim_CK
+    logical_name: WORKER_DIM_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Vendor_Hier_CK
+    logical_name: VENDOR_HIER_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: GL_Account_CK
+    logical_name: GL_ACCOUNT_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Time_Sheet_Approved_Date_CK
+    logical_name: TIME_SHEET_APPROVED_DATE_CK
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: spend_fact
+  logical_name: SPEND_FACT
+  label: spend_fact
+  concept_type: ENTITY
+  domain: P2P_Spend_Semantic_Model_DA
+  synonyms: []
+  business_rules: []
+  physical_table: spend_fact
+  attributes:
+  - name: Source_System_Name
+    logical_name: SOURCE_SYSTEM_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Resource_Dim_CK
+    logical_name: RESOURCE_DIM_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Employee_Identifier
+    logical_name: EMPLOYEE_IDENTIFIER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: GL_Account
+    logical_name: GL_ACCOUNT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Approval_Status
+    logical_name: APPROVAL_STATUS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supplier_Dim_CK
+    logical_name: SUPPLIER_DIM_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Transaction_Date
+    logical_name: TRANSACTION_DATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: Long Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Spend_Fact_CK
+    logical_name: SPEND_FACT_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: GL_Company_Code_CK
+    logical_name: GL_COMPANY_CODE_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: GL_Cost_Center_CK
+    logical_name: GL_COST_CENTER_CK
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: GL_Account_CK
+    logical_name: GL_ACCOUNT_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Invoice_Number
+    logical_name: INVOICE_NUMBER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Quantity
+    logical_name: QUANTITY
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Document_Identifier
+    logical_name: DOCUMENT_IDENTIFIER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Document_Line_Number
+    logical_name: DOCUMENT_LINE_NUMBER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Cost_Center
+    logical_name: COST_CENTER
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Company_Code
+    logical_name: COMPANY_CODE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Document_Line_Type
+    logical_name: DOCUMENT_LINE_TYPE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Source_Cost_Center
+    logical_name: SOURCE_COST_CENTER
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Source_GL_Account
+    logical_name: SOURCE_GL_ACCOUNT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Source_Company_Code
+    logical_name: SOURCE_COMPANY_CODE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Product_Dim_CK
+    logical_name: PRODUCT_DIM_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Document_Category
+    logical_name: DOCUMENT_CATEGORY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Spend_Type
+    logical_name: SPEND_TYPE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Item_Number
+    logical_name: ITEM_NUMBER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Item_Description
+    logical_name: ITEM_DESCRIPTION
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Currency_Code
+    logical_name: CURRENCY_CODE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Transaction_Currency_Amount
+    logical_name: TRANSACTION_CURRENCY_AMOUNT
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Posting_Date
+    logical_name: POSTING_DATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: Long Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: ERP_Document_Number
+    logical_name: ERP_DOCUMENT_NUMBER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Transaction_USD_Amount
+    logical_name: TRANSACTION_USD_AMOUNT
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Product_Hier_CK
+    logical_name: PRODUCT_HIER_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Normalized_Supplier_Dim_CK
+    logical_name: NORMALIZED_SUPPLIER_DIM_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Normalized_Supplier_Diversity_Dim_CK
+    logical_name: NORMALIZED_SUPPLIER_DIVERSITY_DIM_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Normalized_Supplier_Management_Dim_CK
+    logical_name: NORMALIZED_SUPPLIER_MANAGEMENT_DIM_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: DERIVED_BUSINESS_UNIT
+    logical_name: DERIVED_BUSINESS_UNIT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Reporting_Date
+    logical_name: REPORTING_DATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: Short Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Transaction_Date_CK
+    logical_name: TRANSACTION_DATE_CK
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: spend_opportunity_mgmt
+  logical_name: SPEND_OPPORTUNITY_MGMT
+  label: spend_opportunity_mgmt
+  concept_type: DIMENSION
+  domain: P2P_Spend_Semantic_Model_DA
+  synonyms: []
+  business_rules: []
+  physical_table: spend_opportunity_mgmt
+  attributes:
+  - name: Source_System_Name
+    logical_name: SOURCE_SYSTEM_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supplier_Name
+    logical_name: SUPPLIER_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Change_Date_CK
+    logical_name: CHANGE_DATE_CK
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Spend_Opportunity_Breakdown
+    logical_name: SPEND_OPPORTUNITY_BREAKDOWN
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Change_Date
+    logical_name: CHANGE_DATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: Long Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Effective_Calendar_Year
+    logical_name: EFFECTIVE_CALENDAR_YEAR
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Effective_Calendar_Month
+    logical_name: EFFECTIVE_CALENDAR_MONTH
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Effective_Calendar_Month_Number
+    logical_name: EFFECTIVE_CALENDAR_MONTH_NUMBER
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Effective_Calendar_Year_Month
+    logical_name: EFFECTIVE_CALENDAR_YEAR_MONTH
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Effective_Fiscal_Year
+    logical_name: EFFECTIVE_FISCAL_YEAR
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Effective_Fiscal_Month
+    logical_name: EFFECTIVE_FISCAL_MONTH
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Effective_Fiscal_Month_Number
+    logical_name: EFFECTIVE_FISCAL_MONTH_NUMBER
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Effective_Fiscal_Year_Month
+    logical_name: EFFECTIVE_FISCAL_YEAR_MONTH
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Normalized_Supplier_Dim_CK
+    logical_name: NORMALIZED_SUPPLIER_DIM_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Normalized_Supplier_Identifier
+    logical_name: NORMALIZED_SUPPLIER_IDENTIFIER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Normalized_Supplier_Management_Dim_CK
+    logical_name: NORMALIZED_SUPPLIER_MANAGEMENT_DIM_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Curr_Flg
+    logical_name: CURR_FLG
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Effective_Start_Date
+    logical_name: EFFECTIVE_START_DATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: Long Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Effective_End_Date
+    logical_name: EFFECTIVE_END_DATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: Long Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Resource_Dim_CK
+    logical_name: RESOURCE_DIM_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Employee_Identifier
+    logical_name: EMPLOYEE_IDENTIFIER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: supplier
+  logical_name: SUPPLIER
+  label: supplier
+  concept_type: DIMENSION
+  domain: P2P_Spend_Semantic_Model_DA
+  synonyms: []
+  business_rules: []
+  physical_table: supplier
+  attributes:
+  - name: Supplier_Dim_CK
+    logical_name: SUPPLIER_DIM_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Source_System_Name
+    logical_name: SOURCE_SYSTEM_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supplier_Identifier
+    logical_name: SUPPLIER_IDENTIFIER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Dba_Name
+    logical_name: DBA_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supplier_Status
+    logical_name: SUPPLIER_STATUS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Tax_Identifier
+    logical_name: TAX_IDENTIFIER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Duns_Number
+    logical_name: DUNS_NUMBER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Ariba_Network_Identifier
+    logical_name: ARIBA_NETWORK_IDENTIFIER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Address
+    logical_name: ADDRESS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Address1
+    logical_name: ADDRESS1
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Address2
+    logical_name: ADDRESS2
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: City
+    logical_name: CITY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: State
+    logical_name: STATE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Country
+    logical_name: COUNTRY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Postal_Code
+    logical_name: POSTAL_CODE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Primary_Contact_Name
+    logical_name: PRIMARY_CONTACT_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Primary_Contact_Email
+    logical_name: PRIMARY_CONTACT_EMAIL
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Primary_Contact_Phone
+    logical_name: PRIMARY_CONTACT_PHONE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Secondary_Contact_Name
+    logical_name: SECONDARY_CONTACT_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Secondary_Contact_Email
+    logical_name: SECONDARY_CONTACT_EMAIL
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Secondary_Contact_Phone
+    logical_name: SECONDARY_CONTACT_PHONE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Category
+    logical_name: CATEGORY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Subcategory
+    logical_name: SUBCATEGORY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Approved_For_Purchasing
+    logical_name: APPROVED_FOR_PURCHASING
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Quality_Rating
+    logical_name: QUALITY_RATING
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Source_Supplier_Name
+    logical_name: SOURCE_SUPPLIER_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: System_Generated_Supplier_Name
+    logical_name: SYSTEM_GENERATED_SUPPLIER_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Supplier_Type
+    logical_name: SUPPLIER_TYPE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Preferred_Supplier_Flag
+    logical_name: PREFERRED_SUPPLIER_FLAG
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Normalized_Supplier_Dim_CK
+    logical_name: NORMALIZED_SUPPLIER_DIM_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Business_Approved_Supplier_Name
+    logical_name: BUSINESS_APPROVED_SUPPLIER_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: supplier_engagement
+  logical_name: SUPPLIER_ENGAGEMENT
+  label: supplier_engagement
+  concept_type: DIMENSION
+  domain: P2P_Spend_Semantic_Model_DA
+  synonyms: []
+  business_rules: []
+  physical_table: supplier_engagement
+  attributes:
+  - name: Source_System_Name
+    logical_name: SOURCE_SYSTEM_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Company_Code
+    logical_name: COMPANY_CODE
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Source_Business_Unit
+    logical_name: SOURCE_BUSINESS_UNIT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: LGBTQ
+    logical_name: LGBTQ
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Diversity_Date
+    logical_name: DIVERSITY_DATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: General Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Termination_Date
+    logical_name: TERMINATION_DATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: General Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Direct_Indirect_Sourcing
+    logical_name: DIRECT_INDIRECT_SOURCING
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Government_Small
+    logical_name: GOVERNMENT_SMALL
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Small_Disadvantaged
+    logical_name: SMALL_DISADVANTAGED
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Veteran
+    logical_name: VETERAN
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Service_Disabled_Veteran
+    logical_name: SERVICE_DISABLED_VETERAN
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Hubzone
+    logical_name: HUBZONE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Disabled
+    logical_name: DISABLED
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Minority
+    logical_name: MINORITY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Black_American
+    logical_name: BLACK_AMERICAN
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Hispanic_American
+    logical_name: HISPANIC_AMERICAN
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Native_American
+    logical_name: NATIVE_AMERICAN
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Asian_Pacific_American
+    logical_name: ASIAN_PACIFIC_AMERICAN
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Subcontinental_Asian_American
+    logical_name: SUBCONTINENTAL_ASIAN_AMERICAN
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Other_Diversity
+    logical_name: OTHER_DIVERSITY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Diversity_Date_CK
+    logical_name: DIVERSITY_DATE_CK
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Termination_Date_CK
+    logical_name: TERMINATION_DATE_CK
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Woman_Owned_WBE
+    logical_name: WOMAN_OWNED_WBE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Source_Last_Updated_Date_Time
+    logical_name: SOURCE_LAST_UPDATED_DATE_TIME
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: General Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Normalized_Supplier_Diversity_Dim_CK
+    logical_name: NORMALIZED_SUPPLIER_DIVERSITY_DIM_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Normalized_Supplier_Parent_Name
+    logical_name: NORMALIZED_SUPPLIER_PARENT_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Normalized_Supplier_Identifier
+    logical_name: NORMALIZED_SUPPLIER_IDENTIFIER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: NORMALIZED_SUPPLIER_IDENTIFIER_CK
+    logical_name: NORMALIZED_SUPPLIER_IDENTIFIER_CK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+metrics:
+- name: TOTAL_SPEND
+  logical_name: TOTAL_SPEND
+  label: Total Spend
+  description: Base spend measure. Sum of Transaction_USD_Amount. Dependency for all
+    derived measures.
+  sql_expression: SUM(SPEND_FACT."TRANSACTION_USD_AMOUNT")
+  dax_expression: SUM(spend_fact[Transaction_USD_Amount])
+  format_string: $#,##0.00
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total Spend
+  - TOTAL_SPEND
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+  bi_description: Base spend measure. Sum of Transaction_USD_Amount. Dependency for
+    all derived measures.
+- name: DISTINCT_SUPPLIER_COUNT
+  logical_name: DISTINCT_SUPPLIER_COUNT
+  label: Distinct Supplier Count
+  description: Count of distinct normalized suppliers. Base measure for Avg Spend
+    Per Supplier.
+  sql_expression: COUNT(DISTINCT SPEND_FACT."NORMALIZED_SUPPLIER_DIM_CK")
+  dax_expression: DISTINCTCOUNT(spend_fact[Normalized_Supplier_Dim_CK])
+  format_string: '#,##0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Distinct Supplier Count
+  - DISTINCT_SUPPLIER_COUNT
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+  bi_description: Count of distinct normalized suppliers. Base measure for Avg Spend
+    Per Supplier.
+- name: AVG_SPEND_PER_SUPPLIER
+  logical_name: AVG_SPEND_PER_SUPPLIER
+  label: Avg Spend Per Supplier
+  description: 'STRESS TEST: Measure referencing measure. Tests Semabridge handling
+    of 2-level dependency chain.'
+  sql_expression: IFF(COALESCE((COUNT(DISTINCT SPEND_FACT."NORMALIZED_SUPPLIER_DIM_CK")),
+    0) = 0, 0, (SUM(SPEND_FACT."TRANSACTION_USD_AMOUNT")) / (COUNT(DISTINCT SPEND_FACT."NORMALIZED_SUPPLIER_DIM_CK")))
+  dax_expression: DIVIDE([TOTAL_SPEND], [DISTINCT_SUPPLIER_COUNT], 0)
+  format_string: $#,##0.00
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Avg Spend Per Supplier
+  - AVG_SPEND_PER_SUPPLIER
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+  bi_description: 'STRESS TEST: Measure referencing measure. Tests Semabridge handling
+    of 2-level dependency chain.'
+- name: SPEND_BY_POSTING_DATE
+  logical_name: SPEND_BY_POSTING_DATE
+  label: Spend by Posting Date
+  description: 'STRESS TEST: Activates inactive Posting_Date → date[Cal_DT] relationship.
+    Databricks Metric Views have no native USERELATIONSHIP equivalent.'
+  dax_expression: "CALCULATE(\n    SUM(spend_fact[Transaction_USD_Amount]),\n    USERELATIONSHIP(spend_fact[Posting_Date],\
+    \ 'date'[Cal_DT])\n)"
+  deploy_reason: 'not applicable: USERELATIONSHIP requires an inactive-relationship
+    path not representable in the semantic view (the view always joins through the
+    active relationship)'
+  format_string: $#,##0.00
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Spend by Posting Date
+  - SPEND_BY_POSTING_DATE
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+  bi_description: 'STRESS TEST: Activates inactive Posting_Date → date[Cal_DT] relationship.
+    Databricks Metric Views have no native USERELATIONSHIP equivalent.'
+- name: SPEND_SAME_PERIOD_LAST_YEAR
+  logical_name: SPEND_SAME_PERIOD_LAST_YEAR
+  label: Spend Same Period Last Year
+  description: 'STRESS TEST: Activates inactive Posting_Date → date[LY_CAL_DT] relationship,
+    creating a role-playing date dimension pattern. Will return blank with current
+    data range - tests null-handling in Databricks.'
+  dax_expression: "CALCULATE(\n    SUM(spend_fact[Transaction_USD_Amount]),\n    USERELATIONSHIP(spend_fact[Posting_Date],\
+    \ 'date'[LY_CAL_DT])\n)"
+  deploy_reason: 'not applicable: USERELATIONSHIP requires an inactive-relationship
+    path not representable in the semantic view (the view always joins through the
+    active relationship)'
+  format_string: $#,##0.00
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Spend Same Period Last Year
+  - SPEND_SAME_PERIOD_LAST_YEAR
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+  bi_description: 'STRESS TEST: Activates inactive Posting_Date → date[LY_CAL_DT]
+    relationship, creating a role-playing date dimension pattern. Will return blank
+    with current data range - tests null-handling in Databricks.'
+- name: FISCAL_YTD_SPEND
+  logical_name: FISCAL_YTD_SPEND
+  label: Fiscal YTD Spend
+  description: 'STRESS TEST: Fiscal YTD using June 30 year-end (confirmed fiscal year
+    end from date table). Tests non-calendar fiscal year handling.'
+  dax_expression: "CALCULATE(\n    SUM(spend_fact[Transaction_USD_Amount]),\n    DATESYTD('date'[Cal_DT],\
+    \ \"06/30\")\n)"
+  deploy_reason: 'Enriched view creation failed: Enriched view creation failed'
+  format_string: $#,##0.00
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Fiscal YTD Spend
+  - FISCAL_YTD_SPEND
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+  bi_description: 'STRESS TEST: Fiscal YTD using June 30 year-end (confirmed fiscal
+    year end from date table). Tests non-calendar fiscal year handling.'
+- name: ROLLING_12M_SPEND
+  logical_name: ROLLING_12M_SPEND
+  label: Rolling 12M Spend
+  description: 'STRESS TEST: Rolling 12-month spend. Will return blank with current
+    3-month data window - tests graceful null handling in Databricks Metric Views.'
+  dax_expression: "CALCULATE(\n    SUM(spend_fact[Transaction_USD_Amount]),\n    DATESINPERIOD('date'[Cal_DT],\
+    \ LASTDATE('date'[Cal_DT]), -12, MONTH)\n)"
+  deploy_reason: 'Enriched view creation failed: Enriched view creation failed'
+  format_string: $#,##0.00
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Rolling 12M Spend
+  - ROLLING_12M_SPEND
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+  bi_description: 'STRESS TEST: Rolling 12-month spend. Will return blank with current
+    3-month data window - tests graceful null handling in Databricks Metric Views.'
+- name: PRIOR_QUARTER_SPEND
+  logical_name: PRIOR_QUARTER_SPEND
+  label: Prior Quarter Spend
+  description: 'STRESS TEST: Prior quarter spend via PARALLELPERIOD. Will return blank
+    - no prior quarter data. Tests period-shift translation and null handling.'
+  dax_expression: "CALCULATE(\n    SUM(spend_fact[Transaction_USD_Amount]),\n    PARALLELPERIOD('date'[Cal_DT],\
+    \ -1, QUARTER)\n)"
+  deploy_reason: 'Enriched view creation failed: Enriched view creation failed'
+  format_string: $#,##0.00
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Prior Quarter Spend
+  - PRIOR_QUARTER_SPEND
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+  bi_description: 'STRESS TEST: Prior quarter spend via PARALLELPERIOD. Will return
+    blank - no prior quarter data. Tests period-shift translation and null handling.'
+- name: MTD_SPEND
+  logical_name: MTD_SPEND
+  label: MTD Spend
+  description: 'STRESS TEST: Month-to-date spend. Control measure - should succeed
+    and return non-blank results. Validates basic time intelligence survives migration.'
+  dax_expression: "CALCULATE(\n    SUM(spend_fact[Transaction_USD_Amount]),\n    DATESMTD('date'[Cal_DT])\n\
+    )"
+  deploy_reason: 'Enriched view creation failed: Enriched view creation failed'
+  format_string: $#,##0.00
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - MTD Spend
+  - MTD_SPEND
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+  bi_description: 'STRESS TEST: Month-to-date spend. Control measure - should succeed
+    and return non-blank results. Validates basic time intelligence survives migration.'
+- name: FISCAL_QTD_SPEND
+  logical_name: FISCAL_QTD_SPEND
+  label: Fiscal QTD Spend
+  description: 'STRESS TEST: Fiscal quarter-to-date using FISCAL_START column. Combines
+    custom fiscal calendar with QTD logic.'
+  dax_expression: "CALCULATE(\n    SUM(spend_fact[Transaction_USD_Amount]),\n    DATESQTD('date'[FISCAL_START])\n\
+    )"
+  deploy_reason: 'Enriched view creation failed: Enriched view creation failed'
+  format_string: $#,##0.00
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Fiscal QTD Spend
+  - FISCAL_QTD_SPEND
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+  bi_description: 'STRESS TEST: Fiscal quarter-to-date using FISCAL_START column.
+    Combines custom fiscal calendar with QTD logic.'
+- name: DIRECT_APPROVED_SPEND
+  logical_name: DIRECT_APPROVED_SPEND
+  label: Direct Approved Spend
+  description: 'STRESS TEST: Nested FILTER inside CALCULATE with two predicates on
+    spend_fact. Tests compound WHERE clause translation and filter context interaction.'
+  sql_expression: SUM(CASE WHEN (SPEND_FACT."SPEND_TYPE" = 'Direct') AND (SPEND_FACT."APPROVAL_STATUS"
+    = 'Approved') THEN SPEND_FACT."TRANSACTION_USD_AMOUNT" END::FLOAT)
+  dax_expression: "CALCULATE(\n    SUM(spend_fact[Transaction_USD_Amount]),\n    FILTER(\n\
+    \        spend_fact,\n        spend_fact[Spend_Type] = \"Direct\"\n          \
+    \  && spend_fact[Approval_Status] = \"Approved\"\n    )\n)"
+  format_string: $#,##0.00
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Direct Approved Spend
+  - DIRECT_APPROVED_SPEND
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+  bi_description: 'STRESS TEST: Nested FILTER inside CALCULATE with two predicates
+    on spend_fact. Tests compound WHERE clause translation and filter context interaction.'
+- name: DIVERSE_SUPPLIER_SPEND
+  logical_name: DIVERSE_SUPPLIER_SPEND
+  label: Diverse Supplier Spend
+  description: 'STRESS TEST: FILTER across a many-to-many bridge table (diversity_bridge).
+    Diversity_Flag confirmed as Y-only. Tests M:M bridge resolution in Databricks
+    - silent cardinality explosion risk.'
+  dax_expression: "CALCULATE(\n    SUM(spend_fact[Transaction_USD_Amount]),\n    FILTER(\n\
+    \        diversity_bridge,\n        diversity_bridge[Diversity_Flag] = \"Y\"\n\
+    \    )\n)"
+  deploy_reason: 'Not supported by Snowflake semantic views: aggregates columns of
+    DIVERSITY_BRIDGE, which SPEND_FACT cannot reach through many-to-one relationships
+    (for example across a many-to-many/bridge relationship). Snowflake 010219.'
+  format_string: $#,##0.00
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Diverse Supplier Spend
+  - DIVERSE_SUPPLIER_SPEND
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+  bi_description: 'STRESS TEST: FILTER across a many-to-many bridge table (diversity_bridge).
+    Diversity_Flag confirmed as Y-only. Tests M:M bridge resolution in Databricks
+    - silent cardinality explosion risk.'
+- name: TOP_10_COST_CENTER_SPEND
+  logical_name: TOP_10_COST_CENTER_SPEND
+  label: Top 10 Cost Center Spend
+  description: 'STRESS TEST: TOPN set function inside CALCULATE. Tests whether Databricks
+    can represent dynamic ranked sets as subqueries.'
+  dax_expression: "CALCULATE(\n    SUM(spend_fact[Transaction_USD_Amount]),\n    TOPN(\n\
+    \        10,\n        cost_center_hierarchy,\n        CALCULATE(SUM(spend_fact[Transaction_USD_Amount])),\n\
+    \        DESC\n    )\n)"
+  deploy_reason: 'not applicable: TOPN (a top-N set that depends on the query context)
+    is not supported'
+  format_string: $#,##0.00
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Top 10 Cost Center Spend
+  - TOP_10_COST_CENTER_SPEND
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+  bi_description: 'STRESS TEST: TOPN set function inside CALCULATE. Tests whether
+    Databricks can represent dynamic ranked sets as subqueries.'
+- name: SPEND_QOQ_VARIANCE_PCT
+  logical_name: SPEND_QOQ_VARIANCE_PCT
+  label: Spend QoQ Variance %
+  description: 'STRESS TEST: 3-level measure dependency chain. References [Total Spend]
+    and [Prior Quarter Spend]. Tests Semabridge dependency resolution vs SQL flattening.'
+  dax_expression: "DIVIDE(\n    [TOTAL_SPEND] - [PRIOR_QUARTER_SPEND],\n    [PRIOR_QUARTER_SPEND],\n\
+    \    0\n)"
+  deploy_reason: 'Enriched view creation failed: Enriched view creation failed'
+  format_string: 0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Spend QoQ Variance %
+  - SPEND_QOQ_VARIANCE_PCT
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+  bi_description: 'STRESS TEST: 3-level measure dependency chain. References [Total
+    Spend] and [Prior Quarter Spend]. Tests Semabridge dependency resolution vs SQL
+    flattening.'
+- name: CC_SPEND_RANK
+  logical_name: CC_SPEND_RANK
+  label: CC Spend Rank
+  description: 'STRESS TEST: RANKX feeding into a ratio that references [Total Spend].
+    Tests ranked metric as first-class object vs collapsed SQL.'
+  dax_expression: "RANKX(\n    ALL(cost_center_hierarchy[Cost_Center_Name]),\n   \
+    \ CALCULATE(SUM(spend_fact[Transaction_USD_Amount])),\n    ,\n    DESC,\n    Dense\n\
+    )"
+  deploy_reason: 'not applicable: needs window metric (ranking)'
+  format_string: '#,##0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - CC Spend Rank
+  - CC_SPEND_RANK
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+  bi_description: 'STRESS TEST: RANKX feeding into a ratio that references [Total
+    Spend]. Tests ranked metric as first-class object vs collapsed SQL.'
+- name: TOP_5_CC_SPEND_SHARE
+  logical_name: TOP_5_CC_SPEND_SHARE
+  label: Top 5 CC Spend Share
+  description: 'STRESS TEST: References [CC Spend Rank] and [Total Spend]. 3-level
+    chain: this → CC Spend Rank → Total Spend. Tests cascaded metric reference preservation.'
+  dax_expression: "DIVIDE(\n    CALCULATE(\n        SUM(spend_fact[Transaction_USD_Amount]),\n\
+    \        FILTER(\n            ALL(cost_center_hierarchy[Cost_Center_Name]),\n\
+    \            [CC_SPEND_RANK] <= 5\n        )\n    ),\n    [TOTAL_SPEND],\n   \
+    \ 0\n)"
+  deploy_reason: 'Cannot compute — depends on unresolved metric(s): ''CC_SPEND_RANK''
+    (not applicable: needs window metric (ranking)). This metric''s own DAX has no
+    translation issue of its own.'
+  format_string: 0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Top 5 CC Spend Share
+  - TOP_5_CC_SPEND_SHARE
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+  bi_description: 'STRESS TEST: References [CC Spend Rank] and [Total Spend]. 3-level
+    chain: this → CC Spend Rank → Total Spend. Tests cascaded metric reference preservation.'
+- name: DIVERSITY_FILTERED_SPEND
+  logical_name: DIVERSITY_FILTERED_SPEND
+  label: Diversity Filtered Spend
+  description: 'STRESS TEST: Explicitly forces bi-directional cross-filter on the
+    M:M diversity_bridge relationship. No Databricks Metric View equivalent - must
+    be reconstructed as explicit join.'
+  dax_expression: "CALCULATE(\n    SUM(spend_fact[Transaction_USD_Amount]),\n    CROSSFILTER(\n\
+    \        spend_fact[Normalized_Supplier_Diversity_Dim_CK],\n        diversity_bridge[Normalized_Supplier_Diversity_Dim_CK],\n\
+    \        Both\n    )\n)"
+  deploy_reason: 'not applicable: CALCULATE filter modifier CROSSFILTER is not supported'
+  format_string: $#,##0.00
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Diversity Filtered Spend
+  - DIVERSITY_FILTERED_SPEND
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+  bi_description: 'STRESS TEST: Explicitly forces bi-directional cross-filter on the
+    M:M diversity_bridge relationship. No Databricks Metric View equivalent - must
+    be reconstructed as explicit join.'
+- name: ACCOUNT_ROLLUP_SPEND
+  logical_name: ACCOUNT_ROLLUP_SPEND
+  label: Account Rollup Spend
+  description: 'STRESS TEST: Filters account_hierarchy by Account_Level_0 membership
+    and propagates to spend_fact via relationship. Tests context propagation across
+    parent-child hierarchy.'
+  dax_expression: "CALCULATE(\n    SUM(spend_fact[Transaction_USD_Amount]),\n    FILTER(\n\
+    \        account_hierarchy,\n        account_hierarchy[Account_Level_0] = SELECTEDVALUE(account_hierarchy[Account_Level_0])\n\
+    \    )\n)"
+  deploy_reason: 'DAX translation failed: Filter condition contains an aggregate function,
+    which cannot be nested inside SUM: ACCOUNT_HIERARCHY.ACCOUNT_LEVEL_0 = IFF(COUNT(DISTINCT
+    ACCOUNT_HIERARCHY.ACCOUNT_LEVEL_0) + MAX(IFF(ACCOUNT_HIERARCHY.ACCOUNT_LEVEL_0
+    IS NULL, 1, 0)) = 1,'
+  format_string: $#,##0.00
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Account Rollup Spend
+  - ACCOUNT_ROLLUP_SPEND
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+  bi_description: 'STRESS TEST: Filters account_hierarchy by Account_Level_0 membership
+    and propagates to spend_fact via relationship. Tests context propagation across
+    parent-child hierarchy.'
+- name: MY_COST_CENTER_SPEND
+  logical_name: MY_COST_CENTER_SPEND
+  label: My Cost Center Spend
+  description: 'STRESS TEST: Dynamic RLS using flat token match against Cost_Center_Path_RLS
+    (format: /CC/CC000X). USERPRINCIPALNAME() pattern. Tests Databricks row-filter
+    policy translation.'
+  dax_expression: "CALCULATE(\n    SUM(spend_fact[Transaction_USD_Amount]),\n    FILTER(\n\
+    \        cost_center_hierarchy,\n        cost_center_hierarchy[Cost_Center_Path_RLS]\
+    \ = \"/CC/\" & USERPRINCIPALNAME()\n    )\n)"
+  deploy_reason: 'not applicable: text result (& concatenation)'
+  format_string: $#,##0.00
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - My Cost Center Spend
+  - MY_COST_CENTER_SPEND
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+  bi_description: 'STRESS TEST: Dynamic RLS using flat token match against Cost_Center_Path_RLS
+    (format: /CC/CC000X). USERPRINCIPALNAME() pattern. Tests Databricks row-filter
+    policy translation.'
+- name: MY_ACCOUNT_SPEND
+  logical_name: MY_ACCOUNT_SPEND
+  label: My Account Spend
+  description: 'STRESS TEST: Dynamic RLS using PATHCONTAINS against Ancestor_List
+    (GL code slash-delimited path, e.g. GL60000/GL60001/GL60002). SUBSTITUTE converts
+    / to | for DAX PATH compatibility. Tests PATHCONTAINS translation - no SQL equivalent,
+    requires recursive CTE or pre-flattened bridge in Databricks.'
+  dax_expression: "CALCULATE(\n    SUM(spend_fact[Transaction_USD_Amount]),\n    FILTER(\n\
+    \        account_hierarchy,\n        PATHCONTAINS(\n            SUBSTITUTE(account_hierarchy[Ancestor_List],\
+    \ \"/\", \"|\"),\n            SELECTEDVALUE(account_hierarchy[Account_Level_0])\n\
+    \        )\n    )\n)"
+  deploy_reason: 'DAX translation failed: Unsupported DAX function: SUBSTITUTE'
+  format_string: $#,##0.00
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - My Account Spend
+  - MY_ACCOUNT_SPEND
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+  bi_description: 'STRESS TEST: Dynamic RLS using PATHCONTAINS against Ancestor_List
+    (GL code slash-delimited path, e.g. GL60000/GL60001/GL60002). SUBSTITUTE converts
+    / to | for DAX PATH compatibility. Tests PATHCONTAINS translation - no SQL equivalent,
+    requires recursive CTE or pre-flattened bridge in Databricks.'
+- name: SPEND_PCT_OF_TOTAL
+  logical_name: SPEND_PCT_OF_TOTAL
+  label: Spend % of Total
+  description: 'STRESS TEST: DIVIDE against ALL(spend_fact) removes all filters on
+    fact table. Tests filter removal translation to SQL window functions.'
+  dax_expression: "DIVIDE(\n    SUM(spend_fact[Transaction_USD_Amount]),\n    CALCULATE(\n\
+    \        SUM(spend_fact[Transaction_USD_Amount]),\n        ALL(spend_fact)\n \
+    \   ),\n    0\n)"
+  deploy_reason: 'Nested aggregate: SUM(...::FLOAT) appears inside the row-level argument
+    of SUM(...::FLOAT), which Snowflake''s semantic-view METRICS clause does not allow
+    — a metric must be a single aggregate over a row-level expression.'
+  format_string: 0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Spend % of Total
+  - SPEND_PCT_OF_TOTAL
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+  bi_description: 'STRESS TEST: DIVIDE against ALL(spend_fact) removes all filters
+    on fact table. Tests filter removal translation to SQL window functions.'
+- name: SPEND_PCT_WITHIN_FUNCTION
+  logical_name: SPEND_PCT_WITHIN_FUNCTION
+  label: Spend % Within Function
+  description: 'STRESS TEST: ALLEXCEPT preserves Function filter while removing all
+    other cost_center_hierarchy filters. Tests GROUP BY and window partitioning translation
+    - common source of wrong totals post-migration.'
+  dax_expression: "DIVIDE(\n    SUM(spend_fact[Transaction_USD_Amount]),\n    CALCULATE(\n\
+    \        SUM(spend_fact[Transaction_USD_Amount]),\n        ALLEXCEPT(cost_center_hierarchy,\
+    \ cost_center_hierarchy[Function])\n    ),\n    0\n)"
+  deploy_reason: 'not applicable: window calculation that keeps only some filters
+    (e.g. ALLEXCEPT) — Snowflake semantic-view metrics only support window metrics
+    of the form OVER (PARTITION BY EXCLUDING <dimensions>)'
+  format_string: 0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Spend % Within Function
+  - SPEND_PCT_WITHIN_FUNCTION
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+  bi_description: 'STRESS TEST: ALLEXCEPT preserves Function filter while removing
+    all other cost_center_hierarchy filters. Tests GROUP BY and window partitioning
+    translation - common source of wrong totals post-migration.'
+- name: SPEND_CONCENTRATION_INDEX
+  logical_name: SPEND_CONCENTRATION_INDEX
+  label: Spend Concentration Index
+  description: 'STRESS TEST: VAR declarations creating named intermediate values (TotalSpend,
+    Top5Spend). Tests whether Semabridge translates VARs to CTEs or inlines them into
+    opaque SQL.'
+  dax_expression: "VAR TotalSpend = SUM(spend_fact[Transaction_USD_Amount])\nVAR Top5Spend\
+    \ =\n    CALCULATE(\n        SUM(spend_fact[Transaction_USD_Amount]),\n      \
+    \  TOPN(\n            5,\n            normalized_supplier,\n            CALCULATE(SUM(spend_fact[Transaction_USD_Amount])),\n\
+    \            DESC\n        )\n    )\nRETURN\n    DIVIDE(Top5Spend, TotalSpend,\
+    \ 0)"
+  deploy_reason: 'not applicable: TOPN (a top-N set that depends on the query context)
+    is not supported'
+  format_string: 0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Spend Concentration Index
+  - SPEND_CONCENTRATION_INDEX
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+  bi_description: 'STRESS TEST: VAR declarations creating named intermediate values
+    (TotalSpend, Top5Spend). Tests whether Semabridge translates VARs to CTEs or inlines
+    them into opaque SQL.'
+- name: SUM_OF_CAL_MNTH
+  logical_name: SUM_OF_CAL_MNTH
+  label: SUM_OF_CAL_MNTH
+  sql_expression: SUM(COL_DATE."CAL_MNTH")
+  dax_expression: SUM('date'[CAL_MNTH])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_CAL_MNTH
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: date
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_CAL_DAY_NUM
+  logical_name: SUM_OF_CAL_DAY_NUM
+  label: SUM_OF_CAL_DAY_NUM
+  sql_expression: SUM(COL_DATE."CAL_DAY_NUM")
+  dax_expression: SUM('date'[CAL_DAY_NUM])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_CAL_DAY_NUM
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: date
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_CAL_YR
+  logical_name: SUM_OF_CAL_YR
+  label: SUM_OF_CAL_YR
+  sql_expression: SUM(COL_DATE."CAL_YR")
+  dax_expression: SUM('date'[CAL_YR])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_CAL_YR
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: date
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_CAL_QTR_NUM
+  logical_name: SUM_OF_CAL_QTR_NUM
+  label: SUM_OF_CAL_QTR_NUM
+  sql_expression: SUM(COL_DATE."CAL_QTR_NUM")
+  dax_expression: SUM('date'[CAL_QTR_NUM])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_CAL_QTR_NUM
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: date
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_FISCAL_YR
+  logical_name: SUM_OF_FISCAL_YR
+  label: SUM_OF_FISCAL_YR
+  sql_expression: SUM(COL_DATE."FISCAL_YR")
+  dax_expression: SUM('date'[FISCAL_YR])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_FISCAL_YR
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: date
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_FISCAL_QTR_NUM
+  logical_name: SUM_OF_FISCAL_QTR_NUM
+  label: SUM_OF_FISCAL_QTR_NUM
+  sql_expression: SUM(COL_DATE."FISCAL_QTR_NUM")
+  dax_expression: SUM('date'[FISCAL_QTR_NUM])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_FISCAL_QTR_NUM
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: date
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_LY_CAL_YR_NUM
+  logical_name: SUM_OF_LY_CAL_YR_NUM
+  label: SUM_OF_LY_CAL_YR_NUM
+  sql_expression: SUM(COL_DATE."LY_CAL_YR_NUM")
+  dax_expression: SUM('date'[LY_CAL_YR_NUM])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_LY_CAL_YR_NUM
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: date
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_LY_CAL_MNTH_NUM
+  logical_name: SUM_OF_LY_CAL_MNTH_NUM
+  label: SUM_OF_LY_CAL_MNTH_NUM
+  sql_expression: SUM(COL_DATE."LY_CAL_MNTH_NUM")
+  dax_expression: SUM('date'[LY_CAL_MNTH_NUM])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_LY_CAL_MNTH_NUM
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: date
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_LY_CAL_DAY_NUM
+  logical_name: SUM_OF_LY_CAL_DAY_NUM
+  label: SUM_OF_LY_CAL_DAY_NUM
+  sql_expression: SUM(COL_DATE."LY_CAL_DAY_NUM")
+  dax_expression: SUM('date'[LY_CAL_DAY_NUM])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_LY_CAL_DAY_NUM
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: date
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_WEEK_DAY
+  logical_name: SUM_OF_WEEK_DAY
+  label: SUM_OF_WEEK_DAY
+  sql_expression: SUM(COL_DATE."WEEK_DAY")
+  dax_expression: SUM('date'[Week_Day])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_WEEK_DAY
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: date
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_QUARTER
+  logical_name: SUM_OF_QUARTER
+  label: SUM_OF_QUARTER
+  sql_expression: SUM(COL_DATE."QUARTER")
+  dax_expression: SUM('date'[Quarter])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_QUARTER
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: date
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_MONTH
+  logical_name: SUM_OF_MONTH
+  label: SUM_OF_MONTH
+  sql_expression: SUM(COL_DATE."MONTH")
+  dax_expression: SUM('date'[Month])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_MONTH
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: date
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_FY_MONTH
+  logical_name: SUM_OF_FY_MONTH
+  label: SUM_OF_FY_MONTH
+  sql_expression: SUM(COL_DATE."FY_MONTH")
+  dax_expression: SUM('date'[FY_Month])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_FY_MONTH
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: date
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_FY_QTR
+  logical_name: SUM_OF_FY_QTR
+  label: SUM_OF_FY_QTR
+  sql_expression: SUM(COL_DATE."FY_QTR")
+  dax_expression: SUM('date'[FY_QTR])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_FY_QTR
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: date
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_BU_CALULATED
+  logical_name: SUM_OF_BU_CALULATED
+  label: SUM_OF_BU_CALULATED
+  sql_expression: SUM(ENTITY_HIERARCHY."BU_CALULATED")
+  dax_expression: SUM('entity_hierarchy'[BU_Calulated])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_BU_CALULATED
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: entity_hierarchy
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_FTE_FACTOR
+  logical_name: SUM_OF_FTE_FACTOR
+  label: SUM_OF_FTE_FACTOR
+  sql_expression: SUM(RESOURCE_DETAILS."FTE_FACTOR")
+  dax_expression: SUM('resource_details'[FTE_Factor])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_FTE_FACTOR
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: resource_details
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_SERVICE_DATE_MONTH
+  logical_name: SUM_OF_SERVICE_DATE_MONTH
+  label: SUM_OF_SERVICE_DATE_MONTH
+  sql_expression: SUM(RESOURCE_DETAILS."SERVICE_DATE_MONTH")
+  dax_expression: SUM('resource_details'[Service_Date_Month])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_SERVICE_DATE_MONTH
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: resource_details
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_SHORE_LOCATION
+  logical_name: SUM_OF_SHORE_LOCATION
+  label: SUM_OF_SHORE_LOCATION
+  sql_expression: SUM(RESOURCE_DETAILS."SHORE_LOCATION")
+  dax_expression: SUM('resource_details'[Shore_location])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_SHORE_LOCATION
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: resource_details
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_ROWNUM
+  logical_name: SUM_OF_ROWNUM
+  label: SUM_OF_ROWNUM
+  sql_expression: SUM(RESOURCE_DETAILS."ROWNUM")
+  dax_expression: SUM('resource_details'[RowNum])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_ROWNUM
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: resource_details
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_PAY_RATE
+  logical_name: SUM_OF_PAY_RATE
+  label: SUM_OF_PAY_RATE
+  sql_expression: SUM(SPEND_DETAILS_FACT."PAY_RATE")
+  dax_expression: SUM('spend_details_fact'[Pay_Rate])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_PAY_RATE
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_details_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_SUPPLIER_BILL_RATE_ST_HR
+  logical_name: SUM_OF_SUPPLIER_BILL_RATE_ST_HR
+  label: SUM_OF_SUPPLIER_BILL_RATE_ST_HR
+  sql_expression: SUM(SPEND_DETAILS_FACT."SUPPLIER_BILL_RATE_ST_HR")
+  dax_expression: SUM('spend_details_fact'[Supplier_Bill_Rate_ST_HR])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_SUPPLIER_BILL_RATE_ST_HR
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_details_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_SUPPLIER_BILL_RATE_OT_HR
+  logical_name: SUM_OF_SUPPLIER_BILL_RATE_OT_HR
+  label: SUM_OF_SUPPLIER_BILL_RATE_OT_HR
+  sql_expression: SUM(SPEND_DETAILS_FACT."SUPPLIER_BILL_RATE_OT_HR")
+  dax_expression: SUM('spend_details_fact'[Supplier_Bill_Rate_OT_HR])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_SUPPLIER_BILL_RATE_OT_HR
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_details_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_SUPPLIER_BILL_RATE_DT_HR
+  logical_name: SUM_OF_SUPPLIER_BILL_RATE_DT_HR
+  label: SUM_OF_SUPPLIER_BILL_RATE_DT_HR
+  sql_expression: SUM(SPEND_DETAILS_FACT."SUPPLIER_BILL_RATE_DT_HR")
+  dax_expression: SUM('spend_details_fact'[Supplier_Bill_Rate_DT_HR])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_SUPPLIER_BILL_RATE_DT_HR
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_details_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_BUYER_BILL_RATE
+  logical_name: SUM_OF_BUYER_BILL_RATE
+  label: SUM_OF_BUYER_BILL_RATE
+  sql_expression: SUM(SPEND_DETAILS_FACT."BUYER_BILL_RATE")
+  dax_expression: SUM('spend_details_fact'[Buyer_Bill_Rate])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_BUYER_BILL_RATE
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_details_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_BILLABLE_PER_DIEM
+  logical_name: SUM_OF_BILLABLE_PER_DIEM
+  label: SUM_OF_BILLABLE_PER_DIEM
+  sql_expression: SUM(SPEND_DETAILS_FACT."BILLABLE_PER_DIEM")
+  dax_expression: SUM('spend_details_fact'[Billable_Per_Diem])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_BILLABLE_PER_DIEM
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_details_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_BILL_RATE_ST_HR
+  logical_name: SUM_OF_BILL_RATE_ST_HR
+  label: SUM_OF_BILL_RATE_ST_HR
+  sql_expression: SUM(SPEND_DETAILS_FACT."BILL_RATE_ST_HR")
+  dax_expression: SUM('spend_details_fact'[Bill_Rate_ST_HR])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_BILL_RATE_ST_HR
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_details_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_BILL_RATE_OT_HR
+  logical_name: SUM_OF_BILL_RATE_OT_HR
+  label: SUM_OF_BILL_RATE_OT_HR
+  sql_expression: SUM(SPEND_DETAILS_FACT."BILL_RATE_OT_HR")
+  dax_expression: SUM('spend_details_fact'[Bill_Rate_OT_HR])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_BILL_RATE_OT_HR
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_details_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_BILL_RATE_DT_HR
+  logical_name: SUM_OF_BILL_RATE_DT_HR
+  label: SUM_OF_BILL_RATE_DT_HR
+  sql_expression: SUM(SPEND_DETAILS_FACT."BILL_RATE_DT_HR")
+  dax_expression: SUM('spend_details_fact'[Bill_Rate_DT_HR])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_BILL_RATE_DT_HR
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_details_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_BILLABLE_HOURS
+  logical_name: SUM_OF_BILLABLE_HOURS
+  label: SUM_OF_BILLABLE_HOURS
+  sql_expression: SUM(SPEND_DETAILS_FACT."BILLABLE_HOURS")
+  dax_expression: SUM('spend_details_fact'[Billable_Hours])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_BILLABLE_HOURS
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_details_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_NON_BILLABLE_HOURS
+  logical_name: SUM_OF_NON_BILLABLE_HOURS
+  label: SUM_OF_NON_BILLABLE_HOURS
+  sql_expression: SUM(SPEND_DETAILS_FACT."NON_BILLABLE_HOURS")
+  dax_expression: SUM('spend_details_fact'[Non_Billable_Hours])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_NON_BILLABLE_HOURS
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_details_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_HOURS_UNITS
+  logical_name: SUM_OF_HOURS_UNITS
+  label: SUM_OF_HOURS_UNITS
+  sql_expression: SUM(SPEND_DETAILS_FACT."HOURS_UNITS")
+  dax_expression: SUM('spend_details_fact'[Hours_Units])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_HOURS_UNITS
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_details_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_INVOICED_GROSS_ST_HR
+  logical_name: SUM_OF_INVOICED_GROSS_ST_HR
+  label: SUM_OF_INVOICED_GROSS_ST_HR
+  sql_expression: SUM(SPEND_DETAILS_FACT."INVOICED_GROSS_ST_HR")
+  dax_expression: SUM('spend_details_fact'[Invoiced_Gross_ST_HR])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_INVOICED_GROSS_ST_HR
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_details_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_INVOICED_GROSS_OT_HR
+  logical_name: SUM_OF_INVOICED_GROSS_OT_HR
+  label: SUM_OF_INVOICED_GROSS_OT_HR
+  sql_expression: SUM(SPEND_DETAILS_FACT."INVOICED_GROSS_OT_HR")
+  dax_expression: SUM('spend_details_fact'[Invoiced_Gross_OT_HR])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_INVOICED_GROSS_OT_HR
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_details_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_INVOICED_GROSS_DT_HR
+  logical_name: SUM_OF_INVOICED_GROSS_DT_HR
+  label: SUM_OF_INVOICED_GROSS_DT_HR
+  sql_expression: SUM(SPEND_DETAILS_FACT."INVOICED_GROSS_DT_HR")
+  dax_expression: SUM('spend_details_fact'[Invoiced_Gross_DT_HR])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_INVOICED_GROSS_DT_HR
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_details_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_INVOICED_NET
+  logical_name: SUM_OF_INVOICED_NET
+  label: SUM_OF_INVOICED_NET
+  sql_expression: SUM(SPEND_DETAILS_FACT."INVOICED_NET")
+  dax_expression: SUM('spend_details_fact'[Invoiced_Net])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_INVOICED_NET
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_details_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_QUANTITY
+  logical_name: SUM_OF_QUANTITY
+  label: SUM_OF_QUANTITY
+  sql_expression: SUM(SPEND_FACT."QUANTITY")
+  dax_expression: SUM('spend_fact'[Quantity])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_QUANTITY
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_TRANSACTION_CURRENCY_AMOUNT
+  logical_name: SUM_OF_TRANSACTION_CURRENCY_AMOUNT
+  label: SUM_OF_TRANSACTION_CURRENCY_AMOUNT
+  sql_expression: SUM(SPEND_FACT."TRANSACTION_CURRENCY_AMOUNT")
+  dax_expression: SUM('spend_fact'[Transaction_Currency_Amount])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_TRANSACTION_CURRENCY_AMOUNT
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_TRANSACTION_USD_AMOUNT
+  logical_name: SUM_OF_TRANSACTION_USD_AMOUNT
+  label: SUM_OF_TRANSACTION_USD_AMOUNT
+  sql_expression: SUM(SPEND_FACT."TRANSACTION_USD_AMOUNT")
+  dax_expression: SUM('spend_fact'[Transaction_USD_Amount])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_TRANSACTION_USD_AMOUNT
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_fact
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_EFFECTIVE_CALENDAR_YEAR
+  logical_name: SUM_OF_EFFECTIVE_CALENDAR_YEAR
+  label: SUM_OF_EFFECTIVE_CALENDAR_YEAR
+  sql_expression: SUM(SPEND_OPPORTUNITY_MGMT."EFFECTIVE_CALENDAR_YEAR")
+  dax_expression: SUM('spend_opportunity_mgmt'[Effective_Calendar_Year])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_EFFECTIVE_CALENDAR_YEAR
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_opportunity_mgmt
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_EFFECTIVE_CALENDAR_MONTH_NUMBER
+  logical_name: SUM_OF_EFFECTIVE_CALENDAR_MONTH_NUMBER
+  label: SUM_OF_EFFECTIVE_CALENDAR_MONTH_NUMBER
+  sql_expression: SUM(SPEND_OPPORTUNITY_MGMT."EFFECTIVE_CALENDAR_MONTH_NUMBER")
+  dax_expression: SUM('spend_opportunity_mgmt'[Effective_Calendar_Month_Number])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_EFFECTIVE_CALENDAR_MONTH_NUMBER
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_opportunity_mgmt
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_EFFECTIVE_FISCAL_MONTH_NUMBER
+  logical_name: SUM_OF_EFFECTIVE_FISCAL_MONTH_NUMBER
+  label: SUM_OF_EFFECTIVE_FISCAL_MONTH_NUMBER
+  sql_expression: SUM(SPEND_OPPORTUNITY_MGMT."EFFECTIVE_FISCAL_MONTH_NUMBER")
+  dax_expression: SUM('spend_opportunity_mgmt'[Effective_Fiscal_Month_Number])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_EFFECTIVE_FISCAL_MONTH_NUMBER
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: spend_opportunity_mgmt
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+- name: COUNT_OF_COMPANY_CODE
+  logical_name: COUNT_OF_COMPANY_CODE
+  label: COUNT_OF_COMPANY_CODE
+  sql_expression: COUNT(SUPPLIER_ENGAGEMENT."COMPANY_CODE")
+  dax_expression: COUNT('supplier_engagement'[Company_Code])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: COUNT
+  grain: []
+  synonyms:
+  - COUNT_OF_COMPANY_CODE
+  business_rules: []
+  domain: P2P_Spend_Semantic_Model_DA
+  concept: supplier_engagement
+  semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.P2P_SPEND_SEMANTIC_MODEL_DA_SEMANTIC
+  tags: []
+  origin: bi
+relationships:
+- name: REL_SPEND_FACT_GL_ACCOUNT_CK__ACCOUNT_HIERARCHY_GL_ACCOUNT_CK
+  from_concept: spend_fact
+  to_concept: account_hierarchy
+  cardinality: N:1
+  join_expression: spend_fact.GL_Account_CK = account_hierarchy.GL_Account_CK
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SPEND_FACT_PRODUCT_DIM_CK__PRODUCT_PRODUCT_DIM_CK
+  from_concept: spend_fact
+  to_concept: product
+  cardinality: N:1
+  join_expression: spend_fact.Product_Dim_CK = product.Product_Dim_CK
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SPEND_FACT_GL_COMPANY_CODE_CK__ENTITY_HIERARCHY_GL_COMPANY_CODE_CK
+  from_concept: spend_fact
+  to_concept: entity_hierarchy
+  cardinality: N:1
+  join_expression: spend_fact.GL_Company_Code_CK = entity_hierarchy.GL_Company_Code_CK
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SPEND_FACT_GL_COST_CENTER_CK__COST_CENTER_HIERARCHY_GL_COST_CENTER_CK
+  from_concept: spend_fact
+  to_concept: cost_center_hierarchy
+  cardinality: N:1
+  join_expression: spend_fact.GL_Cost_Center_CK = cost_center_hierarchy.GL_Cost_Center_CK
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SPEND_FACT_RESOURCE_DIM_CK__RESOURCE_DETAILS_RESOURCE_DIM_CK
+  from_concept: spend_fact
+  to_concept: resource_details
+  cardinality: N:1
+  join_expression: spend_fact.Resource_Dim_CK = resource_details.Resource_Dim_CK
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SPEND_FACT_PRODUCT_HIER_CK__PRODUCT_HIER_PRODUCT_HIER_CK
+  from_concept: spend_fact
+  to_concept: product_hier
+  cardinality: N:1
+  join_expression: spend_fact.Product_Hier_CK = product_hier.Product_Hier_CK
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SPEND_FACT_REPORTING_DATE__DATE_CAL_DT
+  from_concept: spend_fact
+  to_concept: date
+  cardinality: N:1
+  join_expression: spend_fact.Reporting_Date = date.Cal_DT
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SPEND_FACT_NORMALIZED_SUPPLIER_DIVERSITY_DIM_CK__DIVERSITY_BRIDGE_NORMALIZED_SUPPLIER_DIVERSITY_DIM_CK
+  from_concept: spend_fact
+  to_concept: diversity_bridge
+  cardinality: N:N
+  join_expression: spend_fact.Normalized_Supplier_Diversity_Dim_CK = diversity_bridge.Normalized_Supplier_Diversity_Dim_CK
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SPEND_FACT_NORMALIZED_SUPPLIER_DIM_CK__NORMALIZED_SUPPLIER_NORMALIZED_SUPPLIER_DIM_CK
+  from_concept: spend_fact
+  to_concept: normalized_supplier
+  cardinality: N:1
+  join_expression: spend_fact.Normalized_Supplier_Dim_CK = normalized_supplier.Normalized_Supplier_Dim_CK
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_SPEND_FACT_POSTING_DATE__DATE_CAL_DT
+  from_concept: spend_fact
+  to_concept: date
+  cardinality: N:1
+  join_expression: spend_fact.Posting_Date = date.Cal_DT
+  cross_filter_direction: single
+  is_active: false
+  origin: bi
+- name: REL_SPEND_FACT_POSTING_DATE__DATE_LY_CAL_DT
+  from_concept: spend_fact
+  to_concept: date
+  cardinality: N:1
+  join_expression: spend_fact.Posting_Date = date.LY_CAL_DT
+  cross_filter_direction: single
+  is_active: false
+  origin: bi

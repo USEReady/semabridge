@@ -2,8 +2,11 @@
 
 This folder contains human-facing documentation for the Semabridge project, organized by category for easy navigation.
 
-## Architecture
-High-level system design and core concepts:
+## Architecture & Roadmap
+High-level system design, Architecture v2 control plane, and priority execution roadmap:
+- [Architecture v2 & Priority Roadmap (`feature/architecture-v2`)](ARCHITECTURE_V2_AND_ROADMAP.md)
+- [ADR-002: Architecture v2](decisions/ADR-002-architecture-v2.md)
+- [Quality Gates Reference](GATES.md)
 - [System Overview](architecture/overview.md)
 - [OSI-Centered Model](architecture/osi.md)
 

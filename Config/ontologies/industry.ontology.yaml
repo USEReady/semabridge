@@ -1,0 +1,28 @@
+domain: industry
+id: industry
+version: 1.0.0
+source_project_id: proj-e2e
+semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.INDUSTRY_SEMANTIC
+concepts:
+- name: industry 1
+  logical_name: INDUSTRY_1
+  label: industry 1
+  concept_type: DIMENSION
+  domain: industry
+  synonyms: []
+  business_rules: []
+  physical_table: industry 1
+  attributes:
+  - name: Column1
+    logical_name: COLUMN1
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+metrics: []
+relationships: []

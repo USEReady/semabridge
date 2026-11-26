@@ -1,0 +1,486 @@
+domain: dbt5 · COVID-19 US Tracking Sample 1
+id: dbt5__covid_19_us_tracking_sample_1
+version: 1.0.0
+source_project_id: proj-dbt5
+source_model_id: covid_19_us_tracking_sample_1
+source_model_name: COVID-19 US Tracking Sample 1
+concepts:
+- name: COVID
+  logical_name: COVID
+  label: COVID
+  concept_type: ENTITY
+  domain: dbt5 · COVID-19 US Tracking Sample 1
+  synonyms: []
+  business_rules: []
+  physical_table: COVID
+  attributes:
+  - name: County Name
+    logical_name: COUNTY_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: State
+    logical_name: STATE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Date
+    logical_name: DATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: m/d/yyyy
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Cases
+    logical_name: CASES
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: FIPS
+    logical_name: FIPS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Deaths
+    logical_name: DEATHS
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: County
+    logical_name: COUNTY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Daily cases
+    logical_name: DAILY_CASES
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    format_string: '#,0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Daily deaths
+    logical_name: DAILY_DEATHS
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: StateFIPS
+    logical_name: STATEFIPS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: StateDim
+  logical_name: STATEDIM
+  label: StateDim
+  concept_type: DIMENSION
+  domain: dbt5 · COVID-19 US Tracking Sample 1
+  synonyms: []
+  business_rules: []
+  physical_table: StateDim
+  attributes:
+  - name: State
+    logical_name: STATE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: State code
+    logical_name: STATE_CODE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: US territories
+    logical_name: US_TERRITORIES
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Country
+    logical_name: COUNTRY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Table
+  logical_name: COL_TABLE
+  label: Table
+  concept_type: DIMENSION
+  domain: dbt5 · COVID-19 US Tracking Sample 1
+  synonyms: []
+  business_rules: []
+  physical_table: Table
+  attributes:
+  - name: Metric
+    logical_name: METRIC
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Order
+    logical_name: COL_ORDER
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: COVID measures
+  logical_name: COVID_MEASURES
+  label: COVID measures
+  concept_type: DIMENSION
+  domain: dbt5 · COVID-19 US Tracking Sample 1
+  synonyms: []
+  business_rules: []
+  physical_table: COVID measures
+  attributes: []
+  hierarchies: []
+  tags: []
+  origin: bi
+metrics:
+- name: Updated
+  logical_name: UPDATED
+  label: Updated
+  dax_expression: '"Data provided by USAFacts. Because of the frequency of data upates,
+    they may not reflect the exact numbers reported by government organizations or
+    the news media. For more information or to download the data, please click the
+    logo below.  Data updated through " & FORMAT([Max_date],"mmmm dd, yyyy") & "."'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Updated
+  business_rules: []
+  domain: dbt5 · COVID-19 US Tracking Sample 1
+  concept: COVID
+  tags: []
+  origin: bi
+- name: Max_date
+  logical_name: MAX_DATE
+  label: Max date
+  sql_expression: MAX(COVID."_ALL_MAX_DATE")
+  dax_expression: CALCULATE(MAX('COVID'[Date]),ALL('COVID'))
+  format_string: General Date
+  is_hidden: true
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Max date
+  - Max_date
+  business_rules: []
+  domain: dbt5 · COVID-19 US Tracking Sample 1
+  concept: COVID
+  tags: []
+  origin: bi
+- name: Drill_through_button_text
+  logical_name: DRILL_THROUGH_BUTTON_TEXT
+  label: Drill-through button text
+  sql_expression: CASE WHEN IFF(COUNT(DISTINCT StateDim."STATE") + MAX(IFF(StateDim."STATE"
+    IS NULL, 1, 0)) = 1, MAX(StateDim."STATE"), 0) = "EQ" THEN 0 ELSE 'Click on a
+    State to view by County  ' END
+  dax_expression: IF(SELECTEDVALUE(StateDim[State],0)==0,"Click on a State to view
+    by County  ", "Click here to view by County in " & VALUES(StateDim[State code])
+    &"  ")
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Drill-through button text
+  - Drill_through_button_text
+  business_rules: []
+  domain: dbt5 · COVID-19 US Tracking Sample 1
+  concept: StateDim
+  tags: []
+  origin: bi
+- name: Methodology
+  logical_name: METHODOLOGY
+  label: Methodology
+  sql_expression: '''This interactive feature aggregates data from the Centers for
+    Disease Control and Prevention (CDC), state- and local-level public health agencies.
+    County-level data is confirmed by referencing state and local agencies directly.
+
+
+    Source: USAFacts'''
+  dax_expression: '"This interactive feature aggregates data from the Centers for
+    Disease Control and Prevention (CDC), state- and local-level public health agencies.
+    County-level data is confirmed by referencing state and local agencies directly.
+
+
+    Source: USAFacts"'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Methodology
+  business_rules: []
+  domain: dbt5 · COVID-19 US Tracking Sample 1
+  concept: Table
+  tags: []
+  origin: bi
+- name: Notes
+  logical_name: NOTES
+  label: Notes
+  sql_expression: '''New York* covers 5 counties (Bronx, Kings, New York, Queens,
+    Richmond), not New York county.
+
+
+    City of St. Louis was renamed to St. Louis City.
+
+
+    City and Borough of Juneau was renamed to Juneau Borough.
+
+
+    Municipality of Anchorage was renamed to Anchorage.
+
+
+    Jackson County includes other portions of Kansas City.
+
+
+
+    Source: USAFacts'''
+  dax_expression: '"New York* covers 5 counties (Bronx, Kings, New York, Queens, Richmond),
+    not New York county.
+
+
+    City of St. Louis was renamed to St. Louis City.
+
+
+    City and Borough of Juneau was renamed to Juneau Borough.
+
+
+    Municipality of Anchorage was renamed to Anchorage.
+
+
+    Jackson County includes other portions of Kansas City.
+
+
+
+    Source: USAFacts"'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Notes
+  business_rules: []
+  domain: dbt5 · COVID-19 US Tracking Sample 1
+  concept: Table
+  tags: []
+  origin: bi
+- name: Terms_of_use
+  logical_name: TERMS_OF_USE
+  label: Terms of use
+  sql_expression: ANY_VALUE(CONCAT('This report and data are provided ', '"', 'as
+    is', '"', ', ', '"', 'with all faults', '"', ', and without warranty of any kind.
+    Microsoft gives no express warranties or guarantees and expressly disclaims all
+    implied warranties, including merchantability, fitness for a particular purpose,
+    and non-infringement.'))
+  dax_expression: '"This report and data are provided " & """" & "as is" & """" &
+    ", " & """" & "with all faults" & """" & ", and without warranty of any kind.
+    Microsoft gives no express warranties or guarantees and expressly disclaims all
+    implied warranties, including merchantability, fitness for a particular purpose,
+    and non-infringement."'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Terms of use
+  - Terms_of_use
+  business_rules: []
+  domain: dbt5 · COVID-19 US Tracking Sample 1
+  concept: Table
+  tags: []
+  origin: bi
+- name: Total_confirmed_cases
+  logical_name: TOTAL_CONFIRMED_CASES
+  label: Total confirmed cases
+  sql_expression: SUM(COVID."DAILY_CASES")
+  dax_expression: SUM('COVID'[Daily cases])
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total confirmed cases
+  - Total_confirmed_cases
+  business_rules: []
+  domain: dbt5 · COVID-19 US Tracking Sample 1
+  concept: COVID measures
+  tags: []
+  origin: bi
+- name: Total_deaths
+  logical_name: TOTAL_DEATHS
+  label: Total deaths
+  sql_expression: SUM(COVID."DAILY_DEATHS")
+  dax_expression: SUM(COVID[Daily deaths])
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total deaths
+  - Total_deaths
+  business_rules: []
+  domain: dbt5 · COVID-19 US Tracking Sample 1
+  concept: COVID measures
+  tags: []
+  origin: bi
+- name: Case_fatality_rate
+  logical_name: CASE_FATALITY_RATE
+  label: Case fatality rate
+  sql_expression: (SUM(COVID."DAILY_DEATHS")) / NULLIF((SUM(COVID."DAILY_CASES")),
+    0)
+  dax_expression: 'DIVIDE([Total_deaths],[Total_confirmed_cases])
+
+    '
+  format_string: 0.0%;-0.0%;0.0%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Case fatality rate
+  - Case_fatality_rate
+  business_rules: []
+  domain: dbt5 · COVID-19 US Tracking Sample 1
+  concept: COVID measures
+  tags: []
+  origin: bi
+- name: Confirmed_cases
+  logical_name: CONFIRMED_CASES
+  label: Confirmed cases
+  sql_expression: SUM(COVID."CASES")
+  dax_expression: SUM('COVID'[Cases])
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Confirmed cases
+  - Confirmed_cases
+  business_rules: []
+  domain: dbt5 · COVID-19 US Tracking Sample 1
+  concept: COVID measures
+  tags: []
+  origin: bi
+- name: Deaths
+  logical_name: DEATHS
+  label: Deaths
+  sql_expression: SUM(COVID."DEATHS")
+  dax_expression: SUM('COVID'[Deaths])
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Deaths
+  business_rules: []
+  domain: dbt5 · COVID-19 US Tracking Sample 1
+  concept: COVID measures
+  tags: []
+  origin: bi
+- name: SUM_OF_CASES
+  logical_name: SUM_OF_CASES
+  label: SUM_OF_CASES
+  sql_expression: SUM(COVID."CASES")
+  dax_expression: SUM('COVID'[Cases])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_CASES
+  business_rules: []
+  domain: dbt5 · COVID-19 US Tracking Sample 1
+  concept: COVID
+  tags: []
+  origin: bi
+- name: SUM_OF_DEATHS
+  logical_name: SUM_OF_DEATHS
+  label: SUM_OF_DEATHS
+  sql_expression: SUM(COVID."DEATHS")
+  dax_expression: SUM('COVID'[Deaths])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_DEATHS
+  business_rules: []
+  domain: dbt5 · COVID-19 US Tracking Sample 1
+  concept: COVID
+  tags: []
+  origin: bi
+- name: SUM_OF_ORDER
+  logical_name: SUM_OF_ORDER
+  label: SUM_OF_ORDER
+  sql_expression: SUM(COL_TABLE."COL_ORDER")
+  dax_expression: SUM('Table'[Order])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_ORDER
+  business_rules: []
+  domain: dbt5 · COVID-19 US Tracking Sample 1
+  concept: Table
+  tags: []
+  origin: bi
+relationships:
+- name: REL_COVID_STATE__STATEDIM_STATE_CODE
+  from_concept: COVID
+  to_concept: StateDim
+  cardinality: N:1
+  join_expression: COVID.State = StateDim."State code"
+  cross_filter_direction: single
+  is_active: true
+  origin: bi

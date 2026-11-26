@@ -1,0 +1,808 @@
+domain: PerformanceAnalyzerExportReport 1 2
+id: performanceanalyzerexportreport_1_2
+version: 1.0.0
+source_project_id: proj-dbt4
+semantic_view_name: workspace.default.PerformanceAnalyzerExportReport_1_2_metric_view
+concepts:
+- name: EventEdges
+  logical_name: EVENTEDGES
+  label: EventEdges
+  concept_type: ENTITY
+  domain: PerformanceAnalyzerExportReport 1 2
+  synonyms: []
+  business_rules: []
+  physical_table: EventEdges
+  attributes:
+  - name: id
+    logical_name: ID
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: timestamp
+    logical_name: TIMESTAMP
+    data_type: TIMESTAMP_NTZ
+    is_primary_key: false
+    is_hidden: false
+    format_string: General Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: marker
+    logical_name: MARKER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: timestampMs
+    logical_name: TIMESTAMPMS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: MS Since Root Start
+    logical_name: MS_SINCE_ROOT_START
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Root
+    logical_name: ROOT
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Rank
+    logical_name: RANK
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Duration
+    logical_name: DURATION
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: EdgePath
+    logical_name: EDGEPATH
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: event_type
+    logical_name: EVENT_TYPE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: EventTypes
+  logical_name: EVENTTYPES
+  label: EventTypes
+  concept_type: DIMENSION
+  domain: PerformanceAnalyzerExportReport 1 2
+  synonyms: []
+  business_rules: []
+  physical_table: EventTypes
+  attributes:
+  - name: name
+    logical_name: NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: component
+    logical_name: COMPONENT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: event_type
+    logical_name: EVENT_TYPE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Events
+  logical_name: EVENTS
+  label: Events
+  concept_type: ENTITY
+  domain: PerformanceAnalyzerExportReport 1 2
+  synonyms: []
+  business_rules: []
+  physical_table: Events
+  attributes:
+  - name: name
+    logical_name: NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: component
+    logical_name: COMPONENT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: start
+    logical_name: COL_START
+    data_type: TIMESTAMP_NTZ
+    is_primary_key: false
+    is_hidden: false
+    format_string: General Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: id
+    logical_name: ID
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: ActualQueryDuration
+    logical_name: ACTUALQUERYDURATION
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: DataReadDuration
+    logical_name: DATAREADDURATION
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: QueryText
+    logical_name: QUERYTEXT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: RowCount
+    logical_name: ROWCOUNT
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: RowsRead
+    logical_name: ROWSREAD
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: sourceLabel
+    logical_name: SOURCELABEL
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: status
+    logical_name: STATUS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: visualTitle
+    logical_name: VISUALTITLE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: end
+    logical_name: END
+    data_type: TIMESTAMP_NTZ
+    is_primary_key: false
+    is_hidden: false
+    format_string: General Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: DurationMs
+    logical_name: DURATIONMS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: StartMs
+    logical_name: STARTMS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: EndMs
+    logical_name: ENDMS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: parentId
+    logical_name: PARENTID
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Path
+    logical_name: PATH
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Root
+    logical_name: ROOT
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Rank
+    logical_name: RANK
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: RawIndex
+    logical_name: RAWINDEX
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: ParentIndex
+    logical_name: PARENTINDEX
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Index
+    logical_name: INDEX
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: TreeLabel
+    logical_name: TREELABEL
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: MS Since Visual Start
+    logical_name: MS_SINCE_VISUAL_START
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: PathLength
+    logical_name: PATHLENGTH
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: event_type
+    logical_name: EVENT_TYPE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: changeDetectionMeasure
+    logical_name: CHANGEDETECTIONMEASURE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: visualId
+    logical_name: VISUALID
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: visualType
+    logical_name: VISUALTYPE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Metadata
+  logical_name: METADATA
+  label: Metadata
+  concept_type: DIMENSION
+  domain: PerformanceAnalyzerExportReport 1 2
+  synonyms: []
+  business_rules: []
+  physical_table: Metadata
+  attributes:
+  - name: FilePath
+    logical_name: FILEPATH
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: RawEventCount
+    logical_name: RAWEVENTCOUNT
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: UniqueEventCount
+    logical_name: UNIQUEEVENTCOUNT
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: RootActions
+  logical_name: ROOTACTIONS
+  label: RootActions
+  concept_type: DIMENSION
+  domain: PerformanceAnalyzerExportReport 1 2
+  synonyms: []
+  business_rules: []
+  physical_table: RootActions
+  attributes:
+  - name: Root
+    logical_name: ROOT
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Order
+    logical_name: COL_ORDER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Time DAX Query (ms)
+    logical_name: TIME_DAX_QUERY_MS
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Time Visual Display (ms)
+    logical_name: TIME_VISUAL_DISPLAY_MS
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Time Other (ms)
+    logical_name: TIME_OTHER_MS
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Time Total (ms)
+    logical_name: TIME_TOTAL_MS
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Time Direct Query (ms)
+    logical_name: TIME_DIRECT_QUERY_MS
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Action Label
+    logical_name: ACTION_LABEL
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: ActionType
+    logical_name: ACTIONTYPE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+metrics:
+- name: MS_Since_Previous_Edge
+  logical_name: MS_SINCE_PREVIOUS_EDGE
+  label: MS Since Previous Edge
+  sql_expression: CASE WHEN NOT COALESCE((((MIN(EVENTEDGES."TIMESTAMPMS")) IS NULL)),
+    FALSE) THEN CASE WHEN ("PREVIOUSTIMESTAMPMS" IS NULL) THEN 0 ELSE CASE WHEN (MIN(EVENTEDGES."TIMESTAMPMS"))
+    IS NULL AND ("PREVIOUSTIMESTAMPMS") IS NULL THEN NULL ELSE COALESCE((MIN(EVENTEDGES."TIMESTAMPMS")),
+    0) - COALESCE("PREVIOUSTIMESTAMPMS", 0) END END END
+  dax_expression: '
+
+    VAR _Root = SELECTEDVALUE(EventEdges[Root])
+
+    VAR _Rank = MIN(EventEdges[Rank])
+
+    VAR _TimestampMs = MIN(EventEdges[timestampMs])
+
+    VAR _PreviousTimestampMs = CALCULATE(MAX(''EventEdges''[timestampMs]), FILTER(ALL(EventEdges),
+    ISBLANK(_Root) || [Root] = _Root && [Rank] < _Rank))
+
+    RETURN IF(ISBLANK(_TimestampMs), BLANK(), IF(ISBLANK(_PreviousTimestampMs), 0,
+    _TimestampMs - _PreviousTimestampMs))'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - MS Since Previous Edge
+  - MS_Since_Previous_Edge
+  business_rules: []
+  domain: PerformanceAnalyzerExportReport 1 2
+  concept: EventEdges
+  semantic_view_name: workspace.default.PerformanceAnalyzerExportReport_1_2_metric_view
+  tags: []
+  origin: bi
+- name: MS_Since_First_Edge
+  logical_name: MS_SINCE_FIRST_EDGE
+  label: MS Since First Edge
+  dax_expression: '
+
+    VAR _CurrentTimestamp = MIN(''EventEdges''[timestampMs])
+
+    RETURN IF(ISBLANK(_CurrentTimestamp), BLANK(), _CurrentTimestamp - CALCULATE(MIN(''EventEdges''[timestampMs]),
+    ALLSELECTED(EventEdges)))'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - MS Since First Edge
+  - MS_Since_First_Edge
+  business_rules: []
+  domain: PerformanceAnalyzerExportReport 1 2
+  concept: EventEdges
+  semantic_view_name: workspace.default.PerformanceAnalyzerExportReport_1_2_metric_view
+  tags: []
+  origin: bi
+- name: Data_Quality_Messages
+  logical_name: DATA_QUALITY_MESSAGES
+  label: Data Quality Messages
+  sql_expression: CASE WHEN COALESCE((SUM(Metadata."RAWEVENTCOUNT"::FLOAT)), 0) >
+    COALESCE((SUM(Metadata."UNIQUEEVENTCOUNT"::FLOAT)), 0) THEN 'Export file contains
+    events with duplicate IDs.  Only unique events are shown in this report' END
+  dax_expression: '
+
+    VAR _RawEventCount = SUM(''Metadata''[RawEventCount])
+
+    VAR _UniqueEventCount = SUM(''Metadata''[UniqueEventCount])
+
+    RETURN IF(_RawEventCount > _UniqueEventCount, "Export file contains events with
+    duplicate IDs.  Only unique events are shown in this report", BLANK())'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Data Quality Messages
+  - Data_Quality_Messages
+  business_rules: []
+  domain: PerformanceAnalyzerExportReport 1 2
+  concept: Metadata
+  semantic_view_name: workspace.default.PerformanceAnalyzerExportReport_1_2_metric_view
+  tags: []
+  origin: bi
+- name: DataStatus
+  logical_name: DATASTATUS
+  label: DataStatus
+  sql_expression: CASE WHEN (Metadata."DATA_QUALITY_MESSAGES" IS NULL) THEN 0 ELSE
+    1 END
+  dax_expression: IF(ISBLANK([Data_Quality_Messages]), 0, 1)
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - DataStatus
+  business_rules: []
+  derives_from:
+  - Data_Quality_Messages
+  domain: PerformanceAnalyzerExportReport 1 2
+  concept: Metadata
+  semantic_view_name: workspace.default.PerformanceAnalyzerExportReport_1_2_metric_view
+  tags: []
+  origin: bi
+- name: User_Action_Count
+  logical_name: USER_ACTION_COUNT
+  label: User Action Count
+  sql_expression: COUNT(CASE WHEN (EVENTS."COMPONENT" = 'Report Canvas') AND (EVENTS."NAME"
+    = 'User Action') THEN 1 END)
+  dax_expression: COUNTROWS(FILTER('Events', [component] = "Report Canvas" && [name]
+    = "User Action"))
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - User Action Count
+  - User_Action_Count
+  business_rules: []
+  domain: PerformanceAnalyzerExportReport 1 2
+  concept: Metadata
+  semantic_view_name: workspace.default.PerformanceAnalyzerExportReport_1_2_metric_view
+  tags: []
+  origin: bi
+- name: Visual_Update_Count
+  logical_name: VISUAL_UPDATE_COUNT
+  label: Visual Update Count
+  sql_expression: COUNT(CASE WHEN (EVENTS."COMPONENT" = 'Report Canvas') AND (EVENTS."NAME"
+    = 'Visual Container Lifecycle') THEN 1 END)
+  dax_expression: COUNTROWS(FILTER('Events', [component] = "Report Canvas" && [name]
+    = "Visual Container Lifecycle"))
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Visual Update Count
+  - Visual_Update_Count
+  business_rules: []
+  domain: PerformanceAnalyzerExportReport 1 2
+  concept: Metadata
+  semantic_view_name: workspace.default.PerformanceAnalyzerExportReport_1_2_metric_view
+  tags: []
+  origin: bi
+- name: Change_Detection_Count
+  logical_name: CHANGE_DETECTION_COUNT
+  label: Change Detection Count
+  sql_expression: COUNT(CASE WHEN (EVENTS."COMPONENT" = 'Change Detection') AND (EVENTS."NAME"
+    = 'Execute Change Detection') THEN 1 END)
+  dax_expression: COUNTROWS(FILTER('Events', [component] = "Change Detection" && [name]
+    = "Execute Change Detection"))
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Change Detection Count
+  - Change_Detection_Count
+  business_rules: []
+  domain: PerformanceAnalyzerExportReport 1 2
+  concept: Metadata
+  semantic_view_name: workspace.default.PerformanceAnalyzerExportReport_1_2_metric_view
+  tags: []
+  origin: bi
+- name: SUM_OF_ACTUALQUERYDURATION
+  logical_name: SUM_OF_ACTUALQUERYDURATION
+  label: SUM_OF_ACTUALQUERYDURATION
+  sql_expression: SUM(EVENTS."ACTUALQUERYDURATION")
+  dax_expression: SUM('Events'[ActualQueryDuration])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_ACTUALQUERYDURATION
+  business_rules: []
+  domain: PerformanceAnalyzerExportReport 1 2
+  concept: Events
+  semantic_view_name: workspace.default.PerformanceAnalyzerExportReport_1_2_metric_view
+  tags: []
+  origin: bi
+- name: SUM_OF_DATAREADDURATION
+  logical_name: SUM_OF_DATAREADDURATION
+  label: SUM_OF_DATAREADDURATION
+  sql_expression: SUM(EVENTS."DATAREADDURATION")
+  dax_expression: SUM('Events'[DataReadDuration])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_DATAREADDURATION
+  business_rules: []
+  domain: PerformanceAnalyzerExportReport 1 2
+  concept: Events
+  semantic_view_name: workspace.default.PerformanceAnalyzerExportReport_1_2_metric_view
+  tags: []
+  origin: bi
+- name: SUM_OF_ROWCOUNT
+  logical_name: SUM_OF_ROWCOUNT
+  label: SUM_OF_ROWCOUNT
+  sql_expression: SUM(EVENTS."ROWCOUNT")
+  dax_expression: SUM('Events'[RowCount])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_ROWCOUNT
+  business_rules: []
+  domain: PerformanceAnalyzerExportReport 1 2
+  concept: Events
+  semantic_view_name: workspace.default.PerformanceAnalyzerExportReport_1_2_metric_view
+  tags: []
+  origin: bi
+- name: SUM_OF_ROWSREAD
+  logical_name: SUM_OF_ROWSREAD
+  label: SUM_OF_ROWSREAD
+  sql_expression: SUM(EVENTS."ROWSREAD")
+  dax_expression: SUM('Events'[RowsRead])
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_ROWSREAD
+  business_rules: []
+  domain: PerformanceAnalyzerExportReport 1 2
+  concept: Events
+  semantic_view_name: workspace.default.PerformanceAnalyzerExportReport_1_2_metric_view
+  tags: []
+  origin: bi
+- name: SUM_OF_RAWEVENTCOUNT
+  logical_name: SUM_OF_RAWEVENTCOUNT
+  label: SUM_OF_RAWEVENTCOUNT
+  sql_expression: SUM(METADATA."RAWEVENTCOUNT")
+  dax_expression: SUM('Metadata'[RawEventCount])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_RAWEVENTCOUNT
+  business_rules: []
+  domain: PerformanceAnalyzerExportReport 1 2
+  concept: Metadata
+  semantic_view_name: workspace.default.PerformanceAnalyzerExportReport_1_2_metric_view
+  tags: []
+  origin: bi
+- name: SUM_OF_UNIQUEEVENTCOUNT
+  logical_name: SUM_OF_UNIQUEEVENTCOUNT
+  label: SUM_OF_UNIQUEEVENTCOUNT
+  sql_expression: SUM(METADATA."UNIQUEEVENTCOUNT")
+  dax_expression: SUM('Metadata'[UniqueEventCount])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_UNIQUEEVENTCOUNT
+  business_rules: []
+  domain: PerformanceAnalyzerExportReport 1 2
+  concept: Metadata
+  semantic_view_name: workspace.default.PerformanceAnalyzerExportReport_1_2_metric_view
+  tags: []
+  origin: bi
+relationships:
+- name: REL_EVENTS_EVENT_TYPE__EVENTTYPES_EVENT_TYPE
+  from_concept: Events
+  to_concept: EventTypes
+  cardinality: N:1
+  join_expression: Events.event_type = EventTypes.event_type
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_EVENTEDGES_EVENT_TYPE__EVENTTYPES_EVENT_TYPE
+  from_concept: EventEdges
+  to_concept: EventTypes
+  cardinality: N:1
+  join_expression: EventEdges.event_type = EventTypes.event_type
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_EVENTS_ROOT__ROOTACTIONS_ROOT
+  from_concept: Events
+  to_concept: RootActions
+  cardinality: N:1
+  join_expression: Events.Root = RootActions.Root
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_EVENTEDGES_ROOT__ROOTACTIONS_ROOT
+  from_concept: EventEdges
+  to_concept: RootActions
+  cardinality: N:1
+  join_expression: EventEdges.Root = RootActions.Root
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
