@@ -1,0 +1,1178 @@
+domain: Human Resouce
+id: human_resouce
+version: 1.0.0
+description: ''
+concepts:
+- name: AgeGroup
+  logical_name: AGEGROUP
+  label: AgeGroup
+  concept_type: DIMENSION
+  domain: Human Resouce
+  synonyms: []
+  business_rules: []
+  physical_table: AgeGroup
+  attributes:
+  - name: AgeGroupID
+    logical_name: AGEGROUPID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: AgeGroup
+    logical_name: AGEGROUP
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: BU
+  logical_name: BU
+  label: BU
+  concept_type: DIMENSION
+  domain: Human Resouce
+  synonyms: []
+  business_rules: []
+  physical_table: BU
+  attributes:
+  - name: BU
+    logical_name: BU
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: RegionSeq
+    logical_name: REGIONSEQ
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: VP
+    logical_name: VP
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Region
+    logical_name: REGION
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Date
+  logical_name: COL_DATE
+  label: Date
+  concept_type: DIMENSION
+  domain: Human Resouce
+  synonyms: []
+  business_rules: []
+  physical_table: Date
+  attributes:
+  - name: Date
+    logical_name: DATE
+    data_type: DATE
+    is_primary_key: true
+    is_hidden: false
+    format_string: General Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Month
+    logical_name: MONTH
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: MonthNumber
+    logical_name: MONTHNUMBER
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Period
+    logical_name: PERIOD
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: PeriodNumber
+    logical_name: PERIODNUMBER
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Qtr
+    logical_name: QTR
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: QtrNumber
+    logical_name: QTRNUMBER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Year
+    logical_name: YEAR
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Day
+    logical_name: DAY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: MonthStartDate
+    logical_name: MONTHSTARTDATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: General Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: MonthEndDate
+    logical_name: MONTHENDDATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: false
+    format_string: General Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: MonthIncrementNumber
+    logical_name: MONTHINCREMENTNUMBER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies:
+  - name: YQM
+    label: YQM
+    is_hidden: false
+    levels:
+    - name: Year
+      label: Year
+      attribute: Year
+    - name: QtrNumber
+      label: QtrNumber
+      attribute: QtrNumber
+    - name: PeriodNumber
+      label: PeriodNumber
+      attribute: PeriodNumber
+    origin: bi
+  tags: []
+  origin: bi
+- name: Employee
+  logical_name: EMPLOYEE
+  label: Employee
+  concept_type: ENTITY
+  domain: Human Resouce
+  synonyms: []
+  business_rules: []
+  physical_table: Employee
+  attributes:
+  - name: date
+    logical_name: DATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: true
+    format_string: General Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: EmplID
+    logical_name: EMPLID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Gender
+    logical_name: GENDER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Age
+    logical_name: AGE
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: EthnicGroup
+    logical_name: ETHNICGROUP
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: FP
+    logical_name: FP
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: TermDate
+    logical_name: TERMDATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: true
+    format_string: General Date
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: isNewHire
+    logical_name: ISNEWHIRE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: BU
+    logical_name: BU
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: HireDate
+    logical_name: HIREDATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: PayTypeID
+    logical_name: PAYTYPEID
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: TermReason
+    logical_name: TERMREASON
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: AgeGroupID
+    logical_name: AGEGROUPID
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: TenureDays
+    logical_name: TENUREDAYS
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: TenureMonths
+    logical_name: TENUREMONTHS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: BadHires
+    logical_name: BADHIRES
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Ethnicity
+  logical_name: ETHNICITY
+  label: Ethnicity
+  concept_type: DIMENSION
+  domain: Human Resouce
+  synonyms: []
+  business_rules: []
+  physical_table: Ethnicity
+  attributes:
+  - name: Ethnic Group
+    logical_name: ETHNIC_GROUP
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Ethnicity
+    logical_name: ETHNICITY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: FP
+  logical_name: FP
+  label: FP
+  concept_type: DIMENSION
+  domain: Human Resouce
+  synonyms: []
+  business_rules: []
+  physical_table: FP
+  attributes:
+  - name: FP
+    logical_name: FP
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: FPDesc
+    logical_name: FPDESC
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Gender
+  logical_name: GENDER
+  label: Gender
+  concept_type: DIMENSION
+  domain: Human Resouce
+  synonyms: []
+  business_rules: []
+  physical_table: Gender
+  attributes:
+  - name: ID
+    logical_name: ID
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Gender
+    logical_name: GENDER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Sort
+    logical_name: SORT
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: PayType
+  logical_name: PAYTYPE
+  label: PayType
+  concept_type: DIMENSION
+  domain: Human Resouce
+  synonyms: []
+  business_rules: []
+  physical_table: PayType
+  attributes:
+  - name: PayTypeID
+    logical_name: PAYTYPEID
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: PayType
+    logical_name: PAYTYPE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: SeparationReason
+  logical_name: SEPARATIONREASON
+  label: SeparationReason
+  concept_type: DIMENSION
+  domain: Human Resouce
+  synonyms: []
+  business_rules: []
+  physical_table: SeparationReason
+  attributes:
+  - name: SeparationTypeID
+    logical_name: SEPARATIONTYPEID
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: SeparationReason
+    logical_name: SEPARATIONREASON
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+metrics:
+- name: Count of BU
+  logical_name: COUNT_OF_BU
+  label: Count of BU
+  description: Total count for Count of BU (from Human Resources Sample PBIX).
+  sql_expression: COUNT(BU."BU")
+  dax_expression: COUNTA('BU'[BU])
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Count of BU
+  business_rules: []
+  domain: Human Resouce
+  concept: BU
+  tags: []
+  origin: bi
+- name: Count of Date
+  logical_name: COUNT_OF_DATE
+  label: Count of Date
+  description: Total count for Count of Date (from Human Resources Sample PBIX).
+  sql_expression: COUNT(COL_DATE."COL_DATE")
+  dax_expression: COUNTA('Date'[Date])
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Count of Date
+  business_rules: []
+  domain: Human Resouce
+  concept: Date
+  tags: []
+  origin: bi
+- name: EmpCount
+  logical_name: EMPCOUNT
+  label: EmpCount
+  description: Total count of EmplID for Emp Count (from Human Resources Sample PBIX).
+  sql_expression: COUNT(Employee."EMPLID")
+  dax_expression: CALCULATE(COUNT([EmplID]), FILTER(ALL('Date'[PeriodNumber]), 'Date'[PeriodNumber]
+    = MAX('Date'[PeriodNumber])))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - EmpCount
+  business_rules: []
+  domain: Human Resouce
+  concept: Employee
+  tags: []
+  origin: bi
+- name: Seps
+  logical_name: SEPS
+  label: Seps
+  description: Total count of EmplID for Seps (from Human Resources Sample PBIX).
+  sql_expression: COUNT(CASE WHEN (Employee."TERMDATE" IS NOT NULL) THEN Employee."EMPLID"
+    END)
+  dax_expression: CALCULATE(COUNT([EmplID]), FILTER(Employee, NOT(ISBLANK(Employee[TermDate]))))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Seps
+  business_rules: []
+  domain: Human Resouce
+  concept: Employee
+  tags: []
+  origin: bi
+- name: Actives
+  logical_name: ACTIVES
+  label: Actives
+  description: Total count of EmpCount for Actives (from Human Resources Sample PBIX).
+  dax_expression: CALCULATE([EmpCount], FILTER(Employee, ISBLANK(Employee[TermDate])))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Actives
+  business_rules: []
+  domain: Human Resouce
+  concept: Employee
+  tags: []
+  origin: bi
+- name: New Hires
+  logical_name: NEW_HIRES
+  label: New Hires
+  description: Total sum of isNewHire for New Hires (from Human Resources Sample PBIX).
+  sql_expression: SUM(Employee."ISNEWHIRE"::FLOAT)
+  dax_expression: SUM([isNewHire])
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - New Hires
+  business_rules: []
+  domain: Human Resouce
+  concept: Employee
+  tags: []
+  origin: bi
+- name: AVG Tenure Days
+  logical_name: AVG_TENURE_DAYS
+  label: AVG Tenure Days
+  description: Average value of TenureDays for AVG Tenure Days (from Human Resources
+    Sample PBIX).
+  sql_expression: AVG(Employee."TENUREDAYS"::FLOAT)
+  dax_expression: AVERAGE([TenureDays])
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - AVG Tenure Days
+  business_rules: []
+  domain: Human Resouce
+  concept: Employee
+  tags: []
+  origin: bi
+- name: AVG Tenure Months
+  logical_name: AVG_TENURE_MONTHS
+  label: AVG Tenure Months
+  description: Ratio / rate of AVG Tenure Days for AVG Tenure Months (from Human Resources
+    Sample PBIX).
+  sql_expression: CASE WHEN (ROUND(Employee."AVG_TENURE_DAYS" / 30, 1)) IS NULL AND
+    (1) IS NULL THEN NULL ELSE COALESCE(ROUND(Employee."AVG_TENURE_DAYS" / 30, 1),
+    0) - 1 END
+  dax_expression: ROUND([AVG Tenure Days]/30, 1)-1
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - AVG Tenure Months
+  business_rules: []
+  domain: Human Resouce
+  concept: Employee
+  tags: []
+  origin: bi
+- name: AVG Age
+  logical_name: AVG_AGE
+  label: AVG Age
+  description: Average value for AVG Age (from Human Resources Sample PBIX).
+  sql_expression: ROUND(AVG(Employee."AGE"::FLOAT), 0)
+  dax_expression: ROUND(AVERAGE([Age]), 0)
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - AVG Age
+  business_rules: []
+  domain: Human Resouce
+  concept: Employee
+  tags: []
+  origin: bi
+- name: Sum of BadHires
+  logical_name: SUM_OF_BADHIRES
+  label: Sum of BadHires
+  description: Total sum of BadHires for Sum of Bad Hires (from Human Resources Sample
+    PBIX).
+  sql_expression: SUM(Employee."BADHIRES"::FLOAT)
+  dax_expression: SUM([BadHires])
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Sum of BadHires
+  business_rules: []
+  domain: Human Resouce
+  concept: Employee
+  tags: []
+  origin: bi
+- name: New Hires SPLY
+  logical_name: NEW_HIRES_SPLY
+  label: New Hires SPLY
+  description: Calculated metric for New Hires SPLY (from Human Resources Sample PBIX).
+  dax_expression: CALCULATE([New Hires],SAMEPERIODLASTYEAR('Date'[Date]))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - New Hires SPLY
+  business_rules: []
+  domain: Human Resouce
+  concept: Employee
+  tags: []
+  origin: bi
+- name: Actives SPLY
+  logical_name: ACTIVES_SPLY
+  label: Actives SPLY
+  description: Calculated metric for Actives SPLY (from Human Resources Sample PBIX).
+  dax_expression: CALCULATE([Actives],SAMEPERIODLASTYEAR('Date'[Date]))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Actives SPLY
+  business_rules: []
+  domain: Human Resouce
+  concept: Employee
+  tags: []
+  origin: bi
+- name: Seps SPLY
+  logical_name: SEPS_SPLY
+  label: Seps SPLY
+  description: Calculated metric for Seps SPLY (from Human Resources Sample PBIX).
+  dax_expression: CALCULATE([Seps],SAMEPERIODLASTYEAR('Date'[Date]))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Seps SPLY
+  business_rules: []
+  domain: Human Resouce
+  concept: Employee
+  tags: []
+  origin: bi
+- name: EmpCount SPLY
+  logical_name: EMPCOUNT_SPLY
+  label: EmpCount SPLY
+  description: Total count of EmplID for Emp Count SPLY (from Human Resources Sample
+    PBIX).
+  dax_expression: CALCULATE(COUNT([EmplID]), FILTER(ALL('Date'[PeriodNumber]), 'Date'[PeriodNumber]
+    = MAX('Date'[PeriodNumber])),SAMEPERIODLASTYEAR('Date'[Date]))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - EmpCount SPLY
+  business_rules: []
+  domain: Human Resouce
+  concept: Employee
+  tags: []
+  origin: bi
+- name: Seps YoY Var
+  logical_name: SEPS_YOY_VAR
+  label: Seps YoY Var
+  description: Calculated metric for Seps Yo Y Var (from Human Resources Sample PBIX).
+  sql_expression: CASE WHEN (Employee."SEPS") IS NULL AND (Employee."SEPS_SPLY") IS
+    NULL THEN NULL ELSE COALESCE(Employee."SEPS", 0) - COALESCE(Employee."SEPS_SPLY",
+    0) END
+  dax_expression: '[Seps]-[Seps SPLY]'
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Seps YoY Var
+  business_rules: []
+  derives_from:
+  - Seps
+  domain: Human Resouce
+  concept: Employee
+  tags: []
+  origin: bi
+- name: Actives YoY Var
+  logical_name: ACTIVES_YOY_VAR
+  label: Actives YoY Var
+  description: Calculated metric for Actives Yo Y Var (from Human Resources Sample
+    PBIX).
+  sql_expression: CASE WHEN (Employee."ACTIVES") IS NULL AND (Employee."ACTIVES_SPLY")
+    IS NULL THEN NULL ELSE COALESCE(Employee."ACTIVES", 0) - COALESCE(Employee."ACTIVES_SPLY",
+    0) END
+  dax_expression: '[Actives]-[Actives SPLY]'
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Actives YoY Var
+  business_rules: []
+  derives_from:
+  - Actives
+  domain: Human Resouce
+  concept: Employee
+  tags: []
+  origin: bi
+- name: New Hires YoY Var
+  logical_name: NEW_HIRES_YOY_VAR
+  label: New Hires YoY Var
+  description: Calculated metric for New Hires Yo Y Var (from Human Resources Sample
+    PBIX).
+  sql_expression: CASE WHEN (Employee."NEW_HIRES") IS NULL AND (Employee."NEW_HIRES_SPLY")
+    IS NULL THEN NULL ELSE COALESCE(Employee."NEW_HIRES", 0) - COALESCE(Employee."NEW_HIRES_SPLY",
+    0) END
+  dax_expression: '[New Hires]-[New Hires SPLY]'
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - New Hires YoY Var
+  business_rules: []
+  domain: Human Resouce
+  concept: Employee
+  tags: []
+  origin: bi
+- name: Seps YoY % Change
+  logical_name: SEPS_YOY_PCT_CHANGE
+  label: Seps YoY % Change
+  description: Ratio / rate of Seps YoY Var for Seps Yo Y % Change (from Human Resources
+    Sample PBIX).
+  sql_expression: Employee."SEPS_YOY_VAR" / NULLIF(Employee."SEPS_SPLY", 0)
+  dax_expression: DIVIDE([Seps YoY Var], [Seps SPLY])
+  format_string: '#,0.0%;-#,0.0%;#,0.0%'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Seps YoY % Change
+  business_rules: []
+  domain: Human Resouce
+  concept: Employee
+  tags: []
+  origin: bi
+- name: Actives YoY % Change
+  logical_name: ACTIVES_YOY_PCT_CHANGE
+  label: Actives YoY % Change
+  description: Ratio / rate of Actives YoY Var for Actives Yo Y % Change (from Human
+    Resources Sample PBIX).
+  sql_expression: Employee."ACTIVES_YOY_VAR" / NULLIF(Employee."ACTIVES_SPLY", 0)
+  dax_expression: DIVIDE([Actives YoY Var], [Actives SPLY])
+  format_string: '#,0.0%;-#,0.0%;#,0.0%'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Actives YoY % Change
+  business_rules: []
+  domain: Human Resouce
+  concept: Employee
+  tags: []
+  origin: bi
+- name: New Hires YoY % Change
+  logical_name: NEW_HIRES_YOY_PCT_CHANGE
+  label: New Hires YoY % Change
+  description: Ratio / rate of New Hires YoY Var for New Hires Yo Y % Change (from
+    Human Resources Sample PBIX).
+  sql_expression: Employee."NEW_HIRES_YOY_VAR" / NULLIF(Employee."NEW_HIRES_SPLY",
+    0)
+  dax_expression: DIVIDE([New Hires YoY Var], [New Hires SPLY])
+  format_string: '#,0.0%;-#,0.0%;#,0.0%'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - New Hires YoY % Change
+  business_rules: []
+  domain: Human Resouce
+  concept: Employee
+  tags: []
+  origin: bi
+- name: Bad Hires SPLY
+  logical_name: BAD_HIRES_SPLY
+  label: Bad Hires SPLY
+  description: Calculated metric of Sum of BadHires for Bad Hires SPLY (from Human
+    Resources Sample PBIX).
+  dax_expression: CALCULATE([Sum of BadHires],SAMEPERIODLASTYEAR('Date'[Date]))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Bad Hires SPLY
+  business_rules: []
+  domain: Human Resouce
+  concept: Employee
+  tags: []
+  origin: bi
+- name: Bad Hires YoY Var
+  logical_name: BAD_HIRES_YOY_VAR
+  label: Bad Hires YoY Var
+  description: Calculated metric of Sum of BadHires for Bad Hires Yo Y Var (from Human
+    Resources Sample PBIX).
+  sql_expression: CASE WHEN (Employee."SUM_OF_BADHIRES") IS NULL AND (Employee."BAD_HIRES_SPLY")
+    IS NULL THEN NULL ELSE COALESCE(Employee."SUM_OF_BADHIRES", 0) - COALESCE(Employee."BAD_HIRES_SPLY",
+    0) END
+  dax_expression: '[Sum of BadHires]-[Bad Hires SPLY]'
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Bad Hires YoY Var
+  business_rules: []
+  domain: Human Resouce
+  concept: Employee
+  tags: []
+  origin: bi
+- name: Bad Hires YoY % Change
+  logical_name: BAD_HIRES_YOY_PCT_CHANGE
+  label: Bad Hires YoY % Change
+  description: Ratio / rate of Bad Hires YoY Var for Bad Hires Yo Y % Change (from
+    Human Resources Sample PBIX).
+  sql_expression: Employee."BAD_HIRES_YOY_VAR" / NULLIF(Employee."BAD_HIRES_SPLY",
+    0)
+  dax_expression: DIVIDE([Bad Hires YoY Var], [Bad Hires SPLY])
+  format_string: '#,0.0%;-#,0.0%;#,0.0%'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Bad Hires YoY % Change
+  business_rules: []
+  domain: Human Resouce
+  concept: Employee
+  tags: []
+  origin: bi
+- name: TO %
+  logical_name: TO_PCT
+  label: TO %
+  description: Ratio / rate of Seps for TO % (from Human Resources Sample PBIX).
+  sql_expression: Employee."SEPS" / NULLIF(Employee."ACTIVES", 0)
+  dax_expression: DIVIDE([Seps], [Actives])
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - TO %
+  business_rules: []
+  derives_from:
+  - Seps
+  - Actives
+  domain: Human Resouce
+  concept: Employee
+  tags: []
+  origin: bi
+- name: TO % Norm
+  logical_name: TO_PCT_NORM
+  label: TO % Norm
+  description: Calculated metric for TO % Norm (from Human Resources Sample PBIX).
+  sql_expression: SUM(EMPLOYEE."TO_PCT"::FLOAT) OVER (PARTITION BY EXCLUDING GENDER."GENDER",
+    ETHNICITY."ETHNICITY")
+  dax_expression: CALCULATE([TO %], all(Gender[Gender]), ALL(Ethnicity[Ethnicity]))
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - TO % Norm
+  business_rules: []
+  domain: Human Resouce
+  concept: Employee
+  tags: []
+  origin: bi
+- name: TO % Var
+  logical_name: TO_PCT_VAR
+  label: TO % Var
+  description: Calculated metric for TO % Var (from Human Resources Sample PBIX).
+  sql_expression: CASE WHEN (Employee."TO_PCT") IS NULL AND (Employee."TO_PCT_NORM")
+    IS NULL THEN NULL ELSE COALESCE(Employee."TO_PCT", 0) - COALESCE(Employee."TO_PCT_NORM",
+    0) END
+  dax_expression: '[TO %]-[TO % Norm]'
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - TO % Var
+  business_rules: []
+  domain: Human Resouce
+  concept: Employee
+  tags: []
+  origin: bi
+- name: Sep%ofActive
+  logical_name: SEPPCTOFACTIVE
+  label: Sep%ofActive
+  sql_expression: Employee."SEPS" / NULLIF(Employee."ACTIVES", 0)
+  dax_expression: DIVIDE([Seps],[Actives])
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Sep%ofActive
+  business_rules: []
+  derives_from:
+  - Seps
+  - Actives
+  domain: Human Resouce
+  concept: Employee
+  tags: []
+  origin: bi
+- name: Sep%ofSMLYActives
+  logical_name: SEPPCTOFSMLYACTIVES
+  label: Sep%ofSMLYActives
+  description: Ratio / rate of Seps SPLY for Sep%of SMLYActives (from Human Resources
+    Sample PBIX).
+  sql_expression: Employee."SEPS_SPLY" / NULLIF(Employee."ACTIVES_SPLY", 0)
+  dax_expression: DIVIDE([Seps SPLY],[Actives SPLY])
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Sep%ofSMLYActives
+  business_rules: []
+  domain: Human Resouce
+  concept: Employee
+  tags: []
+  origin: bi
+- name: BadHire%ofActives
+  logical_name: BADHIREPCTOFACTIVES
+  label: BadHire%ofActives
+  description: Ratio / rate of Sum of BadHires for Bad Hire%of Actives (from Human
+    Resources Sample PBIX).
+  sql_expression: Employee."SUM_OF_BADHIRES" / NULLIF(Employee."ACTIVES", 0)
+  dax_expression: DIVIDE([Sum of BadHires],[Actives])
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - BadHire%ofActives
+  business_rules: []
+  derives_from:
+  - Actives
+  domain: Human Resouce
+  concept: Employee
+  tags: []
+  origin: bi
+- name: BadHire%ofActiveSPLY
+  logical_name: BADHIREPCTOFACTIVESPLY
+  label: BadHire%ofActiveSPLY
+  description: Ratio / rate of Bad Hires SPLY for Bad Hire%of Active SPLY (from Human
+    Resources Sample PBIX).
+  sql_expression: Employee."BAD_HIRES_SPLY" / NULLIF(Employee."ACTIVES_SPLY", 0)
+  dax_expression: DIVIDE([Bad Hires SPLY],[Actives SPLY])
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - BadHire%ofActiveSPLY
+  business_rules: []
+  domain: Human Resouce
+  concept: Employee
+  tags: []
+  origin: bi
+- name: SUM_OF_MONTHNUMBER
+  logical_name: SUM_OF_MONTHNUMBER
+  label: SUM_OF_MONTHNUMBER
+  description: Total sum for SUM OF MONTHNUMBER (from Human Resources Sample PBIX).
+  sql_expression: SUM(MonthNumber)
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_MONTHNUMBER
+  business_rules: []
+  domain: Human Resouce
+  concept: Date
+  tags: []
+  origin: bi
+- name: SUM_OF_PERIODNUMBER
+  logical_name: SUM_OF_PERIODNUMBER
+  label: SUM_OF_PERIODNUMBER
+  description: Total sum for SUM OF PERIODNUMBER (from Human Resources Sample PBIX).
+  sql_expression: SUM(PeriodNumber)
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_PERIODNUMBER
+  business_rules: []
+  domain: Human Resouce
+  concept: Date
+  tags: []
+  origin: bi
+- name: SUM_OF_QTR
+  logical_name: SUM_OF_QTR
+  label: SUM_OF_QTR
+  description: Total sum for SUM OF QTR (from Human Resources Sample PBIX).
+  sql_expression: SUM(Qtr)
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_QTR
+  business_rules: []
+  domain: Human Resouce
+  concept: Date
+  tags: []
+  origin: bi
+- name: SUM_OF_YEAR
+  logical_name: SUM_OF_YEAR
+  label: SUM_OF_YEAR
+  description: Total sum for SUM OF YEAR (from Human Resources Sample PBIX).
+  sql_expression: SUM(Year)
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_YEAR
+  business_rules: []
+  domain: Human Resouce
+  concept: Date
+  tags: []
+  origin: bi
+- name: SUM_OF_DAY
+  logical_name: SUM_OF_DAY
+  label: SUM_OF_DAY
+  description: Total sum for SUM OF DAY (from Human Resources Sample PBIX).
+  sql_expression: SUM(Day)
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_DAY
+  business_rules: []
+  domain: Human Resouce
+  concept: Date
+  tags: []
+  origin: bi
+relationships:
+- name: REL_EMPLOYEE_DATE__DATE_DATE
+  from_concept: Employee
+  to_concept: Date
+  cardinality: N:1
+  join_expression: Employee.date = Date.Date
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_EMPLOYEE_FP__FP_FP
+  from_concept: Employee
+  to_concept: FP
+  cardinality: N:1
+  join_expression: Employee.FP = FP.FP
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_EMPLOYEE_ETHNICGROUP__ETHNICITY_ETHNIC_GROUP
+  from_concept: Employee
+  to_concept: Ethnicity
+  cardinality: N:1
+  join_expression: Employee.EthnicGroup = Ethnicity."Ethnic Group"
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_EMPLOYEE_GENDER__GENDER_ID
+  from_concept: Employee
+  to_concept: Gender
+  cardinality: N:1
+  join_expression: Employee.Gender = Gender.ID
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_EMPLOYEE_PAYTYPEID__PAYTYPE_PAYTYPEID
+  from_concept: Employee
+  to_concept: PayType
+  cardinality: N:1
+  join_expression: Employee.PayTypeID = PayType.PayTypeID
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_EMPLOYEE_BU__BU_BU
+  from_concept: Employee
+  to_concept: BU
+  cardinality: N:1
+  join_expression: Employee.BU = BU.BU
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_EMPLOYEE_AGEGROUPID__AGEGROUP_AGEGROUPID
+  from_concept: Employee
+  to_concept: AgeGroup
+  cardinality: N:1
+  join_expression: Employee.AgeGroupID = AgeGroup.AgeGroupID
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_EMPLOYEE_TERMREASON__SEPARATIONREASON_SEPARATIONTYPEID
+  from_concept: Employee
+  to_concept: SeparationReason
+  cardinality: N:1
+  join_expression: Employee.TermReason = SeparationReason.SeparationTypeID
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
