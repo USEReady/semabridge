@@ -150,7 +150,7 @@ test('A project whose platform does not support injection shows the spike reason
   assert.equal(label, 'Publish verified pairs to Cortex');
 
   const genieLabel = formatInjectionTargetLabel('DATABRICKS');
-  assert.equal(genieLabel, 'Publish verified pairs to Genie');
+  assert.equal(genieLabel, 'Publish sample questions to Genie');
 
   const reason = getInjectionDisabledReason({ platform: 'DATABRICKS' });
   assert.ok(reason.includes('workspace contains zero Genie spaces and token lacks space creation scope'));

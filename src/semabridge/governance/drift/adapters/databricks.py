@@ -32,13 +32,18 @@ Target-Aware Blast Radius Consumer Discovery (Spike Findings):
       `system.information_schema.table_lineage`.
 
 Verified Queries Injection Spike Findings (CS-19 Criterion 2):
+- Platform Limitation - Databricks Genie Spaces cannot hold verified pairs:
+    The Genie space schema (`config.sample_questions`) accepts only `[{"id": str, "question": str}]`.
+    It has no field for SQL queries or numerical expected benchmark values.
+    Therefore, any write to Genie writes only the natural language question and discards the SQL and the benchmark.
+    Databricks cannot store verified number pairs as required by Criterion 2. As with the Lakeview dashboard
+    gap, this is recorded as an upstream Databricks platform limitation, not outstanding work.
 - Databricks Genie Spaces Benchmark Questions API:
     Call: `PATCH /api/2.0/genie/spaces/{space_id}`
     Payload shape (Protobuf / JSON schema):
       `config.sample_questions`: Array of objects:
         - `id`: MUST be a 32-character hexadecimal lowercase UUID string without hyphens (e.g. `uuid.uuid4().hex`).
         - `question`: Natural language benchmark query (string).
-        - `sql`: Expected/verified SQL query (string).
       `data_sources.tables`: Array of objects with non-empty `identifier` (`catalog.schema.table`). Empty strings
       or malformed table identifiers are rejected by Databricks schema validation.
 - Live Account Verification Findings:

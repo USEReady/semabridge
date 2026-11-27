@@ -151,6 +151,11 @@ export default function InjectDialog({
               This operation actively modifies the destination warehouse model ({targetLabel}).
               To protect warehouse integrity, you must inspect the <strong>Preview</strong> before publishing.
             </div>
+            {String(platform || '').toUpperCase() === 'DATABRICKS' && (
+              <div style={{ fontSize: 11, marginTop: 4, color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+                Platform limitation: Databricks Genie spaces store only sample questions. Expected SQL queries and numerical benchmark values are not supported by the platform schema and will not be stored.
+              </div>
+            )}
           </div>
         </div>
 

@@ -119,7 +119,7 @@ export function formatInjectionSkipReason(code, defaultMsg = '') {
 export function formatInjectionTargetLabel(platform = '') {
   const p = String(platform || '').toUpperCase();
   if (p === 'SNOWFLAKE') return 'Publish verified pairs to Cortex';
-  if (p === 'DATABRICKS') return 'Publish verified pairs to Genie';
+  if (p === 'DATABRICKS') return 'Publish sample questions to Genie';
   return 'Publish verified pairs to Warehouse';
 }
 
