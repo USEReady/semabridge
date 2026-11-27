@@ -38,6 +38,15 @@ Verified Queries Injection Spike Findings (CS-19 Criterion 2):
     Therefore, any write to Genie writes only the natural language question and discards the SQL and the benchmark.
     Databricks cannot store verified number pairs as required by Criterion 2. As with the Lakeview dashboard
     gap, this is recorded as an upstream Databricks platform limitation, not outstanding work.
+
+BI Truth Window & Unknown-Kind Findings (CS-19):
+- Window Filtering (Live Probe):
+    A trailing `WHERE` clause before `GROUP BY` and tail clauses narrows `MEASURE(...)` on Databricks
+    Unity Catalog Metric Views (`1000000.0` unfiltered vs `500000.0` with `WHERE acco_account_name = 'Acme Corp'`).
+- Unknown Object Kinds in DESCRIBE:
+    Columns in `DESCRIBE TABLE EXTENDED` / `DESCRIBE JSON` whose `data_type` cannot be matched to an
+    aggregate/measure or a known scalar/complex SQL type are classified as `ObjectKind.UNKNOWN`, never
+    counted as `ObjectKind.METRIC`.
 - Databricks Genie Spaces Benchmark Questions API:
     Call: `PATCH /api/2.0/genie/spaces/{space_id}`
     Payload shape (Protobuf / JSON schema):
@@ -217,7 +226,7 @@ class DatabricksAdapter(PlatformAdapter):
         self,
         statement: str,
         connection_config: Optional[Dict[str, Any]] = None,
-        timeout: int = 30,
+        timeout: Optional[int] = None,
     ) -> List[List[Any]]:
         """Execute a SQL statement against Databricks using the SQL Execution REST API.
         
@@ -227,6 +236,7 @@ class DatabricksAdapter(PlatformAdapter):
         import requests
 
         cfg = self._resolve_connection_config(connection_config)
+        effective_timeout = int(timeout if timeout is not None else cfg.get("timeout") or 30)
         host = cfg.get("host")
         token = cfg.get("token")
         warehouse_id = cfg.get("warehouse_id")
@@ -244,7 +254,7 @@ class DatabricksAdapter(PlatformAdapter):
 
         payload: Dict[str, Any] = {
             "statement": statement,
-            "wait_timeout": f"{min(timeout, 30)}s",
+            "wait_timeout": f"{min(effective_timeout, 30)}s",
         }
         if warehouse_id:
             payload["warehouse_id"] = warehouse_id
@@ -254,7 +264,7 @@ class DatabricksAdapter(PlatformAdapter):
             payload["schema"] = cfg["schema"]
 
         try:
-            resp = requests.post(endpoint, json=payload, headers=headers, timeout=timeout + 5)
+            resp = requests.post(endpoint, json=payload, headers=headers, timeout=effective_timeout + 5)
         except requests.exceptions.Timeout as t_err:
             logger.error("Databricks request timed out: %s", t_err)
             raise RuntimeError("warehouse unavailable: query timed out") from t_err
@@ -279,7 +289,7 @@ class DatabricksAdapter(PlatformAdapter):
         state = status_info.get("state")  # hardcoding-ok: Databricks statement execution API status field
 
         start_t = time.time()
-        while state in ("PENDING", "RUNNING") and statement_id and (time.time() - start_t < timeout):
+        while state in ("PENDING", "RUNNING") and statement_id and (time.time() - start_t < effective_timeout):
             time.sleep(1)
             try:
                 poll_resp = requests.get(f"{endpoint}/{statement_id}", headers=headers, timeout=10)
@@ -799,9 +809,21 @@ class DatabricksAdapter(PlatformAdapter):
             comment = rec.get("comment") or extra_desc.get(col_name.upper())
             data_type = str(rec.get("data_type") or "").strip()
 
-            # Determine kind: if column starts with metric prefix or contains agg keyword, or metric by convention
-            is_metric = _AGG_PREFIX_RE.match(data_type) is not None or "metric" in col_name.lower()
-            kind = ObjectKind.METRIC if is_metric else ObjectKind.DIMENSION
+            # Determine kind: aggregate/measure -> METRIC; known SQL scalar/complex type -> DIMENSION; otherwise UNKNOWN
+            is_metric = _AGG_PREFIX_RE.match(data_type) is not None or "measure" in data_type.lower() or "metric" in col_name.lower()
+            is_known_dim = bool(
+                re.match(
+                    r"^(?:string|varchar|char|text|int|integer|bigint|smallint|tinyint|double|float|real|decimal|numeric|boolean|bool|date|timestamp|binary|array|map|struct)\b",
+                    data_type,
+                    re.IGNORECASE,
+                )
+            )
+            if is_metric:
+                kind = ObjectKind.METRIC
+            elif is_known_dim:
+                kind = ObjectKind.DIMENSION
+            else:
+                kind = ObjectKind.UNKNOWN
 
             objects.append(
                 ObjectDef(
@@ -904,40 +926,6 @@ class DatabricksAdapter(PlatformAdapter):
                 )
             )
 
-    def _split_select_items(self, select_clause: str) -> List[str]:
-        """Split SELECT projection items by comma respecting parentheses and string quotes."""
-        items: List[str] = []
-        current: List[str] = []
-        depth = 0
-        in_str = False
-        str_char = ""
-
-        for char in select_clause:
-            if char in ("'", '"', '`'):
-                if not in_str:
-                    in_str = True
-                    str_char = char
-                elif str_char == char:
-                    in_str = False
-            elif not in_str:
-                if char == "(":
-                    depth += 1
-                elif char == ")":
-                    depth = max(0, depth - 1)
-                elif char == "," and depth == 0:
-                    item_str = "".join(current).strip()
-                    if item_str:
-                        items.append(item_str)
-                    current = []
-                    continue
-            current.append(char)
-
-        last_item = "".join(current).strip()
-        if last_item:
-            items.append(last_item)
-
-        return items
-
     def inject_verified_queries(
         self,
         pairs: List[Dict[str, Any]],
@@ -945,14 +933,40 @@ class DatabricksAdapter(PlatformAdapter):
         connection_config: Optional[Dict[str, Any]] = None,
         dry_run: bool = False,
     ) -> Dict[str, Any]:
-        """Inject verified question/SQL pairs into a Databricks Genie Space configuration.
+        """Inject sample questions into a Databricks Genie Space configuration.
 
         Status: UNVERIFIED (Spike Finding).
-        While the Genie Spaces Management REST schema is documented (PATCH /api/2.0/genie/spaces/{space_id}),
-        live account introspection confirmed 0 active Genie spaces in the workspace and token lacks space
-        creation scope. Databricks injection is therefore refused honestly until a live space is provisioned
-        and verified.
+        Queries GET /api/2.0/genie/spaces when credentials are provided; if zero Genie spaces exist
+        or the token lacks space creation scope, refuses honestly with the recorded reason.
         """
+        if not dry_run and connection_config:
+            try:
+                import requests
+
+                cfg = self._resolve_connection_config(connection_config)
+                host = cfg.get("host")
+                token = cfg.get("token")
+                if host and token:
+                    clean_host = host.replace("https://", "").replace("http://", "").rstrip("/")
+                    resp = requests.get(
+                        f"https://{clean_host}/api/2.0/genie/spaces",
+                        headers={"Authorization": f"Bearer {token}"},
+                        timeout=int(cfg.get("timeout") or 15),
+                    )
+                    if resp.status_code == 200:
+                        spaces = (resp.json() or {}).get("spaces") or []
+                        if not spaces:
+                            return {
+                                "supported": False,
+                                "injected_count": 0,
+                                "target": None,
+                                "details": [],
+                                "reason": "Databricks Genie space injection is unverified: workspace contains zero Genie spaces and token lacks space creation scope.",
+                                "dry_run": dry_run,
+                            }
+            except Exception as exc:
+                logger.debug("Genie space check failed during inject_verified_queries: %s", exc)
+
         return {
             "supported": False,
             "injected_count": 0,
@@ -961,3 +975,80 @@ class DatabricksAdapter(PlatformAdapter):
             "reason": "Databricks Genie space injection is unverified: workspace contains zero Genie spaces and token lacks space creation scope.",
             "dry_run": dry_run,
         }
+
+    def execute_sql(
+        self,
+        statement: str,
+        connection_config: Optional[Dict[str, Any]] = None,
+        timeout: int = 15,
+    ) -> Tuple[List[str], List[List[Any]]]:
+        """Execute a read SQL statement against Databricks and return (columns, rows)."""
+        import time
+        import requests
+
+        cfg = self._resolve_connection_config(connection_config)
+        host = cfg.get("host")
+        token = cfg.get("token")
+        warehouse_id = cfg.get("warehouse_id")
+
+        if not host or not token:
+            raise ValueError("Databricks connection credentials missing or incomplete (host/token required)")
+
+        clean_host = host.replace("https://", "").replace("http://", "").rstrip("/")
+        endpoint = f"https://{clean_host}/api/2.0/sql/statements"
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+
+        payload: Dict[str, Any] = {
+            "statement": statement,
+            "wait_timeout": f"{min(timeout, 30)}s",
+        }
+        if warehouse_id:
+            payload["warehouse_id"] = warehouse_id
+        if cfg.get("catalog"):
+            payload["catalog"] = cfg["catalog"]
+        if cfg.get("schema"):
+            payload["schema"] = cfg["schema"]
+
+        resp = requests.post(endpoint, json=payload, headers=headers, timeout=timeout + 5)
+        if resp.status_code in (401, 403):
+            raise RuntimeError("warehouse unavailable: authentication failed")
+        if resp.status_code == 404:
+            raise RuntimeError(f"warehouse unavailable: endpoint or resource not found: {resp.text[:300]}")
+        if resp.status_code >= 400:
+            err_msg = resp.text[:400]
+            if "TABLE_OR_VIEW_NOT_FOUND" in err_msg or "cannot be found" in err_msg.lower():
+                raise RuntimeError(f"view not found: {err_msg}")
+            raise RuntimeError(f"warehouse unavailable: HTTP {resp.status_code}: {err_msg}")
+
+        data = resp.json()
+        statement_id = data.get("statement_id")
+        status_info = data.get("status") or {}
+        state = status_info.get("state")
+
+        start_t = time.time()
+        while state in ("PENDING", "RUNNING") and statement_id and (time.time() - start_t < effective_timeout):
+            time.sleep(1)
+            try:
+                poll_resp = requests.get(f"{endpoint}/{statement_id}", headers=headers, timeout=10)
+                if poll_resp.status_code >= 400:
+                    break
+                data = poll_resp.json()
+                state = (data.get("status") or {}).get("state")
+            except Exception:
+                break
+
+        if state not in ("SUCCEEDED",):
+            err_desc = (data.get("status") or {}).get("error", {}).get("message") or state or "execution failed"
+            if "TABLE_OR_VIEW_NOT_FOUND" in str(err_desc) or "cannot be found" in str(err_desc).lower():
+                raise RuntimeError(f"view not found: {err_desc}")
+            raise RuntimeError(f"warehouse unavailable: {err_desc}")
+
+        manifest = data.get("manifest") or {}
+        schema_info = manifest.get("schema") or {}
+        cols = [c["name"].upper() for c in schema_info.get("columns", [])]
+        rows = (data.get("result") or {}).get("data_array") or []
+        return cols, rows

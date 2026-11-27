@@ -26,6 +26,7 @@ class ObjectKind(str, Enum):
     DIMENSION = "DIMENSION"
     FACT = "FACT"
     RELATIONSHIP = "RELATIONSHIP"
+    UNKNOWN = "UNKNOWN"
 
 
 ADDITION = DriftCategory.ADDITION.value

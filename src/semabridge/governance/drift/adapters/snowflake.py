@@ -1136,3 +1136,28 @@ class SnowflakeAdapter(PlatformAdapter):
                 "reason": f"Snowflake injection failed: {exc}",
                 "dry_run": dry_run,
             }
+
+    def execute_sql(
+        self,
+        statement: str,
+        connection_config: Optional[Dict[str, Any]] = None,
+        timeout: int = 15,
+    ) -> Tuple[List[str], List[List[Any]]]:
+        """Execute a read SQL statement against Snowflake and return (columns, rows)."""
+        from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
+        import snowflake.connector
+
+        kw = get_snowflake_connect_kwargs(connection_config)
+        conn = snowflake.connector.connect(**kw)
+        try:
+            cur = conn.cursor()
+            try:
+                cur.execute(f"ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = {timeout}")
+            except Exception:
+                pass
+            cur.execute(statement)
+            cols = [d[0].upper() for d in cur.description] if cur.description else []
+            rows = cur.fetchall()
+            return cols, rows
+        finally:
+            conn.close()

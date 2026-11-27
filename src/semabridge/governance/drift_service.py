@@ -878,12 +878,18 @@ def _run_drift_check_impl(
 
     if platform in ("UNKNOWN", "NOT_SET", ""):
         cfg_plat = str(wh_dict.get("platform") or wh_dict.get("type") or "").upper().strip()
+        if not cfg_plat and (wh_dict.get("account") or wh_dict.get("sf_account") or wh_dict.get("snowflake_account")):
+            cfg_plat = "SNOWFLAKE"
+        elif not cfg_plat and (wh_dict.get("workspace_url") or wh_dict.get("http_path") or wh_dict.get("server_hostname")):
+            cfg_plat = "DATABRICKS"
         if cfg_plat:
             platform = cfg_plat
         else:
             base_check = get_deploy_baseline(project_id, target_view_name or view)
             if base_check and base_check.get("platform"):
                 platform = str(base_check["platform"]).upper().strip()
+            elif wh_dict:
+                platform = "SNOWFLAKE"
             else:
                 platform = "NOT_SET"
 

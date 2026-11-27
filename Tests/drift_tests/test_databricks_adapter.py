@@ -196,6 +196,21 @@ def test_databricks_parse_describe_json():
     assert obj_by_name["avg_price"].kind == ObjectKind.METRIC
 
 
+def test_databricks_describe_json_unknown_kind_not_metric():
+    """An object whose kind cannot be determined is reported as UNKNOWN, not METRIC."""
+    records = [
+        {"col_name": "mystery_col", "data_type": "", "comment": ""},
+        {"col_name": "weird_col", "data_type": "custom_opaque_type", "comment": ""},
+    ]
+    adapter = DatabricksAdapter()
+    view_def = adapter.parse_definition(
+        raw_text=json.dumps({"describe_records": records}),
+        view_name="catalog.schema.describe_unknown",
+        source="live",
+    )
+    assert [o.kind for o in view_def.objects] == [ObjectKind.UNKNOWN, ObjectKind.UNKNOWN]
+
+
 def test_databricks_comparison_backticks_and_formatting():
     """Verify that backtick-quoted identifiers in Databricks do not trigger false drift."""
     baseline_yaml = """

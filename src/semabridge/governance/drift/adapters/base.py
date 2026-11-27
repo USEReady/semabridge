@@ -8,7 +8,7 @@ same parser parses both the live warehouse definition and the stored baseline.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from semabridge.governance.drift.models import ViewDefinition
 
@@ -106,3 +106,12 @@ class PlatformAdapter(ABC):
             "details": [],
             "dry_run": dry_run,
         }
+
+    def execute_sql(
+        self,
+        statement: str,
+        connection_config: Optional[Dict[str, Any]] = None,
+        timeout: int = 15,
+    ) -> Tuple[List[str], List[List[Any]]]:
+        """Execute a read SQL statement and return (columns, rows)."""
+        raise NotImplementedError(f"Direct SQL execution is not implemented for platform '{self.platform_name}'")
