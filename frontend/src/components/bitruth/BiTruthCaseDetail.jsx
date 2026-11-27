@@ -507,6 +507,7 @@ export default function BiTruthCaseDetail({
                 ? `Rows: ${result.actual_row_count}`
                 : 'Runs against warehouse when approved'}
               {result?.mode && ` • Mode: ${result.mode}`}
+              {result?.platform && ` • Platform: ${result.platform}`}
             </div>
             <TablePreview data={result?.actual_value} />
           </div>
