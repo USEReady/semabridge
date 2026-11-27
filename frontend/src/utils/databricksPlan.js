@@ -23,6 +23,30 @@ export function plannedNamesBySourcePath(plan) {
   return out;
 }
 
+/** source_path -> { placements: [{view, name, expr, approximate}], leftOut: {reason, detail} | null }:
+ * the planner's CURRENT planned expression per metric view (the final SQL that
+ * deploys, not the intermediate converted SQL) and, for a measure that was not
+ * placed, why. Read-only view of the plan. */
+export function plannedDetailsBySourcePath(plan) {
+  const out = new Map();
+  const get = (path) => {
+    if (!out.has(path)) out.set(path, { placements: [], leftOut: null });
+    return out.get(path);
+  };
+  const approx = (m) => [...(m.warnings || []), String(m.comment || '')]
+    .some((t) => String(t).toLowerCase().includes('approximate'));
+  (plan?.views || []).forEach((view) => {
+    (view.fields || []).forEach((f) => get(fieldPath(f.dataset, f.column)).placements.push(
+      { view: view.name, name: f.name, expr: f.expr || null, approximate: false }));
+    (view.measures || []).forEach((m) => get(measurePath(m.source_name)).placements.push(
+      { view: view.name, name: m.name, expr: m.expr || null, approximate: approx(m) }));
+  });
+  (plan?.left_out || []).forEach((lo) => {
+    if (lo?.measure) get(measurePath(lo.measure)).leftOut = { reason: lo.reason || null, detail: lo.detail || null };
+  });
+  return out;
+}
+
 /** source_path -> the plan's outcome for a saved name (name_requests). */
 export function nameRequestsBySourcePath(plan) {
   const out = new Map();

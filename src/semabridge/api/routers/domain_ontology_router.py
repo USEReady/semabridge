@@ -814,6 +814,39 @@ def _is_databricks_project(project_id: Optional[str]) -> bool:
         return False
 
 
+@project_router.get("/{project_id}/target-features", response_model=Dict[str, Any])
+async def get_project_target_features(project_id: str, request: Request) -> Dict[str, Any]:
+    """Read-only: the project's target and the SemaBridge features built for it
+    (TargetRules.features). Unknown target: every feature off."""
+    from semabridge.api.services.target_features import target_features_for
+
+    _review_access(request, project_id)
+    return target_features_for(project_id)
+
+
+@project_router.get("/{project_id}/target-facts", response_model=Dict[str, Any])
+async def get_project_target_facts(project_id: str, request: Request, model_key: str = "") -> Dict[str, Any]:
+    """Read-only: where each source item lives on the project's target -- every
+    occurrence (view + name) with its CURRENT PLANNED and LAST VERIFIED expression,
+    and why left-out measures were left out. Read from the existing plan, bundles
+    and deploy records; nothing is written. Missing artifacts -> available=False."""
+    import asyncio
+
+    from semabridge.api.services.target_features import stored_target_type
+    from semabridge.ontology.targets import UnsupportedOntologyTarget, ontology_adapter_for
+
+    _review_access(request, project_id)
+    target = stored_target_type(project_id)
+    if not target:
+        return {"target": None, "available": False, "items": {}, "notes": ["The project has no target."]}
+    try:
+        adapter = ontology_adapter_for(target)
+    except UnsupportedOntologyTarget:
+        return {"target": target, "available": False, "items": {}, "notes": [f"No target facts for {target}."]}
+    facts = await asyncio.to_thread(adapter.facts, project_id, str(model_key or ""))
+    return facts.as_dict()
+
+
 @project_router.get("/{project_id}/knowledge-graph.sql", response_class=PlainTextResponse)
 async def export_project_knowledge_graph_sql(
     project_id: str,

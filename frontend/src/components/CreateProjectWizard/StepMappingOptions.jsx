@@ -15,7 +15,7 @@ import UpsertChangesView, { OntologyChangesList } from '../UpsertChangesView';
 import PanelBoundary from '../common/PanelBoundary';
 import TableBindingPlan from '../TableBindingPlan';
 import DatabricksPlanPanel from '../DatabricksPlanPanel';
-import { newerPlan, plannedNamesBySourcePath } from '../../utils/databricksPlan.js';
+import { newerPlan, plannedDetailsBySourcePath, plannedNamesBySourcePath } from '../../utils/databricksPlan.js';
 import { resolveMultiModelReadiness, flattenSectionRows } from '../../utils/multiFileDryRunReadiness';
 
 const hasOntologyChanges = (c) => Boolean(c && typeof c === 'object' && (
@@ -206,6 +206,11 @@ export function StepMappingOptions({
   const plannedNames = useMemo(
     () => (String(primaryTargetConnector || '').toLowerCase() === 'databricks' && currentPlan
       ? plannedNamesBySourcePath(currentPlan) : null),
+    [currentPlan, primaryTargetConnector],
+  );
+  const plannedDetails = useMemo(
+    () => (String(primaryTargetConnector || '').toLowerCase() === 'databricks' && currentPlan
+      ? plannedDetailsBySourcePath(currentPlan) : null),
     [currentPlan, primaryTargetConnector],
   );
   const [autoMappingMode, setAutoMappingMode] = useState(true);
@@ -781,6 +786,7 @@ export function StepMappingOptions({
               targetPlatform={primaryTargetConnector || 'snowflake'}
               sqlDialect={dryRunData?.sql_dialect || null}
               plannedNames={plannedNames}
+              plannedDetails={plannedDetails}
               onResetRow={onResetRow ? (rowId) => onResetRow(rowId, null) : null}
             />
           </UpsertChangesView>

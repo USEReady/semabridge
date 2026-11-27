@@ -20,6 +20,8 @@ import {
 } from 'lucide-react';
 import { BTN_SM, BTN_PRIMARY, INPUT_STYLE, SELECT_STYLE, MONO, plural } from './styles';
 import { Pill } from './ui';
+import TargetFactsPanel from './TargetFactsPanel';
+import { featureUnsupported, targetDisplayName } from '../../utils/targetFeatures.js';
 
 const PANEL = {
   padding: 16,
@@ -325,7 +327,26 @@ export function WhatIfSimulator({ gov, metricOptions, onOpenParity }) {
   );
 }
 
-export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimensionOptions = [], semanticViewOptions = [] }) {
+// Targets without a parity check (gov.targetFeatures.parity_check === false, e.g.
+// Databricks) get the read-only target facts instead of the Snowflake tools.
+// Unknown features (null) keep today's panel unchanged.
+export function ParityPanel(props) {
+  const gov = props.gov || {};
+  if (featureUnsupported(gov.targetFeatures, 'parity_check')) {
+    return (
+      <TargetFactsPanel
+        facts={gov.targetFacts}
+        features={gov.targetFeatures}
+        target={gov.targetType}
+        loading={gov.targetFactsLoading}
+        error={gov.targetFactsError}
+      />
+    );
+  }
+  return <SnowflakeParityPanel {...props} />;
+}
+
+function SnowflakeParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimensionOptions = [], semanticViewOptions = [] }) {
   const {
     govProjectId = '',
     setGovProjectId,
@@ -1406,6 +1427,18 @@ export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimens
 }
 
 export function AccessPanel({ gov }) {
+  if (featureUnsupported(gov?.targetFeatures, 'row_level_security')) {
+    return (
+      <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+        Row-level security is not converted for {targetDisplayName(gov?.targetType)} yet. Power BI roles are
+        compiled to Snowflake row access policies only.
+      </div>
+    );
+  }
+  return <SnowflakeAccessPanel gov={gov} />;
+}
+
+function SnowflakeAccessPanel({ gov }) {
   const {
     rlsRoleName,
     setRlsRoleName,

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { X, Sparkles, Code2, GitBranch, Pencil, Check } from 'lucide-react';
 import { BTN, BTN_SM, BTN_PRIMARY, INPUT_STYLE, LABEL, MONO, plural } from './styles';
 import { Pill } from './ui';
+import { verifiedText } from '../../utils/targetFeatures.js';
 
 function QuickAction({ name, text, children }) {
   return (
@@ -69,6 +70,9 @@ export default function MetricDrawer({
   onAsk,
   onEditYaml,
   onShowMap,
+  // Databricks (target-facts read model): this metric's occurrences; null elsewhere.
+  targetItem = null,
+  targetSqlLabel = null,
 }) {
   const [editingMeta, setEditingMeta] = useState(false);
   const [descDraft, setDescDraft] = useState('');
@@ -214,6 +218,31 @@ export default function MetricDrawer({
       >
         {metric.sql_expression || 'No formula defined'}
       </pre>
+      {targetItem && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+            Above: converted SQL (intermediate). {targetSqlLabel || 'Target SQL'} per metric view:
+          </span>
+          {targetItem.left_out && (
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+              Left out: {targetItem.left_out.detail || targetItem.left_out.reason}
+            </span>
+          )}
+          {(targetItem.occurrences || []).map((occ) => (
+            <div key={occ.occurrence_id} style={{ fontSize: 11.5, border: '1px solid var(--border-main)', borderRadius: 8, padding: '6px 8px' }}>
+              <div style={{ color: 'var(--text-secondary)', fontFamily: MONO }}>{occ.view} → {occ.name}</div>
+              <div style={{ marginTop: 4 }}>
+                <span style={{ color: 'var(--text-tertiary)' }}>Plan: </span>
+                <span style={{ fontFamily: MONO }}>{occ.planned ? occ.planned.expression : 'not in the current plan'}</span>
+              </div>
+              <div>
+                <span style={{ color: 'var(--text-tertiary)' }}>Deployed ({verifiedText(occ.verified)}): </span>
+                <span style={{ fontFamily: MONO }}>{occ.verified && occ.verified.status === 'verified' ? occ.verified.expression : '—'}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {metric.derives_from?.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--text-tertiary)' }}>

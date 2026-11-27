@@ -14,6 +14,7 @@ from semabridge.target_rules.base import TargetRules
 from semabridge.target_rules.registry import register_target_rules
 from semabridge.target_rules.snowflake.capabilities import SNOWFLAKE_CAPABILITIES
 from semabridge.target_rules.snowflake.dialect import SnowflakeDialect
+from semabridge.target_rules.snowflake.features import SNOWFLAKE_FEATURES
 from semabridge.target_rules.snowflake.naming import SnowflakeNaming
 from semabridge.target_rules.snowflake.policies import (
     BY_DESIGN_PREFIX,
@@ -27,6 +28,7 @@ SNOWFLAKE_RULES = TargetRules(
     capabilities=SNOWFLAKE_CAPABILITIES,
     dialect=SnowflakeDialect(),
     naming=SnowflakeNaming(),
+    features=SNOWFLAKE_FEATURES,
 )
 
 register_target_rules(SNOWFLAKE_RULES)
@@ -35,6 +37,7 @@ __all__ = [
     "BY_DESIGN_PREFIX",
     "PLACEHOLDER_SQL",
     "SNOWFLAKE_CAPABILITIES",
+    "SNOWFLAKE_FEATURES",
     "SNOWFLAKE_POLICIES",
     "SNOWFLAKE_RULES",
     "SnowflakeDialect",

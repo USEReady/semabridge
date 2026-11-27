@@ -156,6 +156,37 @@ def owned_objects(project_id: str, model_key: str) -> Dict[str, Dict[str, Any]]:
     return out
 
 
+def deploy_states(project_id: str, model_key: str, kind: str = "view") -> Dict[str, Dict[str, Any]]:
+    """{normalized fqn: {"latest": state, "verified": state or None}} for one
+    project/model's objects of ``kind`` -- read-only, for display. ``latest`` is
+    the newest recorded state (any outcome); ``verified`` the newest VERIFIED one,
+    so an applied_unverified (or later failed) write never hides the last verified
+    state. Each state carries the run's plan_revision (the bundle that holds the
+    exact definition) and body_sha256. Raises when the store cannot be read."""
+    from sqlalchemy import select
+
+    m = _models()
+    O, D = m.DatabricksDeployedObject, m.DatabricksDeployment
+    _ensure_tables()
+    out: Dict[str, Dict[str, Any]] = {}
+    with _db().get_session() as s:
+        rows = s.execute(
+            select(O.fqn, O.run_id, O.outcome, O.body_sha256, O.definition_hash, O.uc_object_id, O.readiness,
+                   O.recorded_at, D.plan_revision)
+            .join(D, D.run_id == O.run_id, isouter=True)
+            .where(O.project_id == str(project_id), O.model_key == str(model_key or ""), O.kind == kind)
+            .order_by(O.recorded_at.desc(), O.id.desc())).all()
+        for fqn, run_id, outcome, body, def_hash, uc_id, readiness, recorded_at, revision in rows:
+            state = {"run_id": run_id, "outcome": outcome, "verified": outcome in VERIFIED_OUTCOMES,
+                     "body_sha256": body, "definition_hash": def_hash, "uc_object_id": uc_id, "readiness": readiness,
+                     "plan_revision": int(revision) if revision is not None else None,
+                     "recorded_at": _aware(recorded_at).isoformat() if recorded_at else None}
+            entry = out.setdefault(fqn, {"latest": state, "verified": None})
+            if entry["verified"] is None and state["verified"]:
+                entry["verified"] = state
+    return out
+
+
 def recorded_stub_tables(fqns: Iterable[str]) -> Dict[str, Dict[str, Any]]:
     """{normalized fqn: latest stub_table record} for the given tables, across all
     projects -- used at PLAN time only to recognise SemaBridge's own empty tables,

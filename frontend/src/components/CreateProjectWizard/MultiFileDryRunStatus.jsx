@@ -23,7 +23,7 @@ import UpsertChangesView from '../UpsertChangesView';
 import PanelBoundary from '../common/PanelBoundary';
 import TableBindingPlan from '../TableBindingPlan';
 import DatabricksPlanPanel from '../DatabricksPlanPanel';
-import { newerPlan, plannedNamesBySourcePath } from '../../utils/databricksPlan.js';
+import { newerPlan, plannedDetailsBySourcePath, plannedNamesBySourcePath } from '../../utils/databricksPlan.js';
 import { resolveCollisionsForRows } from '../../utils/projectHelpers';
 
 function pluralize(count, word) {
@@ -406,6 +406,7 @@ export default function MultiFileDryRunStatus({
                         targetPlatform={targetPlatform}
                         sqlDialect={section.result?.sql_dialect || null}
                         plannedNames={databricks && sectionPlan(section) ? plannedNamesBySourcePath(sectionPlan(section)) : null}
+                        plannedDetails={databricks && sectionPlan(section) ? plannedDetailsBySourcePath(sectionPlan(section)) : null}
                         onResetRow={onResetRow ? (rowId) => onResetRow(section.fileId, rowId) : null}
                       />
                     </UpsertChangesView>

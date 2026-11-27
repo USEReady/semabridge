@@ -291,8 +291,34 @@ class TargetNaming:
 
 
 @dataclass(frozen=True)
+class TargetFeatures:
+    """SemaBridge features IMPLEMENTED for this target -- not whether they are
+    usable right now (connection / project state is checked where the feature
+    is called). Read by the UI and by target-specific API entry points; never
+    by conversion or planning (those read TargetCapabilities).
+
+    Only target-wide yes/no product flags and their UI wording belong here:
+    no logic, no state."""
+
+    # Run measure SQL live against the target (Run Live SQL / AI query execution).
+    live_query: bool = False
+    # Reconciliation "update metric SQL" (edit a measure's target SQL).
+    edit_metric_sql: bool = False
+    # Power BI vs target numbers (reconciliation certify / verify).
+    parity_check: bool = False
+    # Compile Power BI roles into the target's row-level security.
+    row_level_security: bool = False
+    # Read the target's semantic layer back into Power BI.
+    reverse_sync: bool = False
+    # Ontology knowledge-graph DDL for the target.
+    knowledge_graph_sql: bool = False
+    # How the UI names the target's SQL.
+    sql_label: str = "SQL"
+
+
+@dataclass(frozen=True)
 class TargetRules:
-    """Policies, capabilities, dialect and naming for one target platform."""
+    """Policies, capabilities, dialect, naming and product features for one target platform."""
 
     target: str
     policies: TargetPolicies
@@ -301,3 +327,5 @@ class TargetRules:
     #: None: the platform has no naming rule of its own (callers keep their
     #: generic behaviour).
     naming: Optional[TargetNaming] = None
+    #: What SemaBridge has built for this target (UI / API gating only).
+    features: TargetFeatures = field(default_factory=TargetFeatures)

@@ -13,6 +13,7 @@ import OverviewView from './ontology/OverviewView';
 import DomainsView from './ontology/DomainsView';
 import MetricDrawer from './ontology/MetricDrawer';
 import HealthView from './ontology/HealthView';
+import { measureFacts, sqlLabel } from '../utils/targetFeatures.js';
 import { WhatIfSimulator, ParityPanel } from './ontology/GovernancePanels';
 import { Pill } from './ontology/ui';
 import { describeApiError, timeAgo, BTN, BTN_PRIMARY } from './ontology/styles';
@@ -297,6 +298,45 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
   };
 
   const effectiveGovProjectId = govProjectId || selectedProjectSlug || '';
+
+  // Target features (TargetRules.features) and, for targets without a parity
+  // check (e.g. Databricks), the read-only target facts (planned vs last verified
+  // per metric-view occurrence). Re-read whenever the project changes; until
+  // loaded, features stay null and every panel behaves exactly as before.
+  // State is tagged with the project it belongs to; state of another project is
+  // ignored (no synchronous reset needed when the project changes).
+  const [targetState, setTargetState] = useState({ pid: '', target: null, features: null, facts: null, loading: false, error: '' });
+  useEffect(() => {
+    const pid = effectiveGovProjectId;
+    if (!pid) return undefined;
+    let cancelled = false;
+    const base = `/api/ontology/projects/${encodeURIComponent(pid)}`;
+    authFetch(`${base}/target-features`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled || !data) return null;
+        const needFacts = Boolean(data.features && data.features.parity_check === false);
+        setTargetState({ pid, target: data.target || null, features: data.features || null, facts: null, loading: needFacts, error: '' });
+        if (!needFacts) return null;
+        const update = (patch) => setTargetState((s) => (s.pid === pid ? { ...s, ...patch } : s));
+        return authFetch(`${base}/target-facts`)
+          .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
+          .then((facts) => { if (!cancelled) update({ facts, loading: false }); })
+          .catch((err) => { if (!cancelled) update({ loading: false, error: `Target facts could not be loaded (${err.message}).` }); });
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [effectiveGovProjectId]);
+  const currentTarget = targetState.pid && targetState.pid === effectiveGovProjectId ? targetState : null;
+  const targetInfo = { target: currentTarget?.target || null, features: currentTarget?.features || null };
+  const targetFacts = currentTarget?.facts || null;
+  const targetGov = {
+    targetFeatures: targetInfo.features,
+    targetType: targetInfo.target,
+    targetFacts,
+    targetFactsLoading: Boolean(currentTarget?.loading),
+    targetFactsError: currentTarget?.error || '',
+  };
   useEffect(() => {
     setImpactReports({});
     setImpactLoading({});
@@ -1257,6 +1297,8 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
     recon: { rows: reconSliceRows, metric: reconMetric, dimension: reconDimension },
     policyCount: sumOf('policy_count'),
     rls: { ddl: rlsDdl, role: rlsRoleName, table: rlsTableName },
+    features: targetInfo.features,
+    target: targetInfo.target,
   });
   const healthIssueCount = healthRows.filter((r) => r.severity === 'breaking' || r.severity === 'warning').length;
 
@@ -1526,6 +1568,8 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
                   lintLoading={runningLint}
                   lintRan={!!lintReport}
                   parity={drawerParity}
+                  targetItem={targetFacts ? measureFacts(targetFacts, drawerMetricObj.name) : null}
+                  targetSqlLabel={targetInfo.features ? sqlLabel(targetInfo.features, 'Target SQL') : null}
                   onClose={() => setDrawerMetric(null)}
                   onSelectMetric={handleSelectMetric}
                   onUpdateMeta={handleUpdateMetricMeta}
@@ -1615,6 +1659,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
               rlsRoleName, setRlsRoleName, rlsTableName, setRlsTableName, rlsDaxExpr, setRlsDaxExpr,
               rlsTargetDb, setRlsTargetDb, rlsTargetSchema, setRlsTargetSchema,
               runningRls, onTranslateRls: handleTranslateRls, rlsDdl, rlsStatus, rlsReason,
+              ...targetGov,
             }}
           />
         )}
@@ -1702,6 +1747,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
                     rlsTargetDb, setRlsTargetDb, rlsTargetSchema, setRlsTargetSchema,
                     runningRls, onTranslateRls: handleTranslateRls, rlsDdl, rlsStatus, rlsReason,
                     onOpenParity: handleJumpToParity,
+                    ...targetGov,
                   }}
                   metricOptions={allMetricNames}
                   dimensionOptions={allDimensions}

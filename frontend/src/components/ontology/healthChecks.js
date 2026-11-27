@@ -1,6 +1,7 @@
 // Pure helpers that turn ontology data and check results into the Health list,
 // metric status pills and per-domain issue counts.
 import { plural } from './styles';
+import { featureUnsupported, targetDisplayName } from '../../utils/targetFeatures.js';
 
 export const SEVERITY_ORDER = { breaking: 0, warning: 1, pending: 2, passing: 3 };
 
@@ -101,6 +102,9 @@ export function buildHealthResults({
   policyCount,
   rls,
   qualityRan = Boolean(lintReport),
+  // Target features (TargetRules.features); null = unknown -> today's rows.
+  features = null,
+  target = null,
 }) {
   const rows = [];
 
@@ -246,7 +250,17 @@ export function buildHealthResults({
   }
 
   // Parity (DAX vs SQL)
-  if (recon.rows.length) {
+  if (featureUnsupported(features, 'parity_check')) {
+    rows.push({
+      id: 'parity',
+      severity: 'pending',
+      category: 'parity',
+      title: `Parity check not available for ${targetDisplayName(target)} yet`,
+      detail: 'Shows where each measure is planned and last verified on the target instead.',
+      action: 'Details',
+      kind: 'parity',
+    });
+  } else if (recon.rows.length) {
     const drift = recon.rows.filter((r) => !r.matched);
     if (drift.length) {
       const worst = drift.reduce((a, b) => (Number(b.deltaPct) > Number(a.deltaPct) ? b : a));
@@ -283,7 +297,17 @@ export function buildHealthResults({
   }
 
   // Access (row-level security)
-  if (rls.ddl) {
+  if (featureUnsupported(features, 'row_level_security')) {
+    rows.push({
+      id: 'access',
+      severity: 'pending',
+      category: 'access',
+      title: `Row-level security not available for ${targetDisplayName(target)} yet`,
+      detail: 'Power BI roles are not converted for this target yet.',
+      action: 'Open',
+      kind: 'access',
+    });
+  } else if (rls.ddl) {
     rows.push({
       id: 'access',
       severity: 'passing',

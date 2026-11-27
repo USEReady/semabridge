@@ -24,6 +24,8 @@ class TMDLToSnowflakeRequest(BaseModel):
     roles: Optional[List[TMDLSecurityRole]] = None
     target_database: Optional[str] = None
     target_schema: Optional[str] = None
+    # Optional: when given, the project's target must support row-level security.
+    project_id: Optional[str] = None
 
 
 class SnowflakeToTMDLRequest(BaseModel):
@@ -34,6 +36,9 @@ class SnowflakeToTMDLRequest(BaseModel):
 @router.post("/tmdl-to-snowflake", response_model=Dict[str, Any])
 def convert_tmdl_role_to_snowflake(req: TMDLToSnowflakeRequest) -> Dict[str, Any]:
     """Convert Power BI / Fabric TMDL DAX role(s) into Snowflake ROW ACCESS POLICY DDL."""
+    from semabridge.api.services.target_features import require_target_feature
+
+    require_target_feature(req.project_id, "row_level_security")
     roles_list: List[TMDLSecurityRole] = []
     if req.roles:
         roles_list.extend(req.roles)

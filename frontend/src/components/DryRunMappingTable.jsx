@@ -19,6 +19,9 @@ const SqlDialectContext = createContext(null);
 // Databricks: the planner's final names per row (Map source_path -> [{view, name}])
 // and the per-row "reset to automatic" action. Null elsewhere.
 const PlannedNamesContext = createContext(null);
+// Databricks: Map source_path -> {placements: [{view, name, expr, approximate}], leftOut}
+// (utils/databricksPlan.js plannedDetailsBySourcePath). Null elsewhere.
+const PlannedDetailsContext = createContext(null);
 const ResetRowContext = createContext(null);
 const isDatabricks = (platform) => String(platform || '').toLowerCase() === 'databricks';
 const PLATFORM_LABELS = { snowflake: 'Snowflake', databricks: 'Databricks', fabric: 'Fabric' };
@@ -154,13 +157,19 @@ function TableHeader() {
  * deploy. Several views can name one source field differently. */
 function PlannedNames({ row }) {
   const planned = useContext(PlannedNamesContext);
+  const details = useContext(PlannedDetailsContext);
   const platform = useTargetPlatform();
   if (!isDatabricks(platform) || !planned) return null;
   const entries = planned.get(String(row.source_path || '')) || [];
   if (entries.length === 0) {
+    const leftOut = details?.get(String(row.source_path || ''))?.leftOut;
+    const reason = leftOut ? (leftOut.detail || leftOut.reason) : null;
     return (
-      <div style={{ fontSize: 10, color: 'var(--text-tertiary)' }} title="Not in any planned metric view (hidden, left out, or its view is not built)">
-        not in a metric view
+      <div
+        style={{ fontSize: 10, color: 'var(--text-tertiary)' }}
+        title={reason ? `Left out by the planner: ${reason}` : 'Not in any planned metric view (hidden, left out, or its view is not built)'}
+      >
+        not in a metric view{reason ? ` (${reason})` : ''}
       </div>
     );
   }
@@ -675,6 +684,39 @@ function synonymSourceLabel(source) {
   return word ? word.replace(/\b\w/g, (c) => c.toUpperCase()) : null;
 }
 
+/** Databricks: the planner's CURRENT planned expression per metric view -- the
+ * final SQL that deploys (the "Translation" above is the intermediate converted SQL). */
+function PlannedExpressions({ row }) {
+  const details = useContext(PlannedDetailsContext);
+  const platform = useTargetPlatform();
+  if (!isDatabricks(platform) || !details) return null;
+  const d = details.get(String(row.source_path || ''));
+  if (!d || (d.placements.length === 0 && !d.leftOut)) return null;
+  return (
+    <div style={{ gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+        Planned metric-view expression (what deploys)
+      </span>
+      {d.leftOut && (
+        <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+          Left out: {d.leftOut.detail || d.leftOut.reason}
+        </div>
+      )}
+      {d.placements.map((p) => (
+        <div key={`${p.view}/${p.name}`} style={{
+          fontFamily: 'monospace', fontSize: 11, padding: '8px 10px', borderRadius: 6,
+          background: 'var(--bg-main)', border: '1px solid var(--border-main)', whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+        }}>
+          <div style={{ color: 'var(--text-tertiary)', marginBottom: 4 }}>
+            {p.view} → {p.name}{p.approximate ? ' · approximate' : ''}
+          </div>
+          <div style={{ color: '#86efac' }}>{p.expr || '—'}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function MeasureTranslationPanel({ row, forceRevealSynonyms = false }) {
   const targetLabel = useTargetLabel();
   const sqlDialect = useContext(SqlDialectContext);
@@ -898,6 +940,7 @@ function MeasureTranslationPanel({ row, forceRevealSynonyms = false }) {
               {isFailed ? '— Translation unavailable —' : (row.target_expression || '—')}
             </div>
           </div>
+          <PlannedExpressions row={row} />
         </div>
       )}
 
@@ -1356,6 +1399,7 @@ export default function DryRunMappingTable({
   targetPlatform = 'snowflake', // the project's target: drives the "<Platform> SQL" labels
   sqlDialect = null,            // the dialect actually used (dry-run `sql_dialect`); overrides the SQL labels
   plannedNames = null,          // Databricks: Map source_path -> [{view, name}] from the planner (utils/databricksPlan.js)
+  plannedDetails = null,        // Databricks: Map source_path -> {placements (final planned SQL per view), leftOut}
   onResetRow = null,            // Databricks: (rowId) => void -- reset a renamed field to automatic naming
   unresolvedReportFieldReferences = [], // [{field, field_type, table, occurrences}] — report queries a name absent from the current schema (see LocalPBIXConnector._detect_unresolved_field_references); table-scoped only, never auto-attached to a specific column
 }) {
@@ -1681,6 +1725,7 @@ export default function DryRunMappingTable({
     <TargetPlatformContext.Provider value={targetPlatform}>
     <SqlDialectContext.Provider value={sqlDialect}>
     <PlannedNamesContext.Provider value={plannedNames}>
+    <PlannedDetailsContext.Provider value={plannedDetails}>
     <ResetRowContext.Provider value={onResetRow}>
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
 
@@ -2118,6 +2163,7 @@ export default function DryRunMappingTable({
       />
     </div>
     </ResetRowContext.Provider>
+    </PlannedDetailsContext.Provider>
     </PlannedNamesContext.Provider>
     </SqlDialectContext.Provider>
     </TargetPlatformContext.Provider>

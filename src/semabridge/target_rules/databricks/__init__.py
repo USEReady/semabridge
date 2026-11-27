@@ -9,7 +9,7 @@ Used only when the target is Databricks; Snowflake's rules are untouched.
 
 from __future__ import annotations
 
-from semabridge.target_rules.base import TargetRules
+from semabridge.target_rules.base import TargetFeatures, TargetRules
 from semabridge.target_rules.databricks.capabilities import DATABRICKS_CAPABILITIES
 from semabridge.target_rules.databricks.dialect import DatabricksDialect
 from semabridge.target_rules.databricks.naming import DatabricksNaming
@@ -26,6 +26,9 @@ DATABRICKS_RULES = TargetRules(
     capabilities=DATABRICKS_CAPABILITIES,
     dialect=DatabricksDialect(),
     naming=DatabricksNaming(),
+    # Snowflake's live features (live SQL, parity, RLS, reverse sync, knowledge
+    # graph) have no Databricks version yet: each is switched on when it exists.
+    features=TargetFeatures(sql_label="Databricks SQL"),
 )
 
 register_target_rules(DATABRICKS_RULES)

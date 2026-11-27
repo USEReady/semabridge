@@ -10,6 +10,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from semabridge.utils.reserved_prefixes import normalize_separator_ident, strip_reserved_column_prefix
+from semabridge.api.services.target_features import require_target_feature
 
 from semabridge.reconciliation.certification_service import (
     get_latest_certifications,
@@ -367,6 +368,7 @@ def _validate_certify_request(req: "CertifyMetricRequest", sql_metric_token: str
 @router.post("/generate-queries", response_model=Dict[str, str])
 def generate_reconciliation_queries(req: GenerateQueriesRequest) -> Dict[str, str]:
     """Generate side-by-side DAX and SQL queries for golden metric reconciliation."""
+    require_target_feature(req.project_id, "parity_check")
     if not req.metric_name.strip() or not req.target_table_or_view.strip():
         raise HTTPException(status_code=400, detail="metric_name and target_table_or_view must not be blank.")
     verifier = GoldenQueryVerifier()
@@ -395,6 +397,7 @@ def generate_reconciliation_queries(req: GenerateQueriesRequest) -> Dict[str, st
 @router.post("/verify", response_model=VerificationResult)
 def verify_metric_results(req: ReconcileDataRequest) -> VerificationResult:
     """Compare DAX vs SQL result sets, compute parity metrics, and persist project certifications."""
+    require_target_feature(req.project_id, "parity_check")
     verifier = GoldenQueryVerifier(default_tolerance=req.tolerance)
     result = verifier.reconcile_data(
         metric_name=req.metric_name,
@@ -500,6 +503,7 @@ def certify_metric_end_to_end(req: CertifyMetricRequest, request: Request) -> Di
     from semabridge.ai.verified_queries_service import save_verified_query_record
     from semabridge.api.routers.ai_router import ExecuteQueryRequest, execute_semantic_query
 
+    require_target_feature(req.project_id, "parity_check")
     if not req.metric_name.strip() or not req.target_table_or_view.strip():
         raise HTTPException(status_code=400, detail="metric_name and target_table_or_view are required.")
 
@@ -770,6 +774,8 @@ def batch_certify_metrics(req: BatchCertifyRequest, request: Request) -> Dict[st
     """Run certification across multiple metrics and return an aggregated audit trail summary."""
     from semabridge.reconciliation.evidence_pack import generate_audit_trail_id
 
+    for item in req.items:
+        require_target_feature(item.project_id, "parity_check")
     audit_id = generate_audit_trail_id()
     results: List[Dict[str, Any]] = []
     certified_count = 0
@@ -805,6 +811,7 @@ def update_metric_sql_expression(req: UpdateMetricSqlRequest) -> Dict[str, Any]:
     from semabridge.ontology.store import ontology_store
     from semabridge.ontology.models import DomainMetric
 
+    require_target_feature(req.project_id, "edit_metric_sql")
     m_name_clean = req.metric_name.strip()
     new_sql = req.sql_expression.strip()
     if not m_name_clean:
