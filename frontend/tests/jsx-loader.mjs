@@ -18,11 +18,11 @@ export async function resolve(specifier, context, defaultResolve) {
 }
 
 export async function load(url, context, defaultLoad) {
-  if (url.endsWith('.jsx') || (url.endsWith('.js') && url.includes('/src/'))) {
+  if (url.endsWith('.jsx') || (url.endsWith('.js') && (url.includes('/src/') || url.includes('/tests/')))) {
     const filePath = fileURLToPath(url);
     const source = fs.readFileSync(filePath, 'utf8');
     const transformed = esbuild.transformSync(source, {
-      loader: url.endsWith('.jsx') ? 'jsx' : 'js',
+      loader: 'jsx',
       format: 'esm',
       jsx: 'transform',
       jsxFactory: 'React.createElement',

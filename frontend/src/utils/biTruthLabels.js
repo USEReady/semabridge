@@ -100,3 +100,53 @@ export function formatTruthValue(val) {
   return String(val);
 }
 
+export function formatInjectionSkipReason(code, defaultMsg = '') {
+  if (!code) return defaultMsg || 'Skipped';
+  const norm = String(code).toUpperCase().trim();
+  const map = {
+    NOT_APPROVED: 'Case is not approved',
+    NO_BENCHMARK: 'No benchmark value captured',
+    DID_NOT_PASS: 'Did not pass in the most recent run',
+    STALE_RUN: 'Suite run is older than the configured limit',
+    NO_RUN: 'No test suite run exists',
+    UNSUPPORTED_PLATFORM: 'Platform does not support verified query injection',
+    UNVERIFIED_DATABRICKS: 'Databricks Genie space injection is unverified: workspace contains zero Genie spaces and token lacks space creation scope',
+    ALREADY_INJECTED: 'Already injected into target',
+  };
+  return map[norm] || defaultMsg || code;
+}
+
+export function formatInjectionTargetLabel(platform = '') {
+  const p = String(platform || '').toUpperCase();
+  if (p === 'SNOWFLAKE') return 'Publish verified pairs to Cortex';
+  if (p === 'DATABRICKS') return 'Publish verified pairs to Genie';
+  return 'Publish verified pairs to Warehouse';
+}
+
+export function getInjectionDisabledReason({
+  qualifyingCount = 0,
+  platform = '',
+  hasRun = true,
+  isStale = false,
+  canWrite = true,
+} = {}) {
+  const p = String(platform || '').toUpperCase();
+  if (p === 'DATABRICKS') {
+    return 'Databricks Genie space injection is unverified: workspace contains zero Genie spaces and token lacks space creation scope';
+  }
+  if (!canWrite) {
+    return 'You lack permission to publish verified queries to warehouse';
+  }
+  if (!hasRun) {
+    return 'No test suite run exists. Run the suite first to evaluate cases';
+  }
+  if (isStale) {
+    return 'Latest test run is older than allowed window. Re-run suite before publishing';
+  }
+  if (qualifyingCount === 0) {
+    return 'No cases qualify for injection. Approve cases, capture benchmarks, and ensure they pass in the latest run';
+  }
+  return null;
+}
+
+

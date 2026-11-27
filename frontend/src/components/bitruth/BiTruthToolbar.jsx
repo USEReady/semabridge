@@ -1,8 +1,9 @@
 import React from 'react';
 import {
-  Target, CheckCircle2, AlertTriangle, ShieldCheck, Sparkles, Plus, Upload, Clock, HelpCircle, Send
+  Target, CheckCircle2, AlertTriangle, ShieldCheck, Sparkles, Plus, Upload, Clock, HelpCircle, Send, History
 } from 'lucide-react';
 import DeployedViewSelector from '../common/DeployedViewSelector';
+import { formatInjectionTargetLabel, getInjectionDisabledReason } from '../../utils/biTruthLabels';
 
 const INPUT = {
   padding: '6px 10px',
@@ -38,22 +39,38 @@ const BTN_PRIMARY = {
 export default function BiTruthToolbar({
   projectId,
   selectedView,
+  platform = 'SNOWFLAKE',
   cases = [],
   approvedCount = 0,
   latestRun = null,
   busy = false,
   limit = 15,
+  canWrite = true,
+  qualifyingCount = 0,
   onLimitChange,
   onRunSuite,
   onGenerate,
   onOpenAdd,
   onOpenImport,
   onOpenSchedules,
+  onOpenHistory,
   onOpenInject,
 }) {
   const accuracyPct = latestRun?.accuracy_pct !== undefined ? latestRun.accuracy_pct : null;
   const totalCases = cases.length;
   const draftCount = cases.filter((c) => c.status === 'draft').length;
+
+  const hasRun = Boolean(latestRun);
+  const isStale = Boolean(latestRun && latestRun.is_stale);
+  const targetWriteLabel = formatInjectionTargetLabel(platform);
+  const injectionDisabledReason = getInjectionDisabledReason({
+    qualifyingCount,
+    platform,
+    hasRun,
+    isStale,
+    canWrite,
+  });
+  const canInject = Boolean(projectId && !injectionDisabledReason);
 
   // Determine Run Suite disabled state and informative tooltip
   const canRunSuite = Boolean(projectId && selectedView && approvedCount > 0 && !busy);
@@ -238,31 +255,38 @@ export default function BiTruthToolbar({
           <Clock size={13} /> Schedules
         </button>
 
+        <button
+          type="button"
+          style={BTN}
+          onClick={onOpenHistory}
+          title="View suite execution runs (reads) and injection audit history (writes)"
+        >
+          <History size={13} /> History
+        </button>
+
         {/* Visual separator before write action */}
         <div style={{ width: 1, height: 20, background: 'var(--border-main)', margin: '0 4px' }} />
 
-        {/* Inject to AI (Dedicated Write Action) */}
+        {/* Dedicated Write Action: Destination-aware verified pairs publisher */}
         <span
-          title={
-            !projectId
-              ? 'Select a project to inject verified benchmark pairs'
-              : 'Inspect qualifying verified pairs and write them to Cortex Analyst (Snowflake) or Genie Spaces (Databricks) as AI ground-truth'
-          }
-          style={{ display: 'inline-flex', cursor: projectId ? 'pointer' : 'not-allowed' }}
+          title={injectionDisabledReason || `Open dialog to inspect preview and publish verified pairs to ${platform}`}
+          style={{ display: 'inline-flex', cursor: canInject ? 'pointer' : 'not-allowed' }}
         >
           <button
             type="button"
-            disabled={!projectId}
+            disabled={!canInject}
             onClick={onOpenInject}
             style={{
               ...BTN,
-              background: 'rgba(245, 158, 11, 0.1)',
-              borderColor: 'var(--color-warning, #f59e0b)',
-              color: 'var(--color-warning, #d97706)',
-              cursor: projectId ? 'pointer' : 'not-allowed',
+              background: canInject ? 'rgba(245, 158, 11, 0.12)' : 'var(--bg-surface-raised)',
+              borderColor: canInject ? 'var(--color-warning, #f59e0b)' : 'var(--border-main)',
+              color: canInject ? 'var(--color-warning, #d97706)' : 'var(--text-tertiary)',
+              cursor: canInject ? 'pointer' : 'not-allowed',
+              opacity: canInject ? 1 : 0.6,
+              fontWeight: 600,
             }}
           >
-            <Send size={13} /> Inject to AI (Write)
+            <Send size={13} /> {targetWriteLabel}
           </button>
         </span>
       </div>

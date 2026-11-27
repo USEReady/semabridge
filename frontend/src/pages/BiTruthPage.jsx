@@ -16,8 +16,10 @@ import BiTruthCaseDetail from '../components/bitruth/BiTruthCaseDetail';
 import BiTruthGateStatus from '../components/bitruth/BiTruthGateStatus';
 import BiTruthSchedules from '../components/bitruth/BiTruthSchedules';
 import InjectDialog from '../components/bitruth/InjectDialog';
+import BiTruthHistoryModal from '../components/bitruth/BiTruthHistoryModal';
 import { useBiTruthCases } from '../hooks/useBiTruthCases';
 import { useBiTruthRuns } from '../hooks/useBiTruthRuns';
+import { useBiTruthInjection } from '../hooks/useBiTruthInjection';
 
 const INPUT = {
   padding: '6px 10px',
@@ -162,6 +164,7 @@ export default function BiTruthPage() {
   } = useBiTruthCases(selectedProjectId);
 
   const {
+    runs,
     latestRun,
     gateVerdict,
     loading: runsLoading,
@@ -169,6 +172,8 @@ export default function BiTruthPage() {
     setError: setRunsError,
     runSuite,
   } = useBiTruthRuns(selectedProjectId);
+
+  const { history: injectionHistory } = useBiTruthInjection(selectedProjectId);
 
   const [selectedCaseId, setSelectedCaseId] = useState(null);
   const [limit, setLimit] = useState(15);
@@ -181,6 +186,7 @@ export default function BiTruthPage() {
   const [openUploadModal, setOpenUploadModal] = useState(false);
   const [openSchedulesModal, setOpenSchedulesModal] = useState(false);
   const [openInjectModal, setOpenInjectModal] = useState(false);
+  const [openHistoryModal, setOpenHistoryModal] = useState(false);
 
   // Form states
   const [manualQuestion, setManualQuestion] = useState('');
@@ -354,6 +360,31 @@ export default function BiTruthPage() {
     fetchAllCasesCounts();
   };
 
+  const selectedProject = (projects || []).find(
+    (p) => p.id === selectedProjectId || p.project_id === selectedProjectId
+  );
+
+  const activePlatform = (
+    selectedProject?.warehouse?.platform ||
+    selectedProject?.target_warehouse?.platform ||
+    selectedProject?.warehouse?.type ||
+    'SNOWFLAKE'
+  ).toUpperCase();
+
+  const qualifyingCount = useMemo(() => {
+    if (!latestRun || !latestRun.results) return 0;
+    const passSet = new Set(
+      latestRun.results
+        .filter((r) => r.verdict === 'PASS' || r.passed)
+        .map((r) => r.case_id)
+    );
+    return (cases || []).filter(
+      (c) => c.status === 'approved' &&
+             (c.expected_value !== null && c.expected_value !== undefined) &&
+             passSet.has(c.id || c.case_id)
+    ).length;
+  }, [cases, latestRun]);
+
   return (
     <div
       style={{
@@ -488,17 +519,20 @@ export default function BiTruthPage() {
           <BiTruthToolbar
             projectId={selectedProjectId}
             selectedView={selectedView}
+            platform={activePlatform}
             cases={cases}
             approvedCount={approvedCount}
             latestRun={latestRun}
             busy={busy || runsLoading}
             limit={limit}
+            qualifyingCount={qualifyingCount}
             onLimitChange={setLimit}
             onRunSuite={handleRunSuite}
             onGenerate={handleGenerate}
             onOpenAdd={() => setOpenAddModal(true)}
             onOpenImport={() => setOpenUploadModal(true)}
             onOpenSchedules={() => setOpenSchedulesModal(true)}
+            onOpenHistory={() => setOpenHistoryModal(true)}
             onOpenInject={() => setOpenInjectModal(true)}
           />
 
@@ -694,12 +728,21 @@ export default function BiTruthPage() {
         <BiTruthSchedules projectId={selectedProjectId} />
       </Modal>
 
+      {/* ── Modal: History (Reads vs Writes) ── */}
+      <BiTruthHistoryModal
+        open={openHistoryModal}
+        onClose={() => setOpenHistoryModal(false)}
+        runs={runs}
+        injectionHistory={injectionHistory}
+      />
+
       {/* ── Modal: Inject to AI (Write Action) ── */}
       <InjectDialog
         open={openInjectModal}
         onClose={() => setOpenInjectModal(false)}
         projectId={selectedProjectId}
         selectedView={selectedView}
+        platform={activePlatform}
       />
     </div>
   );

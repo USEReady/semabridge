@@ -1,5 +1,5 @@
+import React, { useEffect } from 'react';
 import { X, Maximize2, Minimize2 } from 'lucide-react';
-import { useEffect } from 'react';
 
 /**
  * Modal — generic overlay dialog.
