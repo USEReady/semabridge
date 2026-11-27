@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, Literal, Mapping, Optional
 import yaml
 from pydantic import Field
 from semabridge.connectors.snowflake_emitter import MissingSourceTableWarning
@@ -160,6 +160,58 @@ def _databricks_connection_for_run(context: RunContext):
         return None
 
 
+def _semabridge_tables(client: Any, catalog_meta: Mapping[Any, Mapping[str, Any]], project_id: str) -> Dict[str, str]:
+    """{catalog.schema.table: warning or ""} for tables in the source schemas that
+    SemaBridge created as empty stub tables: a stub_table deploy record exists for
+    the name AND its Unity Catalog id (and metastore, when recorded) equals the live
+    table's. Those are never matched as real source data (they stay stubs; deploy
+    decides reuse by the deploying project's own verified record). A table whose
+    live id differs from the record was replaced by someone else: matched normally.
+
+    Read-only: the deploy store plus the UC table API for the recorded names only.
+    If the store or Databricks can't be read, nothing is recognised (the previous
+    behaviour) and a warning says so -- deploy's ownership checks still apply."""
+    from semabridge.target_backends.databricks.deploy import store
+    from semabridge.target_backends.databricks.guard import normalize_name
+    from semabridge.target_backends.databricks.tables import read_table_ids
+
+    names = {normalize_name(t.full_name): t.full_name
+             for tables in catalog_meta.values() for t in tables.values()}
+    if not names:
+        return {}
+    try:
+        records = store.recorded_stub_tables(names)
+    except Exception as exc:  # store unreadable: recognise nothing, say so
+        logger.warning("SemaBridge stub records unreadable during table matching: %s", type(exc).__name__)
+        return {}
+    if not records:
+        return {}
+    try:
+        live_ids = read_table_ids(client, [names[f] for f in records if f in names])
+        rows = client.execute("SELECT current_metastore() AS m").rows
+        metastore = str((rows[0] or {}).get("m") or "") if rows else ""
+    except Exception as exc:
+        logger.warning("Could not read Unity Catalog ids of SemaBridge stub tables: %s", type(exc).__name__)
+        return {}
+    out: Dict[str, str] = {}
+    for fqn, rec in records.items():
+        live_id = live_ids.get(names.get(fqn, ""))
+        if not live_id or not rec.get("uc_object_id") or live_id != rec["uc_object_id"]:
+            continue  # not the table SemaBridge created: an ordinary table
+        rec_ms = str(rec.get("metastore_id") or "")
+        if rec_ms and metastore and rec_ms.lower() != metastore.lower():
+            continue
+        if str(rec.get("project_id") or "") != str(project_id or ""):
+            out[fqn] = (f"{fqn} is an empty table created by another SemaBridge project; "
+                        "it is not used as source data for this project.")
+        elif not rec.get("verified"):
+            out[fqn] = (f"{fqn} is an empty table SemaBridge created, but its last deploy was not verified; "
+                        "it is not used as source data.")
+        else:
+            out[fqn] = ""
+    return out
+
+
 def _step6b_databricks_tables(self, context: RunContext) -> None:
     """Match the model's tables to Unity Catalog (bind / stub / skip) and
     rewrite the measures' SQL to the real column names, BEFORE Step 7
@@ -219,9 +271,11 @@ def _step6b_databricks_tables(self, context: RunContext) -> None:
             context.databricks_existing_objects = read_existing_objects(client, info.catalog, info.schema)
     except (DatabricksSqlError, DatabricksAuthError, DatabricksGuardError) as exc:
         raise ConversionError(f"{LIVE_SCHEMA_UNAVAILABLE} ({', '.join(f'{c}.{s}' for c, s in schemas)}): {exc}") from None
+    own_tables = _semabridge_tables(client, catalog_meta, owning_project_id(context))
     try:
         plan = plan_tables(context.sml_model, catalog_meta, source_schemas=schemas,
-                           on_missing_source=mode, table_mapping=mapping if isinstance(mapping, dict) else {})
+                           on_missing_source=mode, table_mapping=mapping if isinstance(mapping, dict) else {},
+                           semabridge_tables=own_tables)
     except TableMatchingError as exc:
         raise ConversionError(str(exc)) from None
 

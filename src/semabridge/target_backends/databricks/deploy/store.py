@@ -156,6 +156,38 @@ def owned_objects(project_id: str, model_key: str) -> Dict[str, Dict[str, Any]]:
     return out
 
 
+def recorded_stub_tables(fqns: Iterable[str]) -> Dict[str, Dict[str, Any]]:
+    """{normalized fqn: latest stub_table record} for the given tables, across all
+    projects -- used at PLAN time only to recognise SemaBridge's own empty tables,
+    so table matching never binds them as real source data. It grants nothing:
+    reuse at deploy still needs the deploying project's own verified record and
+    a matching Unity Catalog id (prepare._existing_stub). Raises when the store
+    cannot be read."""
+    from sqlalchemy import select
+
+    from semabridge.target_backends.databricks.guard import normalize_name
+
+    wanted = {normalize_name(f) for f in fqns if f}
+    if not wanted:
+        return {}
+    m = _models()
+    O, D = m.DatabricksDeployedObject, m.DatabricksDeployment
+    _ensure_tables()
+    out: Dict[str, Dict[str, Any]] = {}
+    with _db().get_session() as s:
+        rows = s.execute(
+            select(O.fqn, O.project_id, O.model_key, O.uc_object_id, O.outcome, D.metastore_id)
+            .join(D, D.run_id == O.run_id, isouter=True)
+            .where(O.kind == "stub_table", O.fqn.in_(sorted(wanted)))
+            .order_by(O.recorded_at.desc(), O.id.desc())).all()
+        for fqn, project_id, model_key, uc_id, outcome, metastore_id in rows:
+            if fqn in out:
+                continue
+            out[fqn] = {"fqn": fqn, "project_id": project_id, "model_key": model_key, "uc_object_id": uc_id,
+                        "outcome": outcome, "verified": outcome in VERIFIED_OUTCOMES, "metastore_id": metastore_id}
+    return out
+
+
 # --- deployed names (A5) ------------------------------------------------------------------------
 
 def record_names(*, run_id: str, project_id: str, model_key: str, names: Iterable[Dict[str, Any]]) -> None:

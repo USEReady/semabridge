@@ -307,6 +307,34 @@ def _match_column(model_col: str, table: UcTable) -> Tuple[Optional[str], str, L
     return None, "missing", []
 
 
+def _matchable_columns(model_cols: Sequence[str], table: UcTable) -> set:
+    """The table's column names as the shared resolver sees them, plus -- under
+    the Databricks naming rule (TargetRules.naming, the rule stub tables are
+    created with) -- the model column's own cleaned name for every real column it
+    names: 'CampaignSeq' <-> campaign_seq. The shared resolver
+    (connectors/table_binding_resolver.py, also Snowflake's) stays unchanged.
+
+    Only adds matches, and only one-to-one: when two model columns, or two real
+    columns, share a normalised name nothing is added for them (they stay as the
+    shared rules alone decide), so ambiguity is never resolved by guessing."""
+    from semabridge.target_rules.databricks import DATABRICKS_RULES
+
+    base_normalize = DATABRICKS_RULES.naming.base_normalize
+    reals = [real for real, _type in table.columns.values()]
+    out = set(table.columns)
+    model_by: Dict[str, List[str]] = {}
+    real_by: Dict[str, List[str]] = {}
+    for c in model_cols:
+        model_by.setdefault(base_normalize(c)[0], []).append(c)
+    for r in reals:
+        real_by.setdefault(base_normalize(r)[0], []).append(r)
+    for key, models in model_by.items():
+        hits = real_by.get(key) or []
+        if key and len(models) == 1 and len(hits) == 1:
+            out.add(clean_ident(models[0]))
+    return out
+
+
 def _bind_columns(binding: "TableBinding", model_cols: List[str], calculated: List[str]) -> None:
     """Fill column_map / column_match / missing / ambiguous for a bound table, with the
     reverse check: two model columns never silently share one real column."""
@@ -485,12 +513,24 @@ def plan_tables(
     source_schemas: Sequence[Tuple[str, str]],
     on_missing_source: str = "stub",
     table_mapping: Optional[Mapping[str, str]] = None,
+    semabridge_tables: Optional[Mapping[str, str]] = None,
 ) -> TablePlan:
-    """The bind / stub / skip decision for every dataset of the model."""
+    """The bind / stub / skip decision for every dataset of the model.
+
+    ``semabridge_tables``: {catalog.schema.table: warning or ""} -- empty tables
+    SemaBridge itself created (recognised by the caller from deploy records and
+    their Unity Catalog id). They are never bound automatically as real source
+    data; the dataset stays a stub, and deploy decides reuse by ownership. A
+    non-empty value is reported as a warning (another project's or an unverified
+    SemaBridge table). Explicit table mappings are not affected."""
+    from semabridge.target_backends.databricks.guard import normalize_name
+
+    own_tables = {normalize_name(k): str(v or "") for k, v in (semabridge_tables or {}).items() if k}
     mode = str(on_missing_source or "stub").strip().lower()
     if mode not in ON_MISSING_SOURCE:
         raise TableMatchingError(f"on_missing_source must be one of {ON_MISSING_SOURCE}, got {on_missing_source!r}")
     plan = TablePlan(source_schemas=list(source_schemas), on_missing_source=mode)
+    plan.warnings.extend(own_tables[k] for k in sorted(own_tables) if own_tables[k])
     model_name = getattr(sml_model, "unique_name", None) or getattr(sml_model, "label", None)
     metrics_sql = [getattr(m, "sql_expression", None) or "" for m in getattr(sml_model, "metrics", []) or []]
     numeric_refs = _aggregated_refs(metrics_sql)
@@ -522,10 +562,12 @@ def plan_tables(
 
         if binding is None:
             for (catalog, schema) in source_schemas:
-                tables = catalog_meta.get((catalog, schema)) or {}
+                tables = {k: t for k, t in (catalog_meta.get((catalog, schema)) or {}).items()
+                          if normalize_name(t.full_name) not in own_tables}
                 if not tables:
                     continue
-                meta = LiveSchemaMetadata({t: set(tbl.columns) for t, tbl in tables.items()})
+                matchable = {t: _matchable_columns(cols, tbl) for t, tbl in tables.items()}
+                meta = LiveSchemaMetadata(matchable)
                 try:
                     resolve_dataset_to_physical_table(name, cols, meta, model_name=model_name)
                 except TableBindingAmbiguityError as exc:
@@ -537,7 +579,7 @@ def plan_tables(
                     break
                 same = tables.get(name.upper())
                 if same is not None and not binding:
-                    compat = compute_column_compatibility(cols, set(same.columns)) if cols else 0.0
+                    compat = compute_column_compatibility(cols, matchable[name.upper()]) if cols else 0.0
                     plan.warnings.append(
                         f"{name}: a table named {same.full_name} exists but only {compat:.0%} of its columns match "
                         f"(80% needed), so it was not used."

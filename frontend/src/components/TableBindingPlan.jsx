@@ -171,7 +171,7 @@ function DatabricksTablePlan({ plan, style }) {
       {stubs.length > 0 && (
         <div style={{ marginTop: 4 }}>
           <div style={{ color: 'var(--text-primary)' }}>
-            No matching table yet: an empty table is created at deploy (nothing is created during a dry run); load data into it, or a later sync uses the real table once it exists:
+            No matching table yet: an empty table is created at deploy, or reused if SemaBridge created it earlier (nothing is created during a dry run). To use real data, point Source Schemas at your real tables; a later sync then uses them:
           </div>
           {stubs.map((t) => (
             <div key={`s-${t.dataset}`} style={{ fontFamily: MONO, fontSize: 11, paddingLeft: 14 }}>
