@@ -23,10 +23,11 @@ import {
   List,
   GitFork,
   Sliders,
+  Map as MapIcon,
 } from 'lucide-react';
 
-const NODE_W = 220;
-const NODE_H = 76;
+const NODE_W = 240;
+const NODE_H = 82;
 
 const RISK_CONFIG = {
   BREAKING: {
@@ -100,15 +101,15 @@ function ImpactNodeComponent({ data }) {
       <Handle type="target" position={Position.Left} style={{ background: risk.color }} />
       <div style={{ padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 4 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--text-tertiary, #94a3b8)', textTransform: 'uppercase', fontWeight: 600 }}>
-            <TypeIcon size={11} style={{ color: risk.color }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10.5, color: 'var(--text-tertiary, #94a3b8)', textTransform: 'uppercase', fontWeight: 600 }}>
+            <TypeIcon size={12} style={{ color: risk.color }} />
             <span>{typeCfg.label}</span>
           </div>
           <span
             style={{
-              fontSize: 9,
+              fontSize: 9.5,
               fontWeight: 700,
-              padding: '1px 5px',
+              padding: '2px 6px',
               borderRadius: 4,
               background: risk.badgeBg,
               color: risk.badgeText,
@@ -120,8 +121,8 @@ function ImpactNodeComponent({ data }) {
         </div>
         <div
           style={{
-            fontSize: 12,
-            fontWeight: 600,
+            fontSize: 13,
+            fontWeight: 700,
             color: 'var(--text-primary, #f8fafc)',
             whiteSpace: 'nowrap',
             overflow: 'hidden',
@@ -132,7 +133,7 @@ function ImpactNodeComponent({ data }) {
           {data.label}
         </div>
         {data.impact_level && (
-          <div style={{ fontSize: 9.5, color: 'var(--text-tertiary, #94a3b8)', display: 'flex', justifyContent: 'space-between' }}>
+          <div style={{ fontSize: 10, color: 'var(--text-secondary, #cbd5e1)', display: 'flex', justifyContent: 'space-between' }}>
             <span>{data.impact_level}</span>
             {data.source && <span>[{data.source}]</span>}
           </div>
@@ -245,6 +246,7 @@ export default function ImpactDependencyGraph({
 }) {
   const [viewMode, setViewMode] = useState(defaultView);
   const [maxDepth, setMaxDepth] = useState(3);
+  const [showMinimap, setShowMinimap] = useState(false);
 
   // Extract raw graph nodes and edges
   const { rawNodes, rawEdges } = useMemo(() => {
@@ -330,6 +332,8 @@ export default function ImpactDependencyGraph({
         background: 'var(--bg-surface)',
         overflow: 'hidden',
         marginTop: 10,
+        flex: 1,
+        minHeight: 0,
       }}
     >
       {/* ── TOOLBAR ──────────────────────────────────────────────────────── */}
@@ -343,6 +347,7 @@ export default function ImpactDependencyGraph({
           background: 'var(--bg-app)',
           flexWrap: 'wrap',
           gap: 8,
+          flexShrink: 0,
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -370,6 +375,30 @@ export default function ImpactDependencyGraph({
 
         {/* View Toggle & Legend */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {/* Minimap Toggle */}
+          {viewMode === 'graph' && (
+            <button
+              type="button"
+              onClick={() => setShowMinimap((prev) => !prev)}
+              style={{
+                padding: '3px 8px',
+                fontSize: 11,
+                fontWeight: 600,
+                borderRadius: 6,
+                border: '1px solid var(--border-main)',
+                cursor: 'pointer',
+                background: showMinimap ? 'rgba(168, 85, 247, 0.15)' : 'transparent',
+                color: showMinimap ? 'var(--accent-purple)' : 'var(--text-secondary)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+              }}
+              title={showMinimap ? 'Hide overview minimap' : 'Show overview minimap'}
+            >
+              <MapIcon size={12} /> Map
+            </button>
+          )}
+
           {/* Legend */}
           <div style={{ display: 'none', mdDisplay: 'flex', alignItems: 'center', gap: 8, fontSize: 10.5 }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: 3, color: '#ef4444' }}>
@@ -430,7 +459,7 @@ export default function ImpactDependencyGraph({
 
       {/* ── GRAPH VIEW ───────────────────────────────────────────────────── */}
       {viewMode === 'graph' && (
-        <div style={{ height: 380, width: '100%', position: 'relative' }}>
+        <div style={{ flex: 1, minHeight: 460, width: '100%', position: 'relative' }}>
           {flowNodes.length === 0 ? (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-tertiary)', fontSize: 12 }}>
               No dependency graph nodes to render.
@@ -447,15 +476,18 @@ export default function ImpactDependencyGraph({
             >
               <Background color="#334155" gap={16} size={1} />
               <Controls position="top-right" showInteractive={false} />
-              <MiniMap
-                nodeColor={(n) => {
-                  if (n.data?.is_target) return '#a855f7';
-                  if (n.data?.risk === 'BREAKING') return '#ef4444';
-                  if (n.data?.risk === 'ADVISORY') return '#f59e0b';
-                  return '#3b82f6';
-                }}
-                style={{ height: 70, width: 100, background: 'rgba(15, 23, 42, 0.7)' }}
-              />
+              {showMinimap && (
+                <MiniMap
+                  position="bottom-left"
+                  nodeColor={(n) => {
+                    if (n.data?.is_target) return '#a855f7';
+                    if (n.data?.risk === 'BREAKING') return '#ef4444';
+                    if (n.data?.risk === 'ADVISORY') return '#f59e0b';
+                    return '#3b82f6';
+                  }}
+                  style={{ height: 70, width: 100, background: 'rgba(15, 23, 42, 0.75)', borderRadius: 6, border: '1px solid var(--border-main)' }}
+                />
+              )}
             </ReactFlow>
           )}
         </div>
@@ -463,7 +495,7 @@ export default function ImpactDependencyGraph({
 
       {/* ── ACCESSIBLE LIST VIEW ─────────────────────────────────────────── */}
       {viewMode === 'list' && (
-        <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 380, overflowY: 'auto' }}>
+        <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8, flex: 1, minHeight: 460, overflowY: 'auto' }}>
           {totalImpact === 0 ? (
             <div style={{ color: 'var(--text-secondary)', fontSize: 12, padding: '8px 0' }}>
               {report.empty_messages?.summary || `Nothing depends on '${report.target_object || report.target}'.`}

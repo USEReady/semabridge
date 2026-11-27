@@ -37,8 +37,8 @@ const PANEL = {
 
 const itemLabel = (x) => (x && typeof x === 'object' ? x.name || x.object_name || String(x) : String(x));
 
-function ImpactGroup({ title, items, tone, onOpenParity }) {
-  const isMetrics = title === 'Metrics';
+function ImpactGroup({ title, subtitle, items = [], tone, emptyText, onOpenParity }) {
+  const isMetrics = title === 'Metrics' || title === 'Downstream Metrics';
   return (
     <div style={{
       padding: 12,
@@ -50,18 +50,45 @@ function ImpactGroup({ title, items, tone, onOpenParity }) {
       display: 'flex',
       flexDirection: 'column',
     }}>
-      <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{title}</div>
-      <div style={{ fontSize: 22, fontWeight: 800, color: items.length ? tone : 'var(--text-tertiary)', marginTop: 2 }}>
-        {items.length}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            {title}
+          </div>
+          {subtitle && (
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>
+              {subtitle}
+            </div>
+          )}
+        </div>
+        <div style={{ fontSize: 22, fontWeight: 800, color: items.length ? tone : 'var(--text-tertiary)', flexShrink: 0, lineHeight: 1 }}>
+          {items.length}
+        </div>
       </div>
-      {items.length > 0 && (
+
+      {items.length === 0 ? (
+        <div style={{
+          marginTop: 10,
+          padding: '14px 10px',
+          borderRadius: 6,
+          background: 'var(--bg-app)',
+          border: '1px dashed var(--border-main)',
+          color: 'var(--text-tertiary)',
+          fontSize: 11,
+          fontStyle: 'italic',
+          textAlign: 'center',
+        }}>
+          {emptyText || `No downstream ${title.toLowerCase()} affected`}
+        </div>
+      ) : (
         <div style={{
           display: 'flex',
           flexDirection: 'column',
           gap: 6,
-          marginTop: 8,
-          maxHeight: 240,
+          marginTop: 10,
+          maxHeight: 150,
           overflowY: 'auto',
+          overflowX: 'hidden',
           minWidth: 0,
         }}>
           {items.slice(0, 15).map((it, i) => {
@@ -77,9 +104,9 @@ function ImpactGroup({ title, items, tone, onOpenParity }) {
                 onClick={isMetrics && onOpenParity ? () => onOpenParity(mName) : undefined}
                 style={{
                   display: 'flex',
-                  alignItems: 'flex-start',
+                  alignItems: 'center',
                   justifyContent: 'space-between',
-                  gap: 6,
+                  gap: 8,
                   fontFamily: MONO,
                   fontSize: 10.5,
                   padding: '4px 8px',
@@ -90,20 +117,24 @@ function ImpactGroup({ title, items, tone, onOpenParity }) {
                   maxWidth: '100%',
                   boxSizing: 'border-box',
                   cursor: isMetrics && onOpenParity ? 'pointer' : 'default',
+                  overflow: 'hidden',
                 }}
               >
-                <span style={{
-                  wordBreak: 'break-word',
-                  overflowWrap: 'anywhere',
-                  minWidth: 0,
-                  flex: '1 1 auto',
-                  color: 'var(--text-primary)',
-                  fontWeight: 500,
-                  lineHeight: 1.35,
-                }}>
+                <span
+                  title={mName}
+                  style={{
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    minWidth: 100,
+                    flex: '1 1 auto',
+                    color: 'var(--text-primary)',
+                    fontWeight: 600,
+                  }}
+                >
                   {mName}
                 </span>
-                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0, marginTop: 1 }}>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
                   {obj?.risk && (
                     <span style={{
                       fontSize: 9,
@@ -140,9 +171,9 @@ function ImpactGroup({ title, items, tone, onOpenParity }) {
             );
           })}
           {items.length > 15 && (
-            <span style={{ fontSize: 11, color: 'var(--text-tertiary)', padding: '2px 4px' }}>
+            <div style={{ fontSize: 10.5, color: 'var(--text-tertiary)', textAlign: 'center', padding: '2px 0' }}>
               +{items.length - 15} more
-            </span>
+            </div>
           )}
         </div>
       )}
@@ -150,13 +181,13 @@ function ImpactGroup({ title, items, tone, onOpenParity }) {
   );
 }
 
-export function ImpactReport({ report, onOpenParity, onEvaluateAddition, isFinding = false }) {
+export function ImpactReport({ report, onOpenParity, onEvaluateAddition, isFinding = false, style: customStyle }) {
   if (!report) return null;
   const sev = report.severity;
   const sevTone = sev === 'BREAKING' ? 'bad' : sev === 'SAFE' ? 'ok' : sev === 'NOT_FOUND' ? 'n' : 'warn';
   const sevLabel = sev === 'SAFE' ? 'Safe' : sev === 'BREAKING' ? 'Breaking' : sev === 'NOT_FOUND' ? 'NOT_FOUND' : 'Degraded';
   return (
-    <div style={PANEL}>
+    <div style={{ ...PANEL, ...customStyle }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Pill tone={sevTone}>{sevLabel}</Pill>
@@ -238,17 +269,38 @@ export function ImpactReport({ report, onOpenParity, onEvaluateAddition, isFindi
         </div>
       )}
 
-      {sev !== 'NOT_FOUND' && report.total_impacted_items > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10, minWidth: 0 }}>
-          <ImpactGroup title="Metrics" items={report.affected_metrics || []} tone="var(--color-warning)" onOpenParity={onOpenParity} />
-          <ImpactGroup title="BI reports" items={report.affected_bi_reports || []} tone="var(--color-error)" />
-          <ImpactGroup title="AI agents" items={report.affected_ai_tools || []} tone="var(--accent-purple)" />
+      {sev !== 'NOT_FOUND' && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, minWidth: 0, flexShrink: 0 }}>
+          <ImpactGroup
+            title="Downstream Metrics"
+            subtitle="Derived measures & calculation items"
+            items={report.affected_metrics || []}
+            tone="var(--color-warning)"
+            emptyText="No downstream metrics affected"
+            onOpenParity={onOpenParity}
+          />
+          <ImpactGroup
+            title="BI Reports & Dashboards"
+            subtitle="Reports consuming affected metrics"
+            items={report.affected_bi_reports || []}
+            tone="var(--color-error)"
+            emptyText="No downstream BI reports affected"
+          />
+          <ImpactGroup
+            title="AI Agents & Semantic Tools"
+            subtitle="Cortex & Genie tools using this view"
+            items={report.affected_ai_tools || []}
+            tone="var(--accent-purple)"
+            emptyText="No downstream AI tools or agents affected"
+          />
         </div>
       )}
 
       {/* Interactive Dependency Graph View */}
       {sev !== 'NOT_FOUND' && (
-        <ImpactDependencyGraph report={report} />
+        <div style={{ flex: 1, minHeight: 460, display: 'flex', flexDirection: 'column' }}>
+          <ImpactDependencyGraph report={report} />
+        </div>
       )}
 
       {/* Stated Dimension Constraints in Comment */}

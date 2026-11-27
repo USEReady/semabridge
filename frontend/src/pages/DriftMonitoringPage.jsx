@@ -1188,10 +1188,11 @@ export default function DriftMonitoringPage() {
             <span>Drift Blast Radius &amp; Downstream Impact</span>
           </div>
         }
-        width={960}
-        style={{ maxWidth: 960, width: '95vw' }}
+        size="3xl"
+        style={{ maxWidth: 1400, width: '94vw', height: '90vh', maxHeight: '92vh' }}
+        bodyStyle={{ overflow: 'hidden', display: 'flex', flexDirection: 'column', padding: '16px 20px', minHeight: 0 }}
       >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, flex: 1, minHeight: 0, overflow: 'hidden' }}>
           <div style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
             {blastReport?.affected_ai_tools?.length > 0
               ? 'Check how this metric drift propagates downstream across BI dashboards, semantic layers, and Cortex AI agents.'
@@ -1419,10 +1420,11 @@ export default function DriftMonitoringPage() {
 
           {/* Impact Report View */}
           {blastReport && (
-            <div style={{ marginTop: 4 }}>
+            <div style={{ marginTop: 4, flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
               <ImpactReport
                 report={blastReport}
                 isFinding={Boolean(blastFinding)}
+                style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}
                 onPickSuggestion={(sug) => {
                   setBlastTarget(sug);
                   runBlastSimulation(sug);

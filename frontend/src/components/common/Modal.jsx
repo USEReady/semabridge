@@ -26,6 +26,7 @@ export default function Modal({
   onToggleMaximize,
   width,
   style: customStyle,
+  bodyStyle: customBodyStyle,
 }) {
   // Close on Escape key
   useEffect(() => {
@@ -37,7 +38,7 @@ export default function Modal({
 
   if (!open) return null;
 
-  const maxWidths = { sm: 400, md: 520, lg: 680, xl: 860, '2xl': 960 };
+  const maxWidths = { sm: 400, md: 520, lg: 680, xl: 860, '2xl': 1080, '3xl': 1400, full: '96vw' };
   const maxW = width ?? (maxWidths[size] ?? 520);
 
   return (
@@ -56,7 +57,7 @@ export default function Modal({
           background: 'var(--bg-surface)',
           border: '1px solid var(--border-main)',
           boxShadow: 'var(--shadow-lg)',
-          maxHeight: isMaximized ? '95vh' : 'min(90vh, 800px)',
+          maxHeight: isMaximized ? '95vh' : (customStyle?.maxHeight || 'min(92vh, 920px)'),
           ...customStyle,
         }}
       >
@@ -107,7 +108,7 @@ export default function Modal({
         </div>
 
         {/* Body */}
-        <div className="custom-scrollbar" style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
+        <div className="custom-scrollbar" style={{ flex: 1, overflowY: 'auto', padding: 24, ...customBodyStyle }}>
           {children}
         </div>
 
