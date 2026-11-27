@@ -1449,14 +1449,15 @@ def build_engine_instructions_for_view(
     m_list = metrics or []
     period_metrics: List[str] = []
     for m in m_list:
+        m_name = getattr(m, "name", None) or getattr(m, "unique_name", None) or ""
         if (
             getattr(m, "is_period_metric", False)
             or getattr(m, "time_intelligence", False)
             or getattr(m, "time_shift_tags", None)
             or getattr(m, "comparison_type", None)
+            or (m_name and any(tag in m_name.upper() for tag in ("_SPLY", "_YOY", "_YTD", "SPLY", "YOY")))
         ):
-            m_name = getattr(m, "name", None) or getattr(m, "unique_name", None) or ""
-            if m_name:
+            if m_name and m_name not in period_metrics:
                 period_metrics.append(m_name)
 
     if period_metrics:
