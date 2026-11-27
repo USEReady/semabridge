@@ -332,6 +332,44 @@ class PbiDesktopAdapter(SemanticSourceAdapter):
                 warnings=[msg],
             )
 
+        # Ensure file path is either currently open in a running Desktop instance or inside allowed roots
+        from semabridge.auth.file_access import is_path_allowed
+
+        is_safe = False
+        try:
+            if is_path_allowed(file_path):
+                is_safe = True
+        except Exception:
+            pass
+
+        if not is_safe:
+            try:
+                resolved_target = Path(file_path).resolve()
+                for inst in discover_running_instances():
+                    if inst.file_path:
+                        try:
+                            if Path(inst.file_path).resolve() == resolved_target:
+                                is_safe = True
+                                break
+                        except Exception:
+                            continue
+            except Exception:
+                pass
+
+        if not is_safe:
+            msg = (
+                f"Report layer not extracted for '{identity.display_name}': "
+                f"path '{file_path}' is neither currently open in Power BI Desktop nor inside allowed source roots."
+            )
+            logger.warning(msg)
+            return ReportLayer(
+                field_aliases=[],
+                unresolved=[],
+                ambiguous=[],
+                reports=[],
+                warnings=[msg],
+            )
+
         p = Path(file_path)
         try:
             with zipfile.ZipFile(str(p), "r") as zf:

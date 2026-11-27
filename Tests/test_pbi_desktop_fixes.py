@@ -410,3 +410,73 @@ def test_pbi_desktop_source_exempt_from_folder_allowlist(tmp_path, monkeypatch):
     with pytest.raises(DomainPermissionError):
         fa.validate_source_paths(pbix_payload)
 
+    # 3. PBIX payload with display_name + file_path outside allowed roots MUST also be rejected
+    pbix_with_display_name = {
+        "name": "pbix-project",
+        "source": {
+            "type": "pbix",
+            "models": [
+                {
+                    "display_name": "Sales Model",
+                    "file_path": outside_path,
+                }
+            ],
+        },
+    }
+    with pytest.raises(DomainPermissionError):
+        fa.validate_source_paths(pbix_with_display_name)
+
+
+def test_pbi_desktop_report_layer_path_safety(tmp_path, monkeypatch):
+    import semabridge.auth.file_access as fa
+    from semabridge.sources.pbi_desktop.adapter import PbiDesktopAdapter
+    from semabridge.sources.base import ModelIdentity
+    from semabridge.sources.pbi_desktop.discovery import DiscoveredDesktopInstance
+    import zipfile
+
+    monkeypatch.setenv("pbi_desktop_source", "1")
+
+    allowed_root = (tmp_path / "allowed").resolve()
+    allowed_root.mkdir()
+    monkeypatch.setattr(fa, "allowed_source_roots", lambda: [allowed_root])
+
+    outside_pbix = tmp_path / "outside" / "Report.pbix"
+    outside_pbix.parent.mkdir()
+    with zipfile.ZipFile(outside_pbix, "w") as zf:
+        zf.writestr("Report/Layout", b"{}")
+
+    adapter = PbiDesktopAdapter()
+    ident_outside = ModelIdentity(
+        source_type="pbi_desktop",
+        model_id="localhost:5000/db_outside",
+        display_name="OutsideReport",
+    )
+    adapter._resolved_file_paths[ident_outside.model_id] = str(outside_pbix)
+
+    # 1. Neither open nor in allowed roots -> not read, returns warning
+    monkeypatch.setattr("semabridge.sources.pbi_desktop.adapter.discover_running_instances", lambda: [])
+    report_layer = adapter.extract_report_layer(ident_outside, tmsl={"model": {"tables": []}})
+    assert report_layer.reports == []
+    assert any("neither currently open in Power BI Desktop nor inside allowed source roots" in w for w in report_layer.warnings)
+
+    # 2. Currently open file -> accepted and read
+    mock_open_inst = DiscoveredDesktopInstance(
+        port=5000,
+        workspace_folder="ws",
+        workspace_dir=str(tmp_path),
+        msmdsrv_pid=1,
+        parent_pbidesktop_pid=2,
+        database_name="db_outside",
+        file_name="Report.pbix",
+        file_path=str(outside_pbix),
+        file_method="command_line",
+        window_title="Report - Power BI Desktop",
+        pbidesktop_exe="",
+        has_unsaved_changes=False,
+        is_live_connected=False,
+    )
+    monkeypatch.setattr("semabridge.sources.pbi_desktop.adapter.discover_running_instances", lambda: [mock_open_inst])
+    report_layer_open = adapter.extract_report_layer(ident_outside, tmsl={"model": {"tables": []}})
+    assert report_layer_open.reports == ["Report.pbix"]
+
+

@@ -179,14 +179,19 @@ def iter_source_file_paths(node: Any) -> Iterable[str]:
             or node.get("source_type")
             or node.get("source_connector")
             or node.get("sourceConnector")
+            or node.get("adapter")
             or ""
         ).strip().lower()
         if not stype:
             src = node.get("source")
             if isinstance(src, dict):
-                stype = str(src.get("type") or src.get("source_type") or "").strip().lower()
+                stype = str(src.get("type") or src.get("source_type") or src.get("adapter") or "").strip().lower()
             elif isinstance(src, str):
                 stype = src.strip().lower()
+        if not stype:
+            src_cfg = node.get("source_config")
+            if isinstance(src_cfg, dict):
+                stype = str(src_cfg.get("type") or src_cfg.get("source_type") or src_cfg.get("adapter") or "").strip().lower()
         if stype in ("pbi_desktop", "pbidesktop"):
             return
 
