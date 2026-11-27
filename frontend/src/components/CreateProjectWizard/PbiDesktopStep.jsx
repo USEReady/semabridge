@@ -37,6 +37,7 @@ export default function PbiDesktopStep({
   preselectedServer = null,
   preselectedDatabase = null,
   isEditMode = false,
+  embedded = false,
 }) {
   const [instances, setInstances] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -171,17 +172,19 @@ export default function PbiDesktopStep({
   const isInstanceSelected = (inst) => isDesktopInstanceSelected(inst, selectedFiles);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 24, paddingBottom: 40 }}>
-      <div>
-        <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>
-          Select Open Power BI Desktop Models
-        </h2>
-        <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>
-          SemaBridge connects directly to live semantic models running in Power BI Desktop on this machine.
-        </p>
-      </div>
+    <div style={embedded ? { display: 'flex', flexDirection: 'column', gap: 12 } : { display: 'flex', flexDirection: 'column', gap: 24, paddingBottom: 40 }}>
+      {!embedded && (
+        <div>
+          <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>
+            Select Open Power BI Desktop Models
+          </h2>
+          <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>
+            SemaBridge connects directly to live semantic models running in Power BI Desktop on this machine.
+          </p>
+        </div>
+      )}
 
-      <div style={SECTION_CARD}>
+      <div style={embedded ? { ...SECTION_CARD, padding: 0, border: 'none', background: 'transparent', boxShadow: 'none' } : SECTION_CARD}>
         {/* Header with title and refresh button */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
           <div>

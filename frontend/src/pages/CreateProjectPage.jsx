@@ -341,6 +341,12 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     }
   }, [preselectedSource, setWizardState, setStep]);
 
+  useEffect(() => {
+    if (step === 3 && sourceConnector === 'pbi_desktop') {
+      setStep(4);
+    }
+  }, [step, sourceConnector, setStep]);
+
   // Step 1
   const configMode = 'form';
   const targetConnectors = useMemo(() => new Set(targetConnectorsRaw || []), [targetConnectorsRaw]);
@@ -1983,9 +1989,17 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       setMappingError('Resolve blocking mapping validation issues before continuing.');
       return;
     }
+    if (step === 2 && sourceConnector === 'pbi_desktop') {
+      setStep(4);
+      return;
+    }
     setStep(s => Math.min(6, s + 1));
   };
   const goBack = () => {
+    if (step === 4 && sourceConnector === 'pbi_desktop') {
+      setStep(2);
+      return;
+    }
     setStep(s => Math.max(1, s - 1));
   };
 
@@ -2099,19 +2113,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     return Object.keys(diff).length > 0 ? diff : null;
   }, [editMode, initialData, name, description, tags, sourceConnector, targetConnectors]);
 
-  const effectiveSteps = useMemo(() => {
-    if (sourceConnector === 'pbi_desktop') {
-      return [
-        { id: 1, label: 'Basic Info' },
-        { id: 2, label: 'Desktop Files' },
-        { id: 3, label: 'Ontology Review' },
-        { id: 4, label: 'Target Config' },
-        { id: 5, label: 'Mapping Options' },
-        { id: 6, label: 'Finish' },
-      ];
-    }
-    return STEPS;
-  }, [sourceConnector]);
+  const effectiveSteps = STEPS;
 
   /* ─── Render ─── */
   return (
@@ -2161,19 +2163,13 @@ export default function CreateProjectPage({ editMode = false, initialData = null
               }
             />
           )}
-          {step === 2 && sourceConnector === 'pbi_desktop' && (
-            <PbiDesktopStep
-              selectedFiles={pbiDesktopSelectedFiles}
-              onSelectionChange={setPbiDesktopSelectedFiles}
-              onSwitchToPbix={() => setSourceConnector('pbix')}
-              preselectedServer={preselectedServer}
-              preselectedDatabase={preselectedDatabase}
-              isEditMode={editMode}
-            />
-          )}
-          {step === 2 && sourceConnector !== 'pbi_desktop' && (
+          {step === 2 && (
             <StepConnectorConfig
               sourceConnector={sourceConnector}
+              pbiDesktopSelectedFiles={pbiDesktopSelectedFiles}
+              setPbiDesktopSelectedFiles={setPbiDesktopSelectedFiles}
+              onSwitchToPbix={() => setSourceConnector('pbix')}
+              isEditMode={editMode}
               preselectedServer={preselectedServer}
               preselectedDatabase={preselectedDatabase}
               targetConnectors={targetConnectors}
@@ -2246,18 +2242,6 @@ export default function CreateProjectPage({ editMode = false, initialData = null
               setDiscoveryNonce((n) => n + 1); // retry discovery with the new sign-in
             }}
           />
-          {step === 3 && sourceConnector === 'pbi_desktop' && (
-            <ErrorBoundary>
-              <StepOntologyReview
-                review={ontologyReview}
-                setReview={setOntologyReview}
-                sourceConnector={sourceConnector}
-                buildRequest={buildOntologyReviewRequest}
-                projectName={name}
-                projectId={editMode ? initialData?.id : undefined}
-              />
-            </ErrorBoundary>
-          )}
           {step === 3 && sourceConnector !== 'pbi_desktop' && (
             <StepSourceBrowser
               sourceConnector={sourceConnector}
@@ -2295,49 +2279,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
               savedModels={savedModels}
             />
           )}
-          {step === 4 && sourceConnector === 'pbi_desktop' && (
-            <StepConnectorConfig
-              targetOnly={true}
-              sourceConnector={sourceConnector}
-              preselectedServer={preselectedServer}
-              preselectedDatabase={preselectedDatabase}
-              targetConnectors={targetConnectors}
-              fabricAccountId={selectedConnectionId}
-              setFabricAccountId={(nextId) => {
-                setSelectedConnectionId(nextId);
-                setFabricAccountId(nextId);
-              }}
-              fabricAccounts={fabricAccounts}
-              fabricWorkspaceId={fabricWorkspaceId}
-              setFabricWorkspaceId={setFabricWorkspaceId}
-              targetFabricAccountId={targetFabricAccountId}
-              setTargetFabricAccountId={setTargetFabricAccountId}
-              targetFabricWorkspaceId={targetFabricWorkspaceId}
-              setTargetFabricWorkspaceId={setTargetFabricWorkspaceId}
-              snowflakeAccountId={snowflakeAccountId}
-              setSnowflakeAccountId={setSnowflakeAccountId}
-              snowflakeAccounts={snowflakeAccounts}
-              databricksAccountId={databricksAccountId}
-              setDatabricksAccountId={setDatabricksAccountId}
-              databricksAccounts={databricksAccounts}
-              snowflakeDatabase={snowflakeDatabase} setSnowflakeDatabase={setSnowflakeDatabase}
-              snowflakeSchema={snowflakeSchema} setSnowflakeSchema={setSnowflakeSchema}
-              targetDatabase={targetDatabase} setTargetDatabase={setTargetDatabase}
-              targetSchema={targetSchema} setTargetSchema={setTargetSchema}
-              targetAccount={targetAccount} setTargetAccount={setTargetAccount}
-              targetWarehouse={targetWarehouse} setTargetWarehouse={setTargetWarehouse}
-              pbixFile={pbixFile}
-              setPbixFile={setPbixFile}
-              pbixUploadPath={pbixUploadPath}
-              pbixUploading={pbixUploading}
-              setPbixUploading={setPbixUploading}
-              pbixSourceMode={pbixSourceMode}
-              setPbixSourceMode={setPbixSourceMode}
-              localFolders={localFolders}
-              localFoldersLoading={localFoldersLoading}
-            />
-          )}
-          {step === 4 && sourceConnector !== 'pbi_desktop' && (
+          {step === 4 && (
             <ErrorBoundary>
               <StepOntologyReview
                 review={ontologyReview}

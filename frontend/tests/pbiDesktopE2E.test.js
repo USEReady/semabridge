@@ -170,11 +170,11 @@ test('E2E Flow: Desktop create + dry run', async (t) => {
     }
     await assertNoErrors('Source Selected (Desktop)');
 
-    // 3. Continue to Desktop Step
+    // 3. Continue to Connector Config Step (Step 2)
     await clickContinue();
-    await assertNoErrors('Desktop Step List');
+    await assertNoErrors('Connector Config Step');
 
-    // 4. Select instance card
+    // 4. Select instance card in source half
     const instanceCard = page.locator('div:has-text(".pbix")').last();
     await instanceCard.waitFor({ timeout: 8000 });
     await instanceCard.click();
@@ -189,15 +189,11 @@ test('E2E Flow: Desktop create + dry run', async (t) => {
       await assertNoErrors('Desktop Step Refresh');
     }
 
-    // 6. Continue to Ontology Review (Step 3)
+    // 6. Continue to Ontology Review (Step 4)
     await clickContinue();
     await assertNoErrors('Ontology Review Step');
 
-    // 7. Continue to Target Config (Step 4)
-    await clickContinue();
-    await assertNoErrors('Target Step');
-
-    // 8. Continue to Mapping Options (Step 5)
+    // 7. Continue to Mapping Options (Step 5)
     await clickContinue();
     await assertNoErrors('Mapping Options Step');
 

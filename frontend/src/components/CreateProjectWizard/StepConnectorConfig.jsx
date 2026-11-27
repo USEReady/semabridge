@@ -4,7 +4,7 @@ import { api } from '../../utils/api';
 import SourceIcon from '../common/SourceIcon';
 import SearchableSelect from '../common/SearchableSelect';
 import MultiPbixUpload from './MultiPbixUpload';
-import PbiDesktopPicker from './PbiDesktopPicker';
+import PbiDesktopStep from './PbiDesktopStep';
 import { RemoveFileButton } from './uploadStatusUI';
 import { CONNECTOR_TYPES, TARGET_CONNECTOR_TYPES, PBIX_SOURCE_MODES } from '../../utils/constants';
 
@@ -33,6 +33,10 @@ function getAccountId(account) {
 export function StepConnectorConfig({
   targetOnly = false,
   sourceConnector,
+  pbiDesktopSelectedFiles = [],
+  setPbiDesktopSelectedFiles = () => {},
+  onSwitchToPbix = () => {},
+  isEditMode = false,
   preselectedServer = null,
   preselectedDatabase = null,
   targetConnectors,
@@ -167,7 +171,9 @@ export function StepConnectorConfig({
   };
   
   const selectedTargets = [...targetConnectors];
-  const sourceLabel = CONNECTOR_TYPES.find(c => c.value === sourceConnector)?.label || sourceConnector;
+  const sourceLabel = sourceConnector === 'pbi_desktop'
+    ? 'Power BI Desktop (open file)'
+    : (CONNECTOR_TYPES.find(c => c.value === sourceConnector)?.label || sourceConnector);
   const activeLocalFolders = useMemo(
     () => (localFolders || []).filter(folder => folder?.is_active !== false),
     [localFolders],
@@ -484,18 +490,14 @@ export function StepConnectorConfig({
         )}
 
         {sourceConnector === 'pbi_desktop' && (
-          <PbiDesktopPicker
-            selectedInstance={selectedPbixFilePath ? { file_name: selectedPbixFilePath } : null}
+          <PbiDesktopStep
+            selectedFiles={pbiDesktopSelectedFiles}
+            onSelectionChange={setPbiDesktopSelectedFiles}
+            onSwitchToPbix={onSwitchToPbix}
             preselectedServer={preselectedServer}
             preselectedDatabase={preselectedDatabase}
-            onSelectInstance={(inst) => {
-              if (inst && onUploadSuccess) {
-                onUploadSuccess(inst.file_path || inst.file_name, inst.file_name);
-              }
-            }}
-            onSwitchToPbix={() => {
-              if (setPbixSourceMode) setPbixSourceMode('MANUAL');
-            }}
+            isEditMode={isEditMode}
+            embedded={true}
           />
         )}
 
@@ -768,7 +770,7 @@ export function StepConnectorConfig({
           );
         })()}
 
-        {sourceConnector !== 'fabric' && sourceConnector !== 'snowflake' && sourceConnector !== 'pbix' && sourceConnector !== 'tableau' && (
+        {sourceConnector !== 'fabric' && sourceConnector !== 'snowflake' && sourceConnector !== 'pbix' && sourceConnector !== 'tableau' && sourceConnector !== 'pbi_desktop' && (
           <div style={{ fontSize: 12, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
             Source connector defaults will be resolved from the saved global connection.
           </div>
