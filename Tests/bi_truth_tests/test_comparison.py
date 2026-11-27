@@ -228,3 +228,73 @@ def test_1_26_bi_truth_comparison_has_no_platform_or_adapter_imports():
     src = Path(mod.__file__).read_text(encoding="utf-8").lower()
     for forbidden in ("snowflake", "databricks", "adapters", "executors"):
         assert forbidden not in src, f"bi_truth_comparison.py must not reference '{forbidden}'"
+
+
+# ------------------------------------------------------------------ multi-row keyed comparison
+
+def test_1_27_multi_row_same_rows_reordered_pass():
+    from semabridge.ai.bi_truth_comparison import compare_truth_results
+
+    expected = [
+        {"DIM_A": "Alpha", "MEASURE_X": 100.0},
+        {"DIM_A": "Beta", "MEASURE_X": 200.0},
+        {"DIM_A": "Gamma", "MEASURE_X": 300.0},
+    ]
+    actual = [
+        {"DIM_A": "Gamma", "MEASURE_X": 300.0},
+        {"DIM_A": "Alpha", "MEASURE_X": 100.0},
+        {"DIM_A": "Beta", "MEASURE_X": 200.0},
+    ]
+    ok, err, details = compare_truth_results(actual, expected)
+    assert ok is True
+    assert err is None
+    assert details["verdict"] == "PASS"
+
+
+def test_1_28_multi_row_missing_row_fails_naming_it():
+    from semabridge.ai.bi_truth_comparison import compare_truth_results
+
+    expected = [
+        {"DIM_A": "Alpha", "MEASURE_X": 100.0},
+        {"DIM_A": "Beta", "MEASURE_X": 200.0},
+    ]
+    actual = [
+        {"DIM_A": "Alpha", "MEASURE_X": 100.0},
+    ]
+    ok, err, details = compare_truth_results(actual, expected)
+    assert ok is False
+    assert details["verdict"] == "FAIL"
+    assert "Beta" in (err or "")
+
+
+def test_1_29_multi_row_extra_row_fails_naming_it():
+    from semabridge.ai.bi_truth_comparison import compare_truth_results
+
+    expected = [
+        {"DIM_A": "Alpha", "MEASURE_X": 100.0},
+    ]
+    actual = [
+        {"DIM_A": "Alpha", "MEASURE_X": 100.0},
+        {"DIM_A": "Delta", "MEASURE_X": 400.0},
+    ]
+    ok, err, details = compare_truth_results(actual, expected)
+    assert ok is False
+    assert details["verdict"] == "FAIL"
+    assert "Delta" in (err or "")
+
+
+def test_1_30_multi_row_value_differing_fails_naming_that_row():
+    from semabridge.ai.bi_truth_comparison import compare_truth_results
+
+    expected = [
+        {"DIM_A": "Alpha", "MEASURE_X": 100.0},
+        {"DIM_A": "Beta", "MEASURE_X": 200.0},
+    ]
+    actual = [
+        {"DIM_A": "Beta", "MEASURE_X": 250.0},
+        {"DIM_A": "Alpha", "MEASURE_X": 100.0},
+    ]
+    ok, err, details = compare_truth_results(actual, expected)
+    assert ok is False
+    assert details["verdict"] == "FAIL"
+    assert "Beta" in (err or "")

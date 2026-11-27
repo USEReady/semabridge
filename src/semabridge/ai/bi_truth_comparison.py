@@ -232,6 +232,147 @@ def _extract_scalar(val: Any) -> Tuple[Any, Optional[int]]:
     return val, 1
 
 
+def _normalize_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    return {str(k).strip().casefold(): v for k, v in row.items()}
+
+
+def _split_row_columns(
+    exp_rows: List[Dict[str, Any]],
+    act_rows: List[Dict[str, Any]],
+    metric_name: Optional[str] = None,
+) -> Tuple[List[str], List[str]]:
+    """Return (dim_cols, measure_cols) using case-insensitive column names."""
+    all_cols: List[str] = []
+    for r in exp_rows + act_rows:
+        for k in r.keys():
+            if k not in all_cols:
+                all_cols.append(k)
+
+    m_cf = metric_name.strip().casefold() if metric_name else ""
+    measure_cols: List[str] = []
+    if m_cf:
+        measure_cols = [
+            c for c in all_cols
+            if c == m_cf or c == f"measure({m_cf})"
+        ]
+
+    if not measure_cols:
+        # Columns that are non-numeric in any row are dimensions; remaining numeric columns are measures.
+        dim_cols = [
+            c for c in all_cols
+            if any(
+                r.get(c) is not None and _as_number(r.get(c)) is None
+                for r in exp_rows + act_rows
+            )
+        ]
+        measure_cols = [c for c in all_cols if c not in dim_cols]
+        if not dim_cols and len(all_cols) > 1:
+            dim_cols = all_cols[:-1]
+            measure_cols = [all_cols[-1]]
+    else:
+        dim_cols = [c for c in all_cols if c not in measure_cols]
+
+    return dim_cols, measure_cols
+
+
+def _row_key_and_label(row: Dict[str, Any], dim_cols: List[str]) -> Tuple[Tuple[Tuple[str, str], ...], str]:
+    key_parts: List[Tuple[str, str]] = []
+    label_parts: List[str] = []
+    for c in dim_cols:
+        v = row.get(c)
+        norm_v = "" if v is None else str(v).strip().casefold()
+        key_parts.append((c, norm_v))
+        label_parts.append(f"{c}={v!r}")
+    label = ", ".join(label_parts) if label_parts else repr(row)
+    return tuple(key_parts), label
+
+
+def _compare_multi_row(
+    exp_rows: List[Dict[str, Any]],
+    act_rows: List[Dict[str, Any]],
+    tol_pct: float,
+    floor: float,
+    effective_expected_rc: Optional[int],
+    metric_name: Optional[str] = None,
+) -> Comparison:
+    """Compare multi-row result sets as a set keyed on dimension values, independent of row order."""
+    norm_exp = [_normalize_row(r) for r in exp_rows]
+    norm_act = [_normalize_row(r) for r in act_rows]
+    dim_cols, measure_cols = _split_row_columns(norm_exp, norm_act, metric_name=metric_name)
+
+    exp_map: Dict[Tuple[Tuple[str, str], ...], Tuple[str, Dict[str, Any]]] = {}
+    act_map: Dict[Tuple[Tuple[str, str], ...], Tuple[str, Dict[str, Any]]] = {}
+    exp_counts: Dict[Tuple[Tuple[str, str], ...], int] = {}
+    act_counts: Dict[Tuple[Tuple[str, str], ...], int] = {}
+
+    for r in norm_exp:
+        k, lbl = _row_key_and_label(r, dim_cols)
+        idx = exp_counts.get(k, 0)
+        exp_counts[k] = idx + 1
+        full_k = k + (("__dup__", str(idx)),) if idx > 0 else k
+        exp_map[full_k] = (lbl, r)
+
+    for r in norm_act:
+        k, lbl = _row_key_and_label(r, dim_cols)
+        idx = act_counts.get(k, 0)
+        act_counts[k] = idx + 1
+        full_k = k + (("__dup__", str(idx)),) if idx > 0 else k
+        act_map[full_k] = (lbl, r)
+
+    base = dict(
+        expected=exp_rows,
+        actual=act_rows,
+        tolerance_pct=tol_pct,
+        floor=floor,
+        expected_row_count=effective_expected_rc,
+        actual_row_count=len(act_rows),
+    )
+
+    missing_keys = [k for k in exp_map if k not in act_map]
+    extra_keys = [k for k in act_map if k not in exp_map]
+
+    if missing_keys:
+        missing_lbls = "; ".join(exp_map[k][0] for k in missing_keys[:5])
+        return Comparison(
+            Verdict.FAIL,
+            reason=f"missing row(s) in actual result: {missing_lbls}",
+            **base,
+        )
+
+    if extra_keys:
+        extra_lbls = "; ".join(act_map[k][0] for k in extra_keys[:5])
+        return Comparison(
+            Verdict.FAIL,
+            reason=f"unexpected extra row(s) in actual result: {extra_lbls}",
+            **base,
+        )
+
+    for k, (lbl, exp_r) in exp_map.items():
+        _, act_r = act_map[k]
+        for mc in measure_cols:
+            row_comp = compare_values(
+                expected=exp_r.get(mc),
+                actual=act_r.get(mc),
+                tolerance_pct=tol_pct,
+                floor=floor,
+            )
+            if not row_comp.passed:
+                return Comparison(
+                    Verdict.FAIL,
+                    variance_pct=row_comp.variance_pct,
+                    absolute_difference=row_comp.absolute_difference,
+                    used_absolute_rule=row_comp.used_absolute_rule,
+                    reason=f"row ({lbl}) measure '{mc}': {row_comp.reason}",
+                    **base,
+                )
+
+    return _row_check(Comparison(
+        Verdict.PASS,
+        reason=f"all {len(exp_map)} row(s) match within {tol_pct}%",
+        **base,
+    ))
+
+
 def compare_truth_results(
     actual: Any,
     expected: Any,
@@ -243,21 +384,39 @@ def compare_truth_results(
     """Backward-compatible adapter for existing bi_truth_service callers."""
     tol = tolerance if tolerance is not None else get_default_tolerance()
     floor = absolute_floor if absolute_floor is not None else get_default_absolute_floor()
+    tol_pct = tol * 100.0 if tol < 1.0 else tol
 
-    act_scalar, act_rc = _extract_scalar(actual)
-    exp_scalar, exp_rc = _extract_scalar(expected)
-
-    effective_expected_rc = expected_row_count if expected_row_count is not None else exp_rc
-
-    # Tolerance is given as fraction e.g. 0.001 (0.1%), convert to percentage for compare_values
-    comp = compare_values(
-        expected=exp_scalar,
-        actual=act_scalar,
-        tolerance_pct=tol * 100.0 if tol < 1.0 else tol,
-        floor=floor,
-        expected_row_count=effective_expected_rc,
-        actual_row_count=act_rc,
-    )
+    if (
+        isinstance(actual, list)
+        and isinstance(expected, list)
+        and len(actual) > 0
+        and len(expected) > 0
+        and all(isinstance(r, dict) for r in actual)
+        and all(isinstance(r, dict) for r in expected)
+        and (len(actual) > 1 or len(expected) > 1)
+    ):
+        effective_expected_rc = expected_row_count if expected_row_count else len(expected)
+        comp = _compare_multi_row(
+            exp_rows=expected,
+            act_rows=actual,
+            tol_pct=tol_pct,
+            floor=floor,
+            effective_expected_rc=effective_expected_rc,
+            metric_name=metric_name,
+        )
+        act_rc = len(actual)
+    else:
+        act_scalar, act_rc = _extract_scalar(actual)
+        exp_scalar, exp_rc = _extract_scalar(expected)
+        effective_expected_rc = expected_row_count if expected_row_count is not None else exp_rc
+        comp = compare_values(
+            expected=exp_scalar,
+            actual=act_scalar,
+            tolerance_pct=tol_pct,
+            floor=floor,
+            expected_row_count=effective_expected_rc,
+            actual_row_count=act_rc,
+        )
 
     details = {
         "tolerance": tol,
