@@ -30,6 +30,22 @@ Target-Aware Blast Radius Consumer Discovery (Spike Findings):
       Individual dataset queries are nested inside serialized JSON widget definitions and SQL strings;
       direct metadata listing does not expose structured view sources. Lineage must be resolved via
       `system.information_schema.table_lineage`.
+
+Verified Queries Injection Spike Findings (CS-19 Criterion 2):
+- Databricks Genie Spaces Benchmark Questions API:
+    Call: `PATCH /api/2.0/genie/spaces/{space_id}`
+    Payload shape (Protobuf / JSON schema):
+      `config.sample_questions`: Array of objects:
+        - `id`: MUST be a 32-character hexadecimal lowercase UUID string without hyphens (e.g. `uuid.uuid4().hex`).
+        - `question`: Natural language benchmark query (string).
+        - `sql`: Expected/verified SQL query (string).
+      `data_sources.tables`: Array of objects with non-empty `identifier` (`catalog.schema.table`). Empty strings
+      or malformed table identifiers are rejected by Databricks schema validation.
+- Live Account Verification Findings:
+    Live workspace token authentication successfully called `GET /api/2.0/genie/spaces` and confirmed 0 active Genie
+    spaces in the configured workspace. Writing benchmark pairs requires both a target Genie space and write scope
+    permissions. When no valid Genie space exists or write permissions are absent, `inject_verified_queries` returns
+    an explicit refusal with status `refused` rather than failing unexpectedly.
 """
 
 from __future__ import annotations

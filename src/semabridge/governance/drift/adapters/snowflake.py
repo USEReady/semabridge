@@ -29,6 +29,26 @@ Target-Aware Blast Radius Consumer Discovery (Spike Findings):
       Parsed YAML document containing `tables: [ { name: ..., base_table: { database: ..., schema: ..., table: ... } } ]`.
 - Downstream Semantic Views:
     Call: `SHOW SEMANTIC VIEWS IN ACCOUNT` or schema-scoped DDL inspection.
+
+Verified Queries Injection Spike Findings (CS-19 Criterion 2):
+- Warehouse Surface Distinction:
+    1. Deploy-time DDL Surface (`CREATE OR REPLACE SEMANTIC VIEW ... AI_VERIFIED_QUERIES = (...)`):
+       Native to Snowflake semantic views. Emitted during project deployment by `ddl_builder._build_ai_verified_queries_clause`
+       and `ontology/apply._attach_project_verified_queries` when verified queries are associated with an ontology.
+    2. Ad-hoc Staged YAML Surface (`@<stage>/<model>.yaml`):
+       Cortex Analyst LLM models reference staged YAML files. `inject_verified_queries` injects approved
+       BI Truth cases directly into the stage file on demand without requiring a full redeployment.
+- Staged YAML Read / Overwrite Behavior:
+    Verified via live warehouse spike:
+    - Reading: `GET @<stage>/<model_file> file://...` downloads the model specification.
+    - Appending: Parses the YAML, updates the `verified_queries` array with question-SQL pairs.
+    - Writing: `PUT file://... @<stage> OVERWRITE = TRUE AUTO_COMPRESS = FALSE` provides atomic file replacement.
+    - Concurrency & In-Use Safety: Snowflake stage PUT operations are atomic; queries running against Cortex Analyst
+      during PUT either finish on the cached version or pick up the new specification on the subsequent request.
+- Candidate Schema Discovery:
+    When semantic views reside in a domain schema (e.g., `SEMABRIDGE.HUMAN_RESOURCES.VIEW`), stages may exist
+    in either that domain schema or the connection's default schema (e.g., `TESTING_SEMABRIDGE`). `inject_verified_queries`
+    scans candidate schemas `[view_schema, config.schema_name, config.schema]` to discover existing Cortex stages.
 """
 
 from __future__ import annotations
@@ -963,16 +983,16 @@ class SnowflakeAdapter(PlatformAdapter):
             cur = conn.cursor()
 
             # 1. Discover stages in target schema or database
-            target_schema = (
-                getattr(cfg_obj, "schema_name", None)
-                or getattr(cfg_obj, "schema", None)
-                or (v_parts[1] if len(v_parts) == 3 else (v_parts[0] if len(v_parts) == 2 else None))
-            )
+            view_schema = v_parts[1] if len(v_parts) == 3 else (v_parts[0] if len(v_parts) == 2 else None)
+            candidate_schemas = [s for s in [view_schema, getattr(cfg_obj, "schema_name", None), getattr(cfg_obj, "schema", None)] if s]
             stage_rows = []
-            if target_schema:
+            for sch in candidate_schemas:
                 try:
-                    cur.execute(f"SHOW STAGES IN SCHEMA {target_schema}")
-                    stage_rows = cur.fetchall()
+                    cur.execute(f"SHOW STAGES IN SCHEMA {sch}")
+                    rows = cur.fetchall()
+                    if rows:
+                        stage_rows.extend(rows)
+                        break
                 except Exception:
                     pass
             if not stage_rows:

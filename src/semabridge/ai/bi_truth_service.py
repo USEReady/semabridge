@@ -1,4 +1,21 @@
-"""BI-Truth Test Suite: Generate Q&A from certified metrics, approve, run against Cortex/agent, track accuracy."""
+"""BI-Truth Test Suite: Generate Q&A from certified metrics, approve, run against Cortex/agent, track accuracy.
+
+Configuration Reference & System Defaults (CS-19):
+--------------------------------------------------
+- Default Tolerance: 0.001 (0.1% allowable numeric variance between actual and expected benchmark values).
+  Configurable per case via `tolerance_pct`.
+- Accuracy Floor: 10 approved cases. Evaluated suites with fewer than 10 comparable cases report
+  verdicts honestly but do not meet the minimum statistical sample floor for governance certification.
+- Result Max Age: 24 hours (`DEFAULT_MAX_RESULT_AGE_HOURS = 24`). Deploy gates reject test runs older
+  than 24 hours as `STALE`.
+- Warehouse Statement Timeout: 30 seconds (`_DEFAULT_STATEMENT_TIMEOUT = 30`), overridable via
+  `SEMABRIDGE_DRIFT_STATEMENT_TIMEOUT_SECONDS`.
+- Gate Modes:
+    - "report" (default): Runs evaluation non-blocking. Reports failures in findings and logs without
+      stopping deployment (`blocks_deploy = False`).
+    - "block": Enforces strict regression protection. Halts deployment (`blocks_deploy = True`) whenever
+      a critical measure breaches tolerance, the latest run is stale (>24h), or critical measures are missing.
+"""
 
 from __future__ import annotations
 

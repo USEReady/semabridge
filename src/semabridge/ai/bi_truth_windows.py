@@ -3,15 +3,15 @@
 A window narrows a case to one period. It carries its own expected value, because
 a quarter compared against an annual figure always fails.
 
-STATUS NOTE (Step 1 / CS-19):
-Step 1 is built (parsing, storage, comparator integration, refusal handling).
-However, build_windowed_sql currently refuses all SEMANTIC_VIEW queries (returning None)
-because trailing WHERE clauses are rejected by Snowflake.
-Live warehouse testing demonstrates that Snowflake SEMANTIC_VIEW natively supports
-internal WHERE clauses inside the call (e.g. SEMANTIC_VIEW(... WHERE COL_DATE.YEAR = 2014)),
-which successfully narrows metrics across time slices even when the slice column is not
-in the outer DIMENSIONS list. Step 1 will become active for generated queries once internal
-WHERE injection into the SEMANTIC_VIEW argument list is enabled.
+STATUS NOTE (CS-19 Verified):
+Step 1 window injection is fully implemented and verified against live warehouses.
+Snowflake SEMANTIC_VIEW natively requires internal WHERE clauses inside the call argument
+list (e.g. `SEMANTIC_VIEW(view METRICS metric WHERE COL_DATE.YEAR = 2014)`) rather than
+trailing WHERE clauses. `build_windowed_sql` injects the filter clause directly into the
+`SEMANTIC_VIEW(...)` invocation, successfully narrowing metrics across time slices even when
+the slice column is not in the outer query DIMENSIONS list, preserving scalar query shape.
+For plain SQL queries, standard trailing WHERE clauses are safely attached. Malformed,
+injection-risk, or non-SELECT expressions are refused honestly (returning None).
 """
 from __future__ import annotations
 
