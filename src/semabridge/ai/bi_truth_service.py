@@ -36,6 +36,7 @@ from semabridge.reconciliation.golden_verifier import (
     _format_sql_identifier,
 )
 from semabridge.utils.null_sentinel import is_null_cast_sql
+from semabridge.ai.executors import get_executor
 
 logger = logging.getLogger(__name__)
 
@@ -353,35 +354,18 @@ def _format_expected_sql(
     n: int = 5,
     platform: Optional[str] = None,
 ) -> str:
-    """Format runnable query using real view, metric, and dimension identifiers."""
+    """Format runnable query using platform-specific SQL builder."""
     if not view_name or not str(view_name).strip():
-        raise ValueError("view_name is required to format expected SEMANTIC_VIEW SQL")
-    clean_view = _format_sql_identifier(view_name)
-    clean_metric = _format_sql_identifier(metric_ident)
-
-    target_platform = (platform or "SNOWFLAKE").upper()
-    if target_platform == "DATABRICKS":
-        if dim_ident:
-            if isinstance(dim_ident, (list, tuple)):
-                dims_str = ", ".join(_format_sql_identifier(d) for d in dim_ident if d)
-            else:
-                dims_str = _format_sql_identifier(str(dim_ident))
-            if dims_str:
-                if is_top_n:
-                    return f"SELECT {dims_str}, {clean_metric} FROM {clean_view} ORDER BY {clean_metric} DESC LIMIT {n};"
-                return f"SELECT {dims_str}, {clean_metric} FROM {clean_view} GROUP BY {dims_str};"
-        return f"SELECT {clean_metric} FROM {clean_view};"
-
-    if dim_ident:
-        if isinstance(dim_ident, (list, tuple)):
-            dims_str = ", ".join(_format_sql_identifier(d) for d in dim_ident if d)
-        else:
-            dims_str = _format_sql_identifier(str(dim_ident))
-        if dims_str:
-            if is_top_n:
-                return f"SELECT * FROM SEMANTIC_VIEW({clean_view} METRICS {clean_metric} DIMENSIONS {dims_str}) ORDER BY {clean_metric} DESC LIMIT {n};"
-            return f"SELECT * FROM SEMANTIC_VIEW({clean_view} METRICS {clean_metric} DIMENSIONS {dims_str});"
-    return f"SELECT * FROM SEMANTIC_VIEW({clean_view} METRICS {clean_metric});"
+        raise ValueError("view_name is required to format expected query SQL")
+    from semabridge.ai.sql_builders import get_builder
+    builder = get_builder(platform or "")
+    if builder is None:
+        raise ValueError(f"Unsupported or unknown platform '{platform}' for truth SQL generation")
+    if is_top_n:
+        return builder.build_top_n(view_name, metric_ident, dim_ident or [], n=n)
+    elif dim_ident:
+        return builder.build_sliced(view_name, metric_ident, dim_ident)
+    return builder.build_total(view_name, metric_ident)
 
 
 def _format_expected_dax(metric_name: str, dim_ident: Optional[Any] = None) -> str:
@@ -412,12 +396,12 @@ def _format_expected_dax(metric_name: str, dim_ident: Optional[Any] = None) -> s
     return ""
 
 
-def _evaluate_sql_against_snowflake(
+def evaluate_sql_against_warehouse(
     project_id: Optional[str],
     sql: str,
     owner_id: Optional[str] = None,
 ) -> Tuple[Optional[Any], Optional[str]]:
-    """Execute a query once against Snowflake to fetch draft expected value with full result rows."""
+    """Execute a query once against the target warehouse to fetch draft expected value with full result rows."""
     if not project_id or not sql:
         return None, None
     try:
@@ -428,42 +412,22 @@ def _evaluate_sql_against_snowflake(
         except Exception as safety_err:
             return None, f"SQL safety check failed: {safety_err}"
 
-        from semabridge.ai.project_connection import resolve_project_warehouse_config
-        from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
+        from semabridge.ai.executors.base import get_executor
+        executor = get_executor(project_id, owner_id=owner_id)
+        if executor is None:
+            return None, f"No warehouse executor available for project '{project_id}'"
 
-        sf = resolve_project_warehouse_config(project_id, "SNOWFLAKE", owner_id=owner_id)
-        if sf is None:
-            return None, "No warehouse configured"
-        kw = get_snowflake_connect_kwargs(sf)
-        if not (kw.get("account") and kw.get("user")):
-            return None, "Incomplete connection credentials"
-        import snowflake.connector
-
-        conn = snowflake.connector.connect(**kw)
-        try:
-            cur = conn.cursor()
-            try:
-                cur.execute("ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = 15")
-            except Exception as ex:
-                logger.warning("Failed setting statement timeout: %s", ex)
-            cur.execute(sql)
-            cols = [d[0].upper() for d in cur.description] if cur.description else []
-            rows = cur.fetchall()
-            if not rows:
-                return [], None
-            res_rows = [
-                {cols[i]: _sanitize_cell_value(val) for i, val in enumerate(row)}
-                for row in rows
-            ]
-            return res_rows, None
-        finally:
-            conn.close()
+        with executor:
+            res = executor.execute(sql)
+            if res.error:
+                return None, res.error
+            return res.rows, None
     except Exception as exc:
         return None, str(exc)
 
 
-def _evaluate_cases_in_background(cases: List[Dict[str, Any]], owner_id: Optional[str] = None) -> None:
-    """Run one Snowflake connection per batch with query timeout in the background."""
+def evaluate_cases_in_background(cases: List[Dict[str, Any]], owner_id: Optional[str] = None) -> None:
+    """Run one executor per project batch with query timeout in the background."""
     if not cases:
         return
     import threading
@@ -471,96 +435,68 @@ def _evaluate_cases_in_background(cases: List[Dict[str, Any]], owner_id: Optiona
     def _worker():
         try:
             from semabridge.connectors.sql_guard import validate_read_only_sql
-            from semabridge.ai.project_connection import resolve_project_warehouse_config
-            from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
-            import snowflake.connector
+            from semabridge.ai.executors.base import get_executor
 
             by_pid: Dict[Optional[str], List[Dict[str, Any]]] = {}
             for c in cases:
                 pid = c.get("project_id")
                 by_pid.setdefault(pid, []).append(c)
 
-            valid_pids: Dict[str, Tuple[Any, Any, List[Dict[str, Any]]]] = {}
-            for pid, pcases in by_pid.items():
-                if not pid:
-                    continue
-                sf = resolve_project_warehouse_config(pid, "SNOWFLAKE", owner_id=owner_id)
-                if not sf:
-                    continue
-                kw = get_snowflake_connect_kwargs(sf)
-                if not (kw.get("account") and kw.get("user")):
-                    continue
-                valid_pids[pid] = (sf, kw, pcases)
-
-            if not valid_pids:
-                return
-
             now = datetime.now(timezone.utc).isoformat()
             state = _load_suite()
             cases_map = {c["id"]: c for c in state.get(_CASES_KEY) or []}
             updated = False
 
-            for pid, (sf, kw, pcases) in valid_pids.items():
+            for pid, pcases in by_pid.items():
+                if not pid:
+                    continue
+                executor = get_executor(pid, owner_id=owner_id)
+                if not executor:
+                    continue
 
-                conn = None
                 try:
-                    conn = snowflake.connector.connect(**kw)
-                    cur = conn.cursor()
-                    try:
-                        cur.execute("ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = 15")
-                    except Exception as ex:
-                        logger.warning("Failed setting statement timeout: %s", ex)
+                    with executor:
+                        for c in pcases:
+                            cid = c.get("id")
+                            sql = c.get("expected_sql")
+                            if not sql or cid not in cases_map:
+                                continue
 
-                    for c in pcases:
-                        cid = c.get("id")
-                        sql = c.get("expected_sql")
-                        if not sql or cid not in cases_map:
-                            continue
+                            try:
+                                is_safe = validate_read_only_sql(sql)
+                            except Exception:
+                                is_safe = False
+                            if not is_safe:
+                                cases_map[cid]["evaluation_note"] = "SQL safety check failed: query is not read-only"
+                                cases_map[cid]["evaluation_status"] = "evaluation_failed"
+                                updated = True
+                                continue
 
-                        try:
-                            is_safe = validate_read_only_sql(sql)
-                        except Exception as safety_err:
-                            is_safe = False
-                        if not is_safe:
-                            cases_map[cid]["evaluation_note"] = "SQL safety check failed: query is not read-only"
-                            cases_map[cid]["evaluation_status"] = "evaluation_failed"
-                            updated = True
-                            continue
-
-                        try:
-                            cur.execute(sql)
-                            cols = [d[0].upper() for d in cur.description] if cur.description else []
-                            rows = cur.fetchall()
-                            res_rows = [
-                                {cols[i]: _sanitize_cell_value(val) for i, val in enumerate(row)}
-                                for row in rows
-                            ]
-                            cases_map[cid]["expected_value"] = res_rows
-                            cases_map[cid]["expected_evaluated_at"] = now
-                            cases_map[cid]["evaluation_status"] = "draft_evaluated"
-                            cases_map[cid]["evaluation_note"] = None
-                            updated = True
-                        except Exception as q_err:
-                            cases_map[cid]["evaluation_note"] = str(q_err)
-                            cases_map[cid]["evaluation_status"] = "evaluation_failed"
-                            updated = True
+                            res = executor.execute(sql)
+                            if res.error:
+                                cases_map[cid]["evaluation_note"] = res.error
+                                cases_map[cid]["evaluation_status"] = "evaluation_failed"
+                                updated = True
+                            else:
+                                cases_map[cid]["expected_value"] = res.rows
+                                cases_map[cid]["expected_evaluated_at"] = now
+                                cases_map[cid]["evaluation_status"] = "draft_evaluated"
+                                cases_map[cid]["evaluation_note"] = None
+                                updated = True
                 except Exception as conn_err:
-                    logger.warning("Snowflake connection error in background evaluation for project %s: %s", pid, conn_err)
-                finally:
-                    if conn:
-                        try:
-                            conn.close()
-                        except Exception as close_err:
-                            logger.warning("Failed closing snowflake connection: %s", close_err)
+                    logger.warning("Warehouse connection error in background evaluation for project %s: %s", pid, conn_err)
 
             if updated:
                 state[_CASES_KEY] = list(cases_map.values())
                 _save_suite(state)
         except Exception as exc:
-            logger.warning("Background Snowflake evaluation failed: %s", exc)
+            logger.warning("Background warehouse evaluation failed: %s", exc)
 
     thread = threading.Thread(target=_worker, daemon=True)
     thread.start()
+
+
+_evaluate_cases_in_background = evaluate_cases_in_background
 
 
 def _compare_truth_results(
@@ -756,6 +692,24 @@ def generate_truth_cases(
     else:
         target_domains = list(ontology_store.get_federated_ontology().domains.values())
 
+    from semabridge.ai.project_connection import _project_meta
+    from semabridge.governance.drift.adapters.registry import resolve_project_platform
+    from semabridge.ai.sql_builders import get_builder
+    meta = _project_meta(pid) if pid else {}
+    target_platform = resolve_project_platform(meta)
+    if target_platform in ("NOT_SET", "UNKNOWN", ""):
+        from semabridge.ai.executors.base import get_executor
+        ex = get_executor(pid)
+        if ex:
+            target_platform = ex.platform
+    if get_builder(target_platform) is None:
+        return TruthCasesResult(
+            items=[],
+            added_count=0,
+            skipped_count=1,
+            skipped=[{"metric_name": f"Project:{pid or 'unknown'}", "reason": f"No truth SQL builder for platform '{target_platform}'"}],
+        )
+
     name_counts: Dict[str, int] = {}
     for dom in target_domains:
         for nm in {(m.name or m.logical_name or "").casefold() for m in getattr(dom, "metrics", []) or []}:
@@ -875,7 +829,7 @@ def generate_truth_cases(
                 q_total = f"What is the overall {m_display}{in_dom}?" if is_ratio else f"What is the total {m_display}{in_dom}?"
                 metric_candidates.append({
                     "question": q_total,
-                    "expected_sql": _format_expected_sql(view_name, metric_ident),
+                    "expected_sql": _format_expected_sql(view_name, metric_ident, platform=target_platform),
                     "expected_dax": _format_expected_dax(m_name),
                     "expected_row_count": 1,
                     "dimensions": [],
@@ -887,7 +841,7 @@ def generate_truth_cases(
                 q_slice = f"What is {m_display} by {dim_disp}{in_dom}?"
                 metric_candidates.append({
                     "question": q_slice,
-                    "expected_sql": _format_expected_sql(view_name, metric_ident, req_dims),
+                    "expected_sql": _format_expected_sql(view_name, metric_ident, req_dims, platform=target_platform),
                     "expected_dax": _format_expected_dax(m_name, req_dims),
                     "expected_row_count": 0,
                     "dimensions": list(req_dims),
@@ -900,7 +854,7 @@ def generate_truth_cases(
                     q1 = f"What is {m_display} by {dim1_disp}{in_dom}?"
                     metric_candidates.append({
                         "question": q1,
-                        "expected_sql": _format_expected_sql(view_name, metric_ident, dim1),
+                        "expected_sql": _format_expected_sql(view_name, metric_ident, dim1, platform=target_platform),
                         "expected_dax": _format_expected_dax(m_name, dim1),
                         "expected_row_count": 0,
                         "dimensions": [dim1],
@@ -912,7 +866,7 @@ def generate_truth_cases(
                     q2 = f"What is {m_display} by {dim2_disp}{in_dom}?"
                     metric_candidates.append({
                         "question": q2,
-                        "expected_sql": _format_expected_sql(view_name, metric_ident, dim2),
+                        "expected_sql": _format_expected_sql(view_name, metric_ident, dim2, platform=target_platform),
                         "expected_dax": _format_expected_dax(m_name, dim2),
                         "expected_row_count": 0,
                         "dimensions": [dim2],
@@ -924,7 +878,7 @@ def generate_truth_cases(
                     q_date = f"What is {m_display} by {d_disp}{in_dom}?"
                     metric_candidates.append({
                         "question": q_date,
-                        "expected_sql": _format_expected_sql(view_name, metric_ident, d_dim),
+                        "expected_sql": _format_expected_sql(view_name, metric_ident, d_dim, platform=target_platform),
                         "expected_dax": _format_expected_dax(m_name, d_dim),
                         "expected_row_count": 0,
                         "dimensions": [d_dim],
@@ -936,7 +890,7 @@ def generate_truth_cases(
                     q_top = f"What are the top 5 {top_disp} by {m_display}{in_dom}?"
                     metric_candidates.append({
                         "question": q_top,
-                        "expected_sql": _format_expected_sql(view_name, metric_ident, top_dim, is_top_n=True, n=5),
+                        "expected_sql": _format_expected_sql(view_name, metric_ident, top_dim, is_top_n=True, n=5, platform=target_platform),
                         "expected_dax": "",
                         "expected_row_count": 5,
                         "dimensions": [top_dim],
@@ -1019,7 +973,7 @@ def generate_truth_cases(
                 q_total = f"What is the overall {m_display}?" if is_ratio else f"What is the total {m_display}?"
                 cand_qs.append({
                     "question": q_total,
-                    "expected_sql": _format_expected_sql(target_view, metric_ident),
+                    "expected_sql": _format_expected_sql(target_view, metric_ident, platform=target_platform),
                     "expected_dax": _format_expected_dax(m_name),
                     "expected_row_count": 1,
                     "dimensions": [],
@@ -1029,7 +983,7 @@ def generate_truth_cases(
                 dim_disp = ", ".join(d.split(".")[-1].replace("_", " ").title() if "_" in d else d for d in req_dims)
                 cand_qs.append({
                     "question": f"What is {m_display} by {dim_disp}?",
-                    "expected_sql": _format_expected_sql(target_view, metric_ident, req_dims),
+                    "expected_sql": _format_expected_sql(target_view, metric_ident, req_dims, platform=target_platform),
                     "expected_dax": _format_expected_dax(m_name, req_dims),
                     "expected_row_count": 0,
                     "dimensions": list(req_dims),
@@ -1041,7 +995,7 @@ def generate_truth_cases(
                     d1_disp = d1.split(".")[-1].replace("_", " ").title() if "_" in d1 else d1
                     cand_qs.append({
                         "question": f"What is {m_display} by {d1_disp}?",
-                        "expected_sql": _format_expected_sql(target_view, metric_ident, d1),
+                        "expected_sql": _format_expected_sql(target_view, metric_ident, d1, platform=target_platform),
                         "expected_dax": _format_expected_dax(m_name, d1),
                         "expected_row_count": 0,
                         "dimensions": [d1],
@@ -1052,7 +1006,7 @@ def generate_truth_cases(
                     d2_disp = d2.split(".")[-1].replace("_", " ").title() if "_" in d2 else d2
                     cand_qs.append({
                         "question": f"What is {m_display} by {d2_disp}?",
-                        "expected_sql": _format_expected_sql(target_view, metric_ident, d2),
+                        "expected_sql": _format_expected_sql(target_view, metric_ident, d2, platform=target_platform),
                         "expected_dax": _format_expected_dax(m_name, d2),
                         "expected_row_count": 0,
                         "dimensions": [d2],
@@ -1776,52 +1730,36 @@ def run_truth_suite(
             )
         return scopes_cache[p]
 
-    def _get_sf(pid: Optional[str]):
-        p = pid or ""
-        if p not in sf_cache:
-            try:
-                sf_cache[p] = resolve_project_warehouse_config(p, "SNOWFLAKE", owner_id=owner_id)
-            except Exception:
-                sf_cache[p] = None
-        return sf_cache[p]
-
-    # Open ONE Snowflake connection for the run with 15s timeout
     target_pid = project_id or (approved[0].get("project_id") if approved else None)
-    sf_conn = None
-    sf_cur = None
-    if target_pid:
-        try:
-            sf_cfg = _get_sf(target_pid)
-            if sf_cfg:
-                from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
-                kw = get_snowflake_connect_kwargs(sf_cfg)
-                if kw.get("account") and kw.get("user"):
-                    import snowflake.connector
-                    sf_conn = snowflake.connector.connect(**kw)
-                    sf_cur = sf_conn.cursor()
-                    try:
-                        sf_cur.execute("ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = 15")
-                    except Exception as ex:
-                        logger.warning("Failed setting statement timeout: %s", ex)
-        except Exception as conn_err:
-            logger.warning("Failed opening single Snowflake connection for truth run: %s", conn_err)
+    executor = get_executor(target_pid, owner_id=owner_id)
+
+    from semabridge.ai.project_connection import _project_meta
+    from semabridge.governance.drift.adapters.registry import resolve_project_platform
+    meta = _project_meta(target_pid) if target_pid else {}
+    plat = resolve_project_platform(meta)
+    platform_name = getattr(executor, "platform", plat) if executor else plat
+    executor_reason = f"no executor for platform {plat}" if plat and plat not in ("NOT_SET", "UNKNOWN", "") else "Query not executed against warehouse"
 
     results: List[Dict[str, Any]] = []
 
     try:
+        if executor:
+            try:
+                executor.open()
+            except Exception as conn_err:
+                logger.warning("Failed opening executor connection: %s", conn_err)
         for c in approved:
             pid = c.get("project_id") or project_id
             scope = _case_scope(_get_scope(pid), c)
-            sf = _get_sf(pid)
             generated_sql = ""
             mode = "local"
             err = None
 
             try:
-                # 1. Governed query path first: questions matching governed metrics generate SELECT ... FROM SEMANTIC_VIEW(...)
+                # 1. Governed query path first: questions matching governed metrics generate governed SQL
                 plan = engine.resolve_query(
                     c["question"],
-                    dialect="SNOWFLAKE",
+                    dialect=platform_name,
                     semantic_view=getattr(scope, "semantic_view", None),
                     allowed_domains=getattr(scope, "allowed_domains", []),
                 )
@@ -1834,10 +1772,11 @@ def run_truth_suite(
                     mode = "semantic_view_refused"
                 else:
                     # 2. Free-form Cortex SQL only as a fallback, labelled "free-form SQL" and never certified
-                    if sf is not None and getattr(sf, "private_key", None) and getattr(scope, "semantic_view", None):
+                    cfg = getattr(executor, "config", None)
+                    if cfg is not None and getattr(cfg, "private_key", None) and getattr(scope, "semantic_view", None):
                         try:
                             from semabridge.ai.cortex_analyst_client import call_cortex_analyst
-                            resp = call_cortex_analyst(prompt=c["question"], semantic_view=scope.semantic_view, config=sf)
+                            resp = call_cortex_analyst(prompt=c["question"], semantic_view=scope.semantic_view, config=cfg)
                             generated_sql = (resp.get("generated_sql") or "").strip()
                             mode = "free-form SQL"
                         except Exception:
@@ -1867,10 +1806,11 @@ def run_truth_suite(
 
             from semabridge.ai.bi_truth_windows import build_windowed_sql, parse_case_windows
             case_windows = parse_case_windows(c.get("windows"))
+            win_platform = platform_name
 
             if case_windows:
                 for win in case_windows:
-                    win_sql = build_windowed_sql(generated_sql, win) if generated_sql else ""
+                    win_sql = build_windowed_sql(generated_sql, win, platform=win_platform) if generated_sql else ""
                     win_err = err
                     win_actual = None
                     win_ok = False
@@ -1886,37 +1826,43 @@ def run_truth_suite(
                             "comparable": False,
                             "reason": win_err,
                         }
-                        if win_sql and sf_cur is not None:
+                        if win_sql and executor is not None:
                             try:
-                                sf_cur.execute(win_sql)
-                                cols = [d[0].upper() for d in sf_cur.description] if sf_cur.description else []
-                                rows = sf_cur.fetchall()
-                                win_actual = [{cols[i]: _sanitize_cell_value(v) for i, v in enumerate(row)} for row in rows]
+                                qres = executor.execute(win_sql)
+                                if qres.executed and not qres.error:
+                                    win_actual = qres.rows
+                                elif qres.error:
+                                    win_err = f"{win_err} (query execution also failed: {qres.error})"
                             except Exception as q_err:
                                 win_err = f"{win_err} (query execution also failed: {q_err})"
-                    elif win_sql and sf_cur is not None:
+                    elif win_sql and executor is not None:
                         try:
-                            sf_cur.execute(win_sql)
-                            cols = [d[0].upper() for d in sf_cur.description] if sf_cur.description else []
-                            rows = sf_cur.fetchall()
-                            win_actual = [{cols[i]: _sanitize_cell_value(v) for i, v in enumerate(row)} for row in rows]
-                            from semabridge.ai.bi_truth_comparator import compare_truth_results
-                            win_rc = win.get("expected_row_count") if win.get("expected_row_count") is not None else c.get("expected_row_count")
-                            win_ok, mismatch_err, win_details = compare_truth_results(
-                                win_actual,
-                                win_expected,
-                                tolerance=c.get("tolerance"),
-                                expected_row_count=win_rc,
-                            )
-                            if not win_ok and mismatch_err:
-                                win_err = mismatch_err
+                            qres = executor.execute(win_sql)
+                            if qres.executed and not qres.error:
+                                win_actual = qres.rows
+                                from semabridge.ai.bi_truth_comparator import compare_truth_results
+                                win_rc = win.get("expected_row_count") if win.get("expected_row_count") is not None else c.get("expected_row_count")
+                                win_ok, mismatch_err, win_details = compare_truth_results(
+                                    win_actual,
+                                    win_expected,
+                                    tolerance=c.get("tolerance"),
+                                    expected_row_count=win_rc,
+                                )
+                                if not win_ok and mismatch_err:
+                                    win_err = mismatch_err
+                            elif qres.error:
+                                win_ok = False
+                                win_err = qres.error
+                            else:
+                                win_ok = False
+                                win_err = "Query not executed against warehouse"
                         except Exception as q_err:
                             win_ok = False
                             win_err = str(q_err)
                     else:
                         win_ok = False
                         if not win_err:
-                            win_err = "Query not executed against warehouse"
+                            win_err = executor_reason if executor is None else "Query not executed against warehouse"
 
                     win_verdict = (
                         "NOT_COMPARABLE"
@@ -1930,7 +1876,7 @@ def run_truth_suite(
                         "window_filter": win.get("filter"),
                         "question": f"{c['question']} [{win.get('name')}]",
                         "metric_name": c.get("metric_name") or "",
-                        "expected_sql": build_windowed_sql(c.get("expected_sql") or "", win),
+                        "expected_sql": build_windowed_sql(c.get("expected_sql") or "", win, platform=win_platform),
                         "expected_value": win_expected,
                         "expected_evaluated_at": str(c.get("expected_evaluated_at") or ""),
                         "expected_row_count": win.get("expected_row_count"),
@@ -1942,6 +1888,7 @@ def run_truth_suite(
                         "comparable": win_expected is not None and win_sql is not None,
                         "comparison_details": win_details,
                         "mode": mode,
+                        "platform": platform_name,
                         "generated_sql": win_sql,
                         "error": win_err,
                         "reason": win_err,
@@ -1952,12 +1899,15 @@ def run_truth_suite(
                 exp_val = c.get("expected_value")
                 has_benchmark = exp_val is not None
 
-                if generated_sql and sf_cur is not None:
+                cols = []
+                if generated_sql and executor is not None:
                     try:
-                        sf_cur.execute(generated_sql)
-                        cols = [d[0].upper() for d in sf_cur.description] if sf_cur.description else []
-                        rows = sf_cur.fetchall()
-                        actual_val = [{cols[i]: _sanitize_cell_value(v) for i, v in enumerate(row)} for row in rows]
+                        qres = executor.execute(generated_sql)
+                        if qres.executed and not qres.error:
+                            actual_val = qres.rows
+                            cols = qres.columns
+                        elif qres.error:
+                            err = qres.error
                     except Exception as q_err:
                         err = str(q_err)
 
@@ -2008,12 +1958,12 @@ def run_truth_suite(
                 else:
                     ok = False
                     if not err:
-                        err = "Query not executed against warehouse"
+                        err = executor_reason if executor is None else "Query not executed against warehouse"
                     reason = err
                     base_verdict = "NOT_COMPARABLE"
                     is_comparable = False
                     cmp_details = {
-                        "rule_applied": "query_execution_failed",
+                        "rule_applied": "no_platform_executor" if executor is None else "query_execution_failed",
                         "comparable": False,
                         "verdict": "NOT_COMPARABLE",
                         "reason": err,
@@ -2029,7 +1979,7 @@ def run_truth_suite(
                             success=True,
                             execution_type="bi_truth",
                             view_name=target_view,
-                            target="SNOWFLAKE",
+                            target=platform_name,
                         )
                     except Exception as save_err:
                         logger.warning("Recording query execution for case %s skipped: %s", c.get("id"), save_err)
@@ -2051,22 +2001,23 @@ def run_truth_suite(
                     "comparable": is_comparable,
                     "comparison_details": cmp_details,
                     "mode": mode,
+                    "platform": platform_name,
                     "generated_sql": generated_sql,
                     "error": err,
                     "reason": reason,
                 })
     finally:
-        if sf_conn:
+        if executor:
             try:
-                sf_conn.close()
+                executor.close()
             except Exception as ex:
-                logger.warning("Closing Snowflake connection failed: %s", ex)
+                logger.warning("Closing executor failed: %s", ex)
 
     comparable_results = [r for r in results if r.get("comparable") is True and r.get("mode") != "skipped"]
     passed = sum(1 for r in comparable_results if r.get("passed"))
     comparable_total = len(comparable_results)
     total = len(results)
-    accuracy = round((100.0 * passed / comparable_total), 2) if comparable_total else 0.0
+    accuracy = round((100.0 * passed / comparable_total), 2) if comparable_total else (None if executor is None else 0.0)
     run_rec = {
         "id": f"trun-{uuid.uuid4().hex[:8]}",
         "project_id": project_id,
@@ -2076,6 +2027,7 @@ def run_truth_suite(
         "comparable_total": comparable_total,
         "passed": passed,
         "accuracy_pct": accuracy,
+        "status": "NOT_RUN" if (executor is None and approved) else "COMPLETED",
         "results": results,
         "ran_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -2119,7 +2071,7 @@ def inject_verified_queries_for_project(
     """Inject qualifying verified query pairs into downstream AI consumer (Cortex Analyst or Genie)."""
     from semabridge.ai.bi_truth_injection import perform_injection
     from semabridge.governance.drift.adapters.registry import get_adapter, resolve_project_platform
-    from semabridge.ai.project_connection import resolve_project_warehouse_config
+    from semabridge.ai.project_connection import _project_meta, resolve_project_warehouse_config
 
     pid = str(project_id or "").strip()
     if not pid:
@@ -2129,20 +2081,14 @@ def inject_verified_queries_for_project(
     runs = list_truth_runs(pid)
     latest_run = runs[0] if runs else None
 
-    # Resolve platform and connection config
-    conn_cfg = None
-    try:
-        conn_cfg = resolve_project_warehouse_config(pid)
-    except Exception:
-        pass
-
-    platform = "SNOWFLAKE"
-    if conn_cfg:
-        raw_plat = getattr(conn_cfg, "platform", None) or (conn_cfg.get("platform") if isinstance(conn_cfg, dict) else "")
-        if not raw_plat:
-            raw_plat = getattr(conn_cfg, "target_type", None) or (conn_cfg.get("target_type") if isinstance(conn_cfg, dict) else "")
-        if raw_plat:
-            platform = str(raw_plat).upper().strip()
+    # Resolve platform from project metadata or executor
+    meta = _project_meta(pid)
+    platform = resolve_project_platform(meta)
+    if platform in ("NOT_SET", "UNKNOWN", ""):
+        from semabridge.ai.executors.base import get_executor
+        ex = get_executor(pid)
+        if ex:
+            platform = ex.platform
 
     try:
         adapter = get_adapter(platform, mode="live")
@@ -2166,6 +2112,7 @@ def inject_verified_queries_for_project(
     if not resolved_view:
         resolved_view = pid.replace("proj-", "")
 
+    conn_cfg = resolve_project_warehouse_config(pid, platform)
     result = perform_injection(
         adapter=adapter,
         project_id=pid,

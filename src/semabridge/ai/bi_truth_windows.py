@@ -118,77 +118,23 @@ def is_semantic_view_query(sql: str) -> bool:
     return bool(_SEMANTIC_VIEW_RE.search(sql or ""))
 
 
-def build_windowed_sql(sql: Optional[str], filter_clause: Any) -> Optional[str]:
+def build_windowed_sql(
+    sql: Optional[str],
+    filter_clause: Any,
+    platform: Optional[str] = "SNOWFLAKE",
+) -> Optional[str]:
     """Return the SQL narrowed to a window, or None when it cannot be narrowed.
 
     Returning None is the honest answer for a shape this cannot safely modify. A
     caller that receives None reports the window as not comparable rather than
     running the unfiltered query and comparing it to a window's expected value.
     """
-    if not sql or not str(sql).strip():
+    from semabridge.ai.window_builders import get_window_builder
+
+    builder = get_window_builder(platform)
+    if builder is None:
         return None
-
-    # Handle filter_clause passed as string, dict, or CaseWindow
-    if isinstance(filter_clause, dict):
-        clause_str = str(filter_clause.get("filter_clause") or filter_clause.get("filter") or "").strip()
-    elif hasattr(filter_clause, "filter_clause"):
-        clause_str = str(filter_clause.filter_clause or "").strip()
-    else:
-        clause_str = str(filter_clause or "").strip()
-
-    if not clause_str:
-        return str(sql)
-
-    text = str(sql).rstrip().rstrip(";")
-
-    # Refuse query shapes not recognised as a SELECT statement
-    cleaned_sql = _strip_leading_comments(text)
-    if not _PLAIN_SELECT_RE.match(cleaned_sql):
+    supported, _reason = builder.supports_windows()
+    if not supported:
         return None
-
-    # Refuse forbidden / injection patterns in the filter clause
-    if _FORBIDDEN_SQL_RE.search(clause_str):
-        return None
-
-    if is_semantic_view_query(text):
-        # A filter inside SEMANTIC_VIEW must be a simple qualified comparison (TABLE.DIMENSION <op> <val>)
-        if not _QUALIFIED_FILTER_RE.match(clause_str):
-            return None
-
-        # Snowflake SEMANTIC_VIEW natively accepts an internal WHERE clause inside
-        # the call argument list, narrowing the metric calculation over the slice.
-        m = _SEMANTIC_VIEW_RE.search(text)
-        if not m:
-            return None
-        start_paren = m.end() - 1
-        depth = 0
-        end_paren = -1
-        for i in range(start_paren, len(text)):
-            if text[i] == "(":
-                depth += 1
-            elif text[i] == ")":
-                depth -= 1
-                if depth == 0:
-                    end_paren = i
-                    break
-        if end_paren == -1:
-            return None
-
-        args = text[start_paren + 1 : end_paren].strip()
-        joiner = "AND" if _WHERE_RE.search(args) else "WHERE"
-        new_args = f"{args} {joiner} {clause_str}"
-        return f"{text[:start_paren + 1]}{new_args}{text[end_paren:]}".strip()
-
-    # Plain SELECT: must be a valid simple filter
-    if not _PLAIN_FILTER_RE.match(clause_str):
-        return None
-
-    tail_match = _TAIL_RE.search(text)
-    head = text[: tail_match.start()].rstrip() if tail_match else text
-    tail = text[tail_match.start():] if tail_match else ""
-
-    joiner = "AND" if _WHERE_RE.search(head) else "WHERE"
-    windowed = f"{head} {joiner} ({clause_str})" if joiner == "AND" else f"{head} {joiner} {clause_str}"
-    if tail:
-        windowed = f"{windowed} {tail}"
-    return windowed
+    return builder.build(sql, filter_clause)

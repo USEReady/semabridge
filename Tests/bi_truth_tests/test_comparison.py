@@ -180,3 +180,51 @@ def test_1_22_every_verdict_explains_itself():
                          expected_row_count=1, actual_row_count=2),
     ):
         assert r.reason, f"{r.verdict} gave no reason"
+
+
+# ------------------------------------------------------------------ executor types & platform isolation
+
+def test_1_23_databricks_decimal_and_string_numbers_compare_as_numbers():
+    from decimal import Decimal
+    from semabridge.ai.executors.databricks_executor import _normalize_databricks_cell
+
+    dec_val = _normalize_databricks_cell(Decimal("1000000.00"))
+    str_val = _normalize_databricks_cell("1000000.50")
+    assert isinstance(dec_val, float)
+    assert isinstance(str_val, float)
+    assert C.compare_values(expected=1000000.0, actual=dec_val).verdict is V.PASS
+    assert C.compare_values(expected=1000000.5, actual=str_val).verdict is V.PASS
+
+
+def test_1_24_databricks_null_against_null_and_differing_rows():
+    from semabridge.ai.executors.databricks_executor import _normalize_databricks_cell
+
+    assert _normalize_databricks_cell(None) is None
+    assert C.compare_values(expected=None, actual=_normalize_databricks_cell(None)).verdict is V.PASS
+    r_rows = C.compare_values(
+        expected=500000.0,
+        actual=_normalize_databricks_cell("500000.0"),
+        expected_row_count=1,
+        actual_row_count=2,
+    )
+    assert r_rows.verdict is V.ROWS_DIFFER
+
+
+def test_1_25_uppercased_databricks_column_names_compare_regardless_of_stored_casing():
+    from semabridge.ai.bi_truth_comparison import compare_truth_results
+
+    actual_rows = [{"ACCO_ACCOUNT_NAME": "Acme Corp", "MEASURE(AVG_OF_ANNUAL_REVENUE)": 500000.0}]
+    expected_rows = [{"acco_account_name": "Acme Corp", "measure(avg_of_annual_revenue)": 500000.0}]
+    ok, err, details = compare_truth_results(actual_rows, expected_rows, expected_row_count=1)
+    assert ok is True
+    assert err is None
+    assert details["verdict"] == "PASS"
+
+
+def test_1_26_bi_truth_comparison_has_no_platform_or_adapter_imports():
+    from pathlib import Path
+    import semabridge.ai.bi_truth_comparison as mod
+
+    src = Path(mod.__file__).read_text(encoding="utf-8").lower()
+    for forbidden in ("snowflake", "databricks", "adapters", "executors"):
+        assert forbidden not in src, f"bi_truth_comparison.py must not reference '{forbidden}'"

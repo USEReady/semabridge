@@ -137,6 +137,7 @@ def test_windowed_case_evaluates_per_window(monkeypatch):
     monkeypatch.setattr("semabridge.ai.bi_truth_service._save_suite", lambda data: None)
     monkeypatch.setattr("semabridge.ai.nl_query_engine.NLQueryEngine.resolve_query", lambda self, *args, **kwargs: mock_plan)
     monkeypatch.setattr("semabridge.ai.project_connection.resolve_project_scope", lambda pid, explicit_view=None: MagicMock(semantic_view=None, allowed_domains=[]))
+    monkeypatch.setattr("semabridge.ai.project_connection._project_meta", lambda pid: {"platform": "SNOWFLAKE"})
     monkeypatch.setattr("semabridge.ai.project_connection.resolve_project_warehouse_config", lambda pid, platform, owner_id=None: None)
 
     run_result = run_truth_suite(project_id="proj-windows")
@@ -174,6 +175,7 @@ def test_window_without_expected_value_is_not_comparable(monkeypatch):
     monkeypatch.setattr("semabridge.ai.bi_truth_service._save_suite", lambda data: None)
     monkeypatch.setattr("semabridge.ai.nl_query_engine.NLQueryEngine.resolve_query", lambda self, *args, **kwargs: mock_plan)
     monkeypatch.setattr("semabridge.ai.project_connection.resolve_project_scope", lambda pid, explicit_view=None: MagicMock(semantic_view=None, allowed_domains=[]))
+    monkeypatch.setattr("semabridge.ai.project_connection._project_meta", lambda pid: {"platform": "SNOWFLAKE"})
     monkeypatch.setattr("semabridge.ai.project_connection.resolve_project_warehouse_config", lambda pid, platform, owner_id=None: None)
 
     run_result = run_truth_suite(project_id="proj-fallback")

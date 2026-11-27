@@ -6,6 +6,14 @@ be testing the model about to be replaced.
 
 It reports by default. Only a project configured to block is ever stopped, so an
 existing project's deploys are unaffected.
+
+BI Truth Configuration Defaults:
+- Tolerance: ``0.001`` (0.1% relative variance; ``bi_truth_comparison.DEFAULT_TOLERANCE``)
+- Per-measure absolute floor: ``0.0001`` (``bi_truth_comparison.DEFAULT_ABSOLUTE_FLOOR``)
+- Max result age: ``24`` hours (``DEFAULT_MAX_RESULT_AGE_HOURS``)
+- Warehouse query timeout: ``30``s in ``DatabricksAdapter._execute_sql_statement`` (or ``cfg.timeout``),
+  ``15``s in ``DatabricksTruthExecutor.execute``
+- Gate mode: ``"report"`` (``GateMode.REPORT``)
 """
 from __future__ import annotations
 

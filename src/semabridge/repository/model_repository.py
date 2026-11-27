@@ -1008,9 +1008,21 @@ class ModelRepository:
                         info["deploy_error"] = row.error_message
 
                     if row.deployed_at is not None and row.status == "success" and row.view_name:
-                        db = row.target_database or proj_db
-                        schema = row.target_schema or proj_schema
-                        view = row.view_name.strip().strip('"')
+                        raw_v = row.view_name.strip().strip('"').strip('`')
+                        v_parts = [p.strip().strip('"').strip('`') for p in raw_v.split(".") if p.strip()]
+                        if len(v_parts) == 3:
+                            db = v_parts[0]
+                            schema = v_parts[1]
+                            view = v_parts[2]
+                        elif len(v_parts) == 2:
+                            db = row.target_database or proj_db
+                            schema = v_parts[0]
+                            view = v_parts[1]
+                        else:
+                            db = row.target_database or proj_db
+                            schema = row.target_schema or proj_schema
+                            view = v_parts[0] if v_parts else raw_v
+
                         info["database"] = db
                         info["schema"] = schema
                         info["view_name"] = view
@@ -1035,9 +1047,25 @@ class ModelRepository:
                             if not info["deploy_error"] and str(r_status or "").lower() == "failed" and r_err:
                                 info["deploy_error"] = r_err
                             if not info["semantic_view"] and str(r_status or "").lower() == "success" and r_view:
-                                ns_parts = [p.strip().strip('"') for p in str(r_ns or "").split(".") if p.strip()]
-                                parts = [_q_part(p) for p in (*ns_parts, r_view) if p]
+                                raw_v = str(r_view or "").strip().strip('"').strip('`')
+                                v_parts = [p.strip().strip('"').strip('`') for p in raw_v.split(".") if p.strip()]
+                                if len(v_parts) == 3:
+                                    db = v_parts[0]
+                                    schema = v_parts[1]
+                                    pure_view = v_parts[2]
+                                    parts = [_q_part(p) for p in (db, schema, pure_view) if p]
+                                elif len(v_parts) == 2:
+                                    schema = v_parts[0]
+                                    pure_view = v_parts[1]
+                                    ns_parts = [p.strip().strip('"').strip('`') for p in str(r_ns or "").split(".") if p.strip()]
+                                    db = ns_parts[0] if ns_parts else None
+                                    parts = [_q_part(p) for p in (db, schema, pure_view) if p]
+                                else:
+                                    pure_view = v_parts[0] if v_parts else raw_v
+                                    ns_parts = [p.strip().strip('"').strip('`') for p in str(r_ns or "").split(".") if p.strip()]
+                                    parts = [_q_part(p) for p in (*ns_parts, pure_view) if p]
                                 info["semantic_view"] = ".".join(parts) if parts else None
+                                info["view_name"] = pure_view
                             if info["semantic_view"]:
                                 break
                 except Exception:
@@ -1148,23 +1176,36 @@ class ModelRepository:
             for row, proj_db, proj_schema, proj_adapter, run_target, run_type in rows:
                 if str(run_type or "").upper() == "DRY_RUN":
                     continue
-                view_name = (row.view_name or "").strip().strip('"')
+                view_name = (row.view_name or "").strip().strip('"').strip('`')
                 if not view_name and row.sml_blob:
                     blob = _deserialize_sml_blob(row.sml_blob)
                     if isinstance(blob, dict):
                         m_label = blob.get("unique_name") or blob.get("label")
                         if m_label:
                             from semabridge.converter.model_to_snowflake_semantic_view import get_target_deployment_name
-                            view_name = get_target_deployment_name(m_label, "snowflake").strip().strip('"')
+                            view_name = get_target_deployment_name(m_label, "snowflake").strip().strip('"').strip('`')
                 if not view_name:
                     continue
 
-                db = row.target_database or proj_db or proj_db_default or ""
-                schema = row.target_schema or proj_schema or proj_schema_default or ""
-                parts = [_q_part(p) for p in (db, schema, view_name) if p]
-                semantic_view = ".".join(parts) if parts else view_name
+                v_parts = [p.strip().strip('"').strip('`') for p in view_name.split(".") if p.strip()]
+                if len(v_parts) == 3:
+                    db = v_parts[0]
+                    schema = v_parts[1]
+                    pure_view = v_parts[2]
+                elif len(v_parts) == 2:
+                    db = row.target_database or proj_db or proj_db_default or ""
+                    schema = v_parts[0]
+                    pure_view = v_parts[1]
+                else:
+                    db = row.target_database or proj_db or proj_db_default or ""
+                    schema = row.target_schema or proj_schema or proj_schema_default or ""
+                    pure_view = v_parts[0] if v_parts else view_name
 
-                norm_key = f"{db}.{schema}.{view_name}".upper()
+                view_name = pure_view
+                parts = [_q_part(p) for p in (db, schema, pure_view) if p]
+                semantic_view = ".".join(parts) if parts else pure_view
+
+                norm_key = f"{db}.{schema}.{pure_view}".upper()
                 if norm_key in seen_views:
                     continue
                 seen_views.add(norm_key)
@@ -1197,15 +1238,28 @@ class ModelRepository:
                         {"pid": candidate_pid},
                     ).fetchall()
                     for r_status, r_view, r_ns, r_run_id, r_created in rmr_rows:
-                        view_name = str(r_view or "").strip().strip('"')
+                        view_name = str(r_view or "").strip().strip('"').strip('`')
                         if not view_name:
                             continue
-                        ns_parts = [p.strip().strip('"') for p in str(r_ns or "").split(".") if p.strip()]
-                        db = ns_parts[0] if len(ns_parts) > 1 else (proj_db_default or "")
-                        schema = ns_parts[1] if len(ns_parts) > 1 else (ns_parts[0] if ns_parts else (proj_schema_default or ""))
-                        parts = [_q_part(p) for p in (db, schema, view_name) if p]
-                        semantic_view = ".".join(parts) if parts else view_name
-                        norm_key = f"{db}.{schema}.{view_name}".upper()
+                        v_parts = [p.strip().strip('"').strip('`') for p in view_name.split(".") if p.strip()]
+                        if len(v_parts) == 3:
+                            db = v_parts[0]
+                            schema = v_parts[1]
+                            pure_view = v_parts[2]
+                        elif len(v_parts) == 2:
+                            ns_parts = [p.strip().strip('"').strip('`') for p in str(r_ns or "").split(".") if p.strip()]
+                            db = ns_parts[0] if ns_parts else (proj_db_default or "")
+                            schema = v_parts[0]
+                            pure_view = v_parts[1]
+                        else:
+                            pure_view = v_parts[0] if v_parts else view_name
+                            ns_parts = [p.strip().strip('"').strip('`') for p in str(r_ns or "").split(".") if p.strip()]
+                            db = ns_parts[0] if len(ns_parts) > 1 else (proj_db_default or "")
+                            schema = ns_parts[1] if len(ns_parts) > 1 else (ns_parts[0] if ns_parts else (proj_schema_default or ""))
+                        view_name = pure_view
+                        parts = [_q_part(p) for p in (db, schema, pure_view) if p]
+                        semantic_view = ".".join(parts) if parts else pure_view
+                        norm_key = f"{db}.{schema}.{pure_view}".upper()
                         if norm_key in seen_views:
                             continue
                         seen_views.add(norm_key)
