@@ -1494,6 +1494,33 @@ class NLQueryEngine:
         first_metric_order_col: Optional[str] = None
 
         if effective_semantic_view:
+            from semabridge.ai.sql_builders import get_builder
+            from semabridge.ai.window_builders import get_window_builder
+
+            sql_builder = get_builder(dialect)
+            if sql_builder is None:
+                refusal_msg = f"No SQL builder available for dialect '{dialect}'."
+                return QueryResolutionPlan(
+                    original_prompt=prompt,
+                    detected_metrics=[m.name for m in detected_metrics],
+                    detected_dimensions=dim_names,
+                    resolved_tables=sorted(needed_concepts),
+                    generated_sql="",
+                    sql=None,
+                    confidence_score=0.0,
+                    answerable=False,
+                    refused=True,
+                    reason_code="UNSUPPORTED_DIALECT",
+                    reason_text=refusal_msg,
+                    engine="local",
+                    explanation=refusal_msg,
+                    warnings=warnings + [refusal_msg],
+                    view=effective_semantic_view,
+                    semantic_view=effective_semantic_view,
+                    query_path="none",
+                    guard_checks=[],
+                )
+
             sv_metrics: List[str] = []
             sv_dims: List[str] = []
             for m in detected_metrics:
@@ -1512,16 +1539,31 @@ class NLQueryEngine:
                 c_obj, a_obj = dim_to_pair[d]
                 sv_dims.append(self._sv_dim_ref(c_obj, a_obj, lexicon))
 
-            sv_clauses: List[str] = [effective_semantic_view]
-            if sv_metrics:
-                sv_clauses.append(f"METRICS {', '.join(sv_metrics)}")
-            if sv_dims:
-                sv_clauses.append(f"DIMENSIONS {', '.join(sv_dims)}")
-            if filters and (sv_metrics or sv_dims):
-                sv_clauses.append(f"WHERE {' AND '.join(filters)}")
+            metric_arg = ", ".join(sv_metrics) if sv_metrics else ""
+            if parsed.top_n:
+                governed_core_sql = sql_builder.build_top_n(
+                    effective_semantic_view, metric_arg, sv_dims, n=parsed.top_n
+                )
+            elif sv_dims:
+                governed_core_sql = sql_builder.build_sliced(
+                    effective_semantic_view, metric_arg, sv_dims
+                )
+            else:
+                governed_core_sql = sql_builder.build_total(
+                    effective_semantic_view, metric_arg
+                )
 
-            select_parts = ["    *"]
-            from_target: Optional[str] = "SEMANTIC_VIEW(" + " ".join(sv_clauses) + ")"
+            if filters:
+                win_builder = get_window_builder(dialect)
+                if win_builder is not None:
+                    for flt in filters:
+                        narrowed = win_builder.build(governed_core_sql, flt)
+                        if narrowed:
+                            governed_core_sql = narrowed
+                if not governed_core_sql.rstrip().endswith(";"):
+                    governed_core_sql = governed_core_sql.rstrip() + ";"
+
+            from_target: Optional[str] = None
         else:
             select_parts: List[str] = []
             if is_distinct_dim_query:
@@ -1612,6 +1654,9 @@ class NLQueryEngine:
                 from_join = " CROSS JOIN ".join(cte_names)
                 combine_sql = f"{with_clause}\nSELECT {', '.join(all_m_cols)}\nFROM {from_join}"
             generated_sql = combine_sql + f"\nLIMIT {limit_val};"
+        elif effective_semantic_view:
+            sql_lines.append(governed_core_sql)
+            generated_sql = "\n".join(sql_lines)
         else:
             sql_lines.append("SELECT")
             sql_lines.append(",\n".join(select_parts))
@@ -1628,9 +1673,6 @@ class NLQueryEngine:
             sql_lines.append(f"LIMIT {limit_val};")
 
             generated_sql = "\n".join(sql_lines)
-
-        if dialect.upper() == "DATABRICKS":
-            generated_sql = re.sub(r"\bIFF\(", "IF(", generated_sql, flags=re.IGNORECASE)
 
         confidence = min(0.95, 0.55 + (0.35 if dim_names else 0.15) - (0.10 if warnings else 0.0))
         explanation_parts = []
