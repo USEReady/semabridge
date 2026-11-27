@@ -188,9 +188,18 @@ def validate_pbi_desktop_source_config(source: Optional[dict]) -> None:
 
     models = source.get("models")
     if not models or not isinstance(models, list):
-        raise ValidationError(
-            "At least one Power BI Desktop model must be selected (source.models)."
-        )
+        single_model = source.get("model")
+        if single_model and isinstance(single_model, (str, dict)) and str(single_model).strip() not in ("", "*", "[object Object]"):
+            models = [single_model]
+            source["models"] = models
+            source.pop("model", None)
+        else:
+            raise ValidationError(
+                "At least one Power BI Desktop model must be selected (source.models)."
+            )
+    else:
+        # Clean singular model if present alongside models list
+        source.pop("model", None)
 
     seen_keys = set()
     for entry in models:

@@ -1299,8 +1299,8 @@ export default function CreateProjectPage({ editMode = false, initialData = null
 
     if (sourceConnector === 'pbi_desktop') {
       source.models = pbiDesktopSelectedFiles.map((f) => ({
-        file_path: f.file_path,
-        display_name: f.file_name,
+        file_path: f.file_path || '',
+        display_name: f.display_name || f.file_name || f.name || '',
       }));
     }
 
@@ -1368,7 +1368,16 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     if (source.schema) lines.push(`  schema: "${escapeYamlString(source.schema)}"`);
     if (source.models?.length) {
       lines.push('  models:');
-      source.models.forEach(modelName => lines.push(`    - "${escapeYamlString(modelName)}"`));
+      source.models.forEach(modelName => {
+        if (typeof modelName === 'object' && modelName !== null) {
+          lines.push('    -');
+          if (modelName.file_path) lines.push(`      file_path: "${escapeYamlString(modelName.file_path)}"`);
+          const disp = modelName.display_name || modelName.file_name || modelName.name || '';
+          if (disp) lines.push(`      display_name: "${escapeYamlString(disp)}"`);
+        } else {
+          lines.push(`    - "${escapeYamlString(modelName)}"`);
+        }
+      });
     } else if (source.model) {
       lines.push(`  model: "${escapeYamlString(source.model)}"`);
     }
@@ -2396,6 +2405,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
               selectedModelNameByKey={selectedModelNameByKey}
               pbixSourceLabels={pbixSourceLabels}
               savedPbixSourceLabels={savedPbixSourceLabels}
+              pbiDesktopSelectedFiles={pbiDesktopSelectedFiles}
               onClear={clearWizardState}
             />
           )}

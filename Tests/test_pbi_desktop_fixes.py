@@ -198,6 +198,15 @@ def test_validation_rejects_unsaved_new_file(monkeypatch):
     }
     validate_pbi_desktop_source_config(cfg_valid)
 
+    # Valid config with singular model normalizes into models list
+    cfg_singular = {
+        "type": "pbi_desktop",
+        "model": "Regional Sales Sample",
+    }
+    validate_pbi_desktop_source_config(cfg_singular)
+    assert cfg_singular["models"] == ["Regional Sales Sample"]
+    assert "model" not in cfg_singular
+
 
 # ---------------------------------------------------------------------------
 # 3. Adapter Resolution: Path, Display Name, and Ambiguity Check

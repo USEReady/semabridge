@@ -79,14 +79,14 @@ export function parseConfigYamlToInitialData(yamlText, projectMeta) {
           if (typeof m === 'object' && m !== null) {
             return {
               file_path: String(m.file_path || m.path || ''),
-              display_name: String(m.display_name || m.name || ''),
+              display_name: String(m.display_name || m.name || m.file_name || ''),
             };
           }
           return {
-            file_path: String(m || ''),
+            file_path: '',
             display_name: String(m || ''),
           };
-        }).filter(m => m.file_path)
+        }).filter(m => m.display_name || m.file_path)
       : [];
 
     return {

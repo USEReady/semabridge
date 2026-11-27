@@ -22,6 +22,7 @@ export function StepFinish({
   selectedModelNameByKey,
   pbixSourceLabels = [],
   savedPbixSourceLabels = [],
+  pbiDesktopSelectedFiles = [],
   onClear,
 }) {
   const createdProjectId = createdProject?.id || createdProject?.project_id;
@@ -98,6 +99,11 @@ export function StepFinish({
   const showDiffs = editMode && diff && Object.keys(diff).length > 0;
 
   const isPbix = String(sourceConnector || '').toLowerCase() === 'pbix';
+  const isPbiDesktop = String(sourceConnector || '').toLowerCase() === 'pbi_desktop';
+  const desktopLabels = (pbiDesktopSelectedFiles || [])
+    .map(f => f.file_name || f.display_name || (f.file_path ? f.file_path.split(/[/\\]/).pop() : ''))
+    .filter(Boolean);
+
   // De-duplicated display names (a model selected under both its name and
   // its GUID is listed once).
   const namesFor = (keys) => [...new Set(Array.from(keys || [])
@@ -105,13 +111,17 @@ export function StepFinish({
     .sort()
     .join(', ');
 
-  // PBIX: list the actual file(s) that will be saved -- never "Everything (*)".
+  // PBIX / Desktop: list the actual file(s) that will be saved -- never "Everything (*)".
   const currentSelectionNames = isPbix
     ? (pbixSourceLabels.length > 0 ? pbixSourceLabels.join(', ') : 'No PBIX file selected')
+    : isPbiDesktop
+    ? (desktopLabels.length > 0 ? desktopLabels.join(', ') : 'No Power BI Desktop file selected')
     : (selectedModels?.size > 0 ? namesFor(selectedModels) : 'Everything (*)');
 
   const wasSelectionNames = isPbix
     ? (savedPbixSourceLabels.length > 0 ? savedPbixSourceLabels.join(', ') : 'No PBIX file selected')
+    : isPbiDesktop
+    ? (desktopLabels.length > 0 ? desktopLabels.join(', ') : 'No Power BI Desktop file selected')
     : (savedModels?.size > 0 ? namesFor(savedModels) : 'Everything (*)');
 
   const modelsChanged = editMode && currentSelectionNames !== wasSelectionNames;
@@ -161,7 +171,7 @@ export function StepFinish({
           </div>
         </div>
         <div>
-          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', marginBottom: 4 }}>{isPbix ? `PBIX File${pbixSourceLabels.length === 1 ? '' : 's'}` : 'Selected Models'}</div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', marginBottom: 4 }}>{isPbix ? `PBIX File${pbixSourceLabels.length === 1 ? '' : 's'}` : isPbiDesktop ? `Power BI Desktop File${desktopLabels.length === 1 ? '' : 's'}` : 'Selected Models'}</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{currentSelectionNames}</span>

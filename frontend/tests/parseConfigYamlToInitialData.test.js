@@ -92,3 +92,22 @@ targets:
   assert.deepEqual(result.pbix_file_paths, []);
   assert.deepEqual(result.models, ['Sales']);
 });
+
+test('restores pbi_desktop_models for Power BI Desktop projects (with and without file_path)', () => {
+  const yamlText = `
+source:
+  type: pbi_desktop
+  models:
+    - file_path: "C:/models/Regional Sales Sample.pbix"
+      display_name: "Regional Sales Sample"
+    - display_name: "Life expectancy v202009"
+targets:
+  - type: snowflake
+`;
+  const result = parseConfigYamlToInitialData(yamlText, { id: 10, source: { type: 'pbi_desktop' } });
+  assert.equal(result.source_type, 'pbi_desktop');
+  assert.deepEqual(result.pbi_desktop_models, [
+    { file_path: 'C:/models/Regional Sales Sample.pbix', display_name: 'Regional Sales Sample' },
+    { file_path: '', display_name: 'Life expectancy v202009' },
+  ]);
+});

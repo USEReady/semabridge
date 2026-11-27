@@ -257,6 +257,7 @@ function ProjectDashboard({ project, configForm, setConfigForm, connectionStatus
               <option value="fabric">Microsoft Fabric</option>
               <option value="snowflake">Snowflake</option>
               <option value="pbix">Local PBIX</option>
+              <option value="pbi_desktop">Power BI Desktop</option>
             </FormSelect>
           </div>
           
@@ -356,6 +357,20 @@ function ProjectDashboard({ project, configForm, setConfigForm, connectionStatus
               />
               <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
                 Active PBIX file path for this project. Click 'Replace / Upload PBIX' to upload a modified file.
+              </div>
+            </div>
+          )}
+
+          {String(configForm.source_type || '').toLowerCase() === 'pbi_desktop' && (
+            <div style={{ gridColumn: 'span 2' }}>
+              <FormLabel>Power BI Desktop Model(s)</FormLabel>
+              <div style={{ fontSize: 13, color: 'var(--text-primary)', marginTop: 4 }}>
+                {Array.isArray(configForm.pbi_desktop_models) && configForm.pbi_desktop_models.length > 0
+                  ? configForm.pbi_desktop_models.map(m => m.display_name || m.file_path || m.file_name).filter(Boolean).join(', ')
+                  : 'Power BI Desktop (Live Analysis Services instance)'}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
+                Source models connect live to active instances running in Power BI Desktop.
               </div>
             </div>
           )}
@@ -943,6 +958,26 @@ export default function ProjectConfigPage({ embedded = false } = {}) {
       normalized.source = source;
     }
 
+    if (sourceType === 'pbi_desktop') {
+      delete source.model;
+      if (Array.isArray(source.models)) {
+        source.models = source.models.map(m => {
+          if (typeof m === 'object' && m !== null) {
+            const entry = {};
+            if (m.file_path) entry.file_path = String(m.file_path);
+            if (m.display_name) entry.display_name = String(m.display_name);
+            else if (m.name) entry.display_name = String(m.name);
+            else if (m.file_name) entry.display_name = String(m.file_name);
+            return Object.keys(entry).length > 0 ? entry : { display_name: String(tree?.project_name || 'Untitled') };
+          }
+          return { display_name: String(m) };
+        });
+      } else if (source.model && typeof source.model === 'string' && source.model !== '*' && source.model !== '[object Object]') {
+        source.models = [{ display_name: source.model }];
+      }
+      normalized.source = source;
+    }
+
     return normalized;
   };
 
@@ -962,6 +997,7 @@ export default function ProjectConfigPage({ embedded = false } = {}) {
           pbix_folder: '',
           pbix_uploaded_path: '',
           pbix_models: [],
+          pbi_desktop_models: [],
           identity_id: '',
           workspace_id: '',
           database: '',
@@ -995,16 +1031,35 @@ export default function ProjectConfigPage({ embedded = false } = {}) {
     const options = tree.options && typeof tree.options === 'object' ? tree.options : {};
 
     const resolvedSourceType = String(source.type || fallbackSource).toLowerCase();
-    const sourceModels = Array.isArray(source.models) ? source.models.map(v => String(v).trim()).filter(Boolean) : [];
+    const sourceModels = Array.isArray(source.models)
+      ? source.models.map(v => {
+          if (typeof v === 'object' && v !== null) {
+            return String(v.display_name || v.name || v.file_name || v.file_path || '').trim();
+          }
+          return String(v).trim();
+        }).filter(Boolean)
+      : [];
     const sourceModel = source.model ? String(source.model).trim() : '';
-    // For pbix sources, `source.models` is a list of PBIX file paths (one
-    // semantic view per file — see CreateProjectPage.jsx's buildSourceConfig),
-    // not a Fabric/Snowflake model-name allow-list. Keep the two concepts
-    // separate so a multi-PBIX project's file list isn't misread as empty
-    // pbix_path/pbix_folder (which previously blocked Sync Now) nor as an
-    // allow-list of model names to filter.
+
+    const pbiDesktopModels = resolvedSourceType === 'pbi_desktop'
+      ? (Array.isArray(source.models)
+        ? source.models.map(m => {
+            if (typeof m === 'object' && m !== null) {
+              return {
+                file_path: String(m.file_path || m.path || ''),
+                display_name: String(m.display_name || m.name || m.file_name || ''),
+              };
+            }
+            return {
+              file_path: '',
+              display_name: String(m || ''),
+            };
+          }).filter(m => m.display_name || m.file_path)
+        : (sourceModel && sourceModel !== '*' && sourceModel !== '[object Object]' ? [{ file_path: '', display_name: sourceModel }] : []))
+      : [];
+
     const pbixModels = resolvedSourceType === 'pbix' ? sourceModels : [];
-    const allowModels = resolvedSourceType === 'pbix'
+    const allowModels = (resolvedSourceType === 'pbix' || resolvedSourceType === 'pbi_desktop')
       ? []
       : (sourceModels.length ? sourceModels : (sourceModel && sourceModel !== '*' ? [sourceModel] : []));
 
@@ -1023,6 +1078,7 @@ export default function ProjectConfigPage({ embedded = false } = {}) {
         pbix_folder: String(source.pbix_folder || ''),
         pbix_uploaded_path: String(projectMeta?.pbix_file_path || source.pbix_file_path || source.pbix_path || ''),
         pbix_models: pbixModels,
+        pbi_desktop_models: pbiDesktopModels,
         identity_id: String(source.identity_id || ''),
         workspace_id: String(source.workspace_id || ''),
         database: String(source.database || ''),
@@ -1134,6 +1190,41 @@ export default function ProjectConfigPage({ embedded = false } = {}) {
         nextTree.source.models = formToUse.pbix_models;
       } else {
         delete nextTree.source.models;
+      }
+    } else if (formToUse.source_type === 'pbi_desktop') {
+      delete nextTree.source.identity_id;
+      delete nextTree.source.workspace_id;
+      delete nextTree.source.database;
+      delete nextTree.source.schema;
+      delete nextTree.source.pbix_path;
+      delete nextTree.source.pbix_folder;
+      delete nextTree.source.source_path;
+      delete nextTree.source.file_path;
+      delete nextTree.source.model;
+
+      const rawModels = (Array.isArray(formToUse.pbi_desktop_models) && formToUse.pbi_desktop_models.length > 0)
+        ? formToUse.pbi_desktop_models
+        : (Array.isArray(configTree?.source?.models) && configTree.source.models.length > 0)
+          ? configTree.source.models
+          : (Array.isArray(nextTree.source?.models) && nextTree.source.models.length > 0)
+            ? nextTree.source.models
+            : [];
+
+      if (rawModels.length > 0) {
+        nextTree.source.models = rawModels.map((m) => {
+          if (typeof m === 'object' && m !== null) {
+            const entry = {};
+            if (m.file_path) entry.file_path = String(m.file_path);
+            const disp = m.display_name || m.name || m.file_name;
+            if (disp) entry.display_name = String(disp);
+            return Object.keys(entry).length > 0 ? entry : { display_name: String(project?.name || 'Untitled') };
+          }
+          return { display_name: String(m) };
+        });
+      } else if (allow.length > 0 && allow[0] !== '[object Object]') {
+        nextTree.source.models = allow.map(a => ({ display_name: a }));
+      } else {
+        nextTree.source.models = [{ display_name: String(project?.name || 'Untitled') }];
       }
     } else if (formToUse.source_type === 'fabric') {
       if (allow.length) {
@@ -2798,6 +2889,7 @@ function FormEditor({
             <option value="fabric">fabric</option>
             <option value="snowflake">snowflake</option>
             <option value="databricks">databricks</option>
+            <option value="pbi_desktop">pbi_desktop</option>
           </select>
         </div>
         <div>
@@ -2821,7 +2913,7 @@ function FormEditor({
         <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 12 }}>
           1. Source Configuration
           <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--accent-blue)', marginLeft: 8 }}>
-            {value.source_type === 'fabric' ? 'Microsoft Fabric' : value.source_type === 'snowflake' ? 'Snowflake' : value.source_type === 'databricks' ? 'Databricks' : 'PBIX File'}
+            {value.source_type === 'fabric' ? 'Microsoft Fabric' : value.source_type === 'snowflake' ? 'Snowflake' : value.source_type === 'databricks' ? 'Databricks' : value.source_type === 'pbi_desktop' ? 'Power BI Desktop' : 'PBIX File'}
           </span>
         </div>
 
@@ -2996,6 +3088,20 @@ function FormEditor({
                 from project creation (each becomes its own semantic view): {value.pbix_models.join(', ')}
               </div>
             )}
+          </div>
+        )}
+
+        {value.source_type === 'pbi_desktop' && (
+          <div>
+            <label style={LABEL}>Power BI Desktop Model(s)</label>
+            <div style={{ fontSize: 13, color: 'var(--text-primary)', marginBottom: 6 }}>
+              {Array.isArray(value.pbi_desktop_models) && value.pbi_desktop_models.length > 0
+                ? value.pbi_desktop_models.map(m => m.display_name || m.file_path || m.file_name).filter(Boolean).join(', ')
+                : 'Power BI Desktop (Live Analysis Services instance)'}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+              Power BI Desktop models connect live to open instances of Power BI Desktop.
+            </div>
           </div>
         )}
       </div>
