@@ -35,7 +35,7 @@ def clean_drift_state(tmp_path, monkeypatch):
     state_file = tmp_path / "drift_state.json"
     state_file.write_text(json.dumps({"baselines": {}, "events": [], "last_checks": {}}), encoding="utf-8")
     monkeypatch.setattr("semabridge.governance.drift_service._state_path", lambda: state_file)
-    monkeypatch.setattr("semabridge.governance.drift_service._db_load_events", lambda: None)
+    monkeypatch.setattr("semabridge.governance.drift_service._db_load_events", lambda *args, **kwargs: None)
     monkeypatch.setattr("semabridge.governance.drift_service._db_save_events", lambda *a, **k: False)
     try:
         from semabridge.repository.orm.session_factory import db_manager

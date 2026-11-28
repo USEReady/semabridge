@@ -13,8 +13,15 @@ from semabridge.governance.drift.models import (
 
 @pytest.fixture
 def pbix_extracted_objects():
-    pbix_path = r"output\uploads\files\0d09bada55ae4eeab8851c6ca8564df5_Human Resources Sample PBIX.pbix"
-    connector = LocalPBIXConnector({"pbix_path": pbix_path})
+    from pathlib import Path
+    pbix_path = Path("output") / "uploads" / "files" / "0d09bada55ae4eeab8851c6ca8564df5_Human Resources Sample PBIX.pbix"
+    if not pbix_path.exists():
+        candidates = list(Path("output").glob("**/*.pbix")) + list(Path("Tests").glob("**/*.pbix"))
+        if candidates:
+            pbix_path = candidates[0]
+        else:
+            pytest.skip("PBIX sample file not found in workspace")
+    connector = LocalPBIXConnector({"pbix_path": str(pbix_path)})
     connector.authenticate()
     discovered = connector.discover()
 

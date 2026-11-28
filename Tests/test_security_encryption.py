@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import os
 import stat
 
 import pytest
@@ -34,7 +35,8 @@ def test_generates_and_persists_key_when_auth_disabled(monkeypatch, isolated_key
     monkeypatch.setenv("AUTH_ENABLED", "false")
     token = enc.encrypt_token("hello")
     assert isolated_key.exists()
-    assert stat.S_IMODE(isolated_key.stat().st_mode) == 0o600
+    if os.name != "nt":
+        assert stat.S_IMODE(isolated_key.stat().st_mode) == 0o600
     first_key = isolated_key.read_text()
     assert first_key and first_key != enc.LEGACY_DEV_SECRET
     # A fresh process (cache cleared) reuses the persisted key.

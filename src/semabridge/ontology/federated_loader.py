@@ -1067,6 +1067,12 @@ class FederatedOntologyLoader:
                 )
             )
 
+        # Enforce PRD boundary cap: at most 75 relationships per model
+        if len(relationships) > 75:
+            active_rels = [r for r in relationships if r.is_active]
+            inactive_rels = [r for r in relationships if not r.is_active]
+            relationships = (active_rels + inactive_rels)[:75]
+
         return OSIModel(
             unique_name=model_name,
             label=f"{model_name.replace('_', ' ').title()}",

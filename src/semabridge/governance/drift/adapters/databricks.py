@@ -289,7 +289,7 @@ class DatabricksAdapter(PlatformAdapter):
         state = status_info.get("state")  # hardcoding-ok: Databricks statement execution API status field
 
         start_t = time.time()
-        while state in ("PENDING", "RUNNING") and statement_id and (time.time() - start_t < effective_timeout):
+        while state in ("PENDING", "RUNNING") and statement_id and (time.time() - start_t < timeout):
             time.sleep(1)
             try:
                 poll_resp = requests.get(f"{endpoint}/{statement_id}", headers=headers, timeout=10)
@@ -1030,7 +1030,7 @@ class DatabricksAdapter(PlatformAdapter):
         state = status_info.get("state")
 
         start_t = time.time()
-        while state in ("PENDING", "RUNNING") and statement_id and (time.time() - start_t < effective_timeout):
+        while state in ("PENDING", "RUNNING") and statement_id and (time.time() - start_t < timeout):
             time.sleep(1)
             try:
                 poll_resp = requests.get(f"{endpoint}/{statement_id}", headers=headers, timeout=10)

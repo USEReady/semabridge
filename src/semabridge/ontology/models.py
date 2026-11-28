@@ -482,3 +482,35 @@ class FederatedEnterpriseOntology(BaseModel):
     # tell same-named items of different models apart instead of guessing.
     metric_owners: Dict[str, List[str]] = Field(default_factory=dict)
     concept_owners: Dict[str, List[str]] = Field(default_factory=dict)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        if hasattr(self, key):
+            val = getattr(self, key)
+            if val is not None:
+                return val
+        if key == "tables":
+            return {
+                c.name: {
+                    "columns": [a.name for a in getattr(c, "attributes", []) or []],
+                    "grain": getattr(c, "grain", "unknown"),
+                    "source_table": getattr(c, "physical_table", None) or c.name,
+                }
+                for c in self.concepts.values()
+            }
+        if key == "dimensions":
+            dims = []
+            for c in self.concepts.values():
+                for a in getattr(c, "attributes", []) or []:
+                    dims.append({"name": a.name, "table": c.name, "column": a.name})
+            return dims
+        return default
+
+    def __getitem__(self, key: str) -> Any:
+        val = self.get(key)
+        if val is None and not hasattr(self, key) and key not in ("tables", "dimensions"):
+            raise KeyError(key)
+        return val
+
+    def __contains__(self, key: str) -> bool:
+        return hasattr(self, key) or key in ("tables", "dimensions")
+

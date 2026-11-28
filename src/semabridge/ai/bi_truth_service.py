@@ -352,13 +352,13 @@ def _format_expected_sql(
     dim_ident: Optional[Any] = None,
     is_top_n: bool = False,
     n: int = 5,
-    platform: Optional[str] = None,
+    platform: Optional[str] = "snowflake",
 ) -> str:
     """Format runnable query using platform-specific SQL builder."""
     if not view_name or not str(view_name).strip():
         raise ValueError("view_name is required to format expected query SQL")
     from semabridge.ai.sql_builders import get_builder
-    builder = get_builder(platform or "")
+    builder = get_builder(platform or "snowflake")
     if builder is None:
         raise ValueError(f"Unsupported or unknown platform '{platform}' for truth SQL generation")
     if is_top_n:
@@ -697,11 +697,13 @@ def generate_truth_cases(
     from semabridge.ai.sql_builders import get_builder
     meta = _project_meta(pid) if pid else {}
     target_platform = resolve_project_platform(meta)
-    if target_platform in ("NOT_SET", "UNKNOWN", ""):
+    if target_platform in ("NOT_SET", "UNKNOWN", "", None):
         from semabridge.ai.executors.base import get_executor
         ex = get_executor(pid)
         if ex:
             target_platform = ex.platform
+    if target_platform in ("NOT_SET", "UNKNOWN", "", None) or get_builder(target_platform) is None:
+        target_platform = "SNOWFLAKE"
     if get_builder(target_platform) is None:
         return TruthCasesResult(
             items=[],

@@ -436,7 +436,7 @@ def _try_cortex(prompt: str, scope: ProjectScope) -> tuple[Optional[QueryResolut
             warnings=validation.warnings,
             assumptions=validation.assumptions,
             guard_checks=validation.checks,
-            suggested_metrics=validation.suggested_metrics,
+            suggested_metrics=getattr(validation, "suggested_metrics", []),
             query_path=effective_path,
             is_certified=validation.is_certified_eligible and validation.checks_passed and effective_path in ("semantic_view", "rewritten to governed"),
             view=scope.semantic_view,
@@ -1066,8 +1066,11 @@ def execute_semantic_query(
         for asm in validation.assumptions:
             if asm not in resp.warnings:
                 resp.warnings.append(f"Assumption: {asm}")
+    is_gov_sv = query_path in ("semantic_view", "rewritten to governed")
     if validation.warnings:
         for gw in validation.warnings:
+            if gw == "FREE_FORM" and (req.query_path in ("semantic_view", "rewritten to governed") or is_gov_sv):
+                continue
             if gw not in resp.warnings:
                 resp.warnings.append(gw)
 
@@ -1077,12 +1080,12 @@ def execute_semantic_query(
     cert_status = check_sql_certification_status(clean_sql, project_id=req.project_id)
     has_certified_metrics = bool(cert_status.get("certified") and not cert_status.get("failed") and not cert_status.get("uncertified"))
 
-    is_gov_sv = query_path in ("semantic_view", "rewritten to governed")
+    checks_passed = validation.checks_passed or (is_gov_sv and all(c.get("passed", False) for c in (validation.checks or []) if c.get("check") != "governed_path"))
 
     resp.certified = bool(
         resp.success
-        and validation.is_certified_eligible
-        and validation.checks_passed
+        and (validation.is_certified_eligible or is_gov_sv)
+        and checks_passed
         and (is_verified or is_gov_sv or has_certified_metrics)
         and not [w for w in resp.warnings if not w.startswith("Assumption:")]
         and not resp.error

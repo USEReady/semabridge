@@ -369,7 +369,11 @@ def _validate(sql: str, model: Dict[str, Any], question: str = "", allow_current
         flags.append("FAN_OUT")
 
     # joins
+    cte_names = {c.alias_or_name.upper() for c in tree.find_all(exp.CTE)}
     for j in tree.find_all(exp.Join):
+        right_alias = (j.this.alias_or_name or "").upper()
+        if right_alias in cte_names:
+            continue
         on = j.args.get("on")
         if on is None:
             continue
@@ -377,8 +381,9 @@ def _validate(sql: str, model: Dict[str, Any], question: str = "", allow_current
             cols = [c for c in eq.find_all(exp.Column)]
             if len(cols) != 2:
                 continue
-            right_alias = (j.this.alias_or_name or "").upper()
             right_table = _resolve_table(right_alias)
+            if right_table in cte_names:
+                continue
             right_col = next((c.name.upper() for c in cols if (c.table or "").upper() == right_alias), cols[1].name.upper())
             u = model.get("key_uniqueness", {}).get(f"{right_table}.{right_col}")
             if not u or u["rows"] != u["distinct"]:
@@ -650,6 +655,7 @@ class SQLValidationResult(BaseModel):
     assumptions: List[str] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
     unmapped_elements: List[str] = Field(default_factory=list)
+    suggested_metrics: List[str] = Field(default_factory=list)
     is_certified_eligible: bool = False
 
 
@@ -801,6 +807,53 @@ def _adapt_sml_model(sml: Any, **kwargs: Any) -> Dict[str, Any]:
     }
 
 
+def _adapt_ontology_model(fed: Any, **kwargs: Any) -> Dict[str, Any]:
+    tables: Dict[str, Dict[str, Any]] = {}
+    concepts = getattr(fed, "concepts", {}) or {}
+    for cname, c in concepts.items():
+        cols = [a.name for a in getattr(c, "attributes", []) or []]
+        tables[cname] = {
+            "columns": cols,
+            "grain": getattr(c, "grain", "unknown"),
+            "source_table": getattr(c, "physical_table", None) or cname,
+        }
+
+    metrics: List[Dict[str, Any]] = []
+    for mname, m in (getattr(fed, "metrics", {}) or {}).items():
+        sql = (getattr(m, "sql_expression", None) or getattr(m, "expression", None) or "").strip()
+        mt = _AGG_RE.match(sql)
+        table = (mt.group(3) if mt and mt.group(3) else getattr(m, "concept", None) or "").upper()
+        agg_val = getattr(m, "aggregation", None) or getattr(m, "aggregation_type", "")
+        agg = str(getattr(agg_val, "value", agg_val) or (mt.group(1).upper() if mt else "")).upper()
+        col = (mt.group(4).upper() if mt and mt.group(4) != "*" else str(getattr(m, "source_column", getattr(m, "column", None)) or "").upper() or None)
+        metrics.append({
+            "name": mname,
+            "label": getattr(m, "label", None) or mname,
+            "table": table,
+            "agg": agg,
+            "column": col,
+            "filter": getattr(m, "filter_predicate", None) or getattr(m, "filter", None),
+            "kind": "base",
+            "synonyms": list(getattr(m, "synonyms", None) or []),
+        })
+
+    return {
+        "view": kwargs.get("semantic_view_name") or "SEMANTIC_VIEW",
+        "platform": kwargs.get("dialect", "snowflake"),
+        "data_anchored": True,
+        "latest_data_date": kwargs.get("latest_data_date"),
+        "tables": tables,
+        "relationships": [],
+        "key_uniqueness": kwargs.get("key_uniqueness") or {},
+        "metrics": metrics,
+        "dimensions": [
+            {"name": a.name, "table": c.name, "column": a.name}
+            for c in concepts.values()
+            for a in getattr(c, "attributes", []) or []
+        ],
+    }
+
+
 def validate_and_rewrite_generated_sql(
     sql: str,
     *,
@@ -817,8 +870,15 @@ def validate_and_rewrite_generated_sql(
     metadata produces NOT_VALIDATED, never a passing check.
     """
     effective_model = model or kwargs.get("model_metadata")
-    if effective_model and not isinstance(effective_model, dict) and hasattr(effective_model, "datasets"):
-        effective_model = _adapt_sml_model(effective_model, **kwargs)
+    if effective_model and not isinstance(effective_model, dict):
+        if hasattr(effective_model, "datasets"):
+            effective_model = _adapt_sml_model(effective_model, **kwargs)
+        elif hasattr(effective_model, "concepts") or hasattr(effective_model, "domains"):
+            effective_model = _adapt_ontology_model(effective_model, **kwargs)
+        elif hasattr(effective_model, "model_dump"):
+            effective_model = effective_model.model_dump()
+        elif hasattr(effective_model, "dict"):
+            effective_model = effective_model.dict()
     if not effective_model:
         effective_model = {"metrics": [], "tables": {}, "dimensions": []}
     effective_question = question or kwargs.get("prompt") or ""
@@ -848,7 +908,7 @@ def validate_and_rewrite_generated_sql(
             res.refusal_reason = "Query rejected: possible double counting across fan-out or non-unique join"
         else:
             res.refusal_reason = r.get("suggestion") or f"Refused by SQL governance guard: {', '.join(flags)}"
-    elif "NON_UNIQUE_JOIN" in flags and ("key_uniqueness_data" in kwargs or any("SUM" in (m.get("agg") or "") for m in effective_model.get("metrics", []))):
+    elif "NON_UNIQUE_JOIN" in flags and ("key_uniqueness_data" in kwargs or "SUM(" in sql.upper()):
         res.allowed = False
         res.refusal_reason = "Query rejected: possible double counting across fan-out or non-unique join"
 

@@ -15,11 +15,11 @@ _FORBIDDEN_SQL_RE = re.compile(
     re.IGNORECASE,
 )
 _QUALIFIED_FILTER_RE = re.compile(
-    r"^[A-Za-z0-9_\"`]+(?:\.[A-Za-z0-9_\"`]+)\s*(?:=|!=|<>|>=|<=|>|<|LIKE|ILIKE|NOT\s+LIKE|IS|IS\s+NOT|IN|BETWEEN)\s*[^;]*$",
+    r"^(?:[A-Za-z0-9_]+\s*\(\s*)?[A-Za-z0-9_\"`]+(?:\.[A-Za-z0-9_\"`]+)(?:\s*\))?\s*(?:=|!=|<>|>=|<=|>|<|LIKE|ILIKE|NOT\s+LIKE|IS|IS\s+NOT|IN|BETWEEN)\s*[^;]*$",
     re.IGNORECASE,
 )
 _PLAIN_FILTER_RE = re.compile(
-    r"^[A-Za-z0-9_\"`]+(?:\.[A-Za-z0-9_\"`]+)?\s*(?:=|!=|<>|>=|<=|>|<|LIKE|ILIKE|NOT\s+LIKE|IS|IS\s+NOT|IN|BETWEEN)\s*[^;]*$",
+    r"^(?:[A-Za-z0-9_]+\s*\(\s*)?[A-Za-z0-9_\"`]+(?:\.[A-Za-z0-9_\"`]+)?(?:\s*\))?\s*(?:=|!=|<>|>=|<=|>|<|LIKE|ILIKE|NOT\s+LIKE|IS|IS\s+NOT|IN|BETWEEN)\s*[^;]*$",
     re.IGNORECASE,
 )
 

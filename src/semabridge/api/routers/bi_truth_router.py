@@ -368,3 +368,11 @@ def inject_truth_cases(req: InjectTruthCasesRequest, request: Request) -> Dict[s
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Injection failed: {str(exc)}")
 
+
+@router.get("/inject/history", response_model=Dict[str, Any])
+def get_bi_truth_injection_history(project_id: Optional[str] = None) -> Dict[str, Any]:
+    """Retrieve verified query injection history for a project."""
+    from semabridge.ai.bi_truth_service import list_truth_runs
+    runs = list_truth_runs(project_id) if project_id else []
+    return {"history": runs}
+

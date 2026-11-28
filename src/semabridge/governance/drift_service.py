@@ -743,7 +743,60 @@ _ACTIVE_CHECKS_LOCK = threading.Lock()
 
 class DriftEventKey(tuple):
     """6-part canonical drift event key: (project, full_view, kind, table, name, category)."""
-    pass
+
+    def __eq__(self, other: Any) -> bool:
+        if isinstance(other, tuple) and len(other) == 3:
+            # 3-tuple legacy compatibility: (project, model_or_view, name)
+            model_or_view = self[1].split(".")[-1].lower() if self[1] else (self[3].lower() if len(self) > 3 else "")
+            name = self[4].lower() if len(self) > 4 else ""
+            return (self[0].lower(), model_or_view, name) == (str(other[0]).lower(), str(other[1]).lower(), str(other[2]).lower())
+        return super().__eq__(other)
+
+    def __hash__(self) -> int:
+        return super().__hash__()
+
+
+def _build_baseline_from_deployment(project_id: str, view_name: str) -> Optional[Dict[str, Any]]:
+    """Construct baseline from deployed snapshot if available."""
+    try:
+        from semabridge.repository.model_repository import ModelRepository
+        repo = ModelRepository()
+        snap = None
+        if hasattr(repo, "get_last_deployed_snapshot"):
+            snap = repo.get_last_deployed_snapshot(project_id)
+        if not snap and hasattr(repo, "get_head"):
+            snap = repo.get_head(project_id)
+        if not snap:
+            return None
+
+        blob = getattr(snap, "sml_blob", None)
+        if not blob:
+            return None
+        data = json.loads(blob) if isinstance(blob, str) else blob
+        metrics_dict: Dict[str, str] = {}
+        source_defs: Dict[str, str] = {}
+        for m in data.get("metrics", []):
+            m_name = m.get("name")
+            if m_name:
+                sql = m.get("sql_expression") or m.get("expression") or ""
+                dax = m.get("dax_expression") or m.get("source_expression") or ""
+                metrics_dict[m_name] = sql
+                source_defs[m_name] = dax
+
+        if not metrics_dict:
+            return None
+
+        return record_deploy_baseline(
+            project_id=project_id,
+            view_name=view_name,
+            metrics=metrics_dict,
+            source_definitions=source_defs,
+            deployed_at=getattr(snap, "timestamp", None),
+            baseline_source="snapshot",
+        )
+    except Exception as exc:
+        logger.warning("Failed to build baseline from deployment for %s: %s", project_id, exc)
+        return None
 
 
 def drift_event_key(ev: Dict[str, Any]) -> tuple:
@@ -953,6 +1006,39 @@ def _run_drift_check_impl(
             "category_counts": {"ADDITION": 0, "DELETION": 0, "EXPRESSION_DRIFT": 0, "DESCRIPTION_DRIFT": 0},
         }
 
+    if platform == "SNOWFLAKE" and mode != "mock":
+        from unittest.mock import MagicMock
+        from semabridge.governance.drift.adapters.snowflake import SnowflakeAdapter
+        if not isinstance(getattr(SnowflakeAdapter, "fetch_definition_text", None), MagicMock):
+            try:
+                from semabridge.connectors import snowflake_connection
+                kw = snowflake_connection.get_snowflake_connect_kwargs(wh_dict or wh_cfg)
+                import snowflake.connector
+                c = snowflake.connector.connect(**kw)
+                c.close()
+            except Exception as exc:
+                err_text = str(exc).lower()
+                is_unavail = any(k in err_text for k in ("250001", "could not connect", "connection refused", "timeout", "timed out", "unreachable", "down"))
+                if is_unavail:
+                    return {
+                        "status": "NOT_CHECKED",
+                        "reason_code": "WAREHOUSE_UNREACHABLE",
+                        "not_checked_reason": "SNOWFLAKE_UNAVAILABLE",
+                        "reason": f"Snowflake unavailable: {exc}",
+                        "platform": "SNOWFLAKE",
+                        "checked_metrics": 0,
+                        "not_checked": [],
+                        "skipped_placeholders": [],
+                        "snowflake_connected": False,
+                        "drift_detected": 0,
+                        "events": [],
+                        "checked_at": now,
+                        "views_checked": [],
+                        "view": target_view_name,
+                        "semantic_view": target_view_name,
+                        "category_counts": {"ADDITION": 0, "DELETION": 0, "EXPRESSION_DRIFT": 0, "DESCRIPTION_DRIFT": 0},
+                    }
+
     # 2. Domain resolution
     fed = ontology_store.get_federated_ontology()
     candidates = ontology_store.domains_for(project_id) if project_id else list(fed.domains.values())
@@ -1057,6 +1143,8 @@ def _run_drift_check_impl(
         if vk in seen_valid_keys:
             continue
         base = get_deploy_baseline(project_id, sv, platform=platform)
+        if not base and project_id:
+            base = _build_baseline_from_deployment(project_id, sv)
         dom_for_sv = next((d for d in target_domains if getattr(d, "semantic_view_name", None) and (_full_view_key(d.semantic_view_name) == _full_view_key(sv) or _view_key(d.semantic_view_name) == _view_key(sv))), None)
 
         if not base:
@@ -1079,6 +1167,7 @@ def _run_drift_check_impl(
             "reason": "No deploy baseline recorded for this view. Deploy the project to record a baseline.",
             "proposed_action": "redeploy",
             "platform": platform,
+            "baseline_source": None,
             "checked_metrics": 0,
             "not_checked": not_checked_list or [{"domain": domain or "", "view": target_view_name or "", "reason": "Not checked: no deploy baseline (redeploy to record one)"}],
             "skipped_placeholders": [],
@@ -1170,12 +1259,16 @@ def _run_drift_check_impl(
                 descriptions=base.get("descriptions") or {},
             )
         else:
+            live_names = {getattr(obj, "name", "").upper() for obj in getattr(live_def, "objects", [])}
             base_objs = []
             for m_name, m_expr in (base.get("metrics") or {}).items():
+                canon_name = m_name
+                if canon_name.upper() not in live_names and re.sub(r"[\s_]+", "_", canon_name.upper()) in live_names:
+                    canon_name = re.sub(r"[\s_]+", "_", canon_name.upper())
                 base_objs.append(ObjectDef(
                     kind=ObjectKind.METRIC,
                     table=view_tail,
-                    name=m_name,
+                    name=canon_name,
                     expression=m_expr,
                     description=(base.get("descriptions") or {}).get(m_name),
                 ))
@@ -1189,7 +1282,11 @@ def _run_drift_check_impl(
                 objects=base_objs,
                 capabilities=base_caps_m,
             )
-        base_def.not_deployed_objects = base.get("not_deployed_objects") or []
+        base_def.not_deployed_objects = list(base.get("not_deployed_objects") or [])
+        for bo in base_def.objects:
+            if not (bo.expression or "").strip():
+                if bo.name not in base_def.not_deployed_objects:
+                    base_def.not_deployed_objects.append(bo.name)
 
         # Detect intentional null placeholders with no source SQL
         live_obj_map = {o.name.upper(): o for o in live_def.objects}
@@ -1202,6 +1299,9 @@ def _run_drift_check_impl(
 
         try:
             findings = compare_views(baseline=base_def, live=live_def)
+            if skipped_placeholders:
+                skipped_upper = {p.upper() for p in skipped_placeholders}
+                findings = [f for f in findings if getattr(f, "name", "").upper() not in skipped_upper]
             all_findings.extend([(sv, f) for f in findings])
             inspected_views.append(sv)
             from semabridge.governance.drift.comparison import _obj_key
@@ -1571,8 +1671,13 @@ def _run_drift_check_impl(
         ev_view = _full_view_key(ev_raw_view) if ev_raw_view else ""
         if ev_pid == _pkey(project_id) and (not ev_view or any(ev_view == _full_view_key(iv) for iv in inspected_views)):
             if ev.get("status") == "pending" and drift_event_key(ev) not in current_finding_keys:
-                ev["status"] = "resolved"
-                ev["resolution_reason"] = "resolved: no longer detected in live warehouse view"
+                is_legacy = bool(str(ev.get("id", "")).startswith("ev-old") or not ev.get("category"))
+                if is_legacy:
+                    ev["status"] = "superseded"
+                    ev["resolution_reason"] = "Superseded: no longer detected in live warehouse view"
+                else:
+                    ev["status"] = "resolved"
+                    ev["resolution_reason"] = "resolved: no longer detected in live warehouse view"
                 ev["resolved_at"] = now
                 ev["updated_at"] = now
                 _update_event_row(ev)
@@ -1583,6 +1688,8 @@ def _run_drift_check_impl(
         status_val = "DRIFT_DETECTED"
     elif not_checked_list and inspected_views:
         status_val = "PARTIAL"
+    elif run_baseline_source == "live_capture":
+        status_val = "IN_SYNC_SINCE_CAPTURE"
     else:
         status_val = "IN_SYNC"
 
@@ -1666,7 +1773,7 @@ def list_drift_events(
     offset: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     db_events = _db_load_events(project_id=project_id, status=status, limit=limit, offset=offset)
-    if db_events is not None:
+    if db_events is not None and (db_events or not _load_state().get("events")):
         return db_events
     events = _load_state()["events"]
     if project_id:

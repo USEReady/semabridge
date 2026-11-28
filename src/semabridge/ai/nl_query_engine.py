@@ -980,12 +980,17 @@ class NLQueryEngine:
                             seen_opt_names.add(d_name.casefold())
                             opt_names.append(d_name)
                 base_cand = [c for c in candidates if not getattr(c[2], "has_filter_clause", False)]
-                if len(opt_names) > 1 and not base_cand:
+                if len(opt_names) > 1 and len(base_cand) != 1:
                     clarification = f"Measure phrase '{m_phrase.raw_text}' is ambiguous between: {', '.join(opt_names)}. Which metric would you like to use?"
+                    early_dims: List[str] = []
+                    for bp in parsed.by_phrases:
+                        chosen_de, _, _ = self._resolve_by_phrase(bp, lexicon)
+                        if chosen_de and getattr(chosen_de, "attribute", None):
+                            early_dims.append(chosen_de.attribute.name)
                     return QueryResolutionPlan(
                         original_prompt=prompt,
                         detected_metrics=[],
-                        detected_dimensions=[],
+                        detected_dimensions=early_dims,
                         resolved_tables=[],
                         generated_sql="",
                         sql=None,
@@ -1284,8 +1289,10 @@ class NLQueryEngine:
             if date_c and date_a:
                 if effective_semantic_view:
                     date_ref = self._sv_dim_ref(date_c, date_a, lexicon)
-                else:
+                elif len(needed_concepts) > 1:
                     date_ref = f"{self._q_ident(date_c.name)}.{self._q_ident(date_a.name)}"
+                else:
+                    date_ref = self._q_ident(date_a.name)
                 if parsed.year_filters:
                     filters.append(f"YEAR({date_ref}) = {parsed.year_filters[0]}")
                 if parsed.quarter_filters:
@@ -1335,38 +1342,36 @@ class NLQueryEngine:
                         fan_out_reasons.append(msg)
                         failed_check_reasons.append(msg)
 
-        # 2c (Part 1): Window metrics include their PARTITION BY EXCLUDING dimensions (physical draft path only)
-        if not effective_semantic_view:
-            for m in detected_metrics:
-                is_win, req_dims = self._is_window_metric(m.sql_expression, m.description, m.name)
-                if is_win and req_dims:
-                    missing_dims = []
-                    for rd in req_dims:
-                        rd_clean = rd.split(".")[-1].strip().casefold()
-                        in_dims = any(d.split(".")[-1].strip().casefold() == rd_clean for d in dim_names)
-                        if not in_dims:
-                            missing_dims.append(rd)
-                    if missing_dims:
-                        plan_checks_failed = True
-                        failed_check_reasons.append(
-                            f"Window metric '{m.label or m.name}' requires excluded partition dimension(s) "
-                            f"({', '.join(missing_dims)}) from PARTITION BY EXCLUDING clause."
-                        )
+        # 2c (Part 1): Window metrics include their PARTITION BY EXCLUDING dimensions
+        for m in detected_metrics:
+            is_win, req_dims = self._is_window_metric(m.sql_expression, m.description, m.name)
+            if is_win and req_dims:
+                missing_dims = []
+                for rd in req_dims:
+                    rd_clean = rd.split(".")[-1].strip().casefold()
+                    in_dims = any(d.split(".")[-1].strip().casefold() == rd_clean for d in dim_names)
+                    if not in_dims:
+                        missing_dims.append(rd)
+                if missing_dims:
+                    plan_checks_failed = True
+                    failed_check_reasons.append(
+                        f"Window metric '{m.label or m.name}' requires excluded partition dimension(s) "
+                        f"({', '.join(missing_dims)}) from PARTITION BY EXCLUDING clause."
+                    )
 
-        # 2d: Semi-additive (NON ADDITIVE BY) metrics never summed over their non-additive dimension (physical draft path only)
-        if not effective_semantic_view:
-            for m in detected_metrics:
-                semi_dim = self._get_semi_additive_dimension(m, self.ontology.concepts if hasattr(self, "ontology") and self.ontology else None)
-                if semi_dim:
-                    semi_clean = semi_dim.split(".")[-1].strip().casefold()
-                    grouped_by_semi = any(d.split(".")[-1].strip().casefold() == semi_clean for d in dim_names)
-                    filtered_semi = any(semi_clean in f.casefold() for f in filters)
-                    if not grouped_by_semi and not filtered_semi:
-                        plan_checks_failed = True
-                        failed_check_reasons.append(
-                            f"Semi-additive metric '{m.label or m.name}' has non-additive dimension '{semi_dim}' "
-                            f"(NON ADDITIVE BY) and cannot be summed over it without grouping or filtering by that dimension."
-                        )
+        # 2d: Semi-additive (NON ADDITIVE BY) metrics never summed over their non-additive dimension
+        for m in detected_metrics:
+            semi_dim = self._get_semi_additive_dimension(m, self.ontology.concepts if hasattr(self, "ontology") and self.ontology else None)
+            if semi_dim:
+                semi_clean = semi_dim.split(".")[-1].strip().casefold()
+                grouped_by_semi = any(d.split(".")[-1].strip().casefold() == semi_clean for d in dim_names)
+                filtered_semi = any(semi_clean in f.casefold() for f in filters)
+                if not grouped_by_semi and not filtered_semi:
+                    plan_checks_failed = True
+                    failed_check_reasons.append(
+                        f"Semi-additive metric '{m.label or m.name}' has non-additive dimension '{semi_dim}' "
+                        f"(NON ADDITIVE BY) and cannot be summed over it without grouping or filtering by that dimension."
+                    )
 
         if plan_checks_failed:
             warnings.extend(failed_check_reasons)

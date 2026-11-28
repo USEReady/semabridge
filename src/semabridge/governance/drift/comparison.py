@@ -114,7 +114,7 @@ def _build_relationship_match_key(obj: ObjectDef) -> str:
         pairs.sort()
         return f"{f_tbl}->{t_tbl}::{','.join(pairs)}"
 
-    clean_name = re.sub(r"[\s_]+", "_", str(obj.name or "").strip()).upper()
+    clean_name = str(obj.name or "").strip().upper()
     if from_tbl and to_tbl:
         return f"{from_tbl}->{to_tbl}::{clean_name}"
     return clean_name

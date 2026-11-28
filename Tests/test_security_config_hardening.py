@@ -48,7 +48,10 @@ def test_browse_lists_subdirs_but_not_symlink_escapes(root, tmp_path):
 
     (root / "models").mkdir()
     (tmp_path / "secret").mkdir()
-    (root / "escape").symlink_to(tmp_path / "secret", target_is_directory=True)
+    try:
+        (root / "escape").symlink_to(tmp_path / "secret", target_is_directory=True)
+    except OSError:
+        pytest.skip("Symlink creation not permitted in this environment")
     names = [item["name"] for item in browse_directory(str(root))]
     assert names == ["models"]
 
@@ -89,7 +92,10 @@ def test_local_folder_symlink_to_system_dir_rejected(monkeypatch, tmp_path):
 
     monkeypatch.setenv("AUTH_ENABLED", "false")
     link = tmp_path / "innocent"
-    link.symlink_to("/etc", target_is_directory=True)
+    try:
+        link.symlink_to("/etc", target_is_directory=True)
+    except OSError:
+        pytest.skip("Symlink creation not permitted in this environment")
     with pytest.raises(HTTPException) as exc:
         settings_api._resolve_existing_directory(str(link))
     assert exc.value.status_code == 400

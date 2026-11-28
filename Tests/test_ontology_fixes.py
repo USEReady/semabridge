@@ -331,7 +331,7 @@ metrics:
     assert any("SEMANTIC_VIEW" in w for w in raw_snap.warnings)
 
     # Through SEMANTIC_VIEW, both execute cleanly via SEMANTIC_VIEW(...)
-    sv_share = eng.resolve_query("dept share", semantic_view="DB.SCH.LEDGER_SV")
+    sv_share = eng.resolve_query("dept share by dept", semantic_view="DB.SCH.LEDGER_SV")
     assert sv_share.detected_metrics == ["DEPT_SHARE"]
     assert "FROM SEMANTIC_VIEW(DB.SCH.LEDGER_SV" in sv_share.generated_sql
 

@@ -884,6 +884,8 @@ async def _perform_project_run_impl(run: dict, project_cfg: str, started: float)
             # that model's own result entry (result["reconciliation"]).
             for _result_entry in _model_results:
                 _reconcile_model_result(project_id, _result_entry, logger)
+            if _model_results and "reconciliation" in _model_results[-1]:
+                run["summary"]["reconciliation"] = _model_results[-1]["reconciliation"]
         else:
             try:
                 if (

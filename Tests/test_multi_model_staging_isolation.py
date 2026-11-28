@@ -13,9 +13,10 @@ from semabridge.core.engine.targets import snowflake as tgt
 
 
 class _FakeEmitter:
-    def __init__(self, config, behavior=None, physical_namespace=None):
+    def __init__(self, config, behavior=None, physical_namespace=None, **kwargs):
         self.physical_namespace = physical_namespace
         self.drop_ledger = None
+        self.project_id = kwargs.get("project_id")
 
     # Target conversion uses the live-schema build since 230d12e.
     def generate_ddls_live(self, sml):

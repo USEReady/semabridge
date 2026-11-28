@@ -96,11 +96,12 @@ def resolve_source_pbix_path(path_or_name: Any) -> Optional[str]:
                 pass
 
         if clean_stem:
-            patterns = [f"*_{clean_stem}.pbix", f"{clean_stem}.pbix", f"*{clean_stem}*.pbix"]
+            patterns = [f"*_{clean_stem}.pbix", f"{clean_stem}.pbix"]
             for pat in patterns:
                 try:
                     for c in root.rglob(pat):
-                        if c.is_file() and str(c.resolve()) not in seen:
+                        c_clean = re.sub(r"^[0-9a-fA-F]{32}_", "", c.stem).strip()
+                        if c_clean.casefold() == clean_stem.casefold() and c.is_file() and str(c.resolve()) not in seen:
                             seen.add(str(c.resolve()))
                             candidates.append(c)
                 except OSError:
