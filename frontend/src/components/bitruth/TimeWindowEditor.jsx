@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, Calendar, AlertTriangle } from 'lucide-react';
+import { Plus, Trash2, Calendar, AlertTriangle, HelpCircle } from 'lucide-react';
 import { authFetch } from '../../utils/api';
 
 const INPUT = {
