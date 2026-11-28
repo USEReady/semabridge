@@ -133,10 +133,11 @@ export default function MetricComparisonResults({ result, running, error, projec
         body: JSON.stringify({
           space_id: finalSpaceId,
           project_id: projectId || undefined,
+          run_id: result.run_id || result.id || undefined,
           benchmarks: [
             {
               question: `What is the ${result.metric_name}?`,
-              expected_sql: result.target?.query || `SELECT MEASURE(${result.metric_name})`,
+              expected_sql: targetObj?.query || `SELECT MEASURE(${result.metric_name})`,
             },
           ],
           timeout_seconds: 60,
@@ -145,9 +146,11 @@ export default function MetricComparisonResults({ result, running, error, projec
       const data = await res.json();
       if (res.ok) {
         setEvaluationResult(data);
+        const scoreVal = Number(data.accuracy_score || 0);
+        const formattedScore = scoreVal <= 1.0 ? (scoreVal * 100).toFixed(1) : scoreVal.toFixed(1);
         setPublishStatus({
           type: 'success',
-          msg: `Genie evaluation completed. Accuracy score: ${(Number(data.accuracy_score || 0) * 100).toFixed(1)}%.`,
+          msg: `Genie evaluation completed. Accuracy score: ${formattedScore}%.`,
         });
       } else {
         setPublishStatus({ type: 'error', msg: data.detail || 'Genie evaluation failed.' });
@@ -813,10 +816,10 @@ export default function MetricComparisonResults({ result, running, error, projec
                     fontWeight: 700,
                     padding: '2px 8px',
                     borderRadius: 4,
-                    background: evaluationResult.accuracy_score === 1.0 ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-                    color: evaluationResult.accuracy_score === 1.0 ? '#10B981' : '#EF4444',
+                    background: (Number(evaluationResult.accuracy_score || 0) >= 80 || Number(evaluationResult.accuracy_score || 0) === 1.0) ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                    color: (Number(evaluationResult.accuracy_score || 0) >= 80 || Number(evaluationResult.accuracy_score || 0) === 1.0) ? '#10B981' : '#EF4444',
                   }}>
-                    Accuracy: {(Number(evaluationResult.accuracy_score || 0) * 100).toFixed(1)}%
+                    Accuracy: {Number(evaluationResult.accuracy_score || 0) <= 1.0 ? (Number(evaluationResult.accuracy_score || 0) * 100).toFixed(1) : Number(evaluationResult.accuracy_score || 0).toFixed(1)}%
                   </div>
                 </div>
 
@@ -841,25 +844,36 @@ export default function MetricComparisonResults({ result, running, error, projec
 
                 {Array.isArray(evaluationResult.results) && evaluationResult.results.length > 0 && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
-                    {evaluationResult.results.map((r, i) => (
-                      <div key={i} style={{
-                        padding: 10,
-                        borderRadius: 6,
-                        background: 'var(--bg-surface)',
-                        border: '1px solid var(--border-main)',
-                        fontSize: 11.5,
-                      }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                          <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{r.question}</span>
-                          <span style={{
-                            fontWeight: 700,
-                            fontSize: 10.5,
-                            color: r.passed ? '#10B981' : '#EF4444',
-                          }}>
-                            {r.passed ? '✓ PASSED' : '✗ FAILED'}
-                          </span>
-                        </div>
-                        {r.generated_sql && (
+                    {evaluationResult.results.map((r, i) => {
+                      const v = (r.verdict || (r.passed || r.status === 'PASS' ? 'GOOD' : 'BAD')).toUpperCase();
+                      const isGood = v === 'GOOD' || v === 'PASS';
+                      const isNeedsReview = v === 'NEEDS_REVIEW' || v === 'REVIEW';
+                      const badgeColor = isGood ? '#10B981' : isNeedsReview ? '#F59E0B' : '#EF4444';
+                      const badgeBg = isGood ? 'rgba(16, 185, 129, 0.15)' : isNeedsReview ? 'rgba(245, 158, 11, 0.15)' : 'rgba(239, 68, 68, 0.15)';
+                      const badgeLabel = isGood ? '✓ GOOD' : isNeedsReview ? '⚠ NEEDS REVIEW' : '✗ BAD';
+
+                      return (
+                        <div key={i} style={{
+                          padding: 10,
+                          borderRadius: 6,
+                          background: 'var(--bg-surface)',
+                          border: '1px solid var(--border-main)',
+                          fontSize: 11.5,
+                        }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                            <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{r.question}</span>
+                            <span style={{
+                              fontWeight: 700,
+                              fontSize: 10.5,
+                              padding: '2px 6px',
+                              borderRadius: 4,
+                              background: badgeBg,
+                              color: badgeColor,
+                            }}>
+                              {badgeLabel}
+                            </span>
+                          </div>
+                          {r.generated_sql && (
                           <div style={{ marginTop: 4 }}>
                             <div style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>Genie Generated SQL:</div>
                             <pre style={{
@@ -876,8 +890,9 @@ export default function MetricComparisonResults({ result, running, error, projec
                           </div>
                         )}
                       </div>
-                    ))}
-                  </div>
+                    );
+                  })}
+                </div>
                 )}
               </div>
             )}

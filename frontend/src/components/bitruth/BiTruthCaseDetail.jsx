@@ -237,8 +237,11 @@ export default function BiTruthCaseDetail({
         body: JSON.stringify({
           space_id: finalSpaceId,
           project_id: caseItem.project_id || undefined,
+          case_id: caseItem.id || undefined,
           benchmarks: [
             {
+              id: caseItem.id,
+              case_id: caseItem.id,
               question: caseItem.question,
               expected_sql: sqlToEval,
             },
@@ -249,9 +252,11 @@ export default function BiTruthCaseDetail({
       const data = await res.json();
       if (res.ok) {
         setGenieEvalResult(data);
+        const scoreVal = Number(data.accuracy_score || 0);
+        const formattedScore = scoreVal <= 1.0 ? (scoreVal * 100).toFixed(1) : scoreVal.toFixed(1);
         setGenieStatus({
           type: 'success',
-          msg: `Genie evaluation completed. Accuracy score: ${(Number(data.accuracy_score || 0) * 100).toFixed(1)}%.`,
+          msg: `Genie evaluation completed. Accuracy score: ${formattedScore}%.`,
         });
       } else {
         setGenieStatus({ type: 'error', msg: data.detail || 'Genie evaluation failed.' });

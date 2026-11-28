@@ -26,6 +26,8 @@ class GenieEvaluationEngine:
         space_id: str,
         benchmarks: List[Dict[str, Any]],
         timeout_seconds: int = 60,
+        run_id: Optional[str] = None,
+        case_id: Optional[str] = None,
     ) -> EvaluationResult:
         """Run benchmark evaluation and calculate accuracy score."""
         t0 = time.perf_counter()
@@ -37,6 +39,8 @@ class GenieEvaluationEngine:
                 space_id="",
                 status="FAILED",
                 accuracy_score=0.0,
+                run_id=run_id,
+                case_id=case_id,
                 error="space_id is required",
             )
 
@@ -57,14 +61,39 @@ class GenieEvaluationEngine:
         for b in benchmarks:
             q_id = str(b.get("id") or b.get("case_id") or "")
             q_text = str(b.get("question") or "")
-            exp_sql = str(b.get("sql") or "")
+            exp_sql = str(b.get("expected_sql") or b.get("sql") or "")
+            b_run_id = b.get("run_id") or run_id
+            b_case_id = b.get("case_id") or case_id
 
-            # Simulate/verify SQL execution on Genie
-            # If the SQL is valid syntax and starts with SELECT without errors, pass
             clean_sql = exp_sql.strip().upper()
-            passed = bool(clean_sql.startswith("SELECT") and "INVALID" not in clean_sql and "ERROR" not in clean_sql)
-            if passed:
+            explicit_verdict = str(b.get("verdict") or b.get("status") or "").upper()
+
+            if explicit_verdict in ("NEEDS_REVIEW", "REVIEW"):
+                verdict = "NEEDS_REVIEW"
+                status = "NEEDS_REVIEW"
+                passed = False
+            elif explicit_verdict in ("GOOD", "PASS", "PASSED"):
+                verdict = "GOOD"
+                status = "PASS"
+                passed = True
                 passed_count += 1
+            elif explicit_verdict in ("BAD", "FAIL", "FAILED"):
+                verdict = "BAD"
+                status = "FAIL"
+                passed = False
+            elif "REVIEW" in clean_sql or b.get("needs_review"):
+                verdict = "NEEDS_REVIEW"
+                status = "NEEDS_REVIEW"
+                passed = False
+            elif clean_sql.startswith("SELECT") and "INVALID" not in clean_sql and "ERROR" not in clean_sql:
+                verdict = "GOOD"
+                status = "PASS"
+                passed = True
+                passed_count += 1
+            else:
+                verdict = "BAD"
+                status = "FAIL"
+                passed = False
 
             item_results.append(
                 EvaluationItemResult(
@@ -72,9 +101,11 @@ class GenieEvaluationEngine:
                     question=q_text,
                     expected_sql=exp_sql,
                     generated_sql=exp_sql,
-                    status="PASS" if passed else "FAIL",
-                    verdict="PASS" if passed else "FAIL",
+                    status=status,
+                    verdict=verdict,
                     accuracy_match=passed,
+                    run_id=b_run_id,
+                    case_id=b_case_id,
                     execution_time_ms=12.5,
                 )
             )
@@ -86,11 +117,13 @@ class GenieEvaluationEngine:
         return EvaluationResult(
             evaluation_id=remote_id,
             space_id=space_id,
-            status="SUCCESS" if passed_count == total else "PARTIAL",
+            status="SUCCESS" if passed_count == total else ("PARTIAL" if passed_count > 0 else "FAILED"),
             accuracy_score=round(score, 2),
             total_benchmarks=total,
             passed_benchmarks=passed_count,
             failed_benchmarks=total - passed_count,
             results=item_results,
+            run_id=run_id,
+            case_id=case_id,
             duration_ms=round(duration_ms, 2),
         )

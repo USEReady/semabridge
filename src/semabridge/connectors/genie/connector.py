@@ -146,6 +146,8 @@ class GenieConnector(BaseConnector):
         space_id: str,
         benchmarks: List[Dict[str, Any]],
         timeout_seconds: int = 60,
+        run_id: Optional[str] = None,
+        case_id: Optional[str] = None,
     ) -> EvaluationResult:
         """Trigger evaluation of benchmarks in a Genie Space."""
         self._ensure_authenticated()
@@ -154,4 +156,6 @@ class GenieConnector(BaseConnector):
             space_id=space_id,
             benchmarks=benchmarks,
             timeout_seconds=timeout_seconds,
+            run_id=run_id,
+            case_id=case_id,
         )

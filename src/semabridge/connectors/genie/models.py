@@ -93,12 +93,14 @@ class EvaluationItemResult:
     question: str
     expected_sql: str
     generated_sql: Optional[str] = None
-    status: str = "PASS"  # PASS | FAIL | ERROR
-    verdict: str = "PASS"
+    status: str = "PASS"  # PASS | FAIL | ERROR | NEEDS_REVIEW
+    verdict: str = "GOOD"  # GOOD | BAD | NEEDS_REVIEW | PASS | FAIL
     accuracy_match: bool = True
     variance_pct: Optional[float] = 0.0
     execution_time_ms: float = 0.0
     error: Optional[str] = None
+    run_id: Optional[str] = None
+    case_id: Optional[str] = None
 
 
 @dataclass
@@ -114,6 +116,8 @@ class EvaluationResult:
     results: List[EvaluationItemResult] = field(default_factory=list)
     duration_ms: float = 0.0
     error: Optional[str] = None
+    run_id: Optional[str] = None
+    case_id: Optional[str] = None
     evaluated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 

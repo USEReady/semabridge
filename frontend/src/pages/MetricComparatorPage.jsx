@@ -913,71 +913,71 @@ export default function MetricComparatorPage() {
                         {history
                           .filter(h => historyWarehouseFilter === 'ALL' || String(h.target_platform || '').toUpperCase() === historyWarehouseFilter)
                           .map((run) => {
-                          const isPass = run.verdict === 'PASS';
-                          const isFail = run.verdict === 'FAIL';
-                          return (
-                            <tr key={run.id} style={{ borderBottom: '1px solid var(--border-main)' }}>
-                              <td style={{ padding: '10px 12px', fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'monospace' }}>
-                                {run.metric_name}
-                              </td>
-                              <td style={{ padding: '10px 12px', color: 'var(--text-secondary)' }}>
-                                {run.source_platform}
-                              </td>
-                              <td style={{ padding: '10px 12px', color: 'var(--text-secondary)' }}>
-                                {run.target_platform}
-                              </td>
-                              <td style={{ padding: '10px 12px', color: 'var(--text-primary)', fontFamily: 'monospace' }}>
-                                {run.source_value !== null && run.source_value !== undefined ? run.source_value : 'NULL'}
-                              </td>
-                              <td style={{ padding: '10px 12px', color: 'var(--text-primary)', fontFamily: 'monospace' }}>
-                                {run.target_value !== null && run.target_value !== undefined ? run.target_value : 'NULL'}
-                              </td>
-                              <td style={{
-                                padding: '10px 12px',
-                                fontFamily: 'monospace',
-                                color: isPass ? '#10B981' : isFail ? '#EF4444' : '#F59E0B',
-                              }}>
-                                {run.variance_pct !== null && run.variance_pct !== undefined ? `${Number(run.variance_pct).toFixed(4)}%` : 'N/A'}
-                              </td>
-                              <td style={{ padding: '10px 12px' }}>
-                                <span style={{
-                                  fontSize: 10.5,
-                                  fontWeight: 700,
-                                  padding: '2px 7px',
-                                  borderRadius: 4,
-                                  background: isPass ? 'rgba(16, 185, 129, 0.12)' : isFail ? 'rgba(239, 68, 68, 0.12)' : 'rgba(245, 158, 11, 0.12)',
+                            const isPass = run.verdict === 'PASS';
+                            const isFail = run.verdict === 'FAIL';
+                            return (
+                              <tr key={run.id} style={{ borderBottom: '1px solid var(--border-main)' }}>
+                                <td style={{ padding: '10px 12px', fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'monospace' }}>
+                                  {run.metric_name}
+                                </td>
+                                <td style={{ padding: '10px 12px', color: 'var(--text-secondary)' }}>
+                                  {run.source_platform}
+                                </td>
+                                <td style={{ padding: '10px 12px', color: 'var(--text-secondary)' }}>
+                                  {run.target_platform}
+                                </td>
+                                <td style={{ padding: '10px 12px', color: 'var(--text-primary)', fontFamily: 'monospace' }}>
+                                  {run.source_value !== null && run.source_value !== undefined ? run.source_value : 'NULL'}
+                                </td>
+                                <td style={{ padding: '10px 12px', color: 'var(--text-primary)', fontFamily: 'monospace' }}>
+                                  {run.target_value !== null && run.target_value !== undefined ? run.target_value : 'NULL'}
+                                </td>
+                                <td style={{
+                                  padding: '10px 12px',
+                                  fontFamily: 'monospace',
                                   color: isPass ? '#10B981' : isFail ? '#EF4444' : '#F59E0B',
                                 }}>
-                                  {run.verdict}
-                                </span>
-                              </td>
-                              <td style={{ padding: '10px 12px', color: 'var(--text-tertiary)', fontSize: 11 }}>
-                                {run.executed_at ? new Date(run.executed_at).toLocaleTimeString() : '—'}
-                              </td>
-                              <td style={{ padding: '10px 12px', textAlign: 'right' }}>
-                                <button
-                                  type="button"
-                                  onClick={() => handleSelectHistoryRun(run)}
-                                  style={{
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: 4,
-                                    padding: '4px 8px',
+                                  {run.variance_pct !== null && run.variance_pct !== undefined ? `${Number(run.variance_pct).toFixed(4)}%` : 'N/A'}
+                                </td>
+                                <td style={{ padding: '10px 12px' }}>
+                                  <span style={{
+                                    fontSize: 10.5,
+                                    fontWeight: 700,
+                                    padding: '2px 7px',
                                     borderRadius: 4,
-                                    fontSize: 11,
-                                    fontWeight: 600,
-                                    background: 'var(--bg-surface-raised)',
-                                    color: 'var(--text-secondary)',
-                                    border: '1px solid var(--border-main)',
-                                    cursor: 'pointer',
-                                  }}
-                                >
-                                  <Eye size={12} /> Inspect
-                                </button>
-                              </td>
-                            </tr>
-                          );
-                        })}
+                                    background: isPass ? 'rgba(16, 185, 129, 0.12)' : isFail ? 'rgba(239, 68, 68, 0.12)' : 'rgba(245, 158, 11, 0.12)',
+                                    color: isPass ? '#10B981' : isFail ? '#EF4444' : '#F59E0B',
+                                  }}>
+                                    {run.verdict}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '10px 12px', color: 'var(--text-tertiary)', fontSize: 11 }}>
+                                  {run.executed_at ? new Date(run.executed_at).toLocaleTimeString() : '—'}
+                                </td>
+                                <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSelectHistoryRun(run)}
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: 4,
+                                      padding: '4px 8px',
+                                      borderRadius: 4,
+                                      fontSize: 11,
+                                      fontWeight: 600,
+                                      background: 'var(--bg-surface-raised)',
+                                      color: 'var(--text-secondary)',
+                                      border: '1px solid var(--border-main)',
+                                      cursor: 'pointer',
+                                    }}
+                                  >
+                                    <Eye size={12} /> Inspect
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
                       </tbody>
                     </table>
                   </div>

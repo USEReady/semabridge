@@ -50,7 +50,7 @@ class GenieBenchmarkPublisher:
         benchmarks_payload: List[Dict[str, Any]] = []
         for p in pairs:
             q_text = str(p.get("question") or "").strip()
-            sql_text = str(p.get("sql") or "").strip()
+            sql_text = str(p.get("sql") or p.get("expected_sql") or "").strip()
             if not q_text or not sql_text:
                 continue
 

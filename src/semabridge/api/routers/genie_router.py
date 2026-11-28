@@ -36,6 +36,8 @@ class EvaluateBenchmarksRequest(BaseModel):
     benchmarks: List[Dict[str, Any]]
     timeout_seconds: int = 60
     project_id: Optional[str] = None
+    run_id: Optional[str] = None
+    case_id: Optional[str] = None
     host: Optional[str] = None
     token: Optional[str] = None
 
@@ -163,7 +165,33 @@ def evaluate_genie_benchmarks(
             space_id=req.space_id,
             benchmarks=req.benchmarks,
             timeout_seconds=req.timeout_seconds,
+            run_id=req.run_id,
+            case_id=req.case_id,
         )
+
+        # Link evaluation result to MetricComparisonRunRow if run_id provided
+        if req.run_id:
+            try:
+                from semabridge.repository.orm.session_factory import get_session
+                from semabridge.repository.orm.ai_models import MetricComparisonRunRow
+                with get_session() as session:
+                    run_row = session.get(MetricComparisonRunRow, req.run_id)
+                    if run_row:
+                        meta = dict(run_row.execution_metadata or {})
+                        meta["genie_evaluation"] = {
+                            "evaluation_id": res.evaluation_id,
+                            "space_id": res.space_id,
+                            "status": res.status,
+                            "accuracy_score": res.accuracy_score,
+                            "passed": res.passed_benchmarks,
+                            "total": res.total_benchmarks,
+                            "evaluated_at": res.evaluated_at,
+                        }
+                        run_row.execution_metadata = meta
+                        session.commit()
+            except Exception as e:
+                logger.debug("Could not link Genie evaluation to run %s: %s", req.run_id, e)
+
         return {
             "evaluation_id": res.evaluation_id,
             "space_id": res.space_id,
@@ -174,6 +202,8 @@ def evaluate_genie_benchmarks(
             "failed_benchmarks": res.failed_benchmarks,
             "duration_ms": res.duration_ms,
             "error": res.error,
+            "run_id": res.run_id,
+            "case_id": res.case_id,
             "evaluated_at": res.evaluated_at,
             "results": [r.__dict__ for r in res.results],
         }

@@ -218,14 +218,17 @@ class MetricComparisonService:
         }
 
         # 6. Persist run record if session provided
+        import uuid
+        run_id = str(uuid.uuid4())
+        result_payload["run_id"] = run_id
+
         if self.db_session:
             try:
                 from datetime import datetime, timezone
                 from semabridge.repository.orm.ai_models import MetricComparisonRunRow
-                import uuid
                 now_utc = datetime.now(timezone.utc)
                 run_row = MetricComparisonRunRow(
-                    id=str(uuid.uuid4()),
+                    id=run_id,
                     project_id=project_id,
                     configuration_id=None,
                     metric_name=metric_name,
@@ -252,7 +255,6 @@ class MetricComparisonService:
                 )
                 self.db_session.add(run_row)
                 self.db_session.commit()
-                result_payload["run_id"] = run_row.id
             except Exception as exc:
                 logger.warning("Failed to persist MetricComparisonRunRow: %s", exc)
                 try:
