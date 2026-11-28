@@ -45,7 +45,7 @@ def filter_qualifying_cases(
         status = str(c.get("status") or "draft").lower().strip()
         expected_val = c.get("expected_value")
         windows = parse_case_windows(c.get("windows"))
-        has_window_benchmark = any(w.has_expected_value for w in windows)
+        all_windows_benchmarked = bool(windows) and all(w.has_expected_value for w in windows)
 
         # Check 1: Status
         if status not in ("approved", "certified"):
@@ -57,8 +57,8 @@ def filter_qualifying_cases(
             })
             continue
 
-        # Check 2: Captured expected value (case-level or at least one window benchmark)
-        if expected_val is None and not has_window_benchmark:
+        # Check 2: Captured expected value (case-level or every window has its own benchmark)
+        if expected_val is None and not all_windows_benchmarked:
             skipped.append({
                 "case_id": cid,
                 "question": c.get("question") or "",
@@ -87,12 +87,12 @@ def filter_qualifying_cases(
             })
             continue
 
-        passing_res = [
+        failing_res = [
             r for r in cid_results
-            if bool(r.get("passed")) and str(r.get("verdict") or "PASS").upper() == "PASS"
+            if not (bool(r.get("passed")) and str(r.get("verdict") or "PASS").upper() == "PASS")
         ]
-        if not passing_res:
-            last_verdict = str(cid_results[-1].get("verdict") or "FAIL").upper()
+        if failing_res:
+            last_verdict = str(failing_res[-1].get("verdict") or "FAIL").upper()
             skipped.append({
                 "case_id": cid,
                 "question": c.get("question") or "",
