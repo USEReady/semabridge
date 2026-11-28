@@ -44,6 +44,12 @@ function getProjectWarehouse(p) {
   return 'OTHER';
 }
 
+function extractViewName(v) {
+  if (!v) return '';
+  if (typeof v === 'string') return v === '[object Object]' ? '' : v;
+  return v.semantic_view || v.view || v.view_name || v.name || '';
+}
+
 export default function MetricComparatorPage() {
   const {
     projects = [],
@@ -94,7 +100,7 @@ export default function MetricComparatorPage() {
   };
 
   // ─── Project Views & Metrics ─────────────────────────────────────────
-  const { views = [], loading: viewsLoading } = useDeployedViews(activeProjectId);
+  const { views = [], selectedView = '', loading: viewsLoading } = useDeployedViews(activeProjectId);
   const [projectMetrics, setProjectMetrics] = useState([]);
   const [metricsLoading, setMetricsLoading] = useState(false);
   const [metricSearch, setMetricSearch] = useState('');
@@ -120,6 +126,8 @@ export default function MetricComparatorPage() {
 
   useEffect(() => {
     if (activeProjectId) {
+      setTargetView('');
+      setSelectedMetric('');
       fetchProjectMetrics(activeProjectId);
     }
   }, [activeProjectId, fetchProjectMetrics]);
@@ -181,13 +189,16 @@ export default function MetricComparatorPage() {
     }
   }, [config]);
 
-  // Auto-select first view when loaded
+  // Auto-select view when loaded (prioritizing selectedView or first deployed view)
   useEffect(() => {
-    if (views.length > 0 && !targetView) {
-      const firstView = views[0].view_name || views[0].name || String(views[0]);
-      setTargetView(firstView);
+    if (selectedView && (!targetView || targetView === '[object Object]')) {
+      const clean = extractViewName(selectedView);
+      if (clean) setTargetView(clean);
+    } else if (views.length > 0 && (!targetView || targetView === '[object Object]')) {
+      const firstView = extractViewName(views[0]);
+      if (firstView) setTargetView(firstView);
     }
-  }, [views, targetView]);
+  }, [selectedView, views, targetView]);
 
   // Filtered metrics list for selection
   const filteredMetrics = useMemo(() => {
@@ -210,7 +221,7 @@ export default function MetricComparatorPage() {
         metric_name: selectedMetric,
         source_platform: sourcePlatform,
         target_platform: targetPlatform,
-        target_view: targetView,
+        target_view: extractViewName(targetView) || undefined,
         tolerance_pct: parseFloat(tolerancePct) || 0.01,
         null_policy: nullPolicy,
         mock_mode: mockMode,
@@ -535,13 +546,14 @@ export default function MetricComparatorPage() {
               <label style={LABEL_STYLE}>Target View / Metric View</label>
               {views.length > 0 ? (
                 <select
-                  value={targetView}
+                  value={extractViewName(targetView)}
                   onChange={(e) => setTargetView(e.target.value)}
                   style={{ ...SELECT_STYLE, fontFamily: 'monospace' }}
                 >
                   <option value="">-- Choose Target View ({views.length} found) --</option>
                   {views.map((v, idx) => {
-                    const vName = v.view_name || v.name || String(v);
+                    const vName = extractViewName(v);
+                    if (!vName) return null;
                     return (
                       <option key={idx} value={vName}>
                         {vName}
@@ -553,7 +565,7 @@ export default function MetricComparatorPage() {
                 <input
                   type="text"
                   placeholder="e.g. DB.SCHEMA.VIEW or catalog.schema.metric_view"
-                  value={targetView}
+                  value={extractViewName(targetView)}
                   onChange={(e) => setTargetView(e.target.value)}
                   style={{ ...INPUT_STYLE, fontFamily: 'monospace' }}
                 />
