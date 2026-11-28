@@ -933,48 +933,54 @@ class DatabricksAdapter(PlatformAdapter):
         connection_config: Optional[Dict[str, Any]] = None,
         dry_run: bool = False,
     ) -> Dict[str, Any]:
-        """Inject sample questions into a Databricks Genie Space configuration.
+        """Inject verified question/SQL benchmark pairs into a Databricks Genie Space."""
+        from semabridge.connectors.genie.connector import GenieConnector
 
-        Status: UNVERIFIED (Spike Finding).
-        Queries GET /api/2.0/genie/spaces when credentials are provided; if zero Genie spaces exist
-        or the token lacks space creation scope, refuses honestly with the recorded reason.
-        """
-        if not dry_run and connection_config:
-            try:
-                import requests
+        cfg = self._resolve_connection_config(connection_config or {})
+        connector = GenieConnector(cfg)
 
-                cfg = self._resolve_connection_config(connection_config)
-                host = cfg.get("host")
-                token = cfg.get("token")
-                if host and token:
-                    clean_host = host.replace("https://", "").replace("http://", "").rstrip("/")
-                    resp = requests.get(
-                        f"https://{clean_host}/api/2.0/genie/spaces",
-                        headers={"Authorization": f"Bearer {token}"},
-                        timeout=int(cfg.get("timeout") or 15),
-                    )
-                    if resp.status_code == 200:
-                        spaces = (resp.json() or {}).get("spaces") or []
-                        if not spaces:
-                            return {
-                                "supported": False,
-                                "injected_count": 0,
-                                "target": None,
-                                "details": [],
-                                "reason": "Databricks Genie space injection is unverified: workspace contains zero Genie spaces and token lacks space creation scope.",
-                                "dry_run": dry_run,
-                            }
-            except Exception as exc:
-                logger.debug("Genie space check failed during inject_verified_queries: %s", exc)
+        if dry_run:
+            pub_res = connector.publish_benchmarks(space_id="dry-run-space", pairs=pairs, dry_run=True)
+            return {
+                "supported": True,
+                "injected_count": pub_res.injected_count,
+                "target": "GENIE",
+                "details": pub_res.published,
+                "reason": pub_res.reason,
+                "dry_run": True,
+            }
 
-        return {
-            "supported": False,
-            "injected_count": 0,
-            "target": None,
-            "details": [],
-            "reason": "Databricks Genie space injection is unverified: workspace contains zero Genie spaces and token lacks space creation scope.",
-            "dry_run": dry_run,
-        }
+        try:
+            target_space = connector.find_space_for_view(view_name)
+            if not target_space:
+                return {
+                    "supported": False,
+                    "injected_count": 0,
+                    "target": None,
+                    "details": [],
+                    "reason": f"No active Genie Space found matching view '{view_name}' in the configured Databricks workspace.",
+                    "dry_run": False,
+                }
+
+            pub_res = connector.publish_benchmarks(space_id=target_space.space_id, pairs=pairs, dry_run=False)
+            return {
+                "supported": pub_res.success,
+                "injected_count": pub_res.injected_count,
+                "target": "GENIE",
+                "details": pub_res.published,
+                "reason": pub_res.reason,
+                "dry_run": False,
+            }
+        except Exception as exc:
+            logger.warning("Genie injection failed via GenieConnector: %s", exc)
+            return {
+                "supported": False,
+                "injected_count": 0,
+                "target": None,
+                "details": [],
+                "reason": f"Databricks Genie injection failed: {str(exc)}",
+                "dry_run": False,
+            }
 
     def execute_sql(
         self,

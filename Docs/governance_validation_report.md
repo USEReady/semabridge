@@ -1,7 +1,7 @@
 # Governance Features Validation & Architecture Story Report
 
 **Branch:** `integrate/bi-truth-guards`  
-**Features Covered:** Drift Monitoring (CS-16), Blast Radius Simulation (CS-18), BI Truth Suite (CS-19)  
+**Features Covered:** Drift Monitoring Blast Radius Simulation  BI Truth Suite  
 **Target Platforms:** Snowflake & Databricks  
 
 ---
@@ -9,9 +9,9 @@
 ## Executive Summary
 
 This report documents the end-to-end implementation, verification, and hardening of the three core SemaBridge Enterprise Governance modules:
-1. **Drift Monitoring (CS-16):** Continuously reconciles deployed semantic warehouse views against deployed baselines to catch metric expression divergence, column modifications, additions, and deletions without false positives.
-2. **Blast Radius (CS-18):** Simulates upstream schema alterations (such as column drops or expression edits) to compute full direct and transitive dependency graphs across measures, dimensions, and reports, returning structured risk assessments and remediation paths.
-3. **BI Truth Suite (CS-19):** Executes governed semantic Q&A verification cases against live warehouses (Snowflake and Databricks), enforcing strict tolerance comparisons across full aggregates, sliced dimensions, and time windows before certifying pairs for verified query injection (Cortex / Genie).
+1. **Drift Monitoring :** Continuously reconciles deployed semantic warehouse views against deployed baselines to catch metric expression divergence, column modifications, additions, and deletions without false positives.
+2. **Blast Radius :** Simulates upstream schema alterations (such as column drops or expression edits) to compute full direct and transitive dependency graphs across measures, dimensions, and reports, returning structured risk assessments and remediation paths.
+3. **BI Truth Suite :** Executes governed semantic Q&A verification cases against live warehouses (Snowflake and Databricks), enforcing strict tolerance comparisons across full aggregates, sliced dimensions, and time windows before certifying pairs for verified query injection (Cortex / Genie).
 
 ---
 

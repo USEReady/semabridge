@@ -63,6 +63,14 @@
     },
     "shared": []
   },
+  "proj-human-reso": {
+    "models": {
+      "human_resources_sample_pbix": [
+        "human_reso__human_resources_sample_pbix"
+      ]
+    },
+    "shared": []
+  },
   "proj-le": {
     "models": {
       "life_expectancy_v202009": [

@@ -20,6 +20,7 @@ import BiTruthHistoryModal from '../components/bitruth/BiTruthHistoryModal';
 import { useBiTruthCases } from '../hooks/useBiTruthCases';
 import { useBiTruthRuns } from '../hooks/useBiTruthRuns';
 import { useBiTruthInjection } from '../hooks/useBiTruthInjection';
+import MetricComparisonPanel from '../components/bitruth/comparison/MetricComparisonPanel';
 
 const INPUT = {
   padding: '6px 10px',
@@ -180,6 +181,11 @@ export default function BiTruthPage() {
   const [replaceDrafts] = useState(false);
   const [busy, setBusy] = useState(false);
   const [infoMsg, setInfoMsg] = useState('');
+  const [pageMode, setPageMode] = useState('suite'); // 'suite' | 'comparison'
+
+  const availableMetrics = useMemo(() => {
+    return Array.from(new Set(cases.map((c) => c.metric_name).filter(Boolean)));
+  }, [cases]);
 
   // Modals
   const [openAddModal, setOpenAddModal] = useState(false);
@@ -570,39 +576,95 @@ export default function BiTruthPage() {
             </div>
           )}
 
-          {/* ── Main Split View (Master List on Left, Detail Workbench on Right) ── */}
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'minmax(320px, 42%) 1fr',
-              gap: 12,
-              flex: 1,
-              minHeight: 0,
-              overflow: 'hidden',
-            }}
-          >
-            {/* Master List Column */}
-            <BiTruthCasesList
-              cases={cases}
-              resultsMap={resultsMap}
-              selectedCaseId={activeCaseId}
-              onSelectCase={setSelectedCaseId}
-              busy={busy}
-              onGenerate={handleGenerate}
-              onToggleCritical={handleToggleCritical}
-            />
-
-            {/* Active Case Detail Column */}
-            <BiTruthCaseDetail
-              caseItem={activeCase}
-              result={activeResult}
-              onUpdateStatus={setStatus}
-              onUpdateCritical={handleToggleCritical}
-              onUpdateWindows={updateWindows}
-              onAcceptBenchmark={acceptBenchmark}
-              onDelete={handleDeleteCase}
-            />
+          {/* ── Mode Switcher: Truth Suite vs Real-Time Metric Comparison ── */}
+          <div style={{ display: 'flex', gap: 6, marginBottom: 2 }}>
+            <button
+              type="button"
+              onClick={() => setPageMode('suite')}
+              style={{
+                ...BTN,
+                padding: '5px 14px',
+                borderRadius: '6px 6px 0 0',
+                background: pageMode === 'suite' ? 'var(--bg-surface)' : 'transparent',
+                borderColor: pageMode === 'suite' ? 'var(--border-main)' : 'transparent',
+                borderBottom: pageMode === 'suite' ? '2px solid var(--accent-blue)' : 'none',
+                color: pageMode === 'suite' ? 'var(--text-primary)' : 'var(--text-secondary)',
+                fontWeight: pageMode === 'suite' ? 700 : 500,
+              }}
+            >
+              Test Cases Workbench ({cases.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setPageMode('comparison')}
+              style={{
+                ...BTN,
+                padding: '5px 14px',
+                borderRadius: '6px 6px 0 0',
+                background: pageMode === 'comparison' ? 'var(--bg-surface)' : 'transparent',
+                borderColor: pageMode === 'comparison' ? 'var(--border-main)' : 'transparent',
+                borderBottom: pageMode === 'comparison' ? '2px solid var(--accent-blue)' : 'none',
+                color: pageMode === 'comparison' ? 'var(--text-primary)' : 'var(--text-secondary)',
+                fontWeight: pageMode === 'comparison' ? 700 : 500,
+              }}
+            >
+              Real-Time Metric Comparison (DAX vs SQL)
+            </button>
           </div>
+
+          {pageMode === 'comparison' ? (
+            <div
+              style={{
+                flex: 1,
+                minHeight: 0,
+                background: 'var(--bg-surface)',
+                borderRadius: 10,
+                border: '1px solid var(--border-main)',
+                overflow: 'hidden',
+              }}
+            >
+              <MetricComparisonPanel
+                projectId={selectedProjectId}
+                availableMetrics={availableMetrics}
+                currentView={selectedView}
+                targetPlatform={activePlatform}
+              />
+            </div>
+          ) : (
+            /* ── Main Split View (Master List on Left, Detail Workbench on Right) ── */
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'minmax(320px, 42%) 1fr',
+                gap: 12,
+                flex: 1,
+                minHeight: 0,
+                overflow: 'hidden',
+              }}
+            >
+              {/* Master List Column */}
+              <BiTruthCasesList
+                cases={cases}
+                resultsMap={resultsMap}
+                selectedCaseId={activeCaseId}
+                onSelectCase={setSelectedCaseId}
+                busy={busy}
+                onGenerate={handleGenerate}
+                onToggleCritical={handleToggleCritical}
+              />
+
+              {/* Active Case Detail Column */}
+              <BiTruthCaseDetail
+                caseItem={activeCase}
+                result={activeResult}
+                onUpdateStatus={setStatus}
+                onUpdateCritical={handleToggleCritical}
+                onUpdateWindows={updateWindows}
+                onAcceptBenchmark={acceptBenchmark}
+                onDelete={handleDeleteCase}
+              />
+            </div>
+          )}
         </div>
       </div>
 

@@ -436,3 +436,74 @@ def compare_truth_results(
         return False, comp.reason, details
     else:
         return False, comp.reason, details
+
+
+def compare_metric_execution(
+    source_val: Any,
+    target_val: Any,
+    tolerance_pct: Optional[float] = None,
+    floor: Optional[float] = None,
+    null_policy: str = "STRICT_NULL",
+    source_error: Optional[str] = None,
+    target_error: Optional[str] = None,
+    not_comparable: bool = False,
+) -> Comparison:
+    """Compare source DAX metric value against target warehouse SQL metric value.
+    
+    Returns Comparison dataclass with verdict (PASS / FAIL / NOT_COMPARABLE),
+    variance_pct, absolute_difference, and rule_applied details.
+    """
+    if not_comparable or (source_error and "NO_BASELINE" in source_error):
+        return Comparison(
+            verdict=Verdict.NOT_COMPARABLE,
+            expected=source_val,
+            actual=target_val,
+            reason=source_error or target_error or "Comparison not possible",
+        )
+
+    if source_error or target_error:
+        err = source_error if source_error else target_error
+        return Comparison(
+            verdict=Verdict.FAIL,
+            expected=source_val,
+            actual=target_val,
+            reason=f"Execution error: {err}",
+        )
+
+    # Coalesce NULLs only if null_policy explicitly demands it
+    coalesce_zero = str(null_policy or "").strip().upper() in ("NULL_EQUALS_ZERO", "NULL_AS_ZERO", "COALESCE_ZERO")
+    if source_val is None and coalesce_zero:
+        source_val = 0.0
+    if target_val is None and coalesce_zero:
+        target_val = 0.0
+
+    # If both null, it's a pass
+    if source_val is None and target_val is None:
+        return Comparison(
+            verdict=Verdict.PASS,
+            expected=None,
+            actual=None,
+            variance_pct=0.0,
+            absolute_difference=0.0,
+            reason="Both source and target evaluated to NULL (matched null policy)",
+        )
+
+    # If only one is null, fail
+    if source_val is None or target_val is None:
+        return Comparison(
+            verdict=Verdict.FAIL,
+            expected=source_val,
+            actual=target_val,
+            reason="One value is NULL and the other is not (NULL policy: STRICT_NULL)",
+        )
+
+    # Use compare_values
+    tol = tolerance_pct if tolerance_pct is not None else DEFAULT_TOLERANCE_PCT
+    flr = floor if floor is not None else DEFAULT_FLOOR
+    return compare_values(
+        expected=source_val,
+        actual=target_val,
+        tolerance_pct=tol,
+        floor=flr,
+    )
+

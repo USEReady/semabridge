@@ -15,6 +15,7 @@ import DomainsView from './ontology/DomainsView';
 import MetricDrawer from './ontology/MetricDrawer';
 import HealthView from './ontology/HealthView';
 import { WhatIfSimulator, ParityPanel } from './ontology/GovernancePanels';
+import MetricComparisonPanel from './bitruth/comparison/MetricComparisonPanel';
 import { Pill } from './ontology/ui';
 import { describeApiError, timeAgo, BTN, BTN_PRIMARY } from './ontology/styles';
 import {
@@ -185,6 +186,8 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
   // Health: results list
   const [healthFilter, setHealthFilter] = useState('all');
   const [healthExpanded, setHealthExpanded] = useState(null);
+  const [comparatorTab, setComparatorTab] = useState('workbench'); // 'workbench' | 'matrix' | 'governance'
+  const [comparatorSelectedMetric, setComparatorSelectedMetric] = useState('');
   const [impactReports, setImpactReports] = useState({}); // metric name -> blast-radius report
   const [impactLoading, setImpactLoading] = useState({});
   const [checksRanAt, setChecksRanAt] = useState(null);
@@ -1404,7 +1407,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
               </h1>
               <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
                 {mode === 'comparator'
-                  ? 'Golden parity reconciliation, quality linter, and access checks'
+                  ? 'Real-time source-to-target semantic metric reconciliation and golden parity verification'
                   : mode === 'blast-radius'
                   ? 'What-if impact simulator for metric renames, drops, and formula changes'
                   : 'Shared business definitions every BI tool and AI agent uses'}

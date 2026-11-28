@@ -1,0 +1,37 @@
+{
+  "Total Sales": {
+    "value": 1542000.5000,
+    "unit": "USD",
+    "captured_at": "2026-11-20T10:00:00Z"
+  },
+  "Total Profit": {
+    "value": 385500.1250,
+    "unit": "USD",
+    "captured_at": "2026-11-20T10:00:00Z"
+  },
+  "Order Count": {
+    "value": 12450,
+    "unit": "count",
+    "captured_at": "2026-11-20T10:00:00Z"
+  },
+  "CLE": {
+    "value": 72.4500,
+    "unit": "years",
+    "captured_at": "2026-11-20T10:00:00Z"
+  },
+  "CFR_BLACK": {
+    "value": 18.2500,
+    "unit": "rate",
+    "captured_at": "2026-11-20T10:00:00Z"
+  },
+  "Zero Metric": {
+    "value": 0.0000,
+    "unit": "rate",
+    "captured_at": "2026-11-20T10:00:00Z"
+  },
+  "Null Metric": {
+    "value": null,
+    "unit": "rate",
+    "captured_at": "2026-11-20T10:00:00Z"
+  }
+}

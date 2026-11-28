@@ -196,23 +196,27 @@ export default function TimeWindowEditor({
       )}
 
       {!readOnly && (
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 4 }}>
-          {availableDims.length > 0 ? (
-            <select
-              value={selectedDim}
-              onChange={(e) => setSelectedDim(e.target.value)}
-              style={{ ...INPUT, flex: '1 1 140px' }}
-              title="Select a dimension from this view"
-            >
-              {availableDims.map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <input
-              type="text"
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
+          <div style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span>Filter by Model Dimensions: If your model has dimensional attributes (e.g. Accounts, Year, Region), select one below to evaluate this metric on that specific slice.</span>
+          </div>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            {availableDims.length > 0 ? (
+              <select
+                value={selectedDim}
+                onChange={(e) => setSelectedDim(e.target.value)}
+                style={{ ...INPUT, flex: '1 1 140px' }}
+                title="Select a dimension from this model view"
+              >
+                {availableDims.map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
               placeholder={loadingDims ? "Loading dimensions..." : "Dimension (e.g. COL_DATE.YEAR)"}
               value={selectedDim}
               onChange={(e) => setSelectedDim(e.target.value)}
@@ -265,6 +269,7 @@ export default function TimeWindowEditor({
           >
             <Plus size={12} /> Add
           </button>
+        </div>
         </div>
       )}
     </div>

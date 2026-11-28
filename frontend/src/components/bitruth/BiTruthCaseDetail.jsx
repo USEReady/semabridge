@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import {
   Star, Check, X, ShieldAlert, Copy, CheckCircle2, AlertTriangle, AlertCircle,
-  HelpCircle, Trash2, Calendar, Database, Code, RefreshCw, Clock,
+  HelpCircle, Trash2, Calendar, Database, Code, RefreshCw, Clock, Sparkles,
 } from 'lucide-react';
 import TimeWindowEditor from './TimeWindowEditor';
 import { formatTimestamp, formatTruthValue } from '../../utils/biTruthLabels';
+import { authFetch } from '../../utils/api';
 
 const CARD = {
   padding: 14,
@@ -108,6 +109,27 @@ export default function BiTruthCaseDetail({
   const [accepting, setAccepting] = useState(false);
   const [acceptError, setAcceptError] = useState(null);
   const [acceptSuccess, setAcceptSuccess] = useState(false);
+  const [localStatus, setLocalStatus] = useState(null);
+
+  const [trackedCaseId, setTrackedCaseId] = useState(caseItem?.id);
+  if (caseItem?.id !== trackedCaseId) {
+    setTrackedCaseId(caseItem?.id);
+    setLocalStatus(null);
+  }
+
+  const effectiveStatus = localStatus || caseItem?.status;
+  const isApproved = effectiveStatus === 'approved';
+  const isRejected = effectiveStatus === 'rejected';
+
+  const handleApprove = () => {
+    setLocalStatus('approved');
+    onUpdateStatus(caseItem.id, 'approved');
+  };
+
+  const handleReject = () => {
+    setLocalStatus('rejected');
+    onUpdateStatus(caseItem.id, 'rejected');
+  };
 
   const handleAcceptBenchmarkAction = async () => {
     if (!result) return;
@@ -124,17 +146,128 @@ export default function BiTruthCaseDetail({
       setAccepting(false);
     }
   };
+
+  // ─── Genie Space Integration State ─────────────────────────────────
+  const [showGeniePanel, setShowGeniePanel] = useState(false);
+  const [genieSpaces, setGenieSpaces] = useState([]);
+  const [selectedSpaceId, setSelectedSpaceId] = useState('');
+  const [customSpaceId, setCustomSpaceId] = useState('');
+  const [loadingGenieSpaces, setLoadingGenieSpaces] = useState(false);
+  const [publishingGenie, setPublishingGenie] = useState(false);
+  const [evaluatingGenie, setEvaluatingGenie] = useState(false);
+  const [genieStatus, setGenieStatus] = useState(null);
+  const [genieEvalResult, setGenieEvalResult] = useState(null);
+
+  const handleToggleGeniePanel = () => {
+    const next = !showGeniePanel;
+    setShowGeniePanel(next);
+    if (next && genieSpaces.length === 0) {
+      setLoadingGenieSpaces(true);
+      const q = caseItem?.project_id ? `?project_id=${encodeURIComponent(caseItem.project_id)}` : '';
+      authFetch(`/api/genie/spaces${q}`)
+        .then((r) => r.json())
+        .then((data) => {
+          const spaces = data.spaces || [];
+          setGenieSpaces(spaces);
+          if (spaces.length > 0) {
+            setSelectedSpaceId(spaces[0].space_id || spaces[0].id || '');
+          }
+        })
+        .catch((err) => console.warn('Could not load Genie spaces', err))
+        .finally(() => setLoadingGenieSpaces(false));
+    }
+  };
+
+  const handlePublishGenieBenchmark = async () => {
+    const finalSpaceId = (selectedSpaceId === '__custom__' ? customSpaceId : selectedSpaceId).trim();
+    if (!finalSpaceId) {
+      setGenieStatus({ type: 'error', msg: 'Please select or enter a valid Genie Space ID.' });
+      return;
+    }
+
+    setPublishingGenie(true);
+    setGenieStatus(null);
+    try {
+      const sqlToPublish = caseItem.expected_sql || result?.generated_sql || '';
+      const res = await authFetch('/api/genie/publish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          space_id: finalSpaceId,
+          project_id: caseItem.project_id || undefined,
+          pairs: [
+            {
+              question: caseItem.question,
+              expected_sql: sqlToPublish,
+            },
+          ],
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setGenieStatus({
+          type: 'success',
+          msg: `Successfully registered benchmark question in Genie Space '${finalSpaceId}'.`,
+        });
+      } else {
+        setGenieStatus({ type: 'error', msg: data.detail || 'Genie benchmark publishing failed.' });
+      }
+    } catch (e) {
+      setGenieStatus({ type: 'error', msg: String(e) });
+    } finally {
+      setPublishingGenie(false);
+    }
+  };
+
+  const handleEvaluateGenieBenchmark = async () => {
+    const finalSpaceId = (selectedSpaceId === '__custom__' ? customSpaceId : selectedSpaceId).trim();
+    if (!finalSpaceId) {
+      setGenieStatus({ type: 'error', msg: 'Please select or enter a valid Genie Space ID.' });
+      return;
+    }
+
+    setEvaluatingGenie(true);
+    setGenieStatus(null);
+    setGenieEvalResult(null);
+    try {
+      const sqlToEval = caseItem.expected_sql || result?.generated_sql || '';
+      const res = await authFetch('/api/genie/evaluate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          space_id: finalSpaceId,
+          project_id: caseItem.project_id || undefined,
+          benchmarks: [
+            {
+              question: caseItem.question,
+              expected_sql: sqlToEval,
+            },
+          ],
+          timeout_seconds: 60,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setGenieEvalResult(data);
+        setGenieStatus({
+          type: 'success',
+          msg: `Genie evaluation completed. Accuracy score: ${(Number(data.accuracy_score || 0) * 100).toFixed(1)}%.`,
+        });
+      } else {
+        setGenieStatus({ type: 'error', msg: data.detail || 'Genie evaluation failed.' });
+      }
+    } catch (e) {
+      setGenieStatus({ type: 'error', msg: String(e) });
+    } finally {
+      setEvaluatingGenie(false);
+    }
+  };
   const hasGenerated = Boolean(result?.generated_sql);
   const hasExpected = Boolean(caseItem?.expected_sql || caseItem?.dax_expression);
   const hasDax = Boolean(caseItem?.expected_dax || caseItem?.dax_expression);
 
   const defaultTab = hasGenerated ? 'generated' : hasExpected ? 'expected' : 'generated';
   const [userTab, setUserTab] = useState(null);
-  const [prevCaseId, setPrevCaseId] = useState(caseItem?.id);
-  if (caseItem?.id !== prevCaseId) {
-    setPrevCaseId(caseItem?.id);
-    setUserTab(null);
-  }
   const sqlTab = userTab || defaultTab;
 
   if (!caseItem) {
@@ -164,8 +297,6 @@ export default function BiTruthCaseDetail({
     );
   }
 
-  const isApproved = caseItem.status === 'approved';
-  const isRejected = caseItem.status === 'rejected';
   const isCritical = Boolean(caseItem.is_critical);
 
   const handleToggleCritical = () => {
@@ -286,7 +417,7 @@ export default function BiTruthCaseDetail({
               <button
                 type="button"
                 style={{ ...BTN, color: 'var(--color-error)' }}
-                onClick={() => onUpdateStatus(caseItem.id, 'rejected')}
+                onClick={handleReject}
               >
                 <X size={12} /> Reject
               </button>
@@ -300,11 +431,26 @@ export default function BiTruthCaseDetail({
                   borderColor: 'var(--color-success, #22c55e)',
                   boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
                 }}
-                onClick={() => onUpdateStatus(caseItem.id, 'approved')}
+                onClick={handleApprove}
               >
                 <Check size={12} /> Approve
               </button>
             )}
+
+            <button
+              type="button"
+              onClick={handleToggleGeniePanel}
+              style={{
+                ...BTN,
+                background: showGeniePanel ? 'rgba(255, 54, 33, 0.15)' : 'transparent',
+                borderColor: showGeniePanel ? '#FF3621' : 'var(--border-main)',
+                color: showGeniePanel ? '#FF3621' : 'var(--text-secondary)',
+              }}
+              title="Publish benchmark question to Databricks Genie Space"
+            >
+              <Sparkles size={12} style={{ color: '#FF3621' }} />
+              Genie Benchmark
+            </button>
 
             <button
               type="button"
@@ -320,6 +466,139 @@ export default function BiTruthCaseDetail({
             </button>
           </div>
         </div>
+
+        {/* Databricks Genie Space Benchmark Publisher Panel */}
+        {showGeniePanel && (
+          <div style={{
+            background: 'var(--bg-surface-raised)',
+            borderRadius: 8,
+            border: '1px solid var(--border-main)',
+            padding: 12,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 10,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Sparkles size={13} style={{ color: '#FF3621' }} /> Databricks Genie Space Integration
+              </div>
+              <span style={{ fontSize: 10.5, color: 'var(--text-tertiary)' }}>
+                Sync approved question-SQL benchmarks
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              {loadingGenieSpaces ? (
+                <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Discovering Genie Spaces…</span>
+              ) : genieSpaces.length > 0 ? (
+                <div style={{ display: 'flex', gap: 6, flex: 1, minWidth: 240 }}>
+                  <select
+                    value={selectedSpaceId}
+                    onChange={(e) => setSelectedSpaceId(e.target.value)}
+                    style={{ ...INPUT, flex: 1, fontSize: 11 }}
+                  >
+                    {genieSpaces.map((s) => (
+                      <option key={s.space_id || s.id} value={s.space_id || s.id}>
+                        {s.name || s.title || s.space_id} ({s.space_id || s.id})
+                      </option>
+                    ))}
+                    <option value="__custom__">&plus; Enter custom Space ID…</option>
+                  </select>
+                  {selectedSpaceId === '__custom__' && (
+                    <input
+                      type="text"
+                      placeholder="Space ID"
+                      value={customSpaceId}
+                      onChange={(e) => setCustomSpaceId(e.target.value)}
+                      style={{ ...INPUT, width: 140, fontSize: 11 }}
+                    />
+                  )}
+                </div>
+              ) : (
+                <input
+                  type="text"
+                  placeholder="Enter Databricks Genie Space ID…"
+                  value={selectedSpaceId}
+                  onChange={(e) => setSelectedSpaceId(e.target.value)}
+                  style={{ ...INPUT, flex: 1, fontSize: 11 }}
+                />
+              )}
+
+              <button
+                type="button"
+                onClick={handlePublishGenieBenchmark}
+                disabled={publishingGenie || evaluatingGenie}
+                style={{
+                  ...BTN,
+                  background: 'var(--accent-blue)',
+                  color: '#fff',
+                  border: 'none',
+                  fontSize: 11,
+                  padding: '5px 12px',
+                  fontWeight: 600,
+                  opacity: (publishingGenie || evaluatingGenie) ? 0.7 : 1,
+                  cursor: (publishingGenie || evaluatingGenie) ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {publishingGenie ? 'Publishing…' : 'Publish Benchmark'}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleEvaluateGenieBenchmark}
+                disabled={publishingGenie || evaluatingGenie}
+                style={{
+                  ...BTN,
+                  background: 'var(--bg-surface)',
+                  color: 'var(--text-primary)',
+                  fontSize: 11,
+                  padding: '5px 12px',
+                  fontWeight: 600,
+                  opacity: (publishingGenie || evaluatingGenie) ? 0.7 : 1,
+                  cursor: (publishingGenie || evaluatingGenie) ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {evaluatingGenie ? 'Evaluating…' : 'Run Evaluation'}
+              </button>
+            </div>
+
+            {genieStatus && (
+              <div style={{
+                padding: '6px 10px',
+                borderRadius: 4,
+                fontSize: 11,
+                background: genieStatus.type === 'success' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                color: genieStatus.type === 'success' ? '#10B981' : '#EF4444',
+                border: `1px solid ${genieStatus.type === 'success' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+              }}>
+                {genieStatus.msg}
+              </div>
+            )}
+
+            {genieEvalResult && (
+              <div style={{
+                padding: '8px 10px',
+                borderRadius: 4,
+                background: 'var(--bg-surface)',
+                border: '1px solid var(--border-main)',
+                fontSize: 11,
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}>
+                <div>
+                  Accuracy Score: <strong style={{ color: genieEvalResult.accuracy_score === 1.0 ? '#10B981' : '#EF4444' }}>
+                    {(Number(genieEvalResult.accuracy_score || 0) * 100).toFixed(1)}%
+                  </strong>{' '}
+                  ({genieEvalResult.passed_benchmarks} of {genieEvalResult.total_benchmarks} passed)
+                </div>
+                <span style={{ color: 'var(--text-tertiary)', fontSize: 10.5 }}>
+                  {genieEvalResult.duration_ms} ms
+                </span>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Critical tolerance setting bar if critical */}
         {isCritical && (
@@ -622,15 +901,14 @@ export default function BiTruthCaseDetail({
             }}
           >
             {sqlTab === 'generated'
-              ? result?.generated_sql ||
-                (caseItem.expected_sql
-                  ? `-- Live execution pending suite run\n-- Certified Reference Query:\n${caseItem.expected_sql}`
-                  : (isApproved
-                    ? 'No SQL generated yet. Case is approved and queued for the next suite run.'
-                    : 'No SQL generated yet for this question. It will be generated and run once approved.'))
+              ? (result?.generated_sql ||
+                 caseItem.expected_sql ||
+                 (isApproved
+                   ? 'No SQL generated yet. Case is approved and ready for the next suite run.'
+                   : 'No SQL generated yet for this question. It will be generated and run once approved.'))
               : sqlTab === 'expected'
-              ? caseItem.expected_sql || caseItem.dax_expression || 'No certified SQL recorded.'
-              : caseItem.expected_dax || caseItem.dax_expression || 'No DAX recorded.'}
+              ? (caseItem.expected_sql || caseItem.dax_expression || result?.generated_sql || 'No certified SQL recorded.')
+              : (caseItem.expected_dax || caseItem.dax_expression || 'No DAX recorded.')}
           </pre>
 
           <button

@@ -48,6 +48,7 @@ from semabridge.api.routers.drift_router import router as drift_router
 from semabridge.api.routers.reverse_sync_router import router as reverse_sync_router
 from semabridge.api.routers.bi_truth_router import router as bi_truth_router
 from semabridge.api.routers.cross_platform_router import router as cross_platform_router
+from semabridge.api.routers.genie_router import router as genie_router
 
 try:
     from semabridge.api.auth_router import router as auth_router
@@ -111,6 +112,7 @@ for router in [
     reverse_sync_router,
     bi_truth_router,
     cross_platform_router,
+    genie_router,
     maintenance_router,
 ]:
     app.include_router(router)

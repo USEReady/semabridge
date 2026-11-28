@@ -354,7 +354,7 @@ export function buildHealthResults({
       severity: 'pending',
       category: 'parity',
       title: 'Parity not checked yet',
-      detail: "Compares a metric's Power BI DAX result with the warehouse SQL result, slice by slice.",
+      detail: "Real-time comparison: Fabric / Power BI DAX vs Snowflake / Databricks SQL measure with tolerance checks.",
       action: 'Check',
       kind: 'parity',
     });

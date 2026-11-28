@@ -159,6 +159,58 @@ class BITruthRunRow(Base):
         return f"<BITruthRunRow(id={self.id}, score={self.accuracy_score})>"
 
 
+class MetricComparisonConfigRow(Base):
+    """Project-level or metric-level comparison configuration (tolerance, floor, null policy)."""
+
+    __tablename__ = "metric_comparison_configs"
+    __table_args__ = (
+        Index("ix_metric_cmp_cfg_proj_metric", "project_id", "metric_name", unique=True),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    project_id: Mapped[str] = mapped_column(String(PROJECT_ID_LENGTH), nullable=False, index=True)
+    metric_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # NULL implies project default
+    tolerance_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.01)
+    absolute_floor: Mapped[float] = mapped_column(Float, nullable=False, default=0.01)
+    null_policy: Mapped[str] = mapped_column(String(64), nullable=False, default="STRICT_NULL")
+    updated_at: Mapped[datetime] = mapped_column(_UTC_DT, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<MetricComparisonConfigRow(project={self.project_id}, metric={self.metric_name}, tol={self.tolerance_pct})>"
+
+
+class MetricComparisonRunRow(Base):
+    """Historical run of real-time source-to-target metric comparison."""
+
+    __tablename__ = "metric_comparison_runs"
+    __table_args__ = (
+        Index("ix_metric_cmp_run_proj", "project_id"),
+        Index("ix_metric_cmp_run_metric", "project_id", "metric_name"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    project_id: Mapped[str] = mapped_column(String(PROJECT_ID_LENGTH), nullable=False)
+    metric_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_platform: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_platform: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_view: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    source_query: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    target_query: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    source_value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    target_value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    variance_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    absolute_difference: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    tolerance_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.01)
+    verdict: Mapped[str] = mapped_column(String(32), nullable=False, default="NOT_COMPARABLE")
+    reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    execution_ms: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    mock_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    executed_at: Mapped[datetime] = mapped_column(_UTC_DT, server_default=func.now(), nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<MetricComparisonRunRow(id={self.id}, metric={self.metric_name}, verdict={self.verdict})>"
+
+
 # Backward-compatible aliases (names used by the ontology_validations branch).
 QueryExecutionHistory = AIQueryExecutionRow
 VerifiedQuery = AIVerifiedQueryRow

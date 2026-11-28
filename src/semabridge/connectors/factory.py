@@ -41,6 +41,10 @@ def make_source_extractor(connector_type: str, config: Any):
             or (config if isinstance(config, (str, bytes)) else "")
         )
         return TableauConnector(raw)
+    if ct in ("genie", "genie_space"):
+        from semabridge.connectors.genie.connector import GenieConnector
+        cfg_dict = config if isinstance(config, dict) else (config.model_dump() if hasattr(config, "model_dump") else getattr(config, "__dict__", {}))
+        return GenieConnector(cfg_dict)
     raise ValueError(f"Unknown source connector type: {connector_type!r}")
 
 
@@ -89,5 +93,16 @@ def make_target_emitter(connector_type: str, config: Any):
             schema_name=schema_name,
         )
         return DatabricksPublisher(dbx_cfg)
+    if ct in ("genie", "genie_space"):
+        from semabridge.connectors.genie.connector import GenieConnector
+        cfg_dict = config if isinstance(config, dict) else (config.model_dump() if hasattr(config, "model_dump") else getattr(config, "__dict__", {}))
+        return GenieConnector(cfg_dict)
     raise ValueError(f"Unknown target connector type: {connector_type!r}")
+
+
+def make_genie_connector(config: Any):
+    """Return a standalone Genie Space connector instance."""
+    from semabridge.connectors.genie.connector import GenieConnector
+    cfg_dict = config if isinstance(config, dict) else (config.model_dump() if hasattr(config, "model_dump") else getattr(config, "__dict__", {}))
+    return GenieConnector(cfg_dict)
 

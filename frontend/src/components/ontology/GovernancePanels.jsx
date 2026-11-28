@@ -22,6 +22,7 @@ import {
 import { BTN_SM, BTN_PRIMARY, INPUT_STYLE, SELECT_STYLE, MONO, plural } from './styles';
 import { Pill } from './ui';
 import ImpactDependencyGraph from '../governance/ImpactDependencyGraph';
+import MetricComparisonPanel from '../bitruth/comparison/MetricComparisonPanel';
 
 const PANEL = {
   padding: 16,
@@ -576,6 +577,7 @@ export function ParityPanel({ gov = {}, metricOptions = [], dimensionOptions = [
   const [showQueries, setShowQueries] = React.useState(true);
   const [showAdvanced, setShowAdvanced] = React.useState(false);
   const [isEditingSql, setIsEditingSql] = React.useState(false);
+  const [parityMode, setParityMode] = React.useState('realtime');
 
   const availableMetrics = React.useMemo(() => {
     if (parityProjectMetrics?.length > 0) return parityProjectMetrics;
@@ -847,6 +849,90 @@ export function ParityPanel({ gov = {}, metricOptions = [], dimensionOptions = [
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* ── SUB-MODE TOGGLE BAR: REAL-TIME COMPARATOR vs MANUAL CSV ── */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '10px 14px',
+        borderRadius: 8,
+        background: 'var(--bg-surface-raised)',
+        border: '1px solid var(--border-main)',
+        flexWrap: 'wrap',
+        gap: 8,
+      }}>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            type="button"
+            onClick={() => setParityMode('realtime')}
+            style={{
+              padding: '7px 16px',
+              borderRadius: 6,
+              fontSize: 12,
+              fontWeight: 700,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              background: parityMode === 'realtime' ? 'var(--accent-blue, #2563eb)' : 'transparent',
+              color: parityMode === 'realtime' ? '#ffffff' : 'var(--text-secondary)',
+              border: parityMode === 'realtime' ? '1px solid var(--accent-blue, #2563eb)' : '1px solid var(--border-main)',
+              cursor: 'pointer',
+              boxShadow: parityMode === 'realtime' ? '0 1px 3px rgba(0,0,0,0.2)' : 'none',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            ⚡ Real-Time Comparison (Fabric / Power BI ↔ Snowflake / Databricks)
+          </button>
+          <button
+            type="button"
+            onClick={() => setParityMode('manual')}
+            style={{
+              padding: '7px 16px',
+              borderRadius: 6,
+              fontSize: 12,
+              fontWeight: 600,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              background: parityMode === 'manual' ? 'var(--accent-blue, #2563eb)' : 'transparent',
+              color: parityMode === 'manual' ? '#ffffff' : 'var(--text-secondary)',
+              border: parityMode === 'manual' ? '1px solid var(--accent-blue, #2563eb)' : '1px solid var(--border-main)',
+              cursor: 'pointer',
+              boxShadow: parityMode === 'manual' ? '0 1px 3px rgba(0,0,0,0.2)' : 'none',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            📁 Manual CSV / Upload Mode
+          </button>
+        </div>
+        <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{
+            display: 'inline-block',
+            width: 7,
+            height: 7,
+            borderRadius: '50%',
+            background: parityMode === 'realtime' ? '#10b981' : '#64748b',
+          }} />
+          {parityMode === 'realtime' ? 'Live REST / Driver API execution' : 'Static CSV reconciliation'}
+        </div>
+      </div>
+
+      {parityMode === 'realtime' ? (
+        <div style={{
+          background: 'var(--bg-surface)',
+          borderRadius: 10,
+          border: '1px solid var(--border-main)',
+          overflow: 'hidden',
+        }}>
+          <MetricComparisonPanel
+            projectId={govProjectId || 'default'}
+            availableMetrics={availableMetrics.map((m) => m.name || m.logical_name || String(m))}
+            currentView={semanticViewOptions?.[0] || reconTable || ''}
+            targetPlatform={reconTargetKind || 'SNOWFLAKE'}
+          />
+        </div>
+      ) : (
+        <>
       {/* ── 1. PROJECT & DAX SELECTION CARD ─────────────────────────────── */}
       <div style={{
         display: 'grid',
@@ -1742,6 +1828,8 @@ export function ParityPanel({ gov = {}, metricOptions = [], dimensionOptions = [
             </div>
           )}
         </div>
+      )}
+        </>
       )}
     </div>
   );

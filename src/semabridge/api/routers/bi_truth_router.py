@@ -4,8 +4,13 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+from semabridge.api.deps import get_db
+from semabridge.ai.metric_execution.service import MetricComparisonService
+from semabridge.repository.orm.ai_models import MetricComparisonConfigRow, MetricComparisonRunRow
 
 from semabridge.ai.bi_truth_service import (
     _sanitize_cell_value,
@@ -375,4 +380,222 @@ def get_bi_truth_injection_history(project_id: Optional[str] = None) -> Dict[str
     from semabridge.ai.bi_truth_service import list_truth_runs
     runs = list_truth_runs(project_id) if project_id else []
     return {"history": runs}
+
+
+# =====================================================================
+# Source-to-Target Real-Time Metric Comparison Endpoints
+# =====================================================================
+
+class RunMetricComparisonRequest(BaseModel):
+    project_id: str = "default"
+    metric_name: str
+    source_platform: str = "fabric"  # fabric | power_bi | mock
+    target_platform: str = "snowflake"  # snowflake | databricks
+    target_view: str = ""
+    source_config: Dict[str, Any] = {}
+    target_config: Dict[str, Any] = {}
+    slice_filters: Optional[Dict[str, Any]] = None
+    tolerance_pct: Optional[float] = None
+    floor: Optional[float] = None
+    null_policy: str = "STRICT_NULL"  # STRICT_NULL | NULL_EQUALS_ZERO
+    mock_mode: bool = False
+    timeout_seconds: int = 60
+
+
+class UpdateMetricComparisonConfigRequest(BaseModel):
+    project_id: str
+    metric_name: Optional[str] = None
+    tolerance_pct: float = 0.01
+    absolute_floor: float = 0.01
+    null_policy: str = "STRICT_NULL"
+
+
+@router.post("/metric-comparison/run", response_model=Dict[str, Any])
+async def run_metric_comparison_endpoint(
+    req: RunMetricComparisonRequest,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Run real-time source DAX vs target warehouse SQL comparison."""
+    svc = MetricComparisonService(db_session=db)
+    try:
+        res = await svc.run_comparison_async(
+            project_id=req.project_id,
+            metric_name=req.metric_name,
+            source_platform=req.source_platform,
+            target_platform=req.target_platform,
+            target_view=req.target_view,
+            source_config=req.source_config,
+            target_config=req.target_config,
+            slice_filters=req.slice_filters,
+            tolerance_pct=req.tolerance_pct,
+            floor=req.floor,
+            null_policy=req.null_policy,
+            mock_mode=req.mock_mode,
+            timeout_seconds=req.timeout_seconds,
+        )
+        return res
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Metric comparison failed: {str(exc)}")
+
+
+@router.get("/metric-comparison/history", response_model=Dict[str, Any])
+def get_metric_comparison_history(
+    project_id: Optional[str] = None,
+    metric_name: Optional[str] = None,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Retrieve history of metric comparison executions."""
+    query = db.query(MetricComparisonRunRow)
+    if project_id:
+        query = query.filter(MetricComparisonRunRow.project_id == project_id)
+    if metric_name:
+        query = query.filter(MetricComparisonRunRow.metric_name == metric_name)
+    rows = query.order_by(MetricComparisonRunRow.executed_at.desc()).limit(limit).all()
+
+    history = [
+        {
+            "id": r.id,
+            "project_id": r.project_id,
+            "metric_name": r.metric_name,
+            "source_platform": r.source_platform,
+            "target_platform": r.target_platform,
+            "target_view": r.target_view,
+            "source_query": r.source_query,
+            "target_query": r.target_query,
+            "source_value": r.source_value,
+            "target_value": r.target_value,
+            "variance_pct": r.variance_pct,
+            "absolute_difference": r.absolute_difference,
+            "tolerance_pct": r.tolerance_pct,
+            "verdict": r.verdict,
+            "reason": r.reason,
+            "execution_ms": r.execution_ms,
+            "mock_mode": r.mock_mode,
+            "executed_at": r.executed_at.isoformat() if r.executed_at else None,
+        }
+        for r in rows
+    ]
+    return {"count": len(history), "runs": history}
+
+
+@router.get("/metric-comparison/config", response_model=Dict[str, Any])
+def get_metric_comparison_config(
+    project_id: str,
+    metric_name: Optional[str] = None,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Retrieve comparison configuration (tolerance, floor, null policy)."""
+    # 1. Metric-level config if requested
+    metric_cfg = None
+    if metric_name:
+        row = (
+            db.query(MetricComparisonConfigRow)
+            .filter(
+                MetricComparisonConfigRow.project_id == project_id,
+                MetricComparisonConfigRow.metric_name == metric_name,
+            )
+            .first()
+        )
+        if row:
+            metric_cfg = {
+                "tolerance_pct": row.tolerance_pct,
+                "absolute_floor": row.absolute_floor,
+                "null_policy": row.null_policy,
+            }
+
+    # 2. Project-level default
+    proj_row = (
+        db.query(MetricComparisonConfigRow)
+        .filter(
+            MetricComparisonConfigRow.project_id == project_id,
+            MetricComparisonConfigRow.metric_name.is_(None),
+        )
+        .first()
+    )
+    proj_cfg = {
+        "tolerance_pct": proj_row.tolerance_pct if proj_row else 0.01,
+        "absolute_floor": proj_row.absolute_floor if proj_row else 0.01,
+        "null_policy": proj_row.null_policy if proj_row else "STRICT_NULL",
+    }
+
+    return {
+        "project_id": project_id,
+        "metric_name": metric_name,
+        "effective": metric_cfg or proj_cfg,
+        "project_default": proj_cfg,
+        "metric_override": metric_cfg,
+    }
+
+
+@router.put("/metric-comparison/config", response_model=Dict[str, Any])
+def update_metric_comparison_config(
+    req: UpdateMetricComparisonConfigRequest,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Upsert project-level or metric-level comparison configuration."""
+    row = (
+        db.query(MetricComparisonConfigRow)
+        .filter(
+            MetricComparisonConfigRow.project_id == req.project_id,
+            MetricComparisonConfigRow.metric_name == req.metric_name,
+        )
+        .first()
+    )
+    if not row:
+        row = MetricComparisonConfigRow(
+            project_id=req.project_id,
+            metric_name=req.metric_name,
+            tolerance_pct=req.tolerance_pct,
+            absolute_floor=req.absolute_floor,
+            null_policy=req.null_policy,
+        )
+        db.add(row)
+    else:
+        row.tolerance_pct = req.tolerance_pct
+        row.absolute_floor = req.absolute_floor
+        row.null_policy = req.null_policy
+
+    db.commit()
+    db.refresh(row)
+    return {
+        "id": row.id,
+        "project_id": row.project_id,
+        "metric_name": row.metric_name,
+        "tolerance_pct": row.tolerance_pct,
+        "absolute_floor": row.absolute_floor,
+        "null_policy": row.null_policy,
+    }
+
+
+@router.get("/metric-comparison/{run_id}", response_model=Dict[str, Any])
+def get_metric_comparison_detail(
+    run_id: str,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Retrieve details for a specific metric comparison run."""
+    row = db.query(MetricComparisonRunRow).filter(MetricComparisonRunRow.id == run_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Comparison run not found")
+    return {
+        "id": row.id,
+        "project_id": row.project_id,
+        "metric_name": row.metric_name,
+        "source_platform": row.source_platform,
+        "target_platform": row.target_platform,
+        "target_view": row.target_view,
+        "source_query": row.source_query,
+        "target_query": row.target_query,
+        "source_value": row.source_value,
+        "target_value": row.target_value,
+        "variance_pct": row.variance_pct,
+        "absolute_difference": row.absolute_difference,
+        "tolerance_pct": row.tolerance_pct,
+        "verdict": row.verdict,
+        "reason": row.reason,
+        "execution_ms": row.execution_ms,
+        "mock_mode": row.mock_mode,
+        "executed_at": row.executed_at.isoformat() if row.executed_at else None,
+    }
+
 

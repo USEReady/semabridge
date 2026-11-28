@@ -35,6 +35,7 @@ const AskAiPage          = lazy(() => import('./pages/AskAiPage'));
 const GovernanceSuitePage = lazy(() => import('./pages/GovernanceSuitePage'));
 const DriftMonitoringPage = lazy(() => import('./pages/DriftMonitoringPage'));
 const BiTruthPage         = lazy(() => import('./pages/BiTruthPage'));
+const MetricComparatorPage = lazy(() => import('./pages/MetricComparatorPage'));
 
 // Old route names redirect to the new ones, keeping any ?query (bookmarks, links in run reports).
 function RedirectKeepQuery({ to }) {
@@ -115,7 +116,7 @@ export default function App() {
             <Route path="/explore"       element={<RedirectKeepQuery to="/map" />} />
             <Route path="/ask"           element={<ErrorBoundary><Suspense fallback={<PageFallback />}><AskAiPage /></Suspense></ErrorBoundary>} />
             <Route path="/ontology"          element={<ErrorBoundary><Suspense fallback={<PageFallback />}><OntologyPage mode="explorer" /></Suspense></ErrorBoundary>} />
-            <Route path="/metric-comparator" element={<ErrorBoundary><Suspense fallback={<PageFallback />}><OntologyPage mode="comparator" /></Suspense></ErrorBoundary>} />
+            <Route path="/metric-comparator" element={<ErrorBoundary><Suspense fallback={<PageFallback />}><MetricComparatorPage /></Suspense></ErrorBoundary>} />
             <Route path="/blast-radius"      element={<ErrorBoundary><Suspense fallback={<PageFallback />}><OntologyPage mode="blast-radius" /></Suspense></ErrorBoundary>} />
             <Route path="/drift"             element={<ErrorBoundary><Suspense fallback={<PageFallback />}><DriftMonitoringPage /></Suspense></ErrorBoundary>} />
             <Route path="/drift-monitoring"  element={<RedirectKeepQuery to="/drift" />} />
