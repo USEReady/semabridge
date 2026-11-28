@@ -45,7 +45,8 @@ export default function MetricComparisonResults({ result, running, error, projec
   const [customSpaceId, setCustomSpaceId] = useState('');
   const [loadingSpaces, setLoadingSpaces] = useState(false);
 
-  const isDatabricks = String(result?.target?.platform || '').toUpperCase() === 'DATABRICKS';
+  const targetPlatform = String(result?.target?.platform || result?.target_platform || '').toUpperCase();
+  const isDatabricks = targetPlatform === 'DATABRICKS';
 
   // Load actual Genie Spaces from workspace
   useEffect(() => {
@@ -247,8 +248,31 @@ export default function MetricComparisonResults({ result, running, error, projec
   const badgeConfig = BADGE_STYLES[verdict] || BADGE_STYLES.NOT_COMPARABLE;
   const BadgeIcon = badgeConfig.icon;
 
-  const sourceVal = result.source?.normalized_value;
-  const targetVal = result.target?.normalized_value;
+  const sourceObj = result.source || {
+    platform: result.source_platform || 'fabric',
+    success: result.source_execution_status ? result.source_execution_status !== 'ERROR' : (result.source_value !== null),
+    normalized_value: result.source_value,
+    raw_value: result.source_value,
+    execution_ms: result.source_execution_duration_ms || result.execution_ms,
+    query: result.source_query || result.generated_dax,
+    error: result.source_execution_status === 'ERROR' ? result.reason : null,
+  };
+
+  const targetObj = result.target || {
+    platform: result.target_platform || 'snowflake',
+    success: result.target_execution_status ? result.target_execution_status !== 'ERROR' : (result.target_value !== null),
+    normalized_value: result.target_value,
+    raw_value: result.target_value,
+    execution_ms: result.target_execution_duration_ms || result.execution_ms,
+    query: result.target_query || result.generated_sql,
+    error: result.target_execution_status === 'ERROR' ? result.reason : null,
+  };
+
+  const sourceVal = sourceObj.normalized_value;
+  const targetVal = targetObj.normalized_value;
+  const absDiff = result.absolute_difference ?? result.absolute_variance;
+  const variancePct = result.variance_pct ?? result.percentage_variance;
+  const tolerancePct = result.tolerance_pct ?? result.tolerance_percentage;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -316,17 +340,17 @@ export default function MetricComparisonResults({ result, running, error, projec
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
             <span style={{ fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-tertiary)', letterSpacing: '0.04em' }}>
-              SOURCE &bull; {result.source?.platform === 'power_bi' ? 'Power BI' : 'Microsoft Fabric'}
+              SOURCE &bull; {sourceObj.platform === 'power_bi' ? 'Power BI' : 'Microsoft Fabric'}
             </span>
             <span style={{
               fontSize: 10.5,
               fontWeight: 600,
               padding: '1px 6px',
               borderRadius: 4,
-              background: result.source?.success ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-              color: result.source?.success ? '#10B981' : '#EF4444',
+              background: sourceObj.success ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+              color: sourceObj.success ? '#10B981' : '#EF4444',
             }}>
-              {result.source?.success ? 'SUCCESS' : 'FAILED'}
+              {sourceObj.success ? 'SUCCESS' : 'FAILED'}
             </span>
           </div>
 
@@ -341,13 +365,13 @@ export default function MetricComparisonResults({ result, running, error, projec
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, fontSize: 11, color: 'var(--text-secondary)' }}>
-            <span>Raw: <code>{String(result.source?.raw_value ?? 'NULL')}</code></span>
-            <span>Duration: {result.source?.execution_ms || 0}ms</span>
+            <span>Raw: <code>{String(sourceObj.raw_value ?? 'NULL')}</code></span>
+            <span>Duration: {sourceObj.execution_ms || 0}ms</span>
           </div>
 
-          {result.source?.error && (
+          {sourceObj.error && (
             <div style={{ marginTop: 8, padding: '6px 8px', borderRadius: 4, background: 'rgba(239, 68, 68, 0.1)', color: '#EF4444', fontSize: 11 }}>
-              {result.source.error}
+              {sourceObj.error}
             </div>
           )}
         </div>
@@ -361,17 +385,17 @@ export default function MetricComparisonResults({ result, running, error, projec
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
             <span style={{ fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-tertiary)', letterSpacing: '0.04em' }}>
-              TARGET &bull; {result.target?.platform || 'Warehouse'}
+              TARGET &bull; {targetObj.platform || 'Warehouse'}
             </span>
             <span style={{
               fontSize: 10.5,
               fontWeight: 600,
               padding: '1px 6px',
               borderRadius: 4,
-              background: result.target?.success ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-              color: result.target?.success ? '#10B981' : '#EF4444',
+              background: targetObj.success ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+              color: targetObj.success ? '#10B981' : '#EF4444',
             }}>
-              {result.target?.success ? 'SUCCESS' : 'FAILED'}
+              {targetObj.success ? 'SUCCESS' : 'FAILED'}
             </span>
           </div>
 
@@ -386,13 +410,13 @@ export default function MetricComparisonResults({ result, running, error, projec
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, fontSize: 11, color: 'var(--text-secondary)' }}>
-            <span>Raw: <code>{String(result.target?.raw_value ?? 'NULL')}</code></span>
-            <span>Duration: {result.target?.execution_ms || 0}ms</span>
+            <span>Raw: <code>{String(targetObj.raw_value ?? 'NULL')}</code></span>
+            <span>Duration: {targetObj.execution_ms || 0}ms</span>
           </div>
 
-          {result.target?.error && (
+          {targetObj.error && (
             <div style={{ marginTop: 8, padding: '6px 8px', borderRadius: 4, background: 'rgba(239, 68, 68, 0.1)', color: '#EF4444', fontSize: 11 }}>
-              {result.target.error}
+              {targetObj.error}
             </div>
           )}
         </div>
@@ -411,8 +435,8 @@ export default function MetricComparisonResults({ result, running, error, projec
         <div>
           <div style={{ fontSize: 10.5, color: 'var(--text-tertiary)', fontWeight: 600 }}>ABSOLUTE VARIANCE</div>
           <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'monospace', marginTop: 2 }}>
-            {result.absolute_difference !== null && result.absolute_difference !== undefined
-              ? Number(result.absolute_difference).toFixed(4)
+            {absDiff !== null && absDiff !== undefined
+              ? Number(absDiff).toFixed(4)
               : 'N/A'}
           </div>
         </div>
@@ -426,8 +450,8 @@ export default function MetricComparisonResults({ result, running, error, projec
             fontFamily: 'monospace',
             marginTop: 2,
           }}>
-            {result.variance_pct !== null && result.variance_pct !== undefined
-              ? `${Number(result.variance_pct).toFixed(4)}%`
+            {variancePct !== null && variancePct !== undefined
+              ? `${Number(variancePct).toFixed(4)}%`
               : 'N/A'}
           </div>
         </div>
@@ -435,7 +459,7 @@ export default function MetricComparisonResults({ result, running, error, projec
         <div>
           <div style={{ fontSize: 10.5, color: 'var(--text-tertiary)', fontWeight: 600 }}>CONFIGURED TOLERANCE</div>
           <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginTop: 2 }}>
-            &plusmn;{result.tolerance_pct !== undefined ? result.tolerance_pct : '0.01'}%
+            &plusmn;{tolerancePct !== undefined ? tolerancePct : '0.01'}%
           </div>
         </div>
 
@@ -527,11 +551,11 @@ export default function MetricComparisonResults({ result, running, error, projec
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                 <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)' }}>
-                  Source DAX Query ({result.source?.platform || 'Fabric/Power BI'})
+                  Source DAX Query ({sourceObj.platform || 'Fabric/Power BI'})
                 </span>
                 <button
                   type="button"
-                  onClick={() => handleCopy(result.source?.query, 'src')}
+                  onClick={() => handleCopy(sourceObj.query, 'src')}
                   style={{
                     display: 'inline-flex',
                     alignItems: 'center',
@@ -558,7 +582,7 @@ export default function MetricComparisonResults({ result, running, error, projec
                 overflowX: 'auto',
                 color: 'var(--text-primary)',
               }}>
-                {result.source?.query || '-- No DAX query generated'}
+                {sourceObj.query || '-- No DAX query generated'}
               </pre>
             </div>
 
@@ -566,11 +590,11 @@ export default function MetricComparisonResults({ result, running, error, projec
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                 <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)' }}>
-                  Target Warehouse Query ({result.target?.platform || 'Warehouse'})
+                  Target Warehouse Query ({targetObj.platform || 'Warehouse'})
                 </span>
                 <button
                   type="button"
-                  onClick={() => handleCopy(result.target?.query, 'tgt')}
+                  onClick={() => handleCopy(targetObj.query, 'tgt')}
                   style={{
                     display: 'inline-flex',
                     alignItems: 'center',
@@ -597,7 +621,7 @@ export default function MetricComparisonResults({ result, running, error, projec
                 overflowX: 'auto',
                 color: 'var(--text-primary)',
               }}>
-                {result.target?.query || '-- No SQL query generated'}
+                {targetObj.query || '-- No SQL query generated'}
               </pre>
             </div>
           </div>

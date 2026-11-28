@@ -34,19 +34,23 @@ export default function MetricComparisonPanel({
     loading,
     running,
     currentResult,
+    setCurrentResult,
+    fetchRunDetail,
     error,
     config,
     saveConfig,
     runComparison,
   } = useMetricComparison(projectId);
 
-  const [metricName, setMetricName] = useState(initialMetric || availableMetrics[0] || 'Total Sales');
+  const [metricName, setMetricName] = useState(initialMetric || availableMetrics[0] || '');
 
   useEffect(() => {
     if (initialMetric) {
       setMetricName(initialMetric);
+    } else if (!metricName && availableMetrics.length > 0) {
+      setMetricName(availableMetrics[0]);
     }
-  }, [initialMetric]);
+  }, [initialMetric, availableMetrics]);
   const [sourcePlatform, setSourcePlatform] = useState('fabric');
   const [targetPlat, setTargetPlat] = useState(targetPlatform || 'SNOWFLAKE');
   const [targetView, setTargetView] = useState(currentView || '');
@@ -167,7 +171,7 @@ export default function MetricComparisonPanel({
                     type="text"
                     value={metricName}
                     onChange={(e) => setMetricName(e.target.value)}
-                    placeholder="e.g. Total Sales, CLE"
+                    placeholder="Enter metric name (e.g. Sales, Revenue)"
                     style={INPUT}
                   />
                 )}
@@ -371,6 +375,13 @@ export default function MetricComparisonPanel({
                 return (
                   <div
                     key={run.id}
+                    onClick={() => {
+                      setCurrentResult(run);
+                      if (run.id && fetchRunDetail) {
+                        fetchRunDetail(run.id).then((d) => d && setCurrentResult(d));
+                      }
+                      setActiveTab('execute');
+                    }}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -379,7 +390,11 @@ export default function MetricComparisonPanel({
                       borderRadius: 6,
                       background: 'var(--bg-surface-raised)',
                       border: '1px solid var(--border-main)',
+                      cursor: 'pointer',
+                      transition: 'border-color 0.15s ease',
                     }}
+                    onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--accent-blue)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border-main)'; }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                       {isPass ? (
