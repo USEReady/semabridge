@@ -708,7 +708,7 @@ async def list_ontology_projects(request: Request) -> List[Dict[str, Any]]:
             if pid and pid not in known:
                 projects.append(d)
                 known.add(pid)
-    if auth_is_enabled():
+    if auth_is_enabled() and user_id is not None:
         projects = [
             project
             for project in projects

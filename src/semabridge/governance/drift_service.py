@@ -927,6 +927,25 @@ def _run_drift_check_impl(
     meta = _project_meta(project_id) if project_id else {}
     platform = resolve_project_platform(meta)
     wh_cfg = resolve_project_warehouse_config(project_id) if project_id else {}
+    if wh_cfg is None:
+        return {
+            "status": "NOT_CHECKED",
+            "reason_code": "WAREHOUSE_UNREACHABLE",
+            "not_checked_reason": "SNOWFLAKE_UNAVAILABLE" if platform in ("SNOWFLAKE", "UNKNOWN", "NOT_SET") else f"{platform}_UNAVAILABLE",
+            "reason": f"No warehouse connection configured for project '{project_id}'",
+            "platform": platform if platform not in ("UNKNOWN", "NOT_SET") else "SNOWFLAKE",
+            "checked_metrics": 0,
+            "not_checked": [],
+            "skipped_placeholders": [],
+            "snowflake_connected": False,
+            "drift_detected": 0,
+            "events": [],
+            "checked_at": now,
+            "views_checked": [target_view_name] if target_view_name else [],
+            "view": target_view_name,
+            "semantic_view": target_view_name,
+            "category_counts": {"ADDITION": 0, "DELETION": 0, "EXPRESSION_DRIFT": 0, "DESCRIPTION_DRIFT": 0},
+        }
     wh_dict = wh_cfg.dict() if hasattr(wh_cfg, "dict") else (wh_cfg.model_dump() if hasattr(wh_cfg, "model_dump") else (wh_cfg if isinstance(wh_cfg, dict) else getattr(wh_cfg, "__dict__", {})))
 
     if platform in ("UNKNOWN", "NOT_SET", ""):
@@ -953,26 +972,6 @@ def _run_drift_check_impl(
             "reason": f"No target warehouse configured for project '{project_id}'",
             "not_checked_reason": "No target warehouse configured for this project",
             "platform": "NOT_SET",
-            "checked_metrics": 0,
-            "not_checked": [],
-            "skipped_placeholders": [],
-            "snowflake_connected": False,
-            "drift_detected": 0,
-            "events": [],
-            "checked_at": now,
-            "views_checked": [target_view_name] if target_view_name else [],
-            "view": target_view_name,
-            "semantic_view": target_view_name,
-            "category_counts": {"ADDITION": 0, "DELETION": 0, "EXPRESSION_DRIFT": 0, "DESCRIPTION_DRIFT": 0},
-        }
-
-    if wh_cfg is None:
-        return {
-            "status": "NOT_CHECKED",
-            "reason_code": "WAREHOUSE_UNREACHABLE",
-            "not_checked_reason": "SNOWFLAKE_UNAVAILABLE" if platform in ("SNOWFLAKE", "UNKNOWN") else f"{platform}_UNAVAILABLE",
-            "reason": f"No warehouse connection configured for project '{project_id}'",
-            "platform": platform,
             "checked_metrics": 0,
             "not_checked": [],
             "skipped_placeholders": [],

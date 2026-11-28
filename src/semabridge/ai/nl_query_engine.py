@@ -868,16 +868,25 @@ class NLQueryEngine:
         if len(exact_hits) == 1:
             return exact_hits[0], exact_hits, "resolved"
         if len(exact_hits) > 1:
-            # If multiple attributes from the same concept matched via concept label, prefer descriptive/name attribute over ID/key
+            # If multiple attributes from the same concept matched via concept label, prefer exact attribute name, then descriptive/name attribute over ID/key
             def _exact_priority(e: LexiconDimensionEntry) -> int:
                 attr_nm = e.attribute.name.casefold()
+                attr_ns = re.sub(r"[^a-z0-9]+", "", attr_nm)
+                is_exact_attr = (sbt_cf == attr_nm or sbt_nospace == attr_ns)
                 is_k = bool(
                     getattr(e.attribute, "is_primary_key", False)
                     or getattr(e.attribute, "is_foreign_key", False)
                     or getattr(e.attribute, "is_key", False)
+                    or getattr(e.attribute, "is_hidden", False)
+                    or (attr_nm.endswith("id") and not sbt_nospace.endswith("id"))
+                    or (attr_nm.endswith("_id") and not sbt_nospace.endswith("id"))
                 )
+                if is_exact_attr and not is_k:
+                    return -2
+                if is_exact_attr:
+                    return -1
                 if ("key" not in bt_lemmas) and is_k:
-                    return 2
+                    return 3
                 if "name" in attr_nm or "label" in attr_nm or "desc" in attr_nm:
                     return 0
                 return 1

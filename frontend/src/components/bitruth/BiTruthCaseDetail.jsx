@@ -293,7 +293,13 @@ export default function BiTruthCaseDetail({
             ) : (
               <button
                 type="button"
-                style={{ ...BTN, background: 'var(--color-success, #22c55e)', color: '#fff', borderColor: 'var(--color-success, #22c55e)' }}
+                style={{
+                  ...BTN,
+                  background: 'var(--color-success, #22c55e)',
+                  color: '#fff',
+                  borderColor: 'var(--color-success, #22c55e)',
+                  boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
+                }}
                 onClick={() => onUpdateStatus(caseItem.id, 'approved')}
               >
                 <Check size={12} /> Approve
@@ -617,9 +623,11 @@ export default function BiTruthCaseDetail({
           >
             {sqlTab === 'generated'
               ? result?.generated_sql ||
-                (isApproved
-                  ? 'No SQL generated yet. Case is approved and queued for the next suite run.'
-                  : 'No SQL generated yet for this question. It will be generated and run once approved.')
+                (caseItem.expected_sql
+                  ? `-- Live execution pending suite run\n-- Certified Reference Query:\n${caseItem.expected_sql}`
+                  : (isApproved
+                    ? 'No SQL generated yet. Case is approved and queued for the next suite run.'
+                    : 'No SQL generated yet for this question. It will be generated and run once approved.'))
               : sqlTab === 'expected'
               ? caseItem.expected_sql || caseItem.dax_expression || 'No certified SQL recorded.'
               : caseItem.expected_dax || caseItem.dax_expression || 'No DAX recorded.'}
@@ -630,7 +638,7 @@ export default function BiTruthCaseDetail({
             onClick={() => {
               const text =
                 sqlTab === 'generated'
-                  ? result?.generated_sql
+                  ? (result?.generated_sql || caseItem.expected_sql)
                   : sqlTab === 'expected'
                   ? caseItem.expected_sql
                   : caseItem.expected_dax;

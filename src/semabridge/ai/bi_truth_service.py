@@ -1598,14 +1598,22 @@ def list_truth_case_dimensions(case_id: str, project_id: Optional[str] = None) -
     if pid:
         try:
             from semabridge.ontology.store import ontology_store
-            fed = ontology_store.get_federated_ontology()
-            clean_pid = pid.replace("proj-", "").replace("-", "_").casefold()
-            for d_name, dom in getattr(fed, "domains", {}).items():
-                if clean_pid in d_name.casefold() or any(clean_pid in getattr(c, "name", "").casefold() for c in getattr(dom, "concepts", [])):
-                    for concept in getattr(dom, "concepts", []) or []:
-                        c_name = concept.name
-                        for attr in getattr(concept, "attributes", []) or []:
-                            dims.add(f"{c_name}.{attr.name}")
+            matched_domains = ontology_store.domains_for(pid)
+            case_domain = (target_case.get("domain") if target_case else None) or ""
+            if not matched_domains and case_domain:
+                dom = ontology_store.get_domain(case_domain)
+                if dom:
+                    matched_domains = [dom]
+            if not matched_domains:
+                fed = ontology_store.get_federated_ontology()
+                for d_name, dom in getattr(fed, "domains", {}).items():
+                    if case_domain and (d_name.casefold() == case_domain.casefold() or getattr(dom, "id", "").casefold() == case_domain.casefold()):
+                        matched_domains.append(dom)
+            for dom in matched_domains:
+                for concept in getattr(dom, "concepts", []) or []:
+                    c_name = concept.name
+                    for attr in getattr(concept, "attributes", []) or []:
+                        dims.add(f"{c_name}.{attr.name}")
         except Exception as ex:
             logger.debug("Failed extracting domain dimensions for %s: %s", pid, ex)
 

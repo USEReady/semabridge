@@ -1643,10 +1643,10 @@ _compat_bootstrapped: bool = False
 
 def _compat_ensure_loaded() -> None:
     global _compat_bootstrapped
-    if _compat_bootstrapped:
+    if _compat_bootstrapped and len(_compat_projects) > 0:
         return
     with _compat_store_lock:
-        if _compat_bootstrapped:
+        if _compat_bootstrapped and len(_compat_projects) > 0:
             return
         _compat_ensure_loaded_locked()
 

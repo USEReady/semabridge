@@ -109,6 +109,26 @@ export default function TimeWindowEditor({
         Time &amp; Slice Windows ({windows.length})
       </div>
 
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: 6,
+          background: 'rgba(59,130,246,0.06)',
+          border: '1px solid rgba(59,130,246,0.2)',
+          borderRadius: 6,
+          padding: '6px 10px',
+          fontSize: 11,
+          color: 'var(--text-secondary)',
+          lineHeight: 1.4,
+        }}
+      >
+        <HelpCircle size={14} style={{ color: 'var(--accent-blue)', flexShrink: 0, marginTop: 1 }} />
+        <span>
+          <strong>Slice &amp; Time Filters:</strong> If your semantic model contains date, period, or categorical slice dimensions (e.g. <code>YEAR</code>, <code>REGION</code>, <code>SEGMENT</code>), you can select them here to verify warehouse measure accuracy across specific subsets and time windows.
+        </span>
+      </div>
+
       {windows.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {windows.map((w, idx) => {

@@ -31,21 +31,26 @@ export function useBiTruthCases(projectId) {
   }, [fetchCases]);
 
   const setStatus = useCallback(async (caseId, status) => {
+    // Optimistic update: immediately update status so UI responds with zero lag
+    setCases((prev) =>
+      prev.map((c) => (c.id === caseId ? { ...c, status } : c))
+    );
     try {
       const res = await authFetch(`/api/bi-truth/cases/${caseId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
       });
-      if (res.ok) {
-        setCases((prev) =>
-          prev.map((c) => (c.id === caseId ? { ...c, status } : c))
-        );
+      if (!res.ok) {
+        // Rollback on non-200 response
+        fetchCases();
       }
     } catch (err) {
       setError(String(err));
+      // Rollback on exception
+      fetchCases();
     }
-  }, []);
+  }, [fetchCases]);
 
   const updateCritical = useCallback(async (caseId, isCritical, tolerance) => {
     try {
