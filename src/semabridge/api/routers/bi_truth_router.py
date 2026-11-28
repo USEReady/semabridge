@@ -6,7 +6,7 @@ import json
 import time
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
@@ -58,10 +58,11 @@ class BatchUpdateTruthCasesRequest(BaseModel):
 
 
 class InjectTruthCasesRequest(BaseModel):
-    project_id: str
+    project_id: Optional[str] = None
     case_ids: Optional[List[str]] = None
     dry_run: bool = False
     view: Optional[str] = None
+    view_name: Optional[str] = None
 
 
 class CreateManualTruthCaseRequest(BaseModel):
@@ -358,17 +359,44 @@ def get_runs(project_id: Optional[str] = None) -> Dict[str, Any]:
 
 
 @router.post("/inject", response_model=Dict[str, Any])
-def inject_truth_cases(req: InjectTruthCasesRequest, request: Request) -> Dict[str, Any]:
+async def inject_truth_cases(
+    request: Request,
+    req: Optional[InjectTruthCasesRequest] = Body(None),
+    project_id: Optional[str] = Query(None),
+    dry_run: Optional[bool] = Query(None),
+    view: Optional[str] = Query(None),
+    view_name: Optional[str] = Query(None),
+) -> Dict[str, Any]:
     """Inject qualifying verified query pairs into downstream Cortex Analyst or Genie model."""
     uid = getattr(request.state, "user_id", None)
     from semabridge.ai.bi_truth_service import inject_verified_queries_for_project
+
+    pid = (req.project_id if req and req.project_id else None) or project_id
+    if not pid:
+        try:
+            raw_body = await request.json()
+            if isinstance(raw_body, dict):
+                pid = raw_body.get("project_id") or pid
+                if dry_run is None and "dry_run" in raw_body:
+                    dry_run = bool(raw_body["dry_run"])
+                view_name = view_name or raw_body.get("view_name") or raw_body.get("view")
+        except Exception:
+            pass
+
+    if not pid:
+        raise HTTPException(status_code=400, detail="Missing required parameter: project_id")
+
+    is_dry_run = dry_run if dry_run is not None else (req.dry_run if req else False)
+    v_name = (req.view or req.view_name) if req else (view or view_name)
+    c_ids = req.case_ids if req else None
+
     try:
         res = inject_verified_queries_for_project(
-            project_id=req.project_id,
-            case_ids=req.case_ids,
-            dry_run=req.dry_run,
+            project_id=pid,
+            case_ids=c_ids,
+            dry_run=is_dry_run,
             user=str(uid) if uid else "user",
-            view_name=req.view,
+            view_name=v_name,
         )
         return res
     except ValueError as val_err:

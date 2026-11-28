@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import Modal from '../common/Modal';
 import { formatInjectionSkipReason, formatInjectionTargetLabel } from '../../utils/biTruthLabels';
+import { authFetch, formatApiErrorMessage } from '../../utils/api';
 
 const BTN = {
   display: 'inline-flex',
@@ -56,19 +57,29 @@ export default function InjectDialog({
     setLoadingPreview(true);
     setError('');
     try {
+      const payload = {
+        project_id: projectId,
+        dry_run: true,
+        view: selectedView || undefined,
+        view_name: selectedView || undefined,
+      };
       const params = new URLSearchParams({
         project_id: projectId,
         dry_run: 'true',
       });
-      if (selectedView) params.append('view_name', selectedView);
+      if (selectedView) {
+        params.append('view', selectedView);
+        params.append('view_name', selectedView);
+      }
 
-      const res = await fetch(`/api/bi-truth/inject?${params.toString()}`, {
+      const res = await authFetch(`/api/bi-truth/inject?${params.toString()}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data?.detail || data?.reason || 'Preview inspection failed.');
+        setError(formatApiErrorMessage(res, data, 'Preview inspection'));
       } else {
         setPreviewData(data);
         setHasPreviewed(true);
@@ -85,19 +96,29 @@ export default function InjectDialog({
     setInjecting(true);
     setError('');
     try {
+      const payload = {
+        project_id: projectId,
+        dry_run: false,
+        view: selectedView || undefined,
+        view_name: selectedView || undefined,
+      };
       const params = new URLSearchParams({
         project_id: projectId,
         dry_run: 'false',
       });
-      if (selectedView) params.append('view_name', selectedView);
+      if (selectedView) {
+        params.append('view', selectedView);
+        params.append('view_name', selectedView);
+      }
 
-      const res = await fetch(`/api/bi-truth/inject?${params.toString()}`, {
+      const res = await authFetch(`/api/bi-truth/inject?${params.toString()}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data?.detail || data?.reason || 'Warehouse publish failed.');
+        setError(formatApiErrorMessage(res, data, 'Warehouse publish'));
       } else {
         setInjectResult(data);
       }
@@ -170,7 +191,7 @@ export default function InjectDialog({
               fontSize: 12,
             }}
           >
-            {error}
+            {typeof error === 'string' ? error : (error?.message || JSON.stringify(error))}
           </div>
         )}
 
@@ -246,7 +267,9 @@ export default function InjectDialog({
                 </div>
                 <ul style={{ margin: '4px 0 0 16px', padding: 0, fontSize: 12 }}>
                   {injectResult.injected.map((p, idx) => (
-                    <li key={idx} style={{ marginTop: 2 }}>{p.question || p}</li>
+                    <li key={idx} style={{ marginTop: 2 }}>
+                      {typeof p === 'string' ? p : (p?.question || p?.text || JSON.stringify(p))}
+                    </li>
                   ))}
                 </ul>
               </div>
