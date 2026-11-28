@@ -103,7 +103,10 @@ export default function MetricComparatorPage() {
     if (!projId) return;
     setMetricsLoading(true);
     try {
-      const res = await authFetch(`/api/reconciliation/project-metrics?project_id=${encodeURIComponent(projId)}`);
+      let res = await authFetch(`/api/bi-truth/metric-comparison/metrics?project_id=${encodeURIComponent(projId)}`);
+      if (!res.ok) {
+        res = await authFetch(`/api/reconciliation/project-metrics?project_id=${encodeURIComponent(projId)}`);
+      }
       if (res.ok) {
         const data = await res.json();
         setProjectMetrics(data.metrics || []);

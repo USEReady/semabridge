@@ -220,15 +220,19 @@ class MetricComparisonService:
         # 6. Persist run record if session provided
         if self.db_session:
             try:
+                from datetime import datetime, timezone
                 from semabridge.repository.orm.ai_models import MetricComparisonRunRow
                 import uuid
+                now_utc = datetime.now(timezone.utc)
                 run_row = MetricComparisonRunRow(
                     id=str(uuid.uuid4()),
                     project_id=project_id,
+                    configuration_id=None,
                     metric_name=metric_name,
                     source_platform=src_res.platform,
                     target_platform=target_platform,
                     target_view=target_view,
+                    execution_mode="MOCK" if mock_mode else "LIVE",
                     source_query=src_res.query_text,
                     target_query=tgt_res["query_text"],
                     source_value=str(norm_src) if norm_src is not None else None,
@@ -237,9 +241,14 @@ class MetricComparisonService:
                     absolute_difference=comp.absolute_difference,
                     tolerance_pct=effective_tol,
                     verdict=comp.verdict.value,
+                    source_execution_status="SUCCESS" if src_res.success else "ERROR",
+                    target_execution_status="SUCCESS" if tgt_res["success"] else "ERROR",
+                    source_execution_duration_ms=src_res.execution_ms,
+                    target_execution_duration_ms=tgt_res["execution_ms"],
                     reason=comp.reason,
                     execution_ms=src_res.execution_ms + tgt_res["execution_ms"],
                     mock_mode=mock_mode,
+                    completed_at=now_utc,
                 )
                 self.db_session.add(run_row)
                 self.db_session.commit()

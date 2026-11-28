@@ -123,6 +123,20 @@ export function useMetricComparison(projectId) {
     }
   }, [projectId]);
 
+  const fetchRunDetail = useCallback(async (runId) => {
+    if (!runId) return null;
+    try {
+      const res = await authFetch(`/api/bi-truth/metric-comparison/history/${encodeURIComponent(runId)}`);
+      if (res.ok) {
+        const data = await res.json();
+        return data;
+      }
+    } catch (err) {
+      console.error('Failed to load metric comparison run detail', err);
+    }
+    return null;
+  }, []);
+
   useEffect(() => {
     if (projectId) {
       fetchHistory();
@@ -135,11 +149,13 @@ export function useMetricComparison(projectId) {
     loading,
     running,
     currentResult,
+    setCurrentResult,
     error,
     config,
     fetchHistory,
     fetchConfig,
     saveConfig,
     runComparison,
+    fetchRunDetail,
   };
 }

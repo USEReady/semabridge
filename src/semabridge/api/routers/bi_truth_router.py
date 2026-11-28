@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
+import time
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel
+import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from semabridge.api.deps import get_db
@@ -388,26 +391,120 @@ def get_bi_truth_injection_history(project_id: Optional[str] = None) -> Dict[str
 
 class RunMetricComparisonRequest(BaseModel):
     project_id: str = "default"
-    metric_name: str
+    metric_name: Optional[str] = None
+    metric_id: Optional[str] = None
     source_platform: str = "fabric"  # fabric | power_bi | mock
     target_platform: str = "snowflake"  # snowflake | databricks
-    target_view: str = ""
+    target_view: Optional[str] = ""
+    target_semantic_view: Optional[str] = None
     source_config: Dict[str, Any] = {}
     target_config: Dict[str, Any] = {}
     slice_filters: Optional[Dict[str, Any]] = None
     tolerance_pct: Optional[float] = None
+    tolerance_percentage: Optional[float] = None
     floor: Optional[float] = None
     null_policy: str = "STRICT_NULL"  # STRICT_NULL | NULL_EQUALS_ZERO
     mock_mode: bool = False
+    execution_mode: Optional[str] = None  # LIVE | MOCK
     timeout_seconds: int = 60
 
 
 class UpdateMetricComparisonConfigRequest(BaseModel):
     project_id: str
     metric_name: Optional[str] = None
-    tolerance_pct: float = 0.01
+    metric_id: Optional[str] = None
+    source_platform: Optional[str] = None
+    target_platform: Optional[str] = None
+    target_semantic_view: Optional[str] = None
+    tolerance_pct: Optional[float] = None
+    tolerance_percentage: Optional[float] = None
     absolute_floor: float = 0.01
     null_policy: str = "STRICT_NULL"
+    execution_timeout: int = 60
+    configuration: Optional[Dict[str, Any]] = None
+
+
+def _serialize_run_row(r: MetricComparisonRunRow) -> Dict[str, Any]:
+    return {
+        "id": r.id,
+        "run_id": r.id,
+        "project_id": r.project_id,
+        "configuration_id": getattr(r, "configuration_id", None),
+        "metric_id": r.metric_name,
+        "metric_name": r.metric_name,
+        "source_platform": r.source_platform,
+        "target_platform": r.target_platform,
+        "target_view": r.target_view,
+        "target_semantic_view": r.target_view,
+        "execution_mode": getattr(r, "execution_mode", "MOCK" if r.mock_mode else "LIVE"),
+        "source_query": r.source_query,
+        "target_query": r.target_query,
+        "generated_dax": r.source_query,
+        "generated_sql": r.target_query,
+        "source_value": r.source_value,
+        "target_value": r.target_value,
+        "variance_pct": r.variance_pct,
+        "percentage_variance": r.variance_pct,
+        "absolute_difference": r.absolute_difference,
+        "absolute_variance": r.absolute_difference,
+        "tolerance_pct": r.tolerance_pct,
+        "tolerance_percentage": r.tolerance_pct,
+        "verdict": r.verdict,
+        "source_execution_status": getattr(r, "source_execution_status", "SUCCESS"),
+        "target_execution_status": getattr(r, "target_execution_status", "SUCCESS"),
+        "source_execution_duration_ms": getattr(r, "source_execution_duration_ms", 0.0),
+        "target_execution_duration_ms": getattr(r, "target_execution_duration_ms", 0.0),
+        "reason": r.reason,
+        "error": r.reason if r.verdict != "PASS" else None,
+        "execution_ms": r.execution_ms,
+        "mock_mode": r.mock_mode,
+        "executed_at": r.executed_at.isoformat() if r.executed_at else None,
+        "created_at": r.executed_at.isoformat() if r.executed_at else None,
+        "completed_at": r.completed_at.isoformat() if getattr(r, "completed_at", None) else None,
+    }
+
+
+@router.get("/metric-comparison/health", response_model=Dict[str, Any])
+def get_metric_comparison_health(
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Return health status of the Metric Comparator integration and required dependencies."""
+    db_status = "connected"
+    try:
+        db.execute(sa.text("SELECT 1"))
+    except Exception as ex:
+        db_status = f"unhealthy: {str(ex)}"
+
+    return {
+        "status": "healthy" if db_status == "connected" else "degraded",
+        "service": "metric-comparator",
+        "database": db_status,
+        "adapters": {
+            "fabric": True,
+            "power_bi": True,
+            "snowflake": True,
+            "databricks": True,
+            "mock": True,
+        },
+        "supported_null_policies": ["STRICT_NULL", "NULL_EQUALS_ZERO"],
+        "timestamp": time.time(),
+    }
+
+
+@router.get("/metric-comparison/metrics", response_model=Dict[str, Any])
+def get_metric_comparison_metrics(
+    project_id: str = Query(..., description="Project ID to discover metrics for"),
+    view: Optional[str] = Query(None, description="Optional target view name"),
+) -> Dict[str, Any]:
+    """Retrieve available metrics using semantic model metadata for the project."""
+    from semabridge.api.routers.reconciliation_router import get_project_reconciliation_metrics
+    data = get_project_reconciliation_metrics(project_id=project_id, view=view)
+    return {
+        "project_id": project_id,
+        "count": len(data.get("metrics", [])),
+        "metrics": data.get("metrics", []),
+        "target_view": data.get("target_view") or data.get("view_name") or "",
+    }
 
 
 @router.post("/metric-comparison/run", response_model=Dict[str, Any])
@@ -416,21 +513,29 @@ async def run_metric_comparison_endpoint(
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """Run real-time source DAX vs target warehouse SQL comparison."""
+    metric = req.metric_name or req.metric_id
+    if not metric:
+        raise HTTPException(status_code=422, detail="metric_name or metric_id is required")
+
+    tgt_view = req.target_view or req.target_semantic_view or ""
+    tol = req.tolerance_pct if req.tolerance_pct is not None else req.tolerance_percentage
+    is_mock = req.mock_mode or (bool(req.execution_mode) and str(req.execution_mode).upper() == "MOCK")
+
     svc = MetricComparisonService(db_session=db)
     try:
         res = await svc.run_comparison_async(
             project_id=req.project_id,
-            metric_name=req.metric_name,
+            metric_name=metric,
             source_platform=req.source_platform,
             target_platform=req.target_platform,
-            target_view=req.target_view,
+            target_view=tgt_view,
             source_config=req.source_config,
             target_config=req.target_config,
             slice_filters=req.slice_filters,
-            tolerance_pct=req.tolerance_pct,
+            tolerance_pct=tol,
             floor=req.floor,
             null_policy=req.null_policy,
-            mock_mode=req.mock_mode,
+            mock_mode=is_mock,
             timeout_seconds=req.timeout_seconds,
         )
         return res
@@ -442,6 +547,9 @@ async def run_metric_comparison_endpoint(
 def get_metric_comparison_history(
     project_id: Optional[str] = None,
     metric_name: Optional[str] = None,
+    metric_id: Optional[str] = None,
+    verdict: Optional[str] = None,
+    page: int = 1,
     limit: int = 50,
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
@@ -449,59 +557,55 @@ def get_metric_comparison_history(
     query = db.query(MetricComparisonRunRow)
     if project_id:
         query = query.filter(MetricComparisonRunRow.project_id == project_id)
-    if metric_name:
-        query = query.filter(MetricComparisonRunRow.metric_name == metric_name)
-    rows = query.order_by(MetricComparisonRunRow.executed_at.desc()).limit(limit).all()
+    m = metric_name or metric_id
+    if m:
+        query = query.filter(MetricComparisonRunRow.metric_name == m)
+    if verdict:
+        query = query.filter(MetricComparisonRunRow.verdict == verdict.upper())
 
-    history = [
-        {
-            "id": r.id,
-            "project_id": r.project_id,
-            "metric_name": r.metric_name,
-            "source_platform": r.source_platform,
-            "target_platform": r.target_platform,
-            "target_view": r.target_view,
-            "source_query": r.source_query,
-            "target_query": r.target_query,
-            "source_value": r.source_value,
-            "target_value": r.target_value,
-            "variance_pct": r.variance_pct,
-            "absolute_difference": r.absolute_difference,
-            "tolerance_pct": r.tolerance_pct,
-            "verdict": r.verdict,
-            "reason": r.reason,
-            "execution_ms": r.execution_ms,
-            "mock_mode": r.mock_mode,
-            "executed_at": r.executed_at.isoformat() if r.executed_at else None,
-        }
-        for r in rows
-    ]
-    return {"count": len(history), "runs": history}
+    offset = max(0, (page - 1) * limit)
+    rows = query.order_by(MetricComparisonRunRow.executed_at.desc()).offset(offset).limit(limit).all()
+
+    history = [_serialize_run_row(r) for r in rows]
+    return {
+        "count": len(history),
+        "page": page,
+        "limit": limit,
+        "runs": history,
+    }
 
 
 @router.get("/metric-comparison/config", response_model=Dict[str, Any])
 def get_metric_comparison_config(
     project_id: str,
     metric_name: Optional[str] = None,
+    metric_id: Optional[str] = None,
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """Retrieve comparison configuration (tolerance, floor, null policy)."""
+    target_metric = metric_name or metric_id
+
     # 1. Metric-level config if requested
     metric_cfg = None
-    if metric_name:
+    if target_metric:
         row = (
             db.query(MetricComparisonConfigRow)
             .filter(
                 MetricComparisonConfigRow.project_id == project_id,
-                MetricComparisonConfigRow.metric_name == metric_name,
+                MetricComparisonConfigRow.metric_name == target_metric,
             )
             .first()
         )
         if row:
             metric_cfg = {
                 "tolerance_pct": row.tolerance_pct,
+                "tolerance_percentage": row.tolerance_pct,
                 "absolute_floor": row.absolute_floor,
                 "null_policy": row.null_policy,
+                "source_platform": row.source_platform,
+                "target_platform": row.target_platform,
+                "target_semantic_view": row.target_semantic_view,
+                "execution_timeout": row.execution_timeout,
             }
 
     # 2. Project-level default
@@ -515,13 +619,19 @@ def get_metric_comparison_config(
     )
     proj_cfg = {
         "tolerance_pct": proj_row.tolerance_pct if proj_row else 0.01,
+        "tolerance_percentage": proj_row.tolerance_pct if proj_row else 0.01,
         "absolute_floor": proj_row.absolute_floor if proj_row else 0.01,
         "null_policy": proj_row.null_policy if proj_row else "STRICT_NULL",
+        "source_platform": proj_row.source_platform if proj_row else "fabric",
+        "target_platform": proj_row.target_platform if proj_row else "snowflake",
+        "target_semantic_view": proj_row.target_semantic_view if proj_row else "",
+        "execution_timeout": proj_row.execution_timeout if proj_row else 60,
     }
 
     return {
         "project_id": project_id,
-        "metric_name": metric_name,
+        "metric_name": target_metric,
+        "metric_id": target_metric,
         "effective": metric_cfg or proj_cfg,
         "project_default": proj_cfg,
         "metric_override": metric_cfg,
@@ -534,27 +644,45 @@ def update_metric_comparison_config(
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """Upsert project-level or metric-level comparison configuration."""
+    target_metric = req.metric_name or req.metric_id
+    tol = req.tolerance_pct if req.tolerance_pct is not None else (req.tolerance_percentage if req.tolerance_percentage is not None else 0.01)
+
     row = (
         db.query(MetricComparisonConfigRow)
         .filter(
             MetricComparisonConfigRow.project_id == req.project_id,
-            MetricComparisonConfigRow.metric_name == req.metric_name,
+            MetricComparisonConfigRow.metric_name == target_metric,
         )
         .first()
     )
     if not row:
         row = MetricComparisonConfigRow(
             project_id=req.project_id,
-            metric_name=req.metric_name,
-            tolerance_pct=req.tolerance_pct,
+            metric_name=target_metric,
+            tolerance_pct=tol,
             absolute_floor=req.absolute_floor,
             null_policy=req.null_policy,
+            source_platform=req.source_platform or "fabric",
+            target_platform=req.target_platform or "snowflake",
+            target_semantic_view=req.target_semantic_view or "",
+            execution_timeout=req.execution_timeout or 60,
+            configuration=json.dumps(req.configuration) if req.configuration else None,
         )
         db.add(row)
     else:
-        row.tolerance_pct = req.tolerance_pct
+        row.tolerance_pct = tol
         row.absolute_floor = req.absolute_floor
         row.null_policy = req.null_policy
+        if req.source_platform:
+            row.source_platform = req.source_platform
+        if req.target_platform:
+            row.target_platform = req.target_platform
+        if req.target_semantic_view is not None:
+            row.target_semantic_view = req.target_semantic_view
+        if req.execution_timeout:
+            row.execution_timeout = req.execution_timeout
+        if req.configuration is not None:
+            row.configuration = json.dumps(req.configuration)
 
     db.commit()
     db.refresh(row)
@@ -562,40 +690,28 @@ def update_metric_comparison_config(
         "id": row.id,
         "project_id": row.project_id,
         "metric_name": row.metric_name,
+        "metric_id": row.metric_name,
         "tolerance_pct": row.tolerance_pct,
+        "tolerance_percentage": row.tolerance_pct,
         "absolute_floor": row.absolute_floor,
         "null_policy": row.null_policy,
+        "source_platform": row.source_platform,
+        "target_platform": row.target_platform,
+        "target_semantic_view": row.target_semantic_view,
+        "execution_timeout": row.execution_timeout,
     }
 
 
+@router.get("/metric-comparison/history/{run_id}", response_model=Dict[str, Any])
 @router.get("/metric-comparison/{run_id}", response_model=Dict[str, Any])
 def get_metric_comparison_detail(
     run_id: str,
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    """Retrieve details for a specific metric comparison run."""
+    """Retrieve complete execution details for a specific comparison run."""
     row = db.query(MetricComparisonRunRow).filter(MetricComparisonRunRow.id == run_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Comparison run not found")
-    return {
-        "id": row.id,
-        "project_id": row.project_id,
-        "metric_name": row.metric_name,
-        "source_platform": row.source_platform,
-        "target_platform": row.target_platform,
-        "target_view": row.target_view,
-        "source_query": row.source_query,
-        "target_query": row.target_query,
-        "source_value": row.source_value,
-        "target_value": row.target_value,
-        "variance_pct": row.variance_pct,
-        "absolute_difference": row.absolute_difference,
-        "tolerance_pct": row.tolerance_pct,
-        "verdict": row.verdict,
-        "reason": row.reason,
-        "execution_ms": row.execution_ms,
-        "mock_mode": row.mock_mode,
-        "executed_at": row.executed_at.isoformat() if row.executed_at else None,
-    }
+    return _serialize_run_row(row)
 
 

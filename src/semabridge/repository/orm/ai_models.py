@@ -170,10 +170,24 @@ class MetricComparisonConfigRow(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
     project_id: Mapped[str] = mapped_column(String(PROJECT_ID_LENGTH), nullable=False, index=True)
     metric_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # NULL implies project default
+    source_platform: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, default="fabric")
+    target_platform: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, default="snowflake")
+    target_semantic_view: Mapped[Optional[str]] = mapped_column(String(512), nullable=True, default="")
     tolerance_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.01)
     absolute_floor: Mapped[float] = mapped_column(Float, nullable=False, default=0.01)
     null_policy: Mapped[str] = mapped_column(String(64), nullable=False, default="STRICT_NULL")
+    execution_timeout: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+    configuration: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(_UTC_DT, server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(_UTC_DT, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    @property
+    def metric_id(self) -> Optional[str]:
+        return self.metric_name
+
+    @property
+    def tolerance_percentage(self) -> float:
+        return self.tolerance_pct
 
     def __repr__(self) -> str:
         return f"<MetricComparisonConfigRow(project={self.project_id}, metric={self.metric_name}, tol={self.tolerance_pct})>"
@@ -190,10 +204,12 @@ class MetricComparisonRunRow(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
     project_id: Mapped[str] = mapped_column(String(PROJECT_ID_LENGTH), nullable=False)
+    configuration_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     metric_name: Mapped[str] = mapped_column(String(255), nullable=False)
     source_platform: Mapped[str] = mapped_column(String(64), nullable=False)
     target_platform: Mapped[str] = mapped_column(String(64), nullable=False)
     target_view: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    execution_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="LIVE")
     source_query: Mapped[str] = mapped_column(Text, nullable=False, default="")
     target_query: Mapped[str] = mapped_column(Text, nullable=False, default="")
     source_value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -202,10 +218,44 @@ class MetricComparisonRunRow(Base):
     absolute_difference: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     tolerance_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.01)
     verdict: Mapped[str] = mapped_column(String(32), nullable=False, default="NOT_COMPARABLE")
+    source_execution_status: Mapped[str] = mapped_column(String(32), nullable=False, default="SUCCESS")
+    target_execution_status: Mapped[str] = mapped_column(String(32), nullable=False, default="SUCCESS")
+    source_execution_duration_ms: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    target_execution_duration_ms: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
     execution_ms: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     mock_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    execution_metadata: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     executed_at: Mapped[datetime] = mapped_column(_UTC_DT, server_default=func.now(), nullable=False)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
+
+    @property
+    def metric_id(self) -> str:
+        return self.metric_name
+
+    @property
+    def absolute_variance(self) -> Optional[float]:
+        return self.absolute_difference
+
+    @property
+    def percentage_variance(self) -> Optional[float]:
+        return self.variance_pct
+
+    @property
+    def tolerance_percentage(self) -> float:
+        return self.tolerance_pct
+
+    @property
+    def generated_dax(self) -> str:
+        return self.source_query
+
+    @property
+    def generated_sql(self) -> str:
+        return self.target_query
+
+    @property
+    def created_at(self) -> datetime:
+        return self.executed_at
 
     def __repr__(self) -> str:
         return f"<MetricComparisonRunRow(id={self.id}, metric={self.metric_name}, verdict={self.verdict})>"
