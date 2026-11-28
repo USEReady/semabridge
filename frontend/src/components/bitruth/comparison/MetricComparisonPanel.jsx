@@ -22,6 +22,38 @@ const LABEL = {
   display: 'block',
 };
 
+function extractViewName(v) {
+  if (!v) return '';
+  if (typeof v === 'string') {
+    const trimmed = v.trim();
+    return trimmed === '[object Object]' ? '' : trimmed;
+  }
+  if (typeof v === 'object') {
+    const candidate = v.semantic_view || v.view || v.view_name || v.name || v.target_view;
+    if (typeof candidate === 'string') {
+      const trimmed = candidate.trim();
+      return trimmed === '[object Object]' ? '' : trimmed;
+    }
+  }
+  return '';
+}
+
+function extractMetricName(m) {
+  if (!m) return '';
+  if (typeof m === 'string') {
+    const trimmed = m.trim();
+    return trimmed === '[object Object]' ? '' : trimmed;
+  }
+  if (typeof m === 'object') {
+    const candidate = m.name || m.logical_name || m.metric_name || m.measure_name || m.id;
+    if (typeof candidate === 'string') {
+      const trimmed = candidate.trim();
+      return trimmed === '[object Object]' ? '' : trimmed;
+    }
+  }
+  return '';
+}
+
 export default function MetricComparisonPanel({
   projectId,
   availableMetrics = [],
@@ -42,18 +74,27 @@ export default function MetricComparisonPanel({
     runComparison,
   } = useMetricComparison(projectId);
 
-  const [metricName, setMetricName] = useState(initialMetric || availableMetrics[0] || '');
+  const [metricName, setMetricName] = useState(
+    extractMetricName(initialMetric) || extractMetricName(availableMetrics[0]) || ''
+  );
 
   useEffect(() => {
     if (initialMetric) {
-      setMetricName(initialMetric);
+      setMetricName(extractMetricName(initialMetric));
     } else if (!metricName && availableMetrics.length > 0) {
-      setMetricName(availableMetrics[0]);
+      setMetricName(extractMetricName(availableMetrics[0]));
     }
   }, [initialMetric, availableMetrics]);
   const [sourcePlatform, setSourcePlatform] = useState('fabric');
   const [targetPlat, setTargetPlat] = useState(targetPlatform || 'SNOWFLAKE');
-  const [targetView, setTargetView] = useState(currentView || '');
+  const [targetView, setTargetView] = useState(extractViewName(currentView) || '');
+
+  useEffect(() => {
+    if (currentView) {
+      const clean = extractViewName(currentView);
+      if (clean) setTargetView(clean);
+    }
+  }, [currentView]);
   const [tolerancePct, setTolerancePct] = useState(String(config.tolerance_pct || 0.01));
   const [nullPolicy, setNullPolicy] = useState(config.null_policy || 'STRICT_NULL');
   const [mockMode, setMockMode] = useState(false);
@@ -160,11 +201,15 @@ export default function MetricComparisonPanel({
                     onChange={(e) => setMetricName(e.target.value)}
                     style={INPUT}
                   >
-                    {availableMetrics.map((m) => (
-                      <option key={m} value={m}>
-                        {m}
-                      </option>
-                    ))}
+                    {availableMetrics.map((m, idx) => {
+                      const mName = extractMetricName(m);
+                      if (!mName) return null;
+                      return (
+                        <option key={mName || idx} value={mName}>
+                          {mName}
+                        </option>
+                      );
+                    })}
                   </select>
                 ) : (
                   <input
@@ -219,7 +264,7 @@ export default function MetricComparisonPanel({
                 <label style={LABEL}>Target Semantic View / Metric View</label>
                 <input
                   type="text"
-                  value={targetView}
+                  value={extractViewName(targetView)}
                   onChange={(e) => setTargetView(e.target.value)}
                   placeholder="e.g. DB.SCHEMA.SEMANTIC_VIEW or catalog.schema.metric_view"
                   style={INPUT}

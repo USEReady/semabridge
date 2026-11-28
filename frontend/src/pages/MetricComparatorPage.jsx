@@ -46,8 +46,34 @@ function getProjectWarehouse(p) {
 
 function extractViewName(v) {
   if (!v) return '';
-  if (typeof v === 'string') return v === '[object Object]' ? '' : v;
-  return v.semantic_view || v.view || v.view_name || v.name || '';
+  if (typeof v === 'string') {
+    const trimmed = v.trim();
+    return trimmed === '[object Object]' ? '' : trimmed;
+  }
+  if (typeof v === 'object') {
+    const candidate = v.semantic_view || v.view || v.view_name || v.name || v.target_view;
+    if (typeof candidate === 'string') {
+      const trimmed = candidate.trim();
+      return trimmed === '[object Object]' ? '' : trimmed;
+    }
+  }
+  return '';
+}
+
+function extractMetricName(m) {
+  if (!m) return '';
+  if (typeof m === 'string') {
+    const trimmed = m.trim();
+    return trimmed === '[object Object]' ? '' : trimmed;
+  }
+  if (typeof m === 'object') {
+    const candidate = m.name || m.logical_name || m.metric_name || m.measure_name || m.id;
+    if (typeof candidate === 'string') {
+      const trimmed = candidate.trim();
+      return trimmed === '[object Object]' ? '' : trimmed;
+    }
+  }
+  return '';
 }
 
 export default function MetricComparatorPage() {
@@ -162,7 +188,8 @@ export default function MetricComparatorPage() {
   useEffect(() => {
     if (projectMetrics.length > 0 && !selectedMetric) {
       const first = projectMetrics[0];
-      setSelectedMetric(first.name || first.logical_name || String(first));
+      const mName = extractMetricName(first);
+      if (mName) setSelectedMetric(mName);
     }
   }, [projectMetrics, selectedMetric]);
 
@@ -418,7 +445,8 @@ export default function MetricComparatorPage() {
                   >
                     <option value="">-- Choose Measure ({projectMetrics.length} available) --</option>
                     {filteredMetrics.map((m, idx) => {
-                      const mName = m.name || m.logical_name || String(m);
+                      const mName = extractMetricName(m);
+                      if (!mName) return null;
                       const desc = m.concept ? ` [${m.concept}]` : '';
                       return (
                         <option key={idx} value={mName}>
