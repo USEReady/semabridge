@@ -30,18 +30,22 @@ def filter_qualifying_cases(
     qualifying: List[Dict[str, Any]] = []
     skipped: List[Dict[str, Any]] = []
 
-    # Map case_id -> result dict from the latest run
-    results_map: Dict[str, Dict[str, Any]] = {}
+    # Map case_id -> all result dicts from the latest run (supports multi-window cases)
+    results_by_cid: Dict[str, List[Dict[str, Any]]] = {}
     if latest_run and isinstance(latest_run, dict):
         for r in latest_run.get("results") or []:
             cid = r.get("case_id")
             if cid:
-                results_map[cid] = r
+                results_by_cid.setdefault(cid, []).append(r)
+
+    from semabridge.ai.bi_truth_windows import parse_case_windows
 
     for c in cases:
         cid = c.get("id") or "unknown"
         status = str(c.get("status") or "draft").lower().strip()
         expected_val = c.get("expected_value")
+        windows = parse_case_windows(c.get("windows"))
+        has_window_benchmark = any(w.has_expected_value for w in windows)
 
         # Check 1: Status
         if status not in ("approved", "certified"):
@@ -53,8 +57,8 @@ def filter_qualifying_cases(
             })
             continue
 
-        # Check 2: Captured expected value
-        if expected_val is None:
+        # Check 2: Captured expected value (case-level or at least one window benchmark)
+        if expected_val is None and not has_window_benchmark:
             skipped.append({
                 "case_id": cid,
                 "question": c.get("question") or "",
@@ -64,7 +68,7 @@ def filter_qualifying_cases(
             continue
 
         # Check 3: Latest run result
-        if not latest_run or not results_map:
+        if not latest_run or not results_by_cid:
             skipped.append({
                 "case_id": cid,
                 "question": c.get("question") or "",
@@ -73,8 +77,8 @@ def filter_qualifying_cases(
             })
             continue
 
-        res = results_map.get(cid)
-        if not res:
+        cid_results = results_by_cid.get(cid) or []
+        if not cid_results:
             skipped.append({
                 "case_id": cid,
                 "question": c.get("question") or "",
@@ -83,14 +87,17 @@ def filter_qualifying_cases(
             })
             continue
 
-        passed = bool(res.get("passed"))
-        verdict = str(res.get("verdict") or ("PASS" if passed else "FAIL")).upper()
-        if not passed or verdict != "PASS":
+        passing_res = [
+            r for r in cid_results
+            if bool(r.get("passed")) and str(r.get("verdict") or "PASS").upper() == "PASS"
+        ]
+        if not passing_res:
+            last_verdict = str(cid_results[-1].get("verdict") or "FAIL").upper()
             skipped.append({
                 "case_id": cid,
                 "question": c.get("question") or "",
                 "status": status,
-                "reason": f"Case did not pass in latest run (verdict: {verdict})",
+                "reason": f"Case did not pass in latest run (verdict: {last_verdict})",
             })
             continue
 

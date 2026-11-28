@@ -291,3 +291,28 @@ def test_credentials_come_strictly_from_project_config():
     assert passed_cfg["account"] == "secure-corp-acc"
     assert passed_cfg["warehouse"] == "PROD_ANALYTICS_WH"
     assert passed_cfg["database"] == "FINANCE_DB"
+
+
+def test_windowed_case_with_window_benchmark_qualifies_for_injection():
+    """A case whose case-level expected_value is None still qualifies if a window has its own benchmark and passed."""
+    cases = [
+        {
+            "id": "c_win",
+            "metric_name": "AVG_TENURE_DAYS",
+            "question": "What is AVG_TENURE_DAYS?",
+            "expected_sql": "SELECT 1",
+            "expected_value": None,
+            "status": "approved",
+            "windows": [
+                {"window_key": "y2014", "window_label": "2014", "filter_clause": "COL_DATE.YEAR = 2014", "expected_value": 1195.0}
+            ],
+        }
+    ]
+    latest_run = {
+        "results": [
+            {"case_id": "c_win", "window_name": "2014", "passed": True, "verdict": "PASS"},
+        ]
+    }
+    qualifying, skipped = filter_qualifying_cases(cases, latest_run)
+    assert [c["id"] for c in qualifying] == ["c_win"]
+    assert skipped == []
