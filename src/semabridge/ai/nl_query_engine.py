@@ -830,6 +830,8 @@ class NLQueryEngine:
                 or sbt_nospace == a_ns
                 or sbt_cf in syns_cf
                 or sbt_cf == f"{c_cf} {a_cf}"
+                or sbt_cf == f"{c_cf}.{a_cf}"
+                or sbt_nospace == re.sub(r"[^a-z0-9]+", "", f"{c_cf}.{a_cf}")
                 or (attr_label and (sbt_cf == attr_label or sbt_nospace == re.sub(r"[^a-z0-9]+", "", attr_label)))
                 or (concept_label and (sbt_cf == concept_label or sbt_nospace == re.sub(r"[^a-z0-9]+", "", concept_label)))
                 or (bt_initials and (bt_initials == a_cf or bt_initials == c_cf or bt_initials in syns_cf))

@@ -957,18 +957,18 @@ def parse_question(prompt: str, lexicon: Optional[ProjectLexicon] = None) -> Par
         measure_text = rest_measure
     else:
         by_match = re.search(
-            r"\b(?:grouped\s+by|for\s+each|by)\s+([A-Za-z0-9_,\s&-]+?)"
-            r"(?:\s+(?:in|during|for|where|with|from|have|has|had|do|does|did|is|are|was|were)\b|[?.;]|$)",
+            r"\b(?:grouped\s+by|for\s+each|by)\s+([A-Za-z0-9_.,\s&-]+?)"
+            r"(?:\s+(?:in|during|for|where|with|from|have|has|had|do|does|did|is|are|was|were)\b|\.(?=\s|$)|[?;]|$)",
             work_prompt,
             flags=re.I,
         ) or re.search(
-            r"\b(?:per|each)\s+([A-Za-z0-9_,\s&-]+?)"
-            r"(?:\s+(?:in|during|for|where|with|from|have|has|had|do|does|did|is|are|was|were)\b|[?.;]|$)",
+            r"\b(?:per|each)\s+([A-Za-z0-9_.,\s&-]+?)"
+            r"(?:\s+(?:in|during|for|where|with|from|have|has|had|do|does|did|is|are|was|were)\b|\.(?=\s|$)|[?;]|$)",
             work_prompt,
             flags=re.I,
         )
         top_n_by_match = re.search(
-            r"\btop\s+\d+\s+([A-Za-z0-9_\s]+?)\s+by\s+([A-Za-z0-9_\s]+?)(?:\s+(?:in|during|for|where|with|from)\b|[?.;]|$)",
+            r"\btop\s+\d+\s+([A-Za-z0-9_.\s]+?)\s+by\s+([A-Za-z0-9_\s]+?)(?:\s+(?:in|during|for|where|with|from)\b|\.(?=\s|$)|[?;]|$)",
             work_prompt,
             flags=re.I,
         )
